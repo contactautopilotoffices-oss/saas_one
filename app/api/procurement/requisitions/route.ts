@@ -261,7 +261,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Failed to upload file to storage', details: uploadError.message }, { status: 500 });
         }
 
-        const publicUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+        const publicUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
 
         // Calculate total cost using locked price snapshots
         const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 export interface CADAreaItem {
     id: string;
@@ -256,10 +257,10 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 // Benchmarks
                 if (ti?.reference_photos && Array.isArray(ti.reference_photos)) {
                     ti.reference_photos.forEach((rp: any, rpIdx: number) => {
-                        if (rp.url) allBenchmarks.push({ id: rp.id || `bm_${rpIdx + 1}`, url: rp.url, label: rp.label || `Angle ${rpIdx + 1}` });
+                        if (rp.url) allBenchmarks.push({ id: rp.id || `bm_${rpIdx + 1}`, url: maskStorageUrl(rp.url), label: rp.label || `Angle ${rpIdx + 1}` });
                     });
                 } else if (ti?.reference_photo_url) {
-                    allBenchmarks.push({ id: 'ref_1', url: ti.reference_photo_url, label: ti.title || 'Clean Standard' });
+                    allBenchmarks.push({ id: 'ref_1', url: maskStorageUrl(ti.reference_photo_url), label: ti.title || 'Clean Standard' });
                 }
 
                 // Proofs
@@ -272,11 +273,11 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                     }
                     if (Array.isArray(ci.photos) && ci.photos.length > 0) {
                         ci.photos.forEach((p: any, pIdx: number) => {
-                            if (typeof p === 'string') allProofs.push({ url: p, label: `Angle ${pIdx + 1}`, captured_at: ci.checked_at });
-                            else if (p?.url) allProofs.push({ ...p, label: p.label || `Angle ${pIdx + 1}`, captured_at: p.captured_at || ci.checked_at });
+                            if (typeof p === 'string') allProofs.push({ url: maskStorageUrl(p), label: `Angle ${pIdx + 1}`, captured_at: ci.checked_at });
+                            else if (p?.url) allProofs.push({ ...p, url: maskStorageUrl(p.url), label: p.label || `Angle ${pIdx + 1}`, captured_at: p.captured_at || ci.checked_at });
                         });
                     } else if (ci.photo_url) {
-                        allProofs.push({ url: ci.photo_url, label: ti?.title || 'Execution Proof', captured_at: ci.checked_at });
+                        allProofs.push({ url: maskStorageUrl(ci.photo_url), label: ti?.title || 'Execution Proof', captured_at: ci.checked_at });
                     }
 
                     // AI Photo Matches
@@ -285,7 +286,11 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                         try { rawMatches = JSON.parse(rawMatches); } catch { rawMatches = []; }
                     }
                     if (Array.isArray(rawMatches)) {
-                        allMatches.push(...rawMatches);
+                        allMatches.push(...rawMatches.map((m: any) => ({
+                            ...m,
+                            matched_photo_url: maskStorageUrl(m.matched_photo_url),
+                            benchmark_photo_url: maskStorageUrl(m.benchmark_photo_url),
+                        })));
                     }
 
                     // Parameters
@@ -346,8 +351,8 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 category,
                 score: avgScore,
                 status,
-                previewPhoto: allProofs[0]?.url || allBenchmarks[0]?.url,
-                benchmarkPhoto: allBenchmarks[0]?.url,
+                previewPhoto: maskStorageUrl(allProofs[0]?.url || allBenchmarks[0]?.url),
+                benchmarkPhoto: maskStorageUrl(allBenchmarks[0]?.url),
                 capturedAt: allProofs[0]?.captured_at,
                 reason,
                 parameters: allParams,
@@ -444,7 +449,7 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 location: `${cadTemplate?.title || 'D Wing'} • 1st Floor`,
                 score: a.score!,
                 status: a.status as any,
-                photoUrl: a.previewPhoto || a.benchmarkPhoto,
+                photoUrl: maskStorageUrl(a.previewPhoto || a.benchmarkPhoto),
                 timestamp: a.capturedAt ? new Date(a.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' Today' : 'Today',
             }));
         }
@@ -456,7 +461,7 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
             location: `${cadTemplate?.title || 'D Wing'} • 1st Floor`,
             score: a.score || (idx === 0 ? 85 : idx === 1 ? 90 : 78),
             status: a.status as any,
-            photoUrl: a.previewPhoto || a.benchmarkPhoto,
+            photoUrl: maskStorageUrl(a.previewPhoto || a.benchmarkPhoto),
             timestamp: 'Today',
         }));
     }, [areaAudits, cadTemplate]);

@@ -7,6 +7,7 @@ import {
     Maximize2, ExternalLink, X, RefreshCw, Loader2, ArrowUpRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface TenantVisitorManagementProps {
     propertyId: string;
@@ -476,7 +477,7 @@ export default function TenantVisitorManagement({ propertyId, user, propertyName
                     >
                         <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
                             <a
-                                href={previewPhotoUrl}
+                                href={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={e => e.stopPropagation()}
@@ -501,7 +502,7 @@ export default function TenantVisitorManagement({ propertyId, user, propertyName
                             onClick={e => e.stopPropagation()}
                         >
                             <img
-                                src={previewPhotoUrl}
+                                src={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 alt="Visitor Photo Preview"
                                 className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10"
                             />

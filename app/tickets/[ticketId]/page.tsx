@@ -64,6 +64,7 @@ import { Toast } from "@/frontend/components/ui/Toast";
 import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
 import LogAssetWorkModal from "@/frontend/components/assets/LogAssetWorkModal";
 import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
+import { maskStorageUrl } from "@/frontend/utils/storageUrl";
 
 // Types
 interface Ticket {
@@ -425,7 +426,17 @@ export default function TicketDetailPage() {
 
       if (error) throw error;
       if (!t) throw { message: "Ticket not found", code: "NOT_FOUND" };
+      if (t.photo_before_url) t.photo_before_url = maskStorageUrl(t.photo_before_url);
+      if (t.photo_after_url) t.photo_after_url = maskStorageUrl(t.photo_after_url);
+      if (t.video_before_url) t.video_before_url = maskStorageUrl(t.video_before_url);
+      if (t.video_after_url) t.video_after_url = maskStorageUrl(t.video_after_url);
       setTicket(t);
+
+      // Obfuscate raw UUID in browser address bar by replacing with clean ticket number
+      if (isUuid && t.ticket_number && typeof window !== 'undefined') {
+        const cleanUrl = `/tickets/${t.ticket_number}${window.location.search}`;
+        window.history.replaceState(null, '', cleanUrl);
+      }
 
       // Fire all secondary lookups concurrently in parallel to eliminate sequential network latency
       const secondaryTasks: Promise<any>[] = [
@@ -1364,20 +1375,18 @@ export default function TicketDetailPage() {
 
       if (uploadError) throw uploadError;
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("ticket_photos").getPublicUrl(fileName);
+      const proxyUrl = `/api/storage/ticket_photos/${fileName}`;
 
       const { error: dbError } = await supabase
         .from("tickets")
-        .update({ [updateField]: publicUrl })
+        .update({ [updateField]: proxyUrl })
         .eq("id", ticketId);
 
       if (dbError) throw dbError;
 
-      // Update state immediately with public URL and clear spinner
+      // Update state immediately with masked URL and clear spinner
       setTicket((prev) =>
-        prev ? { ...prev, [updateField]: publicUrl } : null,
+        prev ? { ...prev, [updateField]: proxyUrl } : null,
       );
       setUploading(false);
       showToast(
@@ -1387,7 +1396,7 @@ export default function TicketDetailPage() {
 
       // Log activity in background without blocking UI
       const takenAt = new Date(file.lastModified).toISOString();
-      logActivity(`photo_${type}_uploaded`, takenAt, publicUrl).catch(console.error);
+      logActivity(`photo_${type}_uploaded`, takenAt, proxyUrl).catch(console.error);
     } catch (err: any) {
       // Revert to old value on error
       setTicket((prev) => (prev ? { ...prev, [updateField]: oldVal } : null));
@@ -1419,23 +1428,21 @@ export default function TicketDetailPage() {
 
       if (uploadError) throw uploadError;
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("ticket_videos").getPublicUrl(fileName);
+      const proxyUrl = `/api/storage/ticket_videos/${fileName}`;
 
       const { error: dbError } = await supabase
         .from("tickets")
-        .update({ [updateField]: publicUrl })
+        .update({ [updateField]: proxyUrl })
         .eq("id", ticketId);
 
       if (dbError) throw dbError;
 
       const takenAt = new Date(file.lastModified).toISOString();
-      await logActivity(`video_${type}_uploaded`, takenAt, publicUrl);
+      await logActivity(`video_${type}_uploaded`, takenAt, proxyUrl);
 
-      // Final update with actual public URL
+      // Final update with masked proxy URL
       setTicket((prev) =>
-        prev ? { ...prev, [updateField]: publicUrl } : null,
+        prev ? { ...prev, [updateField]: proxyUrl } : null,
       );
       showToast(
         `${type.charAt(0).toUpperCase() + type.slice(1)} video uploaded`,
@@ -1584,8 +1591,8 @@ export default function TicketDetailPage() {
         // Only use `from` if it's an absolute path (starts with /), not a tab name like "requests"
         const destination =
           (from?.startsWith("/") ? from : null) ||
-          (isOrgAdminUser && effectiveOrgId
-            ? `/org/${effectiveOrgId}/dashboard`
+          (isOrgAdminUser
+            ? '/dashboard'
             : `/property/${ticket?.property_id}/${userRole === "admin" ? "dashboard" : userRole === "mst" ? "mst" : userRole === "staff" ? "staff" : "tenant"}?tab=requests`);
         router.push(destination);
       }, 1000);
@@ -1613,8 +1620,8 @@ export default function TicketDetailPage() {
 
     // Direct link fallback
     const effectiveOrgId = ticketOrgId || (ticket?.property as any)?.organization_id;
-    if (isOrgAdminUser && effectiveOrgId) {
-      router.push(`/org/${effectiveOrgId}/dashboard`);
+    if (isOrgAdminUser) {
+      router.push('/dashboard');
       return;
     }
 
@@ -3391,11 +3398,14 @@ export default function TicketDetailPage() {
                             <Eye className="w-3.5 h-3.5" /> Received Item Photos ({req.delivery_photos.length})
                           </p>
                           <div className="flex flex-wrap gap-2">
-                            {req.delivery_photos.map((url: string, idx: number) => (
-                              <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
-                                <img src={url} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
-                              </a>
-                            ))}
+                            {req.delivery_photos.map((url: string, idx: number) => {
+                              const safeUrl = maskStorageUrl(url) || url;
+                              return (
+                                <a key={idx} href={safeUrl} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
+                                  <img src={safeUrl} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                                </a>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -4013,7 +4023,7 @@ export default function TicketDetailPage() {
                                   <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
                                     {act.new_value.startsWith("http") ? (
                                       <a
-                                        href={act.new_value}
+                                        href={maskStorageUrl(act.new_value) || act.new_value}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded-md hover:bg-blue-500/20 transition-colors font-bold"

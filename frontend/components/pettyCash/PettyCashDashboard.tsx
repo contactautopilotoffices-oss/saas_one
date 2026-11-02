@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react'
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowDownLeft, ArrowUpRight, Banknote, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock, CornerUpLeft, Eye, FilePlus2, Inbox, Loader2, Plus, RefreshCw, RotateCcw, Search, Wallet, X } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
+import { useAuth } from '@/frontend/context/AuthContext';
 import PettyCashStyles from './PettyCashStyles';
 import { inr, PC_PAYMENT_MODES, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
 import NewRequestModal from './NewRequestModal';
@@ -25,8 +26,10 @@ function IconAction({ label, hint, tone, disabled, onClick, children }: { label:
     return <button type="button" aria-label={label} title={hint || label} disabled={disabled} onClick={onClick}
         className={`inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-lg border shadow-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${ICON_TONES[tone]}`}>{children}</button>;
 }
-export default function PettyCashDashboard() {
-    const { orgId } = useParams<{ orgId: string }>();
+export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: string | null } = {}) {
+    const params = useParams<{ orgId?: string }>();
+    const { membership } = useAuth();
+    const orgId = propOrgId || params?.orgId || membership?.org_id || '';
     const router=useRouter();const pathname=usePathname();const searchParams=useSearchParams();const linkedRequest=searchParams.get('request_id');
     const invalidLink=linkedRequest!==null&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(linkedRequest);
     const [storedContext, setContext] = useState<Context>();const context=storedContext?.organization_id===orgId?storedContext:undefined; const [requests, setRequests] = useState<PettyCashRequest[]>([]); const [selectedTab, setTab] = useState<string|null>(null);const tab=selectedTab || (context?.caps.isAdmin?'overview':'mine');

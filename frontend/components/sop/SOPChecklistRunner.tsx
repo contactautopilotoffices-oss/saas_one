@@ -335,7 +335,21 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
                             if (res.ok) {
                                 const json = await res.json();
                                 if (json.completion && json.completion.status !== 'completed') {
-                                    completionData = json.completion;
+                                    const todayStr = new Intl.DateTimeFormat('en-CA', {
+                                        timeZone: 'Asia/Kolkata',
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit'
+                                    }).format(new Date());
+                                    const expectedDate = completionDate || todayStr;
+                                    if (json.completion.completion_date === expectedDate) {
+                                        completionData = json.completion;
+                                    } else {
+                                        try {
+                                            localStorage.removeItem(`sop_active_session_${templateId}`);
+                                            sessionStorage.removeItem(`sop_active_session_${templateId}`);
+                                        } catch {}
+                                    }
                                 }
                             }
                         } catch {}

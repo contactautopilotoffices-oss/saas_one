@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, Truck, Loader2, Upload, FileText, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import imageCompression from 'browser-image-compression';
 import ModalPortal from '../ui/ModalPortal';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface ChallanLine {
     catalog_item_id: string;
@@ -209,7 +210,7 @@ export default function DeliveryChallanModal({ requisitionId, title, onClose, on
                                                             {c.total_items} item(s), {fmt(Number(c.total_qty) || 0)} units{c.confirmed_by ? ` by ${c.confirmed_by}` : ''}
                                                         </p>
                                                     </div>
-                                                    <a href={c.file_url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary hover:underline shrink-0">View</a>
+                                                    <a href={maskStorageUrl(c.file_url) || c.file_url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary hover:underline shrink-0">View</a>
                                                 </div>
                                             ))}
                                         </div>

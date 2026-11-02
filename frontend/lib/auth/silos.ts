@@ -53,7 +53,7 @@ export function resolveSilo(
         const orgId =
             memberships.find(m => m.role && silo.list.includes(m.role) && m.orgId)?.orgId ||
             fallbackOrgId;
-        if (orgId) return { kind: silo.kind, orgId, path: `/${orgId}/${silo.segment}` };
+        if (orgId) return { kind: silo.kind, orgId, path: `/${silo.segment}` };
     }
     return null;
 }

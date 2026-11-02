@@ -26,6 +26,7 @@ import {
     ArrowRight,
     UploadCloud,
 } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface CampaignConfig {
     campaign: string;
@@ -1017,7 +1018,7 @@ Task has been added to your CRM call schedule.`
                                                 <span>Property Showcase Photo URL</span>
                                                 {camp.property_photo_url && (
                                                     <a
-                                                        href={camp.property_photo_url}
+                                                        href={maskStorageUrl(camp.property_photo_url) || camp.property_photo_url}
                                                         target="_blank"
                                                         rel="noreferrer"
                                                         className="text-[11px] text-primary hover:underline flex items-center gap-1"

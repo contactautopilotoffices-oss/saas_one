@@ -478,11 +478,11 @@ export default function TicketFlowMap({
         const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'owner', 'admin', 'org_admin'].includes(membership?.org_role || '');
         const effectiveOrgId = organizationId || membership?.org_id;
 
-        if (isOrgLevelAdmin && effectiveOrgId) {
+        if (isOrgLevelAdmin) {
             if (from === 'requests') {
-                router.push(`/org/${effectiveOrgId}/dashboard?tab=requests`);
+                router.push('/dashboard?tab=requests');
             } else {
-                router.push(`/org/${effectiveOrgId}/dashboard`);
+                router.push('/dashboard');
             }
             return;
         }
@@ -521,7 +521,7 @@ export default function TicketFlowMap({
         } else {
             // Fallback for org admins or if membership not found
             if (effectiveOrgId) {
-                router.push(`/org/${effectiveOrgId}/dashboard`);
+                router.push('/dashboard');
             } else {
                 router.push(`/property/${propertyId}/dashboard`);
             }

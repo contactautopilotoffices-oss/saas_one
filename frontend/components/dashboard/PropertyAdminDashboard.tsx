@@ -48,6 +48,7 @@ const ElectricityAnalyticsDashboard = dynamic(() => import('@/frontend/component
 const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: TabLoading });
 const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
 const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
 const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
@@ -93,7 +94,7 @@ const TAB_PRELOADS = [
 ];
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'petty-cash';
 
 interface Property {
     id: string;
@@ -352,7 +353,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // State
     const [dashboardTab, setActiveTab] = useState<Tab>('overview');
-    const openTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
+    const activeTabFromSearch = searchParams?.get('tab');
+    const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKey = `property-${propertyId}`;
@@ -1129,6 +1131,11 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         />}
                         {openTab === 'roster' && property && <RosterDashboard propertyId={property.id} />}
                         {openTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
+                        {openTab === 'petty-cash' && (
+                            <div className="w-full">
+                                <PettyCashDashboard orgId={property?.organization_id || membership?.org_id || undefined} />
+                            </div>
+                        )}
 
                         {openTab === 'water_analytics' && property && <WaterAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'guest_experience' && property && <GuestExperienceDashboard propertyId={property.id} />}

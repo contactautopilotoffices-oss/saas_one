@@ -67,12 +67,10 @@ export async function removeObject(path: string): Promise<void> {
     await supabaseAdmin.storage.from(INVOICE_BUCKET).remove([path]).catch(() => undefined);
 }
 
-/** Returns null (not a throw) so one missing file never takes a whole detail view down. */
+/** Returns the internal proxy URL to stream the file securely without exposing Supabase storage URLs. */
 export async function signObject(path: string | null | undefined): Promise<string | null> {
     if (!path) return null;
-    const { data, error } = await supabaseAdmin.storage.from(INVOICE_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
-    if (error) { console.error('[invoices] sign failed:', error.message); return null; }
-    return data?.signedUrl ?? null;
+    return `/api/invoices/files?path=${encodeURIComponent(path)}`;
 }
 
 /**

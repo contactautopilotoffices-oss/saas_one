@@ -21,6 +21,7 @@ import ProcurementStatusModal from './ProcurementStatusModal';
 import StockSettingsPanel from '../stock/StockSettingsPanel';
 import ProcurementComparativeFlow from './ProcurementComparativeFlow';
 import ProcurementCatalogModal from '../procurement/ProcurementCatalogModal';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import ProcurementFeedbackTab from '../procurement/ProcurementFeedbackTab';
 import MonthlyRequisitionsTab from '../procurement/MonthlyRequisitionsTab';
@@ -1530,27 +1531,30 @@ function RequestsTab({
                                             <div key={i} className="py-3 border-b border-slate-100/50 last:border-0 group/item">
                                                 <div className="flex justify-between items-start gap-4">
                                                     <div className="flex items-start gap-3 min-w-0 flex-1">
-                                                        {item.photo_url && (
-                                                            <button 
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    if (item.photo_url.startsWith('data:')) {
-                                                                        const w = window.open();
-                                                                        w?.document.write(`<img src="${item.photo_url}" style="max-width:100%; max-height:100%; object-fit:contain; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" />`);
-                                                                    } else {
-                                                                        window.open(item.photo_url, '_blank');
-                                                                    }
-                                                                }}
-                                                                className="flex-shrink-0 hover:opacity-80 transition-opacity"
-                                                            >
-                                                                <img 
-                                                                    src={item.photo_url} 
-                                                                    alt={item.name}
-                                                                    className="w-14 h-14 rounded-xl object-cover border border-slate-100 bg-slate-50"
-                                                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                                                />
-                                                            </button>
-                                                        )}
+                                                        {item.photo_url && (() => {
+                                                            const safePhotoUrl = maskStorageUrl(item.photo_url) || item.photo_url;
+                                                            return (
+                                                                <button 
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        if (safePhotoUrl.startsWith('data:')) {
+                                                                            const w = window.open();
+                                                                            w?.document.write(`<img src="${safePhotoUrl}" style="max-width:100%; max-height:100%; object-fit:contain; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);" />`);
+                                                                        } else {
+                                                                            window.open(safePhotoUrl, '_blank');
+                                                                        }
+                                                                    }}
+                                                                    className="flex-shrink-0 hover:opacity-80 transition-opacity"
+                                                                >
+                                                                    <img 
+                                                                        src={safePhotoUrl} 
+                                                                        alt={item.name}
+                                                                        className="w-14 h-14 rounded-xl object-cover border border-slate-100 bg-slate-50"
+                                                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                                                    />
+                                                                </button>
+                                                            );
+                                                        })()}
                                                         <div className="flex-1 min-w-0">
                                                             <span className="text-sm font-bold text-slate-800">{item.name}</span>
                                                             {(item.description || item.notes) && (

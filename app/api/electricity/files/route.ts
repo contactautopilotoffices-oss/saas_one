@@ -44,12 +44,28 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: 'Unknown file' }, { status: 404 });
     }
 
-    const { data, error } = await supabaseAdmin.storage
+    const { data: fileBlob, error } = await supabaseAdmin.storage
         .from(BUCKET)
-        .createSignedUrl(path, SIGNED_URL_TTL);
-    if (error || !data?.signedUrl) {
-        console.error('[electricity files] sign failed:', error?.message);
+        .download(path);
+    if (error || !fileBlob) {
+        console.error('[electricity files] download failed:', error?.message);
         return NextResponse.json({ error: 'Could not open the file' }, { status: 404 });
     }
-    return NextResponse.redirect(data.signedUrl);
+
+    const filename = path.split('/').pop() || 'file';
+    const isPdf = filename.toLowerCase().endsWith('.pdf');
+    const isPng = filename.toLowerCase().endsWith('.png');
+    const isJpg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg');
+    const contentType = isPdf ? 'application/pdf' : isPng ? 'image/png' : isJpg ? 'image/jpeg' : (fileBlob.type || 'application/octet-stream');
+
+    const buffer = Buffer.from(await fileBlob.arrayBuffer());
+    return new NextResponse(new Uint8Array(buffer), {
+        status: 200,
+        headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
+            'Content-Length': buffer.byteLength.toString(),
+            'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+        },
+    });
 }

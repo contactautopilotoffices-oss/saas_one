@@ -120,3 +120,23 @@ export async function getDownloadUrl(admin: SupabaseClient, id: string): Promise
   if (error) throw error;
   return data.signedUrl;
 }
+
+/** Download the original file directly as a buffer without exposing the bucket or signed URL. */
+export async function downloadVersionFile(
+  admin: SupabaseClient,
+  id: string,
+): Promise<{ buffer: Buffer; name: string; contentType: string }> {
+  const version = await getVersion(admin, id);
+  if (!version.storage_path) {
+    throw new PolicyActionError("The original file isn't stored for this version.", 404);
+  }
+  const { data: fileBlob, error } = await admin.storage
+    .from(DOCUMENTS_BUCKET)
+    .download(version.storage_path);
+  if (error || !fileBlob) throw error || new Error("Failed to download file");
+
+  const buffer = Buffer.from(await fileBlob.arrayBuffer());
+  const isPdf = version.name.toLowerCase().endsWith(".pdf");
+  const contentType = fileBlob.type || (isPdf ? "application/pdf" : "application/octet-stream");
+  return { buffer, name: version.name, contentType };
+}

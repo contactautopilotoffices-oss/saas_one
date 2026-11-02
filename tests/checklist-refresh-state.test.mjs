@@ -101,4 +101,8 @@ test('SOPChecklistRunner does not execute redundant auth refreshSession on check
 
     // runner must NOT have 5-minute periodic session refresh interval
     assert.doesNotMatch(runnerCode, /sessionRefreshInterval\s*=\s*setInterval/);
+
+    // runner must validate that activeId completion_date matches expectedDate before resuming
+    assert.match(runnerCode, /json\.completion\.completion_date === expectedDate/);
 });
+

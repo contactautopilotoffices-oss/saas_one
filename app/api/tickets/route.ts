@@ -114,7 +114,8 @@ export async function GET(request: NextRequest) {
         const isVendor = propRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r)) || orgRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r));
         const isTenant = propRoles.some(r => ['tenant', 'super_tenant'].includes(r)) && !isOrgSuperAdmin && !isPropertyAdmin && !isStaffOrMst;
 
-        const isAllProperties = propertyId === 'all';
+        const isAllProperties = !propertyId || propertyId === 'all';
+        const isAllOrgs = !organizationId || organizationId === 'all';
 
         // Non-superadmins cannot query all properties across the organization
         if (isAllProperties && !isOrgSuperAdmin) {
@@ -162,7 +163,7 @@ export async function GET(request: NextRequest) {
             query = query.in('property_id', userPropIds);
         }
 
-        if (organizationId) query = query.eq('organization_id', organizationId);
+        if (organizationId && !isAllOrgs) query = query.eq('organization_id', organizationId);
         if (status) {
             if (status.includes(',')) {
                 query = query.in('status', status.split(',').map(s => s.trim()));
@@ -241,7 +242,7 @@ export async function GET(request: NextRequest) {
         if (raisedByRole) {
             // Get user IDs with the specified role from memberships
             let membershipQuery;
-            if (propertyId) {
+            if (propertyId && !isAllProperties) {
                 // Scoped: only tenants of this specific property
                 membershipQuery = supabase
                     .from('property_memberships')
@@ -249,7 +250,7 @@ export async function GET(request: NextRequest) {
                     .eq('property_id', propertyId)
                     .eq('role', raisedByRole)
                     .eq('is_active', true);
-            } else if (organizationId) {
+            } else if (organizationId && !isAllOrgs) {
                 // Scoped: users with this role across any property in this org
                 membershipQuery = supabase
                     .from('property_memberships')

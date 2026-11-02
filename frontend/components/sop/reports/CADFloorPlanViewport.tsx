@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AreaAuditScore } from './useCADReportData';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface CADFloorPlanViewportProps {
     cadImageUrl?: string;
@@ -278,7 +279,7 @@ export const CADFloorPlanViewport: React.FC<CADFloorPlanViewportProps> = ({
                                 <div className="w-full h-28 rounded-xl overflow-hidden bg-slate-900 border border-slate-200 shadow-2xs relative">
                                     {(activePopoverArea.audit?.previewPhoto || activePopoverArea.audit?.benchmarkPhoto) ? (
                                         <img
-                                            src={activePopoverArea.audit.previewPhoto || activePopoverArea.audit.benchmarkPhoto}
+                                            src={maskStorageUrl(activePopoverArea.audit.previewPhoto || activePopoverArea.audit.benchmarkPhoto)}
                                             alt={activePopoverArea.area.label}
                                             className="w-full h-full object-cover"
                                         />
