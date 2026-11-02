@@ -1,6 +1,6 @@
 # LiveVoice ID: speaker identification for Meeting Notes to Tasks
 
-Status: **DRAFT PLAN, 2026-11-02. Nothing built yet. Needs owner answers in section 9 before Phase 1 starts.**
+Status: **DRAFT PLAN, updated 2026-11-02 with owner decisions (section 1a). Nothing built yet. Waiting on the engine choice (section 4a).**
 Branch: `feature/livevoice-speaker-id`
 Doctrine: [AGENT_DOCTRINE.md](AGENT_DOCTRINE.md) · Runbook: [AGENT_RUNBOOK.md](AGENT_RUNBOOK.md) · Builds on: [MEETING_TASKS_SPEC.md](MEETING_TASKS_SPEC.md)
 
@@ -11,6 +11,18 @@ Doctrine: [AGENT_DOCTRINE.md](AGENT_DOCTRINE.md) · Runbook: [AGENT_RUNBOOK.md](
 When the Meeting Assistant turns a meeting into tasks, it should know **who said each line** (by name, not "Speaker 2"),
 so it can tell **who asked whom** to do something, and the draft tasks come out with the right owner and the right
 "asked by".
+
+## 1a. Owner decisions (2026-11-02)
+
+1. **Anyone can set up their voice.** Every user of the Task Manager sees "Set up my voice", whatever their
+   department and whether or not the feature is switched on for them.
+2. **Voice matching is switched on per department**, with a new switch in the existing Task Manager Control Center
+   (same place as "Assign to anyone in team" and the other department switches). It starts **OFF for every
+   department**. **Tech is switched ON first for testing.**
+3. **The people picked in "New meeting" are the people we compare voices against.** The attendee picker shows who
+   has a voice set up, so the person starting the meeting can see in advance which names can be recognised.
+4. **No server of our own if we can avoid it.** Asked whether hosting is needed with Amazon or another provider:
+   see section 4a.
 
 ## 2. What already exists (and why it changes the PRD)
 
@@ -41,10 +53,15 @@ What this means:
 ### 3.1 Voice enrollment (once per person)
 
 ```
-Profile / Task Manager settings → "Set up my voice" → consent screen → read 3 short sentences (about 5 s each)
-→ browser checks loudness and noise → audio sent once to our voice service → 192-number voiceprint saved
+Task Manager (any user) → "Set up my voice" → consent screen → read 3 short sentences (about 5 s each)
+→ browser checks loudness and noise → audio sent once to the voice engine → voiceprint saved
 → audio thrown away → "Voice profile saved"
 ```
+
+- Open to **every** user (owner decision 1). The department switch only controls whether meetings use voiceprints,
+  not who may create one, so people in other departments can be ready before their department is switched on.
+- The voiceprint is whatever the chosen engine produces (section 4a): a 192-number vector for self-hosted ECAPA, or
+  the engine's own voiceprint string for pyannoteAI. Stored in our database either way.
 
 - Sentences are a mix of English and Hinglish (our meetings are Hinglish; the model is text independent, but people
   speak more naturally in their own mix).
@@ -56,6 +73,10 @@ Profile / Task Manager settings → "Set up my voice" → consent screen → rea
 - The person can **delete their voiceprint** at any time (one button). Admin cannot create one for someone else.
 
 ### 3.2 Identifying speakers in a recorded meeting
+
+**When it runs:** only if the department of the person who started the meeting has the voice switch ON
+(`task_manager_department_settings.voice_id`), and at least one person picked as present has a voice set up.
+Otherwise the step is skipped with a recorded reason and the meeting works exactly as today.
 
 New processing step in `MeetingService.advance()`:
 
@@ -101,6 +122,30 @@ line from that Sarvam speaker in one go, and offers "Re-run task extraction". Th
 cases where the match is wrong or the person never enrolled. Corrections are counted (they are our live accuracy
 measure). Corrections **never** update anyone's voiceprint automatically (consent).
 
+### 3.5 Picking people in "New meeting" (owner decision 3)
+
+`frontend/components/task-manager/meetings/NewMeeting.tsx` already has the "who was present" picker (search people
+or departments, plus typed names). Changes:
+
+- Each person in the list shows a small **"Voice ready"** mark if they have set up their voice.
+- Under the picker, one line: "3 of 6 people picked can be recognised by voice". Shown only when the voice switch is
+  ON for the creator's department.
+- Typed names (people not in the Task Manager) can never be recognised; the line says so.
+- No new step for the user: the people already picked are the comparison list. Nothing extra to fill in.
+- `MeetingService.people()` gains a `voiceReady: boolean` per person (read from `voice_profiles`, never the
+  voiceprint itself).
+
+### 3.6 Department switch (owner decision 2)
+
+- Reuse the existing table `task_manager_department_settings` (already holds `team_assign`, `pending_on`,
+  `protect_given`, `assigned_tab`). Add one column **`voice_id BOOLEAN NOT NULL DEFAULT false`**, same style as
+  migration `20261019000001_task_manager_team_controls.sql`.
+- Shown as one more switch, "Recognise speakers by voice (Meeting Assistant)", in the existing
+  `frontend/components/task-manager/TaskAccessPanel.tsx`, read through `task-manager/TaskAccessService.ts` like the
+  other four. Who can flip it stays exactly who can flip the others today (no change to permissions).
+- Rule: the meeting creator's department decides. Tech ON for testing; every other department OFF until the owner
+  turns it on.
+
 ## 4. Architecture
 
 ```
@@ -130,6 +175,40 @@ Choices against the PRD, and why:
 
 The voice service is a **new service**. Per CLAUDE.md that needs an explicit yes; the PRD asks for it, but the owner
 should confirm the hosting choice before it is built.
+
+## 4a. Is hosting needed? (owner question 2026-11-02)
+
+Short answer: **only if we run SpeechBrain ourselves.** If we pay a provider that does speaker identification as an
+API, there is no server to run. But the big clouds no longer offer it:
+
+| Option | Does it name speakers from enrolled voices? | Server needed? | Notes |
+|---|---|---|---|
+| **Amazon** (Transcribe) | **No.** Transcribe only labels `spk_0`, `spk_1`, like Sarvam. Amazon's speaker-recognition product, Amazon Connect Voice ID, reached **end of support on 20 May 2026** and was only for call centres | n/a | Not an option |
+| **Microsoft Azure** Speaker Recognition | Did, but **retired 30 September 2025** | n/a | Not an option |
+| **Google Cloud** | No speaker-identification API (diarization only) | n/a | Not an option |
+| **pyannoteAI** (hosted API by the makers of PyAnnote, the library named in the PRD) | **Yes.** Create a voiceprint from one person's clip, then send the meeting audio plus the voiceprints of the people present; it returns who spoke when, with one voice per person (exclusive matching on by default) | **No** | Paid per second of audio processed plus per voiceprint; Developer plan listed at €19/month with €19 usage included. Audio goes to a third party (same as Sarvam today) |
+| **Self-hosted SpeechBrain ECAPA** (the PRD's plan) | Yes, our own code does the matching | **Yes**, a small CPU container (Cloud Run, Render, Fly, own VM) | No per-minute fee, audio stays with us, but one more service to keep running |
+
+**Recommendation for the Tech test: pyannoteAI, no hosting.** It is the quickest way to learn whether voice naming
+works in our rooms. The code talks to the engine through one small interface (`VoiceIdClient`: `createVoiceprint`,
+`identify`), so we can move to self-hosted SpeechBrain later without touching the UI, the database or the meeting
+flow, if cost or privacy makes that worth it.
+
+What changes if pyannoteAI is chosen:
+
+- No `services/voice-id/` Python service in Phases 1 and 2. `VoiceIdClient.ts` calls pyannoteAI directly from our
+  Next.js API routes (new env var `PYANNOTE_API_KEY`, added by the owner).
+- pyannoteAI identification runs on the whole meeting audio, so it can also replace Sarvam's "Speaker N" grouping.
+  Text still comes from Sarvam; we join the two by time (each Sarvam line takes the name of the voice that talks most
+  during that line).
+- Its job is asynchronous, which fits our existing "one step per poll" design (start on one poll, check on the next),
+  exactly like the Sarvam job today.
+- `voice_profiles.embedding` becomes `voiceprint TEXT` plus `engine TEXT` ('pyannoteai' or 'ecapa'), so both engines
+  fit the same table.
+- Privacy: meeting audio and enrollment clips are processed by pyannoteAI. This must be in the consent text. Their
+  data-retention terms must be read before the first real meeting (not checked yet: their docs could not be reached
+  from this session).
+- Exact endpoints, limits and per-second price to be confirmed from their docs during Phase 0.
 
 ## 5. Data and privacy
 
@@ -209,14 +288,17 @@ voiceprints outside Meeting Assistant.
 
 ## 7. Files expected to change
 
-New: `services/voice-id/{app.py,requirements.txt,Dockerfile,README.md}` · `supabase/migrations/2026110x_voice_profiles.sql` ·
+New: `services/voice-id/{app.py,requirements.txt,Dockerfile,README.md}` (**only if self-hosted is chosen**, section 4a) ·
+`supabase/migrations/2026110x_voice_profiles.sql` (also adds `task_manager_department_settings.voice_id`) ·
 `task-manager/voice/VoiceIdClient.ts` · `app/api/task-manager/voice-profile/route.ts` ·
 `frontend/components/task-manager/voice/VoiceEnrollment.tsx`
 
 Changed: `task-manager/meetings/MeetingService.ts` (new step) · `task-manager/meetings/MeetingExtractor.ts`
 (`asked_by`) · `task-manager/meetings/MeetingTranscriber.ts` (`TranscriptLine.speaker_user_id`, optional) ·
 `frontend/components/task-manager/meetings/{MeetingReview,NewMeeting,api}.tsx|ts` ·
-`task-manager/tests/test_meetings.ts` · `docs/MEETING_TASKS_SPEC.md` (link to this file)
+`task-manager/tests/test_meetings.ts` · `docs/MEETING_TASKS_SPEC.md` (link to this file) ·
+`task-manager/TaskAccessService.ts` + `frontend/components/task-manager/TaskAccessPanel.tsx` (the new department
+switch) · `task-manager/meetings/MeetingService.ts` `people()` (`voiceReady` flag)
 
 Not touched: auth / roles / `requireMeetingSpace()`, the Ira LiveKit room (until Phase 3), `.env` files (new env vars
 `VOICE_ID_URL`, `VOICE_ID_SECRET` are listed for the owner to add).
@@ -232,15 +314,19 @@ Not touched: auth / roles / `requireMeetingSpace()`, the Ira LiveKit room (until
 6. **Wrong name is worse than no name.** A task "asked by" the wrong person is misleading, so the threshold leans to
    "Speaker N" when unsure, and a human still presses Send on every task.
 
-## 9. Questions for the owner (needed before Phase 1)
+## 9. Questions for the owner
 
-1. **Hosting** for the Python voice service: our own VM, Google Cloud Run, Render / Railway / Fly, or something
-   already in use? (CPU is enough; no GPU needed for after-meeting matching.)
-2. **Who can enroll**: every Task Manager user, or only Tech / HR / Admin spaces first?
-3. **Consent wording**: do you have a privacy text we must use, or shall we draft one for legal review?
-4. **Phase 0 volunteers**: can 5 to 8 Tech team members enroll and allow 3 to 5 meetings to be kept for one week
-   for testing?
-5. **Is live highlighting (Phase 3) actually needed**, given the LiveKit room already knows who is talking?
+Answered 2026-11-02: who can enroll (**everyone**), where to switch it on (**per department, Tech first**), where the
+comparison list comes from (**the people picked in New meeting**).
+
+Still open:
+
+1. **Engine**: pyannoteAI (no hosting, paid per use, recommended for the Tech test) or self-hosted SpeechBrain (needs
+   a container host)? See section 4a.
+2. **Consent wording**: do you have a privacy text we must use, or shall we draft one for legal review?
+3. **Tech volunteers**: can the Tech team set up their voices and allow 3 to 5 test meetings, with a hand check of
+   who said what?
+4. **Is live highlighting (Phase 3) actually needed**, given the LiveKit room already knows who is talking?
 
 ---
 
