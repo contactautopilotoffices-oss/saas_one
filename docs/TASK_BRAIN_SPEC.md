@@ -543,3 +543,64 @@ clean-up, task import (photos / text), duplicate check, superuser chat, learning
      today's chain always following as the fallback.
    - **L6** `[BAA pp.96–97]`: if the learning loop is set to the same family as the live bot, its drafts are graded by a
      same-family model. Not blocked; the default keeps Gemini for the loop and Claude for the bot.
+
+
+## Agent Spec — Smart chat fixes from the 27–31 Oct failures, message batching (2026-11-02)
+
+Diagnosis (audit log `brain_live`, 355 turns 19 Oct–2 Nov, read-only): in every studied failure the AI's own summary was
+right and the code around it threw the reading away. ~1 reply in 4 was a question back (29 doubt blocks, 19 unknown, 14
+unsure answers, 11 low confidence, 10 "nothing is waiting"). Median 5.8 s per reply, p90 10.2 s.
+
+**1. Workflow or agent?**  workflow (unchanged: understand → decide in code → reply). Justification (a) `[BAA p.115]`.
+   Head-to-head `[BAA pp.94–95, 99]`: not re-run for this change (see 10).
+
+**2. Context** `[BAA p.112]`  Unchanged, plus: several quick messages arrive as ONE turn, one line per message (prompt rule H);
+   a second reading gets an `important_note` only when the first one answered a question that was not there.
+
+**3. Cost of a false positive** `[BAA p.112]`
+   - Tasks added to the person's OWN list (undo 10 min): **low** → saved despite a doubt or a confidence of 0.5–0.8; the doubt
+     is one inserted line of the reply (`aside`).
+   - Anything touching other people, telling a giver a task is done, deleting: **higher** → a doubt the AI wrote down becomes
+     ONE question offering the AI's reading (`understood` / `question`); a middling confidence becomes a preview.
+   - Below 0.5 (`SOFT_CHANGE_CONFIDENCE_MIN`): always asks. Model tier unchanged (Claude Haiku, Control Center chain).
+
+**4. Tools** — none exposed to the model (unchanged). New code-only step: the inbox (`task-manager/SmartChatInbox.ts`), every
+   call wrapped, errors → "answer alone, as before" `[BAA p.94]`.
+
+**5. Prompt** `[BAA pp.105, 114]`  New FIXED rules (outside the tunable steps, so a tuned version cannot drop them):
+   E2 yes-with-a-reason is a yes; F never "answer_pending" when nothing is pending, "Change of mind:" = classify the whole
+   corrected request; G most likely reading, doubts only for equally likely readings; H several lines = one turn.
+
+**6. Memory** `[BAA pp.100–103]`  Unchanged (no write tool). The inbox is a queue, not memory: text blanked when the turn ends.
+
+**7. Multi-agent?** `[BAA p.116]`  Single. The changes sit in the decide code and fixed prompt rules; the reply prompt is untouched.
+
+**8. Evaluation** `[BAA pp.118–119]`
+   System: batching adds a quiet window (`QUIET_MS` 2.5 s, max 7 s); the rewrite call is now skipped for messages that stand
+   alone (≤ 6 words or pointing back still rewritten), saving up to 4 s on most long messages. Not yet measured live.
+   Quality assurance: offline — `task-manager/tests/test_brain_fixes_2026_11_02.ts` (65 checks), existing brain suites
+   updated where they encoded the old rules (phase2_core: 0.79 → preview; safety invariant now at 0.5; phase4_live: a
+   `not_handled` trace row is allowed). real failures covered offline (see addendum b); **live-model run not done** (owner OK
+   needed for provider cost). No rubric (L6 gap unchanged).
+   Tool interaction: n/a. Agent efficiency: +1 understand call only when the first reading answered a missing question.
+
+**9. Trace** `[BAA pp.119–120]`  New: every eligible message that falls through to the old bot writes a `brain_live` row with
+   `status: 'not_handled'` and `why` (older_conversation + state type / facility_open / handoff). Never the text.
+
+**10. Laws knowingly violated, and why:**
+   - **L2** `[BAA pp.94–95]`: the new decide rules were not A/B-tested on the live model before shipping; offline scripted tests
+     only. Reason: the failures were in code, not the model; run `run_eval.ts --set real` with the owner's OK.
+   - **L6** `[BAA pp.96–98]`: no rubric grader (unchanged gap).
+   - **Migration** `20261102000001_whatsapp_smart_chat_inbox.sql` must be applied by a person; until then batching is off and
+     the old in-memory merge (now fixed: same confirm rules, a merged "yes" is carried out, a merged question is remembered,
+     no message dropped on a plain reply) is used.
+
+**Addendum 2026-11-02 (b) — conversation memory and prompt caching** `[BAA pp.100-103, 119]`
+   - The bot's replies are stored compacted (`compactBotText`): inserted lists become one bracket, headings go, so the
+     question at the end always survives the 300-character cut. Automatic messages (any send with a rule / message type:
+     digests, reminders, alerts) are stored as one marked line, and at most the newest 2 are shown to the AI.
+   - Every step now sees the last **8** messages (was 5). Memory still keeps 20 for 24 h; no write tool (L7 unchanged).
+   - Claude calls send the fixed instructions as one cached block (`cache_control: ephemeral`); per-person data stays in the
+     user part. `tokensIn` still counts the cached part; `cachedIn` reports it. Cache hit rate not yet measured live.
+   - The 7 real failures were NOT added to the paid eval set (owner 2026-10-22: 20 cases maximum); they are covered by the
+     offline test `test_brain_fixes_2026_11_02.ts` (65 checks).

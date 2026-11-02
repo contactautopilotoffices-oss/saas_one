@@ -345,7 +345,7 @@ async function safeReply(io: VoiceIO, phone: string, text: string): Promise<bool
  */
 export async function handToBrain(input: { phone: string; messageId: string; text: string; prefix: string }, liveIO?: LiveIO): Promise<boolean> {
     const { claimSmartChat } = await import('../brain/live');
-    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice' });
+    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice', noBatch: true });
     if (!claim.handled) return false;
     if (claim.background) await claim.background();   // never throws: a problem becomes one apology
     return true;

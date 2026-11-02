@@ -8,12 +8,14 @@ import { BrainDeps, BrainResult, composeBrainReply, runBrain } from './index';
 import { shadowDetails } from './shadow';
 import { addDays, clip, isGrounded, splitLongReply } from './text';
 import { FIND_MAX_ROWS, type FoundTask } from './findTasks';
-import { DEFAULT_CONFIRM_POLICY, DRAFT_TTL_MIN, type Action, type BrainContext, type ClarifyReason, type PendingState } from './types';
+import { DEFAULT_CONFIRM_POLICY, DRAFT_TTL_MIN, MAX_NOTE_LENGTH, type Action, type BrainContext, type ClarifyReason, type ConfirmPolicy, type PendingState } from './types';
 import { AI_DOWN_HELP, ExactPlan, LastChange, UNDO_HINT, UndoIO, changeFromAction, normalizeChange, parseExactCommand, planExact, runUndo } from './frontDoor';
 import { isExplicitTaskCommand } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 import { tasksDomainWithTeam } from './tasksDomain';
 import { facilityDomain } from './facilityDomain';
 import { buildTeamReport, buildTeamTaskList } from './teamReport';
+import { normalizeInbound } from '@/backend/lib/whatsapp/assistant/protocol.mjs';
+import { type InboxIO, collectBatch, inboxMaybeAvailable, joinBatch } from '../SmartChatInbox';
 
 /**
  * The language brain — Phase 4: SMART CHAT, live.
@@ -58,6 +60,26 @@ export interface LiveState {
 /** Owner 2026-10-20: a reply short enough to be a plain yes ("yes", "haan kar do", "ok go ahead") — one line, at most 8 words. */
 export const isShortReply = (text: string): boolean => !/\n/.test(text.trim()) && text.trim().split(/\s+/).filter(Boolean).length <= 8;
 
+/**
+ * 2026-11-02 (Neeti's request, 28 Oct: "Yes i cannot take the request because I'm busy" got "nothing is waiting"): a ONE-line
+ * reply that STARTS with a yes is a yes, however long — the rest is a reason or a comment. (A request sent again in a new
+ * form, Sanil's case on 2026-10-20, does not start with "yes" and is still read as a change.)
+ */
+const YES_START = /^(?:yes+|yeah|yep|yup|ya|haan|han|ha|ok|okay|sure|go ahead|confirm(?:ed)?|theek hai|thik hai|kar do|ji)\b[\s,.!:;-]*/i;
+export const startsWithYes = (text: string): boolean => !/\n/.test(text.trim()) && YES_START.test(text.trim());
+/** The words after the yes ("because I'm busy"), as a reason. null when nothing is left. */
+export function reasonAfterYes(text: string): string | null {
+    const rest = text.trim().replace(YES_START, '').replace(/^(?:but|as|since)\s+/i, '').trim();
+    if (!rest || !/[a-z]/i.test(rest)) return null;
+    return clip(rest.charAt(0).toUpperCase() + rest.slice(1), MAX_NOTE_LENGTH);
+}
+/** A declined support request waiting for its yes takes the reason they just gave, when it had none. */
+function withReason(action: Action, reason: string | null): Action {
+    return action.type === 'answer_request' && !action.accept && !action.reason && reason ? { ...action, reason } : action;
+}
+/** 2026-11-02: a change that could not be applied keeps the question open (never "nothing is waiting"). */
+export const KEEP_QUESTION = "Sorry, I couldn't apply that change. Reply *yes* to go ahead as shown, *no* to cancel, or send the corrected request in one message.";
+
 const EMPTY: LiveState = { recent: [], pending: null, action: null, originalSummary: null, pickOptions: [], relay: false, titles: {} };
 
 /** Owner 2026-10-19: an unfinished request is kept for DRAFT_TTL_MIN minutes, then forgotten. */
@@ -88,6 +110,7 @@ const SUGGEST_REASONS: ReadonlySet<ClarifyReason> = new Set<ClarifyReason>(['per
 const ASSIGN_WORDS = /\b(?:assign|assigned|give|hand|de do|dedo|ko do|ko de)\b/i;
 const ADD_WORDS = /\b(?:add|task|tasks|todo|to-do|remind me|kaam|jod|daal|likh)\b/i;
 const COMMAND_WORDS = /^(?:(?:please|pls|plz|kindly)\s+)?(?:(?:i\s+)?(?:need|want|have)\s+to\s+)?(?:add|create|make|put|new)?\s*(?:a\s+|an\s+|new\s+|one\s+)?(?:tasks?|todo|to-do)?\s*(?:for\s+me|for\s+myself)?\s*[:.\-–]?\s*/i;
+const TRAILING_COMMAND = /[\s:.\-–,]+(?:(?:please|pls|plz)\s+)?(?:add|create)(?:\s+(?:a|an|the|this|new|it))?(?:\s+(?:tasks?|todo|to-do))?(?:\s+(?:for\s+me|for\s+myself|please|pls))?\s*$|[\s:.\-–,]+(?:tasks?|todo|to-do)\s+(?:add|create)\s*$/i;
 const QUESTION_START = /^(?:what|which|how|why|when|who|whose|where|is|are|do|does|can|show|list|tell|kya|kab|kaun|kitne|kaise)\b/i;
 export const SUGGEST_QUESTION = "Did you want to add this task to your list? Reply yes, or tell me who it's for.";
 
@@ -98,6 +121,8 @@ export function suggestedTitle(text: string): string | null {
             // "Task. Add Sailee rest FNF" (lines can arrive joined): drop command words until none are left at the start.
             let out = l.trim();
             for (let i = 0; i < 4; i++) { const next = out.replace(COMMAND_WORDS, '').replace(/^[\s:.\-–,]+/, '').trim(); if (next === out) break; out = next; }
+            // 2026-11-02 (31 Oct: saved as "2nd floor sigma ir testing vendor align Add task"): command words at the END go too.
+            out = out.replace(TRAILING_COMMAND, '');
             return out.replace(/[\s:.\-–,!]+$/g, '').trim();
         })
         .filter(l => /[a-z]/i.test(l) && !/^(?:tasks?|add|please|pls|need|to|ok|okay|hi|hello)$/i.test(l));
@@ -189,10 +214,35 @@ export interface LiveIO {
     audit(details: Record<string, unknown>, employee: Employee): Promise<void>;
     seenBefore(messageId: string): boolean;
     markSeen(messageId: string): void;
+    /** 2026-11-02: message batching (SmartChatInbox.ts). Absent → every message is answered on its own, as before. */
+    inbox?: InboxIO;
 }
 
-export interface LiveClaim { handled: boolean; background?: () => Promise<void> }
+export interface LiveClaim {
+    handled: boolean; background?: () => Promise<void>;
+    /** 2026-11-02 (batching): not ours, and several messages were read together → the old bot gets THIS body (their words, one
+     *  line per message) instead of only the latest message. Absent → the original body, as before. */
+    rewrite?: unknown;
+    /** 2026-11-02 (batching): the words this turn answers (several messages, one per line) — for the conversation memory. */
+    text?: string;
+}
 const NOT_HANDLED: LiveClaim = { handled: false };
+
+/** A plain text body as the shared parser reads it (same shape as a confirmed voice note), carrying the original's id and time. */
+function bodyWithText(body: unknown, phone: string, messageId: string | null | undefined, text: string): unknown {
+    type Parsed = { projectId?: string; inboundAt?: string } | null;
+    let n: Parsed;
+    try { n = normalizeInbound(body) as Parsed; } catch { n = null; }
+    return { phone, messageId: messageId || '', text, ...(n?.projectId ? { project_id: n.projectId } : {}), ...(n?.inboundAt ? { timestamp: n.inboundAt } : {}) };
+}
+
+/** An older conversation (task-list preview, the old bot's own "confirm?") that must finish first. Idle markers do not count. */
+function olderConversation(row: { type: string } | null, text: string): boolean {
+    // Group 3 (2026-10-13): "ACTIVE_SESSION" and the old "1. Tasks / 2. Facility" menu are idle markers; only a plain "1" / "2"
+    // still answers that menu (Harsh's "add HR grievance module task also" got the menu).
+    const idleOld = row?.type === 'ACTIVE_SESSION' || (row?.type === 'DISAMBIGUATION' && !/^\s*[12]\s*$/.test(text));
+    return !!row && row.type !== LIVE_STATE_TYPE && !idleOld;
+}
 
 // Owner 2026-10-20: these always go to the old bot, before any AI call or in-flight merging. Greetings / menu words get the
 // menu (Create Ticket / Book Meeting Room, or 1. Tasks / 2. Facility), and ticket / room requests reach the facility assistant
@@ -213,6 +263,10 @@ export interface LiveOptions {
     replyPrefix?: string;
     /** Where the text came from, recorded in the audit row (e.g. 'voice'). */
     via?: string;
+    /** 2026-11-02: shown below every reply of this turn (e.g. "for a ticket, send it on its own"). Not remembered. */
+    replySuffix?: string;
+    /** 2026-11-02: answer this message on its own, never batched with others (callers feeding text from elsewhere). */
+    noBatch?: boolean;
 }
 
 interface InFlightTurn {
@@ -227,30 +281,56 @@ export function resetInFlightQueues(): void {
     activeInFlight.clear();
 }
 
-/**
- * Called first for every text message. Not ours → { handled:false } and the old bot answers exactly as before.
- * Ours → the decision is already made; the caller runs `background` AFTER answering the webhook.
- */
-export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptions = {}): Promise<LiveClaim> {
-    let cand: ReturnType<typeof extractCandidate>;
-    try { cand = extractCandidate(body); } catch { return NOT_HANDLED; }
-    if (!cand || cand.mediaClass !== 'text' || !cand.text.trim()) return NOT_HANDLED;
-    if (isMenuOrFacilityMessage(cand.text)) return NOT_HANDLED;          // menu, tickets, rooms → the old bot (see above)
-
-    // Zero-delay in-flight merging: if this user already has an active turn running,
-    // catch this follow-up message and append it to that turn instead of answering separately.
+/** The old "zero-delay" merge (only while batching is unavailable): a follow-up during a running turn joins that turn. */
+async function mergeIntoRunningTurn(cand: { phone: string; text: string; messageId: string | null | undefined }, io: LiveIO | undefined): Promise<LiveClaim | null> {
     const inFlight = activeInFlight.get(cand.phone);
     if (inFlight && !inFlight.closing && Date.now() - inFlight.createdAt < 30_000) {
         inFlight.pending.push({ text: cand.text, messageId: cand.messageId });
         const real = io ?? await defaultLiveIO();
         if (cand.messageId) real.markSeen(cand.messageId);
         return { handled: true };
-    } else if (inFlight && (inFlight.closing || Date.now() - inFlight.createdAt >= 30_000)) {
-        activeInFlight.delete(cand.phone);
     }
+    if (inFlight) activeInFlight.delete(cand.phone);
+    return null;
+}
+
+/**
+ * Called first for every text message. Not ours → { handled:false } and the old bot answers exactly as before.
+ * Ours → the decision is already made; the caller runs `background` AFTER answering the webhook.
+ *
+ * 2026-11-02 batching: with the inbox available (SmartChatInbox.ts), the webhook waits until the person stops typing, and the
+ * newest message's webhook reads ALL their waiting messages as one turn (one reply). Earlier messages' webhooks return
+ * { handled:true } with nothing to do. Without the inbox (migration not applied, tests) everything is exactly as before.
+ */
+export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptions = {}): Promise<LiveClaim> {
+    let cand: ReturnType<typeof extractCandidate>;
+    try { cand = extractCandidate(body); } catch { return NOT_HANDLED; }
+    if (!cand || cand.mediaClass !== 'text' || !cand.text.trim()) return NOT_HANDLED;
+    // Batching needs the inbox: the real wiring has one (until it is found missing); a test's IO has none → the old behaviour.
+    const batching = !opts.noBatch && (io ? !!io.inbox : inboxMaybeAvailable());
+    const menuOrFacility = isMenuOrFacilityMessage(cand.text);
+    // Menu words, tickets and rooms go to the old bot (see isMenuOrFacilityMessage). With batching they wait first, so
+    // "Hi" + "Hello" + "Can u help" become ONE turn instead of two menus and two replies.
+    if (menuOrFacility && !batching) return NOT_HANDLED;
+    if (!batching) { const merged = await mergeIntoRunningTurn(cand, io); if (merged) return merged; }
+
+    let real: LiveIO | null = null;
+    let batchToken: string | null = null;
+    const release = async () => {
+        if (!batchToken || !real?.inbox) return;
+        const token = batchToken; batchToken = null;
+        await real.inbox.finish(token).catch(() => undefined);
+    };
+    let text = cand.text;
+    let batched = false;
+    // Not ours after all → the old bot. When several messages were read together it gets all of them, one per line.
+    const notOurs = async (): Promise<LiveClaim> => {
+        await release();
+        return batched ? { handled: false, rewrite: bodyWithText(body, cand!.phone, cand!.messageId, text) } : NOT_HANDLED;
+    };
 
     try {
-        const real = io ?? await defaultLiveIO();
+        real = io ?? await defaultLiveIO();
         // Group 2 "faster replies" (2026-10-13): reads that do not depend on each other run side by side (they used to run one
         // after another). The same checks, in the same order of meaning: any "no" still means the old bot answers.
         const t0 = Date.now();
@@ -262,6 +342,52 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         const [access, config] = await Promise.all([real.checkAccess(employee), real.getConfig()]);
         // Same people as the Task Manager itself, in a department with the switch ON, inside the sandbox while it is ON.
         if (!decideImportEligibility(config, cand.phone, employee, access, departments).ok) return NOT_HANDLED;
+        // 2026-11-02 (L14): an eligible person's message that still goes to the old bot is written down with the reason, so a
+        // case like 28 Oct's "TASK 4 DONE" (answered by the old bot, no trace) can be explained next time. Never the text.
+        const auditIO = real;
+        const fellThrough = (why: string, extra: Record<string, unknown> = {}) => auditIO.audit({ phoneMasked: cand!.phone.replace(/\d(?=\d{4})/g, '•'), messageId: cand!.messageId ?? null, live: true, status: 'not_handled', why, ...extra }, employee).catch(() => undefined);
+
+        // An older conversation still in progress (a task-list preview, an old confirmation) finishes first.
+        const [row0, facility0] = await Promise.all([real.getState(cand.phone), real.facilityActive(cand.phone)]);
+        if (olderConversation(row0, cand.text)) { await fellThrough('older_conversation', { stateType: row0?.type ?? null }); return NOT_HANDLED; }
+        if (facility0) { await fellThrough('facility_open'); return NOT_HANDLED; }      // a room / ticket conversation is open
+        if (cand.messageId && real.seenBefore(cand.messageId)) return { handled: true }; // repeat delivery of one we already took
+
+        // ── 2026-11-02 batching: wait for the person to stop typing, then answer all their waiting messages at once ──
+        if (batching && real.inbox) {
+            const b = await collectBatch({ phone: cand.phone, messageId: cand.messageId, text: cand.text, io: real.inbox });
+            if (b.kind === 'deferred') {                                     // a newer message's webhook answers for this one too
+                if (cand.messageId) real.markSeen(cand.messageId);
+                return { handled: true };
+            }
+            if (b.kind === 'unavailable') {
+                if (menuOrFacility) return NOT_HANDLED;
+                const merged = await mergeIntoRunningTurn(cand, real); if (merged) return merged;
+            } else {
+                batchToken = b.token;
+                for (const id of b.messageIds) real.markSeen(id);
+                const lines = b.texts.map(s => s.trim()).filter(Boolean);
+                batched = lines.length > 1;
+                text = joinBatch(lines) || cand.text;
+                const content = lines.filter(l => !MENU_WORDS.test(l));      // "hi" / "hello" / "menu" add nothing on their own
+                const forTasks = content.filter(l => !isMenuOrFacilityMessage(l));
+                if (!forTasks.length) {
+                    // Only greetings, menu words or ticket / room requests → the old bot ONCE, with the most useful line
+                    // (the ticket request, else the last greeting), so "Hi" + "Hello" gets one menu, not two.
+                    text = content.length ? content[content.length - 1] : lines[lines.length - 1] ?? cand.text;
+                    batched = text !== cand.text;
+                    return notOurs();
+                }
+                // A ticket / room request mixed with task messages: the task part is answered here, the rest is pointed to the menu.
+                if (forTasks.length < content.length) opts = { ...opts, replySuffix: [opts.replySuffix, HANDOFF_IN_MERGE].filter(Boolean).join('\n\n') };
+                text = joinBatch(forTasks);
+            }
+        }
+
+        // Read AFTER waiting: an earlier turn may have just saved a question or a change that this batch answers.
+        const [row, facility] = batchToken ? await Promise.all([real.getState(cand.phone), real.facilityActive(cand.phone)]) : [row0, facility0];
+        if (olderConversation(row, text)) { await fellThrough('older_conversation', { stateType: row?.type ?? null }); return notOurs(); }
+        if (facility) { await fellThrough('facility_open'); return notOurs(); }
 
         // Read BEFORE this message is stored, so the transcript holds only EARLIER messages (the new one is "message").
         const conversationP = real.readConversation ? real.readConversation(cand.phone).catch(() => [] as string[]) : Promise.resolve([] as string[]);
@@ -270,15 +396,6 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
             real.teamReportsOn ? real.teamReportsOn().catch(() => false) : Promise.resolve(false),
         ]);
         conversationP.catch(() => undefined); switchesP.catch(() => undefined);
-        const [row, facility] = await Promise.all([real.getState(cand.phone), real.facilityActive(cand.phone)]);
-        // An older conversation still in progress (a task-list preview, an old confirmation) finishes first. The old bot's IDLE
-        // markers do not count (group 3, 2026-10-13): "ACTIVE_SESSION" (set for 30 min by an old "tasks") and the old
-        // "1. Tasks / 2. Facility" menu sent everything to the old bot for half an hour — Harsh's "add HR grievance module task
-        // also" got the menu. Only a plain "1" / "2" still answers that menu.
-        const idleOld = row?.type === 'ACTIVE_SESSION' || (row?.type === 'DISAMBIGUATION' && !/^\s*[12]\s*$/.test(cand.text));
-        if (row && row.type !== LIVE_STATE_TYPE && !idleOld) return NOT_HANDLED;
-        if (facility) return NOT_HANDLED;                                  // a room / ticket conversation is open
-        if (cand.messageId && real.seenBefore(cand.messageId)) return { handled: true }; // repeat delivery of one we already took
 
         const state = normalizeState(row?.type === LIVE_STATE_TYPE ? row.data : null);   // an old idle marker → start fresh
         // A superuser with a reminder waiting for a reply: their "working on it" / "done" answers THAT request.
@@ -291,26 +408,31 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         const ctx = await real.buildContext(employee, cand.phone, { pending, recent: state.recent, ...(conversation.length ? { conversation } : {}) });
         const [frontDoorSwitch, teamReportsSwitch] = await switchesP;
         const loadMs = Date.now() - t0;
-        if (real.beginLearning) await real.beginLearning({ messageId: cand.messageId, phone: cand.phone, text: cand.text, context: ctx }).catch(() => undefined);
+        if (real.beginLearning) await real.beginLearning({ messageId: cand.messageId, phone: cand.phone, text, context: ctx }).catch(() => undefined);
         const started = Date.now();
         const phone0 = cand.phone, messageId0 = cand.messageId;
+        const io0 = real;
+        const turnText = text;
+        const said = batched ? { text: turnText } : {};
+        const turnOpts = opts;
 
         // Phase 3 "One front door" (switch OFF → skipped entirely): exact commands are answered by code, no AI call.
         const frontDoor = frontDoorSwitch;
         if (frontDoor && !ctx.pending) {
-            const cmd = parseExactCommand(cand.text);
+            const cmd = parseExactCommand(turnText);
             const plan = cmd ? planExact(cmd, ctx) : null;
             if (plan) {
                 if (messageId0) real.markSeen(messageId0);
                 return {
-                    handled: true,
+                    handled: true, ...said,
                     background: async () => {
                         const q: InFlightTurn = { phone: phone0, pending: [], createdAt: Date.now() };
                         activeInFlight.set(phone0, q);
                         try {
-                            await respondExact({ io: real, employee, phone: phone0, messageId: messageId0, text: cand!.text, ctx, state, plan, started, opts });
+                            await respondExact({ io: io0, employee, phone: phone0, messageId: messageId0, text: turnText, ctx, state, plan, started, opts: turnOpts });
                         } finally {
                             activeInFlight.delete(phone0);
+                            await release();
                         }
                     }
                 };
@@ -321,35 +443,41 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         const teamReports = teamReportsSwitch;
         const brainIO = teamReports ? { ...real, brain: { ...real.brain, domains: [tasksDomainWithTeam, facilityDomain] } } : real;
         // Owner 2026-10-14: with "One front door" ON (it provides undo), marking one's own tasks done needs no "Reply YES".
-        const policy = { ...DEFAULT_CONFIRM_POLICY, ...(brainIO.brain.policy || {}), confirmCompletions: !frontDoor, confirmCreates: !frontDoor };
-        const result = await runBrain(cand.text, ctx, { ...brainIO.brain, policy, skipReply: true });
+        const policy = livePolicy(brainIO, frontDoor);
+        const result = await runBrain(turnText, ctx, { ...brainIO.brain, policy, skipReply: true });
         if (result.status !== 'ok' || !result.decision || !result.interpretation) {
-            await real.audit({ phoneMasked: cand.phone.replace(/\d(?=\d{4})/g, '•'), messageId: cand.messageId ?? null, live: true, status: 'ai_unavailable', fallback: !frontDoor || isExplicitTaskCommand(cand.text), ms: Date.now() - started }, employee).catch(() => undefined);
+            await real.audit({ phoneMasked: cand.phone.replace(/\d(?=\d{4})/g, '•'), messageId: cand.messageId ?? null, live: true, status: 'ai_unavailable', fallback: !frontDoor || isExplicitTaskCommand(turnText), ms: Date.now() - started }, employee).catch(() => undefined);
             // AI down. Front door ON: old exact commands still go to the old bot; anything else gets one short help line (no menu).
-            if (!frontDoor || isExplicitTaskCommand(cand.text)) return NOT_HANDLED;
+            if (!frontDoor || isExplicitTaskCommand(turnText)) return notOurs();
             if (messageId0) real.markSeen(messageId0);
-            return { handled: true, background: async () => { try { await real.reply(phone0, prefixedText(opts, AI_DOWN_HELP)); } catch { /* the watchdog covers silence */ } } };
+            return { handled: true, ...said, background: async () => { try { await io0.reply(phone0, prefixedText(turnOpts, AI_DOWN_HELP)); } catch { /* the watchdog covers silence */ } finally { await release(); } } };
         }
-        if (result.decision.outcome === 'HANDOFF') return NOT_HANDLED;                                 // rooms / tickets → facility assistant
+        if (result.decision.outcome === 'HANDOFF') { await fellThrough('handoff'); return notOurs(); }   // rooms / tickets → facility assistant
 
         if (cand.messageId) real.markSeen(cand.messageId);
-        const phone = cand.phone, text = cand.text, messageId = cand.messageId;
+        const phone = cand.phone, messageId = cand.messageId;
         return {
-            handled: true,
+            handled: true, ...said,
             background: async () => {
                 const q: InFlightTurn = { phone, pending: [], createdAt: Date.now() };
                 activeInFlight.set(phone, q);
                 try {
-                    await respond({ io: brainIO, employee, phone, text, messageId, ctx, result, state, depth: 0, started, relay: ctx.pending?.kind === 'ping_reply', titles, opts, frontDoor, loadMs });
+                    await respond({ io: brainIO, employee, phone, text: turnText, messageId, ctx, result, state, depth: 0, started, relay: ctx.pending?.kind === 'ping_reply', titles, opts: turnOpts, frontDoor, loadMs });
                 } finally {
                     activeInFlight.delete(phone);
+                    await release();
                 }
             }
         };
     } catch (err) {
         console.warn('[TaskBrainLive] not handled, the old bot answers instead:', err instanceof Error ? err.message : err);
-        return NOT_HANDLED;
+        return notOurs();
     }
+}
+
+/** The confirmation rules for a live turn: with "One front door" ON (it provides undo) own completions and new tasks go straight through. */
+function livePolicy(io: LiveIO, frontDoor: boolean | undefined): ConfirmPolicy {
+    return { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !frontDoor, confirmCreates: !frontDoor };
 }
 
 interface Turn {
@@ -364,7 +492,8 @@ interface Turn {
     loadMs?: number;
 }
 
-const prefixedText = (opts: LiveOptions | undefined, text: string): string => (opts?.replyPrefix ? `${opts.replyPrefix}\n\n${text}` : text);
+const prefixedText = (opts: LiveOptions | undefined, text: string): string =>
+    [opts?.replyPrefix, text, opts?.replySuffix].filter(Boolean).join('\n\n');
 const prefixed = (t: Turn, text: string): string => prefixedText(t.opts, text);
 
 /**
@@ -378,7 +507,9 @@ async function drainInFlight(
     io: LiveIO,
     currentCtx: BrainContext,
     currentState: LiveState,
-    initialReply: string
+    initialReply: string,
+    /** 2026-11-02: the SAME confirmation rules as the first message (it used to be the strict default for merged ones). */
+    policy: ConfirmPolicy = DEFAULT_CONFIRM_POLICY
 ): Promise<{ reply: string; nextState: LiveState }> {
     let combinedReply = initialReply;
     let state = currentState;
@@ -424,11 +555,26 @@ async function drainInFlight(
             }
         } else {
             try {
-                const brainResult = await runBrain(nextMsg.text, ctx, { ...io.brain, policy: DEFAULT_CONFIRM_POLICY, skipReply: true });
+                const brainResult = await runBrain(nextMsg.text, ctx, { ...io.brain, policy, skipReply: true });
                 if (brainResult.status === 'ok' && brainResult.decision?.outcome === 'HANDOFF') {
                     combinedReply = `${combinedReply}\n\n${HANDOFF_IN_MERGE}`;
                 } else if (brainResult.status === 'ok' && brainResult.decision && brainResult.interpretation) {
                     let execResult: ExecutionResult | null = null;
+                    const d = brainResult.decision;
+                    // 2026-11-02: a merged "yes" / "no" answers the question the first message's reply just asked. Before, the
+                    // yes was acknowledged but the change was never carried out.
+                    if (d.outcome === 'ACT' && d.action.type === 'answer_pending' && state.action && (d.action.answer === 'yes' || d.action.answer === 'no')) {
+                        if (d.action.answer === 'yes') {
+                            const change = changeFromAction(state.action, ctx);
+                            execResult = await executeAction(state.action, ctx, io.exec, { relay: state.relay, titles: state.titles });
+                            if (change) anyChange = true;
+                            state = { ...state, ...carry(state, change) };
+                        }
+                        state = { ...state, pending: null, action: null, originalSummary: null, pickOptions: [], relay: false, titles: {} };
+                    } else if (d.outcome === 'CONFIRM') {
+                        // 2026-11-02: a merged message that needs a yes leaves that question waiting (it used to be forgotten).
+                        state = { ...state, pending: { kind: 'confirm', summary: brainResult.interpretation.summary || 'a change to your tasks' }, action: d.action, originalSummary: clip(nextMsg.text, 1500), relay: false, titles: {} };
+                    }
                     if (brainResult.decision.outcome === 'ACT' && needsExecution(brainResult.decision.action)) {
                         execResult = await executeAction(brainResult.decision.action, ctx, io.exec);
                         const change = changeFromAction(brainResult.decision.action, ctx);
@@ -490,7 +636,7 @@ async function respondExact(t: {
 
         const inFlight = activeInFlight.get(phone);
         if (inFlight && inFlight.pending.length > 0) {
-            const drained = await drainInFlight(inFlight, phone, employee, io, ctx, next, reply);
+            const drained = await drainInFlight(inFlight, phone, employee, io, ctx, next, reply, livePolicy(io, true));
             reply = drained.reply;
             next = drained.nextState;
         }
@@ -520,6 +666,22 @@ async function respond(t: Turn): Promise<void> {
 
 const GENERIC_LOST = 'Sorry, I lost track of what we were doing. What would you like to do?';
 
+/**
+ * 2026-11-02: a plain reply sent outside `say` (e.g. "please reply yes") still answers any message that joined this turn while
+ * it was running (old in-memory merge). Before, those messages were marked seen and never answered.
+ */
+async function replyKeepingTurn(t: Turn, text: string): Promise<void> {
+    let reply = text;
+    const inFlight = activeInFlight.get(t.phone);
+    if (inFlight && inFlight.pending.length > 0) {
+        const drained = await drainInFlight(inFlight, t.phone, t.employee, t.io, t.ctx, t.state, reply, livePolicy(t.io, t.frontDoor));
+        reply = drained.reply;
+        await t.io.setState(t.phone, drained.nextState).catch(() => undefined);
+    }
+    if (inFlight) inFlight.closing = true;
+    await t.io.reply(t.phone, prefixed(t, reply));
+}
+
 async function handle(t: Turn): Promise<void> {
     const { io, employee, phone, ctx } = t;
     const interp = t.result.interpretation!;
@@ -534,7 +696,7 @@ async function handle(t: Turn): Promise<void> {
         const inFlight = activeInFlight.get(phone);
         if (inFlight && inFlight.pending.length > 0 && finalReplyText) {
             const baseState = finalNext === 'clear' ? EMPTY : finalNext;
-            const drained = await drainInFlight(inFlight, phone, employee, io, ctx, baseState, finalReplyText);
+            const drained = await drainInFlight(inFlight, phone, employee, io, ctx, baseState, finalReplyText, livePolicy(io, t.frontDoor));
             finalReplyText = drained.reply;
             finalNext = drained.nextState;
         }
@@ -580,7 +742,12 @@ async function handle(t: Turn): Promise<void> {
     }
     if (t.depth === 0 && decision.outcome === 'CLARIFY' && SUGGEST_REASONS.has(decision.reason)) {
         const words = draftRequest(t.state.pending, t.text);
-        const title = suggested ?? (ADD_WORDS.test(words) && !ASSIGN_WORDS.test(words) ? suggestedTitle(words) : null);
+        // 2026-11-02 (Sahil, 31 Oct: "Etpl hhmd repair and new supply" was answered with the PREVIOUS suggestion): a new message
+        // that is itself a task line is suggested in its own words; the earlier suggestion is kept only for a bare answer
+        // ("add task", "for me") that names no work of its own.
+        const fresh = (suggested || ADD_WORDS.test(t.text)) && !ASSIGN_WORDS.test(t.text) && !isYesToSuggestion(t.text) ? suggestedTitle(t.text) : null;
+        const title = (fresh && !(suggested && isGrounded(fresh, suggested)) ? fresh : null)
+            ?? suggested ?? (ADD_WORDS.test(words) && !ASSIGN_WORDS.test(words) ? suggestedTitle(words) : null);
         if (title) {
             decision = { outcome: 'CLARIFY', reason: 'suggest_add', options: [], detail: title };
             const next: LiveState = { ...EMPTY, recent: t.state.recent, ...(t.frontDoor ? carry(t.state, null) : {}),
@@ -593,17 +760,23 @@ async function handle(t: Turn): Promise<void> {
     if (decision.outcome === 'ACT' && decision.action.type === 'answer_pending') {
         let a = decision.action;
         if (a.answer === 'no') return say(t.result, null, 'clear');
+        // 2026-11-02: declining a support request ("can't, I'm busy") — any reply that starts with a yes is the yes, and the
+        // rest is the reason, even if the reading called it a change.
+        const declining = t.state.action?.type === 'answer_request' && !t.state.action.accept;
+        if (a.answer === 'edit' && declining && startsWithYes(t.text)) a = { ...a, answer: 'yes' };
         // Owner 2026-10-20 (Sanil sent his request again and it was saved as if he had said yes): only a SHORT reply can be a
         // yes. A longer message is a new version of the request → re-read with it (a new preview), or ask for a clear yes.
-        if (a.answer === 'yes' && t.state.action && !isShortReply(t.text)) {
+        // 2026-11-02: unless it STARTS with a yes ("Yes I can't take it because I'm busy") — then the rest is a reason / comment.
+        if (a.answer === 'yes' && t.state.action && !isShortReply(t.text) && !startsWithYes(t.text)) {
             if (t.depth === 0 && t.state.originalSummary) a = { ...a, answer: 'edit', instruction: t.text };
-            else { await io.reply(phone, prefixed(t, 'Please reply *yes* to go ahead, or *no* to cancel.')); return; }
+            else { await replyKeepingTurn(t, 'Please reply *yes* to go ahead, or *no* to cancel.'); return; }
         }
         if (a.answer === 'yes' && t.state.action) {
-            const change = t.frontDoor ? changeFromAction(t.state.action, ctx) : null;   // read BEFORE it changes
+            const action = withReason(t.state.action, a.instruction && !/^\s*(?:yes|ok|okay|sure)\s*$/i.test(a.instruction) ? clip(a.instruction, MAX_NOTE_LENGTH) : reasonAfterYes(t.text));
+            const change = t.frontDoor ? changeFromAction(action, ctx) : null;   // read BEFORE it changes
             const a0 = Date.now();
-            const exec = await executeAction(t.state.action, ctx, io.exec, { relay: t.state.relay, titles: t.state.titles });
-            return say(t.result, exec, { ...EMPTY, recent: t.state.recent, ...(t.frontDoor ? carry(t.state, change) : {}) }, { confirmedAction: t.state.action.type, actMs: Date.now() - a0 });
+            const exec = await executeAction(action, ctx, io.exec, { relay: t.state.relay, titles: t.state.titles });
+            return say(t.result, exec, { ...EMPTY, recent: t.state.recent, ...(t.frontDoor ? carry(t.state, change) : {}) }, { confirmedAction: action.type, actMs: Date.now() - a0 });
         }
         if ((a.answer === 'pick' || a.answer === 'edit') && t.depth === 0 && t.state.originalSummary) {
             const label = a.answer === 'pick' ? t.state.pickOptions[(a.pick ?? 0) - 1] : null;
@@ -612,14 +785,19 @@ async function handle(t: Turn): Promise<void> {
                 const message = a.answer === 'pick' ? `${t.state.originalSummary}. Specifically: ${label}` : `${t.state.originalSummary}. Change of mind: ${a.instruction}`;
                 const waiting = t.state.relay ? await io.openPingPending(employee) : null;
                 const ctx2: BrainContext = { ...ctx, pending: waiting?.pending ?? null };
-                const again = await runBrain(message, ctx2, { ...io.brain, policy: { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !t.frontDoor, confirmCreates: !t.frontDoor }, skipReply: true });
-                if (again.status === 'ok' && again.decision && again.interpretation && again.decision.outcome !== 'HANDOFF') {
+                const again = await runBrain(message, ctx2, { ...io.brain, policy: livePolicy(io, t.frontDoor), skipReply: true });
+                // 2026-11-02 (28 Oct, twice: "nothing is waiting for a yes" right after the bot asked one): the second reading
+                // must produce the corrected request. If it reads as an answer to a question again, the ORIGINAL question is
+                // kept open (state untouched) and the person is told plainly, never "nothing is waiting".
+                const lostTrack = !again.interpretation || again.interpretation.intent === 'answer_pending';
+                if (again.status === 'ok' && again.decision && again.interpretation && again.decision.outcome !== 'HANDOFF' && !lostTrack) {
                     return handle({ ...t, text: message, ctx: ctx2, result: again, state: { ...t.state, pending: null, action: null, pickOptions: [] }, depth: 1, relay: !!waiting, titles: waiting?.titles ?? {} });
                 }
+                if (t.state.action) { await replyKeepingTurn(t, KEEP_QUESTION); return; }
             }
         }
         await io.clearState(phone);
-        await io.reply(phone, prefixed(t, GENERIC_LOST));
+        await replyKeepingTurn(t, GENERIC_LOST);
         return;
     }
 

@@ -60,6 +60,18 @@ export function acceptRewrite(rewrite: unknown, message: string, ctx: BrainConte
 
 export interface RewriteResult { rewritten: string | null; tokensIn: number; tokensOut: number; ms: number; failure?: string }
 
+/**
+ * 2026-11-02 (speed: replies took 6–14 s, the rewrite is one of three AI calls in a row): a message that already stands on
+ * its own does not need rewriting — the understand step reads the same chat lines anyway. Only short messages, or ones that
+ * point back ("same for Neeti", "make it tomorrow", "that one", "usko bhi"), are rewritten.
+ */
+const REFERS_BACK = /\b(?:same|that|this|those|these|it|its|them|him|her|also|too|again|another|more|other|one|ones|wahi|wohi|woh|vo|ye|yeh|usko|isko|unko|uska|iska|bhi|above|previous|earlier|last)\b/i;
+export const REWRITE_MAX_PLAIN_WORDS = 6;
+export function mayNeedRewrite(message: string): boolean {
+    const words = message.trim().split(/\s+/).filter(Boolean);
+    return words.length <= REWRITE_MAX_PLAIN_WORDS || REFERS_BACK.test(message);
+}
+
 export async function rewriteMessage(p: { llm: BrainLlm; message: string; ctx: BrainContext; models?: readonly string[]; timeoutMs?: number }): Promise<RewriteResult> {
     const started = Date.now();
     const none = (failure?: string): RewriteResult => ({ rewritten: null, tokensIn: 0, tokensOut: 0, ms: Date.now() - started, ...(failure ? { failure } : {}) });
@@ -67,6 +79,7 @@ export async function rewriteMessage(p: { llm: BrainLlm; message: string; ctx: B
     if (!lines.length) return none();                                                    // first message: nothing to refer back to
     const k = p.ctx.pending?.kind;
     if (k === 'confirm' || k === 'pick' || k === 'preview' || k === 'ping_reply') return none(); // an answer to a question: leave it
+    if (!mayNeedRewrite(p.message)) return none();                                       // already stands on its own
 
     let tokensIn = 0, tokensOut = 0;
     const user = JSON.stringify({ chat: lines, new_message: p.message });

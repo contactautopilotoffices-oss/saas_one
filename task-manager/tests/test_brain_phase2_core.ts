@@ -125,7 +125,10 @@ async function run() {
 
     console.log('\n5. Deciding: confidence, doubt and wording');
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.79 }));
-    check('a change at confidence 0.79 → CLARIFY (bar is 0.8)', d.outcome === 'CLARIFY' && d.reason === 'low_confidence');
+    // 2026-11-02: a middling confidence no longer gets a vague question: the change is shown as a preview (one yes), never done.
+    check('a change at confidence 0.79 → a PREVIEW for one yes (below the 0.8 bar), never done straight away', d.outcome === 'CONFIRM');
+    d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.49 }));
+    check('…and below 0.5 → still ASKED (low_confidence), with the AI\'s own reading', d.outcome === 'CLARIFY' && d.reason === 'low_confidence' && 'understood' in d);
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.8 }));
     check('…and at exactly 0.8 → CONFIRM', d.outcome === 'CONFIRM');
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { ambiguities: ['could be task 3'] }));
@@ -198,7 +201,8 @@ async function run() {
     d = decide(interp('progress_update', { state: 'working', which: which({ numbers: [9] }), note: null }), mkCtx());
     check('…but a status note on a task that does not exist is still ASKED about, never acted on', d.outcome === 'CLARIFY');
     d = decide(interp('progress_update', { state: 'working', which: which(), note: null }, { confidence: 0.6 }), mkCtx({ pending: ping }));
-    check('…and an unsure status note (low confidence) is still ASKED about', d.outcome === 'CLARIFY');
+    // 2026-11-02: asked as a preview (one yes) instead of a vague question; still never noted straight away.
+    check('…and an unsure status note (low confidence) is still ASKED about (a preview), never noted straight away', d.outcome === 'CONFIRM' || d.outcome === 'CLARIFY');
     d = decide(interp('progress_update', { state: 'done_some', which: which(), note: null }));
     check('"done some" without saying which → CLARIFY', d.outcome === 'CLARIFY');
     check('state "other" → CLARIFY', decide(interp('progress_update', { state: 'other', which: which(), note: null })).outcome === 'CLARIFY');
@@ -284,7 +288,8 @@ async function run() {
         }
         if (dec.outcome === 'CONFIRM') {
             const a = dec.action;
-            if (conf < types.CHANGE_CONFIDENCE_MIN || amb.length) aboveThreshold++;
+            // 2026-11-02: a preview may now be shown from 0.5 (SOFT_CHANGE_CONFIDENCE_MIN); a flagged doubt still never becomes one.
+            if (conf < types.SOFT_CHANGE_CONFIDENCE_MIN || amb.length) aboveThreshold++;
             if (a.taskIds && !a.taskIds.every((id: string) => knownTaskIds.has(id))) badIds++;
             if (a.taskId && !knownTaskIds.has(a.taskId)) badIds++;
             if (a.assigneeId && !knownPeople.has(a.assigneeId)) badIds++;
@@ -294,7 +299,7 @@ async function run() {
         }
     }
     check(`a change is NEVER executed without confirmation, except a plain status note on real tasks (0 of ${total} broke this)`, acted === 0, acted);
-    check('a change is never proposed below the confidence bar or with flagged doubt', aboveThreshold === 0, aboveThreshold);
+    check('a change is never proposed below the soft confidence bar (0.5) or with flagged doubt', aboveThreshold === 0, aboveThreshold);
     check('a proposed change only ever names real tasks, real people, and people the sender may assign to', badIds === 0, badIds);
 
     console.log('\n12. The reply checker');

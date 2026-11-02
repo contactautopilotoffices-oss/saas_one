@@ -31,6 +31,8 @@ export interface MeetingTask {
     id: string; title: string; note: string | null; ownerName: string | null; ownerUserIds: string[]; ownerNames: string[];
     dueDate: string | null; dueTime: string | null; quote: string | null; quoteAtSeconds: number | null; quoteFound: boolean | null;
     source: 'ai' | 'manual'; status: 'draft' | 'sending' | 'sent' | 'deleted'; sentAt: string | null; error: string | null;
+    /** Owner 2026-11-02: who it went out as — "Autopilot" or "Name (Department)"; null = not sent, or no longer known */
+    sentAs: string | null;
 }
 
 /** Owner 2026-10-29: who the tasks are sent from */

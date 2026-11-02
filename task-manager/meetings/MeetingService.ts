@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from '../TaskDatabaseService';
 import { isMissingSchema } from '../TaskLinks';
 import { setTaskDue } from '../TaskDueService';
+import type { TaskDue } from '../dueDates';
 import { personLabel, sendTaskAssigned } from '../taskAlerts';
 import { shortList, taskBell } from '../taskBell';
 import { todayIST, isUuid } from '../WorkspaceService';
@@ -174,6 +175,23 @@ export class MeetingService {
         ]);
         if (tasksRes.error) dbFail(tasksRes.error, 'Could not load the tasks');
         const nameOf = new Map(people.map(p => [p.id, p.name]));
+        const taskRows = (tasksRes.data ?? []) as MeetingTaskRow[];
+        // Owner 2026-11-02: the "Sent" tab shows who each task went out as. Not stored on the card: it is the giver on the
+        // Task Manager task it created (none = "Autopilot", a person = "Send as: me"). A read only; null = no longer known.
+        const linkedIds = taskRows.filter(t => t.status === 'sent').map(t => t.task_ids?.[0] ?? t.task_id).filter((x): x is string => !!x);
+        const giverOf = new Map<string, string | null>();
+        if (linkedIds.length) {
+            const { data: linked, error: linkedError } = await supabaseAdmin.from('task_assignments').select('id, assigned_by').in('id', linkedIds);
+            if (linkedError) console.warn('[MeetingService] could not read who the tasks were sent as:', linkedError.message);
+            for (const r of (linked ?? []) as Array<{ id: string; assigned_by: string | null }>) giverOf.set(r.id, r.assigned_by);
+        }
+        const labelOf = new Map(people.map(p => [p.id, p.department ? `${p.name} (${p.department})` : p.name]));
+        const sentAsOf = (t: MeetingTaskRow): string | null => {
+            const linkedId = t.task_ids?.[0] ?? t.task_id;
+            if (t.status !== 'sent' || !linkedId || !giverOf.has(linkedId)) return null;
+            const giver = giverOf.get(linkedId);
+            return giver ? labelOf.get(giver) || 'Former employee' : AUTOPILOT;
+        };
         return {
             meeting: {
                 id: m.id, title: m.title, meetingDate: m.meeting_date, status: m.status, error: m.error, confidential: m.confidential,
@@ -183,11 +201,11 @@ export class MeetingService {
                 canRetry: m.status === 'failed' && (!!m.transcript?.length || m.stt?.audioDeleted !== true),
                 notesSentAt: m.notes_sent_at ?? null, notesSentCount: m.notes_sent_count ?? null,
             },
-            tasks: ((tasksRes.data ?? []) as MeetingTaskRow[]).map(t => ({
+            tasks: taskRows.map(t => ({
                 id: t.id, title: t.title, note: t.note, ownerName: t.owner_name,
                 ownerUserIds: ownersOf(t), ownerNames: ownersOf(t).map(o => nameOf.get(o) || 'Former employee'),
                 dueDate: t.due_date, dueTime: t.due_time, quote: t.quote, quoteAtSeconds: t.quote_at_seconds, quoteFound: t.quote_found,
-                source: t.source, status: t.status, sentAt: t.sent_at, error: t.error,
+                source: t.source, status: t.status, sentAt: t.sent_at, sentAs: sentAsOf(t), error: t.error,
             })),
             people,
             // For "Send as: me" — how the person pressing Send is shown to the people who get the tasks
@@ -674,7 +692,7 @@ export class MeetingService {
         const sent: Array<{ id: string; name: string }> = [];
         const skipped: Array<{ id: string; title: string; why: string }> = [];
         const today = todayIST();
-        const byPerson = new Map<string, { titles: string[]; phone: string; departmentId: string | null; departmentName: string | null }>();
+        const byPerson = new Map<string, { titles: string[]; notes: Array<string | null>; dues: Array<TaskDue | null>; phone: string; departmentId: string | null; departmentName: string | null }>();
 
         for (const id of ids) {
             const { data: claimed, error: claimError } = await supabaseAdmin.from('meeting_note_tasks')
@@ -692,17 +710,19 @@ export class MeetingService {
             // Owner 2026-10-29: one Task Manager task per person. The card counts as sent once at least one copy exists;
             // anyone who could not get it is named on the card (it is NOT put back to draft, so nobody gets a second copy).
             const description = [t.note || '', fromLine].filter(Boolean).join('\n').slice(0, 1000);
-            const created: Array<{ taskId: string; personId: string; name: string }> = [];
+            const created: Array<{ taskId: string; personId: string; name: string; slot: number }> = [];
             const missed: string[] = [];
             for (const ownerId of owners) {
                 const person = await TaskDatabaseService.getEmployeeById(ownerId).catch(() => null);
                 if (!person?.active) { missed.push(person?.name || 'someone no longer in the Task Manager'); continue; }
                 try {
                     const taskId = (await TaskDatabaseService.createTaskAssignment({ employeeId: person.id, title: t.title, description, assignedDate: today, assignedBy: me?.id })).id;
-                    created.push({ taskId, personId: person.id, name: person.name });
-                    const g = byPerson.get(person.id) ?? { titles: [], phone: person.phone_number, departmentId: person.department_id, departmentName: person.department_name };
+                    const g = byPerson.get(person.id) ?? { titles: [], notes: [], dues: [], phone: person.phone_number, departmentId: person.department_id, departmentName: person.department_name };
                     g.titles.push(t.title);
+                    g.notes.push(t.note);
+                    g.dues.push(null); // filled in below once the due date is really saved
                     byPerson.set(person.id, g);
+                    created.push({ taskId, personId: person.id, name: person.name, slot: g.titles.length - 1 });
                 } catch (err) {
                     console.error('[MeetingService] could not create a task:', err instanceof Error ? err.message : err);
                     missed.push(person.name);
@@ -718,8 +738,14 @@ export class MeetingService {
             if (markError) console.error('[MeetingService] task created but not marked sent (left "sending", never re-sent):', t.id, taskIdsMade, markError.message);
             sent.push({ id: t.id, name: created.map(c => c.name).join(', ') });
             try {
-                if (t.due_date && !(await setTaskDue(taskIdsMade, { date: t.due_date, time: t.due_time }))) {
-                    await supabaseAdmin.from('meeting_note_tasks').update({ error: 'Sent, but the due date could not be saved.' }).eq('id', t.id);
+                if (t.due_date) {
+                    const due: TaskDue = { date: t.due_date, time: t.due_time };
+                    if (await setTaskDue(taskIdsMade, due)) {
+                        // Owner 2026-11-02: the WhatsApp alert shows it on the Task line — only once it was really saved
+                        for (const c of created) { const g = byPerson.get(c.personId); if (g) g.dues[c.slot] = due; }
+                    } else {
+                        await supabaseAdmin.from('meeting_note_tasks').update({ error: 'Sent, but the due date could not be saved.' }).eq('id', t.id);
+                    }
                 }
                 for (const c of created) {
                     await TaskDatabaseService.logAudit({ eventType: 'meeting_task_sent', actorId: userId, targetEmployeeId: c.personId, taskId: c.taskId, details: { meetingId, meetingTaskId: t.id, from: me ? 'sender' : AUTOPILOT } });
@@ -736,7 +762,7 @@ export class MeetingService {
             // Sending to yourself as yourself: it is already in your list, no alert needed
             if (me && personId === me.id) return;
             void taskBell({ userId: personId, kind: 'TASK_ASSIGNED', title: `New task${g.titles.length === 1 ? '' : 's'} from ${giver}`, message: `From the meeting "${m.title}": ${shortList(g.titles)}`, departmentName: g.departmentName });
-            await sendTaskAssigned(g.phone, { titles: g.titles, fromLabel: from, date: today, departmentId: g.departmentId || undefined });
+            await sendTaskAssigned(g.phone, { titles: g.titles, notes: g.notes, dues: g.dues, fromLabel: from, date: today, departmentId: g.departmentId || undefined });
         }));
         return { sent, skipped };
     }

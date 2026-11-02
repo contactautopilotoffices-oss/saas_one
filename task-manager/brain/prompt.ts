@@ -84,6 +84,14 @@ export function interpretSystemPromptWithSections(domains: DomainHandler[], sect
         'D. UNFINISHED REQUEST (the context says "UNFINISHED REQUEST"): work out what the new message is, by MEANING, not by keywords. (1) It answers the question or adds the missing part ("both", "dono ko", "only Neeti", "assign it to Srushti", "mera hai", "for me", "make it Friday", "yes add it"): classify the WHOLE request — the earlier words plus this answer — as one request, with every slot filled from both. Titles and names still come from the person\'s own words (earlier or now). (2) It is a side question ("who reports to Sanil?", "what are my tasks?"): classify only the side question. (3) It is a different, complete request: classify only that. (4) They drop it ("leave it", "cancel", "rehne do", "no"): use "answer_pending" with answer "no". Never use "answer_pending" for case (1).',
         // Owner 2026-10-19: answers by meaning, in any language mix.
         'E. ANSWERING A YES/NO OR A PREVIEW (the context says the assistant asked to confirm or showed a preview): read the MEANING, in English, Hindi or Hinglish. Agreeing ("yes", "haan", "ha", "kar do", "go ahead", "theek hai", "ok do it", "sure", "👍") → "answer_pending" answer "yes". Refusing ("no", "nahi", "mat karo", "cancel", "rehne do") → answer "no". Agreeing WITH a change, or only a change ("yes but make it tomorrow", "remove 3", "not Neeti, give it to Sanil", "add one more: call the vendor") → answer "edit" with the change in "instruction", in their words. Sending the REQUEST AGAIN in a new form (for example the same tasks written differently, or split up) is a change, never a "yes": answer "edit" with the whole new message in "instruction".',
+        // 2026-11-02 (Neeti request, 28 Oct): a yes that only adds a reason or a comment is still a yes.
+        'E2. A YES WITH A REASON OR A COMMENT that does not change WHAT will be done ("yes, I can\'t take it because I\'m busy", "yes please, thanks", "haan kar do, urgent hai") → "answer_pending" answer "yes", with the reason or comment in "instruction". Only a change to the request itself is "edit".',
+        // 2026-11-02 (28 Oct "TASK 4 DONE" and "only add the dashboard task"): never answer a question that is not there.
+        'F. NOTHING PENDING (the context says "Nothing is pending."): NEVER use "answer_pending". If the message repeats an earlier request or agrees to one, classify THAT request itself (rule B). A message containing "Change of mind:" is the person\'s earlier request followed by their correction: classify the WHOLE corrected request (its intent and slots, with the change applied), never "answer_pending".',
+        // 2026-11-02 (31 Oct "database setup in design login"): use the most likely reading instead of a vague doubt.
+        'G. MOST LIKELY READING: put a doubt in "ambiguities" only when two readings are about EQUALLY likely AND would lead to different actions. Otherwise use the most likely reading and say it in "summary". A task written without commas, "and", new lines or numbers ("database setup in design login") is ONE task in the person\'s exact words. A message that stops mid-sentence ("update atlas for co working and") is still a request for what it does say.',
+        // 2026-11-02: messages sent quickly one after another arrive together, one per line.
+        'H. SEVERAL LINES may be several short messages the person sent one after another. Read them together as ONE turn: greetings and fillers ("hi", "hello", "can u help", "are you there") add nothing on their own; the lines may be one request split across messages, a request and its correction (the later line wins), or several requests (rule A). If the lines are ONLY greetings or questions about you, that is "smalltalk" or "help".',
         'C. QUESTIONS WITH FILTERS → "find_tasks": fill only the filters the person said. Example: "how many tasks did vidya finish last week?" → {"whose":"people","people":["Vidya Nair"],"period":"last_week","date_field":"finished","status":"done","show_as":"count"}. Example: "anything about AMC still pending?" → {"whose":"me","words":["amc"],"status":"open"}. Never invent a filter, a word or a date the message does not give.',
         '',
         'Intents (choose one):',
@@ -117,6 +125,8 @@ export function interpretUserPrompt(message: string, ctx: BrainContext, rewritte
             tasks: tasks.length ? tasks : ['(no tasks today)'],
             pending,
             recent: ctx.recent ?? [],
+            // 2026-11-02: only on a second reading (rule F was broken the first time); absent → this prompt is unchanged.
+            ...(ctx.retryNote ? { important_note: ctx.retryNote } : {}),
             // Owner 2026-10-26: only when someone from another department is waiting for this person's answer
             ...(ctx.supportRequests?.length ? { support_requests_waiting_for_answer: ctx.supportRequests.map(r => `${r.title} (from ${r.fromName}, ${r.fromDepartment})`) } : {}),
             // Owner 2026-10-22 (learned from Otto): the last CONVERSATION_LINES messages are REAL context for the whole
@@ -204,9 +214,10 @@ export function replySystemPromptFree(): string {
 }
 
 /** Owner 2026-10-22: how many of the latest chat messages (the person's and the assistant's) every step sees: the
- *  understanding, the rewrite and the reply. Memory keeps more (20), but 5 is enough to follow the chat and keeps every
- *  call small and quick (like Otto, which sees its last 4). */
-export const CONVERSATION_LINES = 5;
+ *  understanding, the rewrite and the reply. Memory keeps more (20).
+ *  2026-11-02: 5 → 8 (about four exchanges). Affordable now that the bot's replies are stored compacted and automatic
+ *  messages (digests, reminders) are one short line, at most two of them (ConversationMemory.ts). */
+export const CONVERSATION_LINES = 8;
 /** Kept under its old name for the callers that import it. */
 export const REPLY_CONVERSATION_LINES = CONVERSATION_LINES;
 export function recentConversation(lines: readonly string[] | undefined): string[] {

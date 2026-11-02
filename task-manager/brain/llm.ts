@@ -14,7 +14,8 @@ export interface LlmRequest {
     json?: boolean;
 }
 
-export interface LlmResponse { text: string; tokensIn: number; tokensOut: number; finishReason?: string }
+/** `cachedIn` (2026-11-02): of tokensIn, how many were read from Claude's prompt cache (absent for other providers). */
+export interface LlmResponse { text: string; tokensIn: number; tokensOut: number; finishReason?: string; cachedIn?: number }
 
 export interface BrainLlm { complete(req: LlmRequest): Promise<LlmResponse> }
 
@@ -179,7 +180,9 @@ export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS)
         // a small budget (the rewrite asks for 200) could be used up before any answer was written. Only what is used is paid.
         max_tokens: (req.maxTokens ?? 1200) + CLAUDE_THINKING_ROOM,
         // No `temperature`: Claude 5.x models reject it with HTTP 400 ("deprecated for this model").
-        system: req.system,
+        // 2026-11-02 (speed / cost): the instructions are the same on every call (all per-person data is in the user part), so
+        // they are cached. Below the model's minimum size the marker is simply ignored (no error). Never changes the answer.
+        system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: req.user }],
     });
     const problems: string[] = [];
@@ -197,10 +200,13 @@ export async function anthropicComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS)
         clearTimeout(timer);
         if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
         if (!res.ok) throw new Error(`Claude HTTP ${res.status}`); // a bad request: another key would not help
-        const j = await res.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string; usage?: { input_tokens?: number; output_tokens?: number } };
+        const j = await res.json() as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string; usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } };
         const text = (j?.content ?? []).filter(b => b?.type === 'text').map(b => b.text ?? '').join('');
         if (!text.trim()) throw new Error(`Claude returned nothing (stop_reason=${j?.stop_reason ?? 'unknown'})`);
-        return { text, tokensIn: j?.usage?.input_tokens ?? 0, tokensOut: j?.usage?.output_tokens ?? 0, finishReason: j?.stop_reason };
+        // With caching, input_tokens counts only the uncached part: add the cached parts back so the totals stay comparable.
+        const cachedIn = j?.usage?.cache_read_input_tokens ?? 0;
+        const tokensIn = (j?.usage?.input_tokens ?? 0) + cachedIn + (j?.usage?.cache_creation_input_tokens ?? 0);
+        return { text, tokensIn, tokensOut: j?.usage?.output_tokens ?? 0, finishReason: j?.stop_reason, cachedIn };
     }
     throw new Error(`Claude failed (${problems.join('; ')})`);
 }

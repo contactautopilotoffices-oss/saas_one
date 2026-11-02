@@ -98,7 +98,10 @@ async function run() {
     console.log('\n1. When the brain must stay out of the way (the old bot answers as before)');
     const stays = async (label: string, over: any, text = 'show my tasks') => {
         const w = mk(over); const c = await L.claimSmartChat(body(text, 'x1'), w.io);
-        check(label, !c.handled && w.calls.understand === 0 && w.sent.length === 0 && w.audits.length === 0 && w.state === (over.state ?? null), { c, calls: w.calls });
+        // 2026-11-02: an eligible person's message that goes to the old bot leaves ONE 'not_handled' audit row (the reason, never
+        // the text) — nothing else.
+        const onlyTrace = w.audits.every((a: any) => a.status === 'not_handled' && typeof a.why === 'string');
+        check(label, !c.handled && w.calls.understand === 0 && w.sent.length === 0 && onlyTrace && w.state === (over.state ?? null), { c, calls: w.calls, audits: w.audits });
     };
     await stays('no department has Smart chat ON (the default) → untouched, no AI call', { depts: new Set() });
     await stays('Smart chat ON only for ANOTHER department → untouched', { depts: new Set(['d9']) });

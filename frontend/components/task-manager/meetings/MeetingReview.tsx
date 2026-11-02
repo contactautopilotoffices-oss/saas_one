@@ -38,6 +38,8 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
     const [exporting, setExporting] = useState(false);
     /** The meeting's name while it is being changed (null = not editing) */
     const [titleDraft, setTitleDraft] = useState<string | null>(null);
+    /** Owner 2026-11-02: "To send" / "Sent" tabs over the tasks (null = not chosen yet: Sent when nothing is left to send) */
+    const [taskTab, setTaskTab] = useState<'todo' | 'sent' | null>(null);
     const saving = useRef(new Set<Promise<unknown>>());
     const alive = useRef(true);
 
@@ -117,6 +119,10 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
     const drafts = tasks.filter(t => t.status === 'draft');
     const readyToSend = drafts.filter(t => t.ownerUserIds.length > 0);
     const sentCount = tasks.filter(t => t.status === 'sent').length;
+    // "Sending" stays under To send (it is still in progress); the Sent tab is the record, newest first
+    const toSend = tasks.filter(t => t.status !== 'sent');
+    const sentTasks = tasks.filter(t => t.status === 'sent').sort((a, b) => (b.sentAt || '').localeCompare(a.sentAt || ''));
+    const tab = taskTab ?? (toSend.length === 0 && sentTasks.length > 0 ? 'sent' : 'todo');
 
     return (
         <div className="mx-auto max-w-4xl space-y-5">
@@ -290,9 +296,22 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                     {/* Tasks */}
                     <section className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-                            <h3 className="text-sm font-black uppercase tracking-widest text-zinc-500">
-                                Tasks <span className="normal-case tracking-normal text-zinc-400">· {tasks.length} found{sentCount ? `, ${sentCount} sent` : ''}</span>
-                            </h3>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <h3 className="text-sm font-black uppercase tracking-widest text-zinc-500">
+                                    Tasks <span className="normal-case tracking-normal text-zinc-400">· {tasks.length} found{sentCount ? `, ${sentCount} sent` : ''}</span>
+                                </h3>
+                                <div className="flex rounded-xl border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-800/60" role="tablist" aria-label="Tasks">
+                                    {([['todo', 'To send', toSend.length], ['sent', 'Sent', sentTasks.length]] as const).map(([value, label, count]) => (
+                                        <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTaskTab(value)}
+                                            className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors ${tab === value
+                                                ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-100'
+                                                : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'}`}>
+                                            {label} <span className="text-zinc-400">({count})</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            {tab === 'todo' && (
                             <div className="flex gap-2">
                                 <button type="button" disabled={!!busy} onClick={() => void act('add', { action: 'add_task', title: 'New task' }, r => setNewTaskId((r.id as string) || null))}
                                     className="flex items-center gap-1.5 rounded-xl border border-zinc-300 px-3 py-2 text-xs font-bold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
@@ -303,7 +322,13 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                                     {busy === 'send-all' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Send all ready ({readyToSend.length})
                                 </button>
                             </div>
+                            )}
                         </div>
+                        {tab === 'sent' ? (
+                            sentTasks.length === 0
+                                ? <Panel><p className="text-sm text-zinc-500">Nothing has been sent from this meeting yet.</p></Panel>
+                                : sentTasks.map(t => <SentCard key={t.id} task={t} />)
+                        ) : (<>
                         {readyToSend.length > 0 && (
                             <div className="flex flex-wrap items-center gap-2 px-1" role="radiogroup" aria-label="Send as">
                                 <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Send as</span>
@@ -318,7 +343,10 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                             </div>
                         )}
                         {tasks.length === 0 && <Panel><p className="text-sm text-zinc-500">No tasks were found in this meeting. Use &ldquo;Add task&rdquo; if something was missed.</p></Panel>}
-                        {tasks.map(t => (
+                        {tasks.length > 0 && toSend.length === 0 && (
+                            <Panel><p className="text-sm text-zinc-500">Every task has been sent. See the &ldquo;Sent&rdquo; tab for the record.</p></Panel>
+                        )}
+                        {toSend.map(t => (
                             <TaskCard key={t.id} task={t} space={space} meetingId={meetingId} groups={peopleByDept} busy={busy} track={track} justAdded={t.id === newTaskId}
                                 onSend={() => void send([t.id])} onChanged={() => void load()} onError={setFlash} />
                         ))}
@@ -327,6 +355,7 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                                 ? <>Tasks go into each person&apos;s Task Manager list from &ldquo;Autopilot&rdquo;, with the usual WhatsApp alert.</>
                                 : <>Tasks go into each person&apos;s list as given by you ({data.me.name}, {data.me.department}), with the usual WhatsApp alert. You will hear when they are done.</>}
                         </p>
+                        </>)}
                     </section>
                 </>
             )}
@@ -398,6 +427,33 @@ function Steps({ status }: { status: MeetingDetail['status'] }) {
                 </li>
             ))}
         </ol>
+    );
+}
+
+/** Owner 2026-11-02: one task in the "Sent" tab — the record of exactly what went out, to whom, when, and as whom. */
+function SentCard({ task: t }: { task: MeetingTask }) {
+    const when = t.sentAt ? new Date(t.sentAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : null;
+    const row = (label: string, value: React.ReactNode) => (
+        <div className="flex gap-2 text-xs">
+            <dt className="w-20 shrink-0 font-black uppercase tracking-wide text-zinc-400">{label}</dt>
+            <dd className="min-w-0 flex-1 font-semibold text-zinc-700 dark:text-zinc-300">{value}</dd>
+        </div>
+    );
+    return (
+        <div className="space-y-2.5 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">
+            <div className="flex items-start gap-2.5">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                <p className="min-w-0 flex-1 break-words text-sm font-bold text-zinc-800 dark:text-zinc-200">{t.title}</p>
+            </div>
+            <dl className="space-y-1.5 pl-7">
+                {row('Note', t.note ? <span className="whitespace-pre-line">{t.note}</span> : <span className="text-zinc-400">No note</span>)}
+                {row('Sent to', t.ownerNames.join(', ') || '—')}
+                {row('Due', t.dueDate ? `${niceDate(t.dueDate)}${t.dueTime ? ` ${t.dueTime}` : ''}` : <span className="text-zinc-400">No due date</span>)}
+                {row('Sent on', when || '—')}
+                {row('Sent as', t.sentAs || <span className="text-zinc-400">Not known</span>)}
+            </dl>
+            {t.error && <p className="pl-7 text-xs font-semibold text-amber-700 dark:text-amber-400">{t.error}</p>}
+        </div>
     );
 }
 

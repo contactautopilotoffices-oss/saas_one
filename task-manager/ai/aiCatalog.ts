@@ -69,7 +69,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'import_image', label: 'Reading photos and screenshots', hint: 'Reads a task list from an image', group: 'Task import', needs: 'vision', providers: ['anthropic', 'engy'], defaults: IMPORT_DEFAULT },
     { key: 'import_text', label: 'Reading text and Excel', hint: 'Turns a pasted list or a sheet into tasks', group: 'Task import', needs: 'chat', providers: ['anthropic', 'engy'], defaults: IMPORT_DEFAULT },
     { key: 'duplicate_check', label: 'Duplicate task check', hint: 'Asks whether a new task means the same work as an open one', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['qwen3.8-27b', 'glm-5.3-flash'] },
-    { key: 'superuser_chat', label: 'Superuser chat', hint: 'Understands a superuser\'s WhatsApp question about teams', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['groq:llama-3.3-70b-versatile'] },
+    // 2026-11-02: 'superuser_chat' retired (Smart chat answers superusers); kept in the AiJob type so old settings still read.
     { key: 'learning_loop', label: 'Learning loop', hint: 'Review summaries and nightly draft instructions (admin only)', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
 ];
 

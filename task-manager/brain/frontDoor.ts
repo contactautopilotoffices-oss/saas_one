@@ -36,7 +36,9 @@ export function parseExactCommand(text: string): ExactCommand | null {
     if (/^(tasks?|my tasks|view tasks|status|today'?s? tasks)$/.test(t)) return { kind: 'view' };
     if (t === 'accept') return { kind: 'accept' };   // the template's quick-reply button (exact text only)
     if (/^(done ?all|done-all|all done|complete all|completed all|finished all)$/.test(t)) return { kind: 'done_all' };
-    const m = /^(?:done|complete|completed|finish|finished)(?: (?:my )?tasks?)? ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t);
+    const m = /^(?:done|complete|completed|finish|finished)(?: (?:my )?tasks?)? ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t)
+        // 2026-11-02 (Lohitaksha's "TASK 4 DONE", 28 Oct): the number first — "task 4 done", "4 done", "#4 done", "tasks 2, 3 completed"
+        ?? /^(?:(?:my )?tasks? ?(?:no\.? ?|number )?|#)?((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*) (?:is |are )?(?:done|completed|complete|finished)$/.exec(t);
     if (m) {
         const numbers = [...new Set(m[1].split(/ ?, ?| and | & | /).filter(Boolean).map(Number))];
         if (numbers.length && numbers.every(n => Number.isInteger(n) && n >= 1)) return { kind: 'done', numbers };

@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
                 void import('@/task-manager/taskBell').then(({ taskBell }) => taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${newTask.title}`, departmentName: target.department_name }));
             }
             void sendTaskAssigned(target.phone_number, {
-                titles: [newTask.title], fromLabel: personLabel(actor.name, actor.department_name),
+                titles: [newTask.title], notes: [description?.trim() || null], fromLabel: personLabel(actor.name, actor.department_name),
                 date: newTask.assigned_date || new Date().toISOString().slice(0, 10), departmentId: target.department_id || undefined,
             });
 
