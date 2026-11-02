@@ -1,6 +1,8 @@
 # LiveVoice ID: speaker identification for Meeting Notes to Tasks
 
-Status: **DRAFT PLAN, updated 2026-11-02 with owner decisions (section 1a). Nothing built yet. Waiting on the engine choice (section 4a).**
+Status: **Updated 2026-11-02. Engine chosen: self-hosted SpeechBrain on Hugging Face Spaces (free). Python service
+written and offline-tested (`services/voice-id/`, not yet deployed). Next.js side (enrollment, department switch,
+meeting step) not built yet.**
 Branch: `feature/livevoice-speaker-id`
 Doctrine: [AGENT_DOCTRINE.md](AGENT_DOCTRINE.md) · Runbook: [AGENT_RUNBOOK.md](AGENT_RUNBOOK.md) · Builds on: [MEETING_TASKS_SPEC.md](MEETING_TASKS_SPEC.md)
 
@@ -177,6 +179,12 @@ The voice service is a **new service**. Per CLAUDE.md that needs an explicit yes
 should confirm the hosting choice before it is built.
 
 ## 4a. Is hosting needed? (owner question 2026-11-02)
+
+**Decision (owner, 2026-11-02): no paid services. Self-hosted SpeechBrain on Hugging Face Spaces, free "CPU basic"
+(2 vCPU, 16 GB RAM, sleeps after 48 h idle).** Other free hosts offered and not chosen: Google Cloud Run free tier
+(needs a card), Oracle Cloud Always Free VM (card, capacity often unavailable), an office machine behind a Cloudflare
+Tunnel. Render's free tier (512 MB RAM) is too small for PyTorch. Setup steps: `services/voice-id/README.md`.
+The pyannoteAI notes below are kept for the record only.
 
 Short answer: **only if we run SpeechBrain ourselves.** If we pay a provider that does speaker identification as an
 API, there is no server to run. But the big clouds no longer offer it:
