@@ -645,7 +645,7 @@ export class WorkspaceService {
         // sent in Pretend Mode. notify:false = the caller sends ONE grouped alert for several tasks (alertAssigned).
         if (input.notify !== false && target.id !== actor.id) {
             void taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${withNoteLabel(task.title, note)}${dueSaved ? ` (due ${dueLabel(dueSaved)})` : ''}`, departmentName: target.department_name });
-            void sendTaskAssigned(target.phone_number, { titles: [withNoteLabel(task.title, note)], fromLabel: personLabel(actor.name, actor.department_name), date: task.assigned_date, departmentId: target.department_id || undefined });
+            void sendTaskAssigned(target.phone_number, { titles: [task.title], notes: [note || (input.description || '').trim() || null], dues: [dueSaved], fromLabel: personLabel(actor.name, actor.department_name), date: task.assigned_date, departmentId: target.department_id || undefined });
         }
 
         return task;
@@ -1135,7 +1135,7 @@ export class WorkspaceService {
             // The new person is told like any new task (approved template; gated, so nothing is sent in Pretend Mode)
             if (target.id !== actor.id) {
                 void taskBell({ userId: target.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${actor.name} gave you: ${title}`, departmentName: target.department_name });
-                void sendTaskAssigned(target.phone_number, { titles: [title], fromLabel: personLabel(actor.name, actor.department_name), date, departmentId: target.department_id || undefined });
+                void sendTaskAssigned(target.phone_number, { titles: [title], notes: [withoutHandoverNotes(description)], dues: [newDue], fromLabel: personLabel(actor.name, actor.department_name), date, departmentId: target.department_id || undefined });
             }
             await this.bellHolderOfChange(actor, row, `${actor.name} moved your task "${row.title}" to ${target.name}.`);
         } else {

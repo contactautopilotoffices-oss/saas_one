@@ -2,7 +2,7 @@ import { matchByName } from '../TaskGateway';
 import type { DomainHandler, ExecutionResult, IntentSpec, ReplyFacts } from './domain';
 import {
     Action, BrainContext, BrainPerson, BrainTask, CHANGE_CONFIDENCE_MIN, ClarifyReason, ConfirmPolicy, Decision, Intent,
-    Interpretation, MAX_NOTE_LENGTH, MAX_TASKS_PER_MESSAGE, MAX_TITLE_LENGTH, NoteTarget, ProgressState, READ_CONFIDENCE_MIN, Slots, TASK_INTENTS, ViewScope, Which,
+    Interpretation, MAX_NOTE_LENGTH, MAX_TASKS_PER_MESSAGE, MAX_TITLE_LENGTH, NoteTarget, ProgressState, READ_CONFIDENCE_MIN, SOFT_CHANGE_CONFIDENCE_MIN, Slots, TASK_INTENTS, ViewScope, Which,
 } from './types';
 import { addDays, clip, contentWords, dayLabel, headedList, isGrounded, isIsoDate, norm, sectionedList, similarity } from './text';
 import { TaskQuery, findQuerySchema, periodRange, validateQuery, wordsGrounded } from './findTasks';
@@ -347,8 +347,34 @@ function decide(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy
         if (same && a.type === 'create_tasks') same.tasks = [...same.tasks, ...a.tasks].slice(0, MAX_TASKS_PER_MESSAGE);
         else actions.push(a.type === 'create_tasks' ? { ...a, tasks: [...a.tasks] } : a);
     }
-    if (actions.length === 1 && !unclear.length) return { outcome: 'CONFIRM', action: actions[0] };
-    return { outcome: 'CONFIRM', action: { type: 'batch', actions, unclear } };
+    // 2026-11-02: when EVERY part would go straight through on its own (the policy allows it, e.g. "done 1" + "add a task" with
+    // undo ON) and nothing was unclear, the combined change goes straight through too, with one undo for all of it. Before,
+    // any message with two requests always waited for a yes. A part that would be previewed on its own keeps the preview.
+    const outcome = !unclear.length && clear.every(p => p.d.outcome === 'ACT') ? 'ACT' : 'CONFIRM';
+    if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
+    return { outcome, action: { type: 'batch', actions, unclear } };
+}
+
+/**
+ * 2026-11-02 (the 31 Oct "database setup in design login" and 27 Oct "add three tasks: …" turns): the AI understood the
+ * request correctly but also wrote a doubt, or gave a middling confidence, and the bot answered with a vague question.
+ * Now the request is decided normally, and then:
+ *   • code's own question (a name or task that really is unclear) or a refusal → used as is (it is specific);
+ *   • tasks added to the person's OWN list, allowed straight away by the policy → saved (undo for 10 minutes), the doubt
+ *     goes in one short line of the reply;
+ *   • anything else WITH a doubt the AI wrote down ("both Vidya and Dipti, or one?") → ONE question that offers the AI's
+ *     reading (it touches other people, or tells a giver a task is done, so a wrong guess costs more);
+ *   • anything else with only a middling confidence → a preview (one yes).
+ * Cost of a wrong guess on the person's own list is low (undo); anything touching other people still asks. [BAA p.112]
+ */
+function softenDoubt(d: Decision, ctx: BrainContext, interp: Interpretation): Decision {
+    if (d.outcome !== 'ACT' && d.outcome !== 'CONFIRM') return d;
+    const doubt = interp.ambiguities.join('; ') || null;
+    const ownCreate = (a: Action): boolean => a.type === 'create_tasks' && a.assigneeId === ctx.sender.id;
+    const ownOnly = ownCreate(d.action) || (d.action.type === 'batch' && !d.action.unclear.length && d.action.actions.every(ownCreate));
+    if (d.outcome === 'ACT' && ownOnly) return { ...d, aside: doubt };
+    if (doubt) return { outcome: 'CLARIFY', reason: 'ai_flagged_ambiguity', options: [], detail: doubt, understood: interp.summary || null, question: interp.clarifyQuestion };
+    return { outcome: 'CONFIRM', action: d.action };
 }
 
 function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy): Decision {
@@ -364,9 +390,17 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
 
     if (intent === 'unknown') return clarify('unknown_intent');
     if (!interp.grounded) return clarify('not_grounded');
-    if (isChange && interp.ambiguities.length) return clarify('ai_flagged_ambiguity', [], interp.ambiguities.join('; '));
-    if (isChange && interp.confidence < CHANGE_CONFIDENCE_MIN) return clarify('low_confidence');
-    if (!isChange && intent !== 'help' && intent !== 'smalltalk' && interp.confidence < READ_CONFIDENCE_MIN) return clarify('low_confidence');
+    // 2026-11-02: a doubt or a middling confidence on a change no longer stops it with a vague question (softenDoubt above).
+    // Only a really low confidence still asks, and then the question proposes what the AI understood.
+    const ownGuess = (reason: ClarifyReason, detail: string | null = null): Decision =>
+        ({ outcome: 'CLARIFY', reason, options: [], detail, understood: interp.summary || null, question: interp.clarifyQuestion });
+    const doubted = isChange && (interp.ambiguities.length > 0 || interp.confidence < CHANGE_CONFIDENCE_MIN);
+    if (isChange && interp.confidence < SOFT_CHANGE_CONFIDENCE_MIN) return ownGuess(interp.ambiguities.length ? 'ai_flagged_ambiguity' : 'low_confidence', interp.ambiguities.join('; ') || null);
+    if (doubted) {
+        const d = decideOne({ ...interp, ambiguities: [], confidence: 1 }, ctx, policy);
+        return softenDoubt(d, ctx, interp);
+    }
+    if (!isChange && intent !== 'help' && intent !== 'smalltalk' && interp.confidence < READ_CONFIDENCE_MIN) return ownGuess('low_confidence');
 
     switch (slots.intent) {
         case 'help': return { outcome: 'ACT', action: { type: 'chat', kind: 'help' } };
@@ -934,6 +968,16 @@ function clarifyFacts(d: Extract<Decision, { outcome: 'CLARIFY' }>, ctx: BrainCo
     const withOptions = (describe: string, fallbackQ: string): ReplyFacts => ({
         ...base, describe, values: { options: opts }, required: d.options.length ? ['options'] : [], fallback: d.options.length ? `${fallbackQ}\n${opts}` : fallbackQ,
     });
+    // 2026-11-02: the AI's own reading is known ("Add a task: database setup in design login") → ask ONE question that offers
+    // it as the best guess, so a plain "yes" / a short correction finishes it (the request is kept as a draft, rule D).
+    // No task list: the question is no longer a bare "not sure" (the case Part B4 guarded against).
+    if ((d.reason === 'ai_flagged_ambiguity' || d.reason === 'low_confidence') && d.understood) {
+        const guess = clip(d.understood, 200);
+        const q = d.question ? clip(d.question, 200) : null;
+        return { ...base, noYesNoQuestion: false,
+            describe: `You think the person most likely wants this: "${guess}"${d.detail ? `. You were unsure about: ${d.detail}` : ''}. Ask ONE short, specific question that offers this reading as your best guess, so they can simply say yes or correct it${q ? ` (for example: "${q}")` : ''}. Do not list their tasks.`,
+            values: {}, required: [], fallback: q || `Just to check, did you mean: ${guess.replace(/[.\s]+$/, '')}?` };
+    }
     switch (d.reason) {
         case 'no_task_referenced': return withOptions('The person wants to act on a task but did not say which. Ask which one they mean and show the open tasks.', 'Which task do you mean?');
         case 'several_tasks_match': return withOptions('More than one task fits what the person said. Ask which one they mean, showing the matching tasks.', 'Which of these do you mean?');
@@ -1011,7 +1055,20 @@ function batchLine(a: Action, ctx: BrainContext): string {
     }
 }
 
+/**
+ * 2026-11-02: a change that went ahead (or is previewed) although the AI noted a doubt ends with ONE short line, inserted by
+ * the system, saying what it was unsure of and that they can correct it, instead of a question before anything happens.
+ */
 function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionResult): ReplyFacts | null {
+    const facts = replyFactsBase(decision, ctx, result);
+    const aside = decision.outcome === 'ACT' || decision.outcome === 'CONFIRM' ? decision.aside : null;
+    if (!facts || !aside || !aside.trim()) return facts;
+    const line = `(I wasn't fully sure: ${clip(aside.trim().replace(/[.\s]+$/, ''), 160)}. If I got it wrong, just tell me.)`;
+    return { ...facts, describe: `${facts.describe} Finish with the short note about what you were unsure of (inserted by the system, on its own line).`,
+        values: { ...facts.values, aside: line }, required: [...facts.required, 'aside'], fallback: `${facts.fallback}\n\n${line}` };
+}
+
+function replyFactsBase(decision: Decision, ctx: BrainContext, result?: ExecutionResult): ReplyFacts | null {
     const sender = ctx.sender;
     const titleOf = (id: string) => ctx.tasks.find(t => t.id === id)?.title ?? 'that task';
     const personName = (id: string) => (id === sender.id ? 'you' : ctx.people.find(p => p.id === id)?.name ?? 'them');
@@ -1203,6 +1260,8 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
 
     // Owner 2026-10-21: a suggested task saved straight away after a clear answer → say what was added, then the undo hint.
     if (!confirming && (a.type === 'create_tasks' || a.type === 'batch') && result && /^Added\b/.test(result.summary)) return resultFacts('create_result', result, UNDO_HINT);
+    // 2026-11-02: several changes from one message carried out straight away (e.g. "done 1" + "add a task") → what happened + undo.
+    if (!confirming && a.type === 'batch' && result) return resultFacts('batch_result', result, UNDO_HINT);
     // Owner 2026-10-14: marked done straight away (no "Reply YES") → say what was done, then "Reply undo within 10 minutes".
     const finishedNow = a.type === 'complete_tasks' || (a.type === 'progress_update' && (a.state === 'done_all' || a.state === 'done_some'));
     if (!confirming && finishedNow && result && /^Marked\b/.test(result.summary)) return resultFacts('complete_result', result, UNDO_HINT);

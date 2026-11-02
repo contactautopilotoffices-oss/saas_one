@@ -89,7 +89,8 @@ export async function POST(req: NextRequest) {
     }));
     // Conversation memory (WHATSAPP_MEMORY_ENABLED, OFF by default → returns at once): the person's message is stored only once a
     // Task Manager route has taken it — for Smart chat AFTER the AI has read the memory, so it never sees this message twice.
-    const remember = () => appendTurn(input?.phone, 'person', input?.text, receivedAt);
+    // 2026-11-02 batching: several messages answered as one turn are remembered as that one turn (their words, one per line).
+    const remember = (text?: string) => appendTurn(input?.phone, 'person', text ?? input?.text, receivedAt);
     // A Task Manager background job that crashes gets an immediate apology instead of silence (no-op while the switch is OFF).
     const guarded = (job: () => Promise<void>) => async () => {
         try { await job(); }
@@ -117,15 +118,19 @@ export async function POST(req: NextRequest) {
     // Smart chat (Phase 4): for people in a department with Smart chat ON, the brain answers plain-language messages. Anything it
     // does not take (rooms / tickets, the AI being down, an older conversation still open) comes back handled:false and the old
     // bot answers exactly as before. The slow part (carrying out, replying) runs after this webhook has answered.
+    // Batching (2026-11-02): several messages sent back to back are answered ONCE, by the newest message's webhook; the earlier
+    // ones come back handled with nothing to do. A batch that is not Smart chat's (only greetings, a ticket request) comes
+    // back with `rewrite` = their words, and the code below carries on with that, as for a confirmed voice note.
     const smartChat = await claimSmartChat(body);
     if (smartChat.handled) {
         if (smartChat.background) {
             await markRoute(input?.messageId, 'smart_chat', input?.phone, input?.text);
-            await remember();
+            await remember(smartChat.text);
             after(guarded(smartChat.background));
         }
         return NextResponse.json({ success: true, routedTo: 'SMART_CHAT' });
     }
+    if (smartChat.rewrite) { body = smartChat.rewrite; input = normalizeInbound(body); }
 
     // Task Brain shadow mode (Phase 3): beside the old bot, for the sandbox numbers only, the brain reads the message and only
     // LOGS what it would have done. It never replies and never changes anything; any failure is swallowed.

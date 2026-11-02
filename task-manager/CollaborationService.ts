@@ -205,7 +205,7 @@ export class CollaborationService {
             details: { title, assignedDate: date, ...(dueSaved ? { dueDate: dueSaved.date, dueTime: dueSaved.time } : {}), ...(due && !dueSaved ? { dueNotSaved: true } : {}), crossDepartment: true, kind, toDepartment: person.department_name, via: 'send_tab' },
         });
         void taskBell({ userId: person.id, kind: 'TASK_ASSIGNED', title: `New task from ${actor.name}`, message: `${from} ${kind === 'together' ? 'wants to work with you on' : 'gave you'}: ${title}${dueSaved ? ` (due ${dueLabel(dueSaved)})` : ''}`, departmentName: person.department_name });
-        void sendTaskAssigned(person.phone_number, { titles: [title], fromLabel: from, date, departmentId: person.department_id || undefined });
+        void sendTaskAssigned(person.phone_number, { titles: [title], notes: [description || null], dues: [dueSaved], fromLabel: from, date, departmentId: person.department_id || undefined });
         return { taskIds, requestId: null };
     }
 

@@ -145,6 +145,8 @@ export interface BrainContext {
     message?: string;
     /** Owner 2026-10-26: support requests from other departments waiting for this person's answer (absent = none). */
     supportRequests?: Array<{ id: string; title: string; fromName: string; fromDepartment: string }>;
+    /** 2026-11-02: a note for a SECOND reading only (the first one answered a question that was not there). Absent = none. */
+    retryNote?: string;
 }
 
 export type Action =
@@ -196,9 +198,13 @@ export type ClarifyReason =
 export type RefuseReason = 'not_allowed_to_assign' | 'task_already_done' | 'not_allowed_to_view' | 'cannot_hand_over_to_self' | 'nothing_to_do' | 'nothing_in_group' | 'nothing_to_remind' | 'already_locked' | 'not_locked' | 'team_fixed';
 
 export type Decision =
-    | { outcome: 'ACT'; action: Action }
-    | { outcome: 'CONFIRM'; action: Action }
-    | { outcome: 'CLARIFY'; reason: ClarifyReason; options: string[]; detail: string | null }
+    /** 2026-11-02: `aside` = the AI's own doubt about a change that went ahead anyway (an undoable change on the person's own
+     *  list, or a preview). The reply adds ONE short line saying how to correct it, instead of asking a question first. */
+    | { outcome: 'ACT'; action: Action; aside?: string | null }
+    | { outcome: 'CONFIRM'; action: Action; aside?: string | null }
+    /** 2026-11-02: `understood` / `question` = the AI's own reading and question, so a clarifying reply proposes its best
+     *  guess ("Add X as one task?") instead of a generic "what would you like to do?". */
+    | { outcome: 'CLARIFY'; reason: ClarifyReason; options: string[]; detail: string | null; understood?: string | null; question?: string | null }
     | { outcome: 'REFUSE'; reason: RefuseReason; detail: string | null }
     | { outcome: 'HANDOFF'; domain: string; service: string };
 
@@ -224,6 +230,12 @@ export const DEFAULT_CONFIRM_POLICY: ConfirmPolicy = { confirmProgressUpdates: f
 /** Confidence below which a CHANGE is never proposed; the bot asks instead. Reads use the lower bar. */
 export const CHANGE_CONFIDENCE_MIN = 0.8;
 export const READ_CONFIDENCE_MIN = 0.55;
+/**
+ * 2026-11-02: below CHANGE_CONFIDENCE_MIN but at or above this, a change is no longer refused with a vague question: an
+ * undoable change to the person's OWN list goes ahead (with undo), anything else is shown as a preview for one yes.
+ * Below this the bot still asks. Cost of a false positive on the own list is low (10-minute undo) [BAA p.112].
+ */
+export const SOFT_CHANGE_CONFIDENCE_MIN = 0.5;
 /** Owner 2026-10-19: 15 → 30 (HR send longer lists). */
 export const MAX_TASKS_PER_MESSAGE = 30;
 /** Owner 2026-10-19: how long an unfinished request (a "draft") waits for the answer to the bot's question. */

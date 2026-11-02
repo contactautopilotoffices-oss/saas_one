@@ -126,7 +126,9 @@ async function run() {
 
     reset();
     await say('how are the folks in procurement getting along');
-    check('unusual wording: the AI reads it, and the answer is still the real Procurement data', aiCalls.length === 1 && toolCalls.includes('progress:d-proc'), { aiCalls: aiCalls.length, toolCalls });
+    // 2026-11-02 (owner): the old bot's separate "Superuser chat" AI is retired (Smart chat answers superusers with the main
+    // model). The old bot no longer calls it, so unusual wording reads nothing here (and invents nothing).
+    check('unusual wording: the old bot no longer calls the retired superuser AI, and reads no data by guesswork', aiCalls.length === 0 && toolCalls.length === 0, { aiCalls: aiCalls.length, toolCalls });
 
     reset();
     await say('help');

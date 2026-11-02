@@ -109,6 +109,17 @@ export async function runBrain(message: string, ctx: BrainContext, deps: BrainDe
             interpretation = r.interpretation;
             trace.interpretModel = r.trace.model; trace.interpretMs = r.ms; trace.tokensIn += r.tokensIn; trace.tokensOut += r.tokensOut;
             trace.failures.push(...r.trace.failures.map(f => `understand ${f.model}: ${f.error}`));
+            // 2026-11-02 (28 Oct: "TASK 4 DONE" and "only add the dashboard task" got "nothing is waiting for a yes"): the reading
+            // answered a question that is not there. Read ONCE more with that said plainly; only this rare case pays for it.
+            if (interpretation.intent === 'answer_pending' && !ctx.pending) {
+                const retryArgs = { ...args, ctx: { ...ctx, retryNote: 'Nothing is pending: NO question is waiting for an answer. Do NOT use "answer_pending". Classify what this message itself asks for (rule F); if it only says yes / no to nothing, use "smalltalk".' } };
+                const r2 = await interpretMessage(retryArgs).catch(() => null);
+                if (r2) {
+                    trace.interpretMs += r2.ms; trace.tokensIn += r2.tokensIn; trace.tokensOut += r2.tokensOut;
+                    trace.failures.push('understand: answered a question that was not there; read again');
+                    if (r2.interpretation.intent !== 'answer_pending') interpretation = r2.interpretation;
+                }
+            }
         } catch (err) {
             trace.failures.push(err instanceof Error ? err.message : String(err));
             return unavailable();

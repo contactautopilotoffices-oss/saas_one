@@ -6,7 +6,7 @@ import { AlertTriangle, Bell, Check, ChevronDown, Eye, FileText, Loader2, Paperc
 import { ATTACH_ACCEPT, ATTACH_MAX_BYTES, WAttachment, avatarGradient, fileSizeLabel, initials, shortDate, shortDateTime, todayIST } from './types';
 import type { CollabIncoming, CollabKind, CollabSent, useCollaboration } from './useCollaboration';
 import { DuePicker, DueValue, dueBody } from './due';
-import { dueLabel } from '@/task-manager/dueDates';
+import { dueLabel, timeLabel } from '@/task-manager/dueDates';
 
 /**
  * Owner 2026-10-26 — the Send tab's "Other departments": give a task to, ask for support from, or work together with
@@ -84,7 +84,7 @@ export default function CrossDeptPanel({ collab, me, uploadFiles, onChanged, due
     const start = startDate || todayIST();
     const preview = person ? (kind === 'support'
         ? `🤝 Request from another team\n\nHello ${firstName(person.name)},\n${from} needs your help with a task.\nTask: ${title.trim() || '…'}\nNeeded by: ${neededBy ? longDay(neededBy) : 'No date given'}\n\nTap Accept, or Can't do it.`
-        : `🔔 A new task has been assigned to you.\n\nTask: ${title.trim() || '…'}\nAssigned by: ${from}\nDate: ${longDay(start)}\n\nReply "tasks" to see your list and mark it done.`) : '';
+        : `🔔 A new task has been assigned to you.\n\nTask: ${title.trim() || '…'}${due?.date ? ` (Due: ${longDay(due.date)}${due.time ? `, ${timeLabel(due.time).toUpperCase()}` : ''})` : ''}\nNote: ${details.replace(/\s+/g, ' ').trim().slice(0, 300) || '—'}\nAssigned by: ${from}\nDate: ${longDay(start)}\n\nReply "tasks" to see your list and mark it done.`) : '';
 
     const pickFiles = (list: FileList | null) => {
         const picked = Array.from(list || []);
