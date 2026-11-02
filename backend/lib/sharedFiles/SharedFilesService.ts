@@ -42,12 +42,16 @@ interface Row {
     id: string; organization_id: string; parent_id: string | null; kind: 'folder' | 'file'; name: string;
     size_bytes: number | null; mime_type: string | null; storage_path: string | null; status: 'uploading' | 'ready';
     team: FilesTeam; created_by: string | null; created_at: string; updated_at: string;
+    /** 20261102000002_shared_files_notes.sql; undefined until that migration is applied. */
+    note?: string | null;
 }
 
 export interface SharedFileItem {
     id: string; kind: 'folder' | 'file'; name: string; sizeBytes: number | null; mimeType: string | null;
-    team: FilesTeam; createdByName: string; updatedAt: string; itemCount: number | null;
+    team: FilesTeam; createdByName: string; updatedAt: string; itemCount: number | null; note: string | null;
 }
+
+export const MAX_NOTE_CHARS = 2000;
 
 /** Same clean-up the Task Manager uses for attachment names: no slashes or control characters. */
 export function cleanName(raw: unknown): string {
@@ -108,7 +112,7 @@ export class SharedFilesService {
         const items: SharedFileItem[] = rows.map(r => ({
             id: r.id, kind: r.kind, name: r.name, sizeBytes: r.size_bytes, mimeType: r.mime_type, team: r.team,
             createdByName: (r.created_by && nameOf.get(r.created_by)) || 'Someone', updatedAt: r.updated_at,
-            itemCount: r.kind === 'folder' ? counts.get(r.id) ?? 0 : null,
+            itemCount: r.kind === 'folder' ? counts.get(r.id) ?? 0 : null, note: r.note ?? null,
         }));
 
         const path: Array<{ id: string; name: string }> = [];
@@ -192,6 +196,19 @@ export class SharedFilesService {
             throw new SharedFilesError(500, 'Could not prepare the download.');
         }
         return { url: data.signedUrl };
+    }
+
+    /**
+     * Owner 2026-11-02: sets the one note on a file or folder; empty clears it. Anyone on either team may edit any
+     * note (same rule as delete). Editing a note does not change the item's "Last modified".
+     */
+    static async setNote(organizationId: string, id: unknown, rawNote: unknown) {
+        const r = await this.item(organizationId, id);
+        const note = String(rawNote ?? '').normalize('NFC').replace(/\r\n?/g, '\n').trim();
+        if (note.length > MAX_NOTE_CHARS) throw new SharedFilesError(400, `Notes can be up to ${MAX_NOTE_CHARS} characters.`);
+        const { error } = await supabaseAdmin.from('shared_files').update({ note: note || null }).eq('id', r.id);
+        if (error) dbFail(error, 'Could not save the note');
+        return { note: note || null };
     }
 
     /** Deletes a file, or a folder and everything inside it. */

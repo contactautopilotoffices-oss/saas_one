@@ -11,7 +11,9 @@ export type AiJob =
     | 'wa_understand' | 'wa_reply' | 'wa_tidy'
     | 'voice_transcribe' | 'voice_cleanup'
     | 'import_image' | 'import_text'
-    | 'superuser_chat' | 'learning_loop' | 'duplicate_check';
+    | 'superuser_chat' | 'learning_loop' | 'duplicate_check'
+    // Owner 2026-11-02: Candidate Search (Tech console tab) picks its models here too
+    | 'candidate_parse' | 'candidate_rank';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech';
@@ -48,7 +50,7 @@ export interface JobInfo {
     label: string;
     /** What it does, in plain words. */
     hint: string;
-    group: 'WhatsApp bot' | 'Voice notes' | 'Task import' | 'Other';
+    group: 'WhatsApp bot' | 'Voice notes' | 'Task import' | 'Other' | 'Candidate Search';
     needs: Capability;
     /** Providers this job's code can actually call (a model of another provider "cannot do this job"). */
     providers: readonly Provider[];
@@ -59,6 +61,8 @@ export interface JobInfo {
 const BRAIN_DEFAULT = ['anthropic:claude-haiku-5-5', 'glm-5.3-flash', 'qwen3.8-27b'] as const;
 const IMPORT_DEFAULT = ['anthropic:claude-sonnet-5-5', 'qwen3.8-27b', 'glm-5.3-flash'] as const;
 const CHAT_PROVIDERS: readonly Provider[] = ['anthropic', 'engy', 'groq', 'gemini'];
+/** Owner 2026-11-02: Candidate Search runs on Claude Opus 5.5 unless the Control Center picks otherwise. */
+const CANDIDATE_DEFAULT = ['anthropic:claude-opus-5-5'] as const;
 
 export const AI_JOBS: readonly JobInfo[] = [
     { key: 'wa_understand', label: 'Understanding the message', hint: 'Reads what the person wants (the step that decides actions)', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
@@ -71,6 +75,8 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'duplicate_check', label: 'Duplicate task check', hint: 'Asks whether a new task means the same work as an open one', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['qwen3.8-27b', 'glm-5.3-flash'] },
     // 2026-11-02: 'superuser_chat' retired (Smart chat answers superusers); kept in the AiJob type so old settings still read.
     { key: 'learning_loop', label: 'Learning loop', hint: 'Review summaries and nightly draft instructions (admin only)', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
+    { key: 'candidate_parse', label: 'Reading the search', hint: 'Turns an HR request or job description into filters (experience, notice, salary, location)', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
+    { key: 'candidate_rank', label: 'Ranking candidates', hint: 'Scores the shortlisted records against the request and explains each pick', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
 ];
 
 export const jobInfo = (job: AiJob): JobInfo | undefined => AI_JOBS.find(j => j.key === job);

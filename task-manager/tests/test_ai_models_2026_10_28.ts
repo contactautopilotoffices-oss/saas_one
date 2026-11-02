@@ -116,7 +116,9 @@ async function run() {
     check('the API is Tech-only (Control Centre guard) on both GET and POST', (route.match(/requireControlCentre\(/g) || []).length === 2);
     const sql = read('supabase/migrations/20261028140001_task_manager_ai_models.sql').split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
     check('migration: one new table, RLS on, nothing destructive', /CREATE TABLE IF NOT EXISTS public\.task_manager_ai_models/.test(sql) && /ENABLE ROW LEVEL SECURITY/.test(sql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(sql) && !/ALTER TABLE public\.(?!task_manager_ai_models)/i.test(sql));
-    check('every job in the catalog is allowed by the migration', C.AI_JOBS.every(j => sql.includes(`'${j.key}'`)));
+    // 2026-11-02: the Candidate Search jobs are allowed by the follow-up migration that widens the job list
+    const sqlJobs = sql + read('supabase/migrations/20261102000004_candidate_search_ai_models.sql');
+    check('every job in the catalog is allowed by the migrations', C.AI_JOBS.every(j => sqlJobs.includes(`'${j.key}'`)));
 
     check('no network used', net.length === 0, net);
     console.log(failures === 0 ? '\n🎉 AI MODELS TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

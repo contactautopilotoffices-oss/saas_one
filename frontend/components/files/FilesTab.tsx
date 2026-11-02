@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, ChevronUp, CircleAlert, CircleCheck, Download, File, FileArchive, FileCode,
-    FileImage, FileSpreadsheet, FileText, Film, Folder, FolderPlus, LoaderCircle, Music, Plus, Presentation, Search, Trash2, Upload, X,
+    FileImage, FileSpreadsheet, FileText, Film, Folder, FolderPlus, LoaderCircle, Music, Plus, Presentation, Search, StickyNote, Trash2, Upload, X,
 } from 'lucide-react';
 
 /**
@@ -17,8 +17,11 @@ export type FilesTeam = 'design' | 'tech';
 interface Item {
     id: string; kind: 'folder' | 'file'; name: string; sizeBytes: number | null; mimeType: string | null;
     team: FilesTeam; createdByName: string; updatedAt: string; itemCount: number | null;
+    /** Owner 2026-11-02: one editable note per file or folder (null = none) */
+    note: string | null;
 }
 interface Crumb { id: string; name: string }
+const MAX_NOTE_CHARS = 2000;
 type Result<T> = ({ ok: true } & T) | { ok: false; error: string; code?: string };
 
 interface UploadJob {
@@ -200,8 +203,9 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
 
     const [selected, setSelected] = useState<string | null>(null);
     const [menuOpen, setMenuOpen] = useState(false);
-    const [dialog, setDialog] = useState<null | { type: 'folder' } | { type: 'delete'; item: Item }>(null);
+    const [dialog, setDialog] = useState<null | { type: 'folder' } | { type: 'delete'; item: Item } | { type: 'note'; item: Item }>(null);
     const [folderName, setFolderName] = useState('');
+    const [noteText, setNoteText] = useState('');
     const [busy, setBusy] = useState(false);
     const [snack, setSnack] = useState<string | null>(null);
     const [jobs, setJobs] = useState<UploadJob[]>([]);
@@ -369,6 +373,20 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
         setSelected(null);
         toast(`"${item.name}" deleted`);
         load();
+    };
+
+    // ---- notes ---------------------------------------------------------------------------------------------------
+    const openNote = (item: Item) => { setSelected(item.id); setNoteText(item.note ?? ''); setDialog({ type: 'note', item }); };
+
+    const saveNote = async (item: Item, text: string) => {
+        if (busy) return;
+        setBusy(true);
+        const r = await call<{ note: string | null }>({ action: 'set_note', id: item.id, note: text });
+        setBusy(false);
+        if (!r.ok) return toast(r.error);
+        setItems(list => list.map(i => (i.id === item.id ? { ...i, note: r.note } : i)));
+        setDialog(null);
+        toast(r.note ? 'Note saved' : 'Note removed');
     };
 
     useEffect(() => {
@@ -550,7 +568,7 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
                                     {header('updatedAt', 'Last modified', 'hidden sm:table-cell')}
                                     {header('sizeBytes', 'File size', 'hidden lg:table-cell')}
                                     <th aria-hidden className="hidden sm:table-cell" />
-                                    <th scope="col" className="w-24"><span className="sr-only">Actions</span></th>
+                                    <th scope="col" className="w-36"><span className="sr-only">Actions</span></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -569,6 +587,13 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
                                                 <div data-fit-row className="flex min-w-0 items-center gap-4">
                                                     <ItemIcon item={item} />
                                                     <span data-fit className="truncate font-medium" title={item.name}>{item.name}</span>
+                                                    {item.note && (
+                                                        <button type="button" onClick={e => { e.stopPropagation(); openNote(item); }} onDoubleClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
+                                                            title={item.note} aria-label={`Note on ${item.name}: ${item.note}`}
+                                                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#F9AB00] hover:bg-black/[.08]">
+                                                            <StickyNote className="h-4 w-4" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </td>
                                             <td data-col="type" className="hidden truncate px-4 text-[#444746] sm:table-cell">{typeLabel(item)}</td>
@@ -592,6 +617,10 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
                                                             <Download className="h-5 w-5" />
                                                         </button>
                                                     )}
+                                                    <button type="button" onClick={e => { e.stopPropagation(); openNote(item); }} onKeyDown={e => e.stopPropagation()} aria-label={`${item.note ? 'Edit' : 'Add'} note on ${item.name}`} title={item.note ? 'Edit note' : 'Add note'}
+                                                        className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-black/[.08]">
+                                                        <StickyNote className="h-5 w-5" />
+                                                    </button>
                                                     <button type="button" onClick={e => { e.stopPropagation(); setDialog({ type: 'delete', item }); }} aria-label={`Delete ${item.name}`} title="Delete"
                                                         className="flex h-10 w-10 items-center justify-center rounded-full text-[#444746] hover:bg-black/[.08]">
                                                         <Trash2 className="h-5 w-5" />
@@ -618,8 +647,32 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
             {/* Dialogs */}
             {dialog && (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onMouseDown={e => { if (e.target === e.currentTarget) setDialog(null); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="files-dialog-title" style={FONT} className="w-full max-w-sm rounded-[28px] bg-white p-6 shadow-2xl">
-                        {dialog.type === 'folder' ? (
+                    <div role="dialog" aria-modal="true" aria-labelledby="files-dialog-title" style={FONT} className={`w-full ${dialog.type === 'note' ? 'max-w-md' : 'max-w-sm'} rounded-[28px] bg-white p-6 shadow-2xl`}>
+                        {dialog.type === 'note' ? (
+                            <form onSubmit={e => { e.preventDefault(); void saveNote(dialog.item, noteText); }}>
+                                <h2 id="files-dialog-title" className="mb-1 text-2xl text-[#1F1F1F]">Note</h2>
+                                <p className="mb-4 flex min-w-0 items-center gap-2 text-sm text-[#444746]">
+                                    <ItemIcon item={dialog.item} className="h-4 w-4 shrink-0" />
+                                    <span className="truncate" title={dialog.item.name}>{dialog.item.name}</span>
+                                </p>
+                                <textarea autoFocus value={noteText} onChange={e => setNoteText(e.target.value)} maxLength={MAX_NOTE_CHARS} rows={5}
+                                    aria-label={`Note on ${dialog.item.name}`} placeholder="Add a note for both teams…"
+                                    onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) e.currentTarget.form?.requestSubmit(); }}
+                                    className="w-full resize-y rounded border border-[#747775] px-4 py-3 text-base outline-none focus:border-2 focus:border-[#0B57D0] focus:px-[15px] focus:py-[11px]" />
+                                <p className="mt-1 text-right text-xs tabular-nums text-[#747775]">{noteText.length} / {MAX_NOTE_CHARS}</p>
+                                <div className="mt-4 flex items-center justify-between gap-2">
+                                    {dialog.item.note ? (
+                                        <button type="button" disabled={busy} onClick={() => void saveNote(dialog.item, '')} className="h-10 rounded-full px-4 text-sm font-medium text-[#B3261E] hover:bg-[#B3261E]/[.08] disabled:opacity-40">Remove note</button>
+                                    ) : <span />}
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setDialog(null)} className="h-10 rounded-full px-4 text-sm font-medium text-[#0B57D0] hover:bg-[#0B57D0]/[.08]">Cancel</button>
+                                        <button type="submit" disabled={busy || noteText.trim() === (dialog.item.note ?? '')} className="h-10 rounded-full px-4 text-sm font-medium text-[#0B57D0] hover:bg-[#0B57D0]/[.08] disabled:opacity-40">
+                                            {busy ? 'Saving…' : 'Save'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </form>
+                        ) : dialog.type === 'folder' ? (
                             <form onSubmit={createFolder}>
                                 <h2 id="files-dialog-title" className="mb-4 text-2xl text-[#1F1F1F]">New folder</h2>
                                 <input id="files-folder-name" autoFocus value={folderName} onChange={e => setFolderName(e.target.value)} maxLength={200} aria-label="Folder name"

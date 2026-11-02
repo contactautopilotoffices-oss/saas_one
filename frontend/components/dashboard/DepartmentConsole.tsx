@@ -30,13 +30,14 @@ const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoadi
 const BookMeetingRoom = dynamic(() => import('@/app/(dashboard)/[orgId]/book-room/page'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Design shares with the Tech team (the Tech console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
-// Owner 2026-11-02: IT sees the tickets assigned to it (across all properties); Design can raise a ticket
-const AssignedTicketsTab = dynamic(() => import('@/frontend/components/tickets/AssignedTicketsTab'), { loading: TabLoading });
+// Owner 2026-11-02: IT's Requests tab is the Super Admin console's Requests list (TicketsView, list view only), locked
+// to the tickets assigned to the signed-in user, across all properties; Design can raise a ticket
+const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
 const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 
 export type ConsoleDepartment = 'it' | 'design';
 
-type ConsoleTab = 'tasks' | 'assets' | 'tickets' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
+type ConsoleTab = 'tasks' | 'assets' | 'requests' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
 
 interface NavItem { id: ConsoleTab | 'feedback'; label: string; icon: React.ComponentType<{ className?: string }> }
 
@@ -47,7 +48,7 @@ const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[]; ca
         canRaiseTickets: false,
         work: [
             { id: 'assets', label: 'Assets', icon: Boxes },
-            { id: 'tickets', label: 'Tickets', icon: Ticket },
+            { id: 'requests', label: 'Requests', icon: Ticket },
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'grievance', label: 'Grievances', icon: ShieldCheck },
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
@@ -299,8 +300,12 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                     {errorMsg && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
 
                     {activeTab === 'tasks' && <DepartmentTasksTab />}
-                    {activeTab === 'tickets' && org && user && (
-                        <AssignedTicketsTab organizationId={org.id} userId={user.id} propertyId={propertyFilter} />
+                    {activeTab === 'requests' && org && user && (
+                        <TicketsView
+                            propertyId={propertyFilter}
+                            organizationId={propertyFilter ? undefined : org.id}
+                            lockedAssigneeId={user.id}
+                        />
                     )}
                     {activeTab === 'assets' && org && (
                         <AssetsModule
