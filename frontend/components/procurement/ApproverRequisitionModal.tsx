@@ -9,6 +9,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
 import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 
 interface ApproverRequisitionModalProps {
@@ -271,7 +272,7 @@ export default function ApproverRequisitionModal({
                                         <span className="text-slate-500 dark:text-slate-400 font-semibold block">Attachment:</span>
                                         {vendorQuotation.file_url ? (
                                             <a
-                                                href={vendorQuotation.file_url}
+                                                href={maskStorageUrl(vendorQuotation.file_url) || vendorQuotation.file_url}
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="inline-flex items-center gap-1 text-sky-700 dark:text-sky-300 font-bold hover:underline"
@@ -322,7 +323,7 @@ export default function ApproverRequisitionModal({
                                         <div>
                                             <span className="text-slate-500 dark:text-slate-400 font-semibold block">PO Document:</span>
                                             <a
-                                                href={requisition.po_info.file_url}
+                                                href={maskStorageUrl(requisition.po_info.file_url) || requisition.po_info.file_url}
                                                 target="_blank"
                                                 rel="noreferrer"
                                                 className="text-emerald-700 dark:text-emerald-300 underline font-bold"

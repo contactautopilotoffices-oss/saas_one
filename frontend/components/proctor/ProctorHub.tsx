@@ -7,7 +7,9 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import Loader from '@/frontend/components/ui/Loader';
 import { DEFAULT_SECTIONS } from '@/frontend/lib/proctor/sections';
 import { PROCTOR_TEMPLATES, type ProctorTemplate } from '@/frontend/lib/proctor/templates';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 import TestBuilder, { emptyQuestion, newUid, orderedQuestions, type Draft, type SectionDraft } from '@/frontend/components/proctor/TestBuilder';
+
 
 /**
  * Proctored tests — the HR "Assessments" tab, and the standalone /proctor page.
@@ -843,15 +845,18 @@ function Results({ test, onBack }: { test: TestRow; onBack: () => void }) {
                                                         <div className="mb-3">
                                                             <p className="mb-1 text-xs font-bold uppercase tracking-wider text-slate-500">Frames kept for review</p>
                                                             <div className="flex flex-wrap gap-2">
-                                                                {evidence.map((e, i) => (
-                                                                    <a key={i} href={e.evidence_url || '#'} target="_blank" rel="noreferrer" className="block">
-                                                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                                                        <img src={e.evidence_url || ''} alt={CATEGORY_LABEL[e.detail?.category || ''] || 'Flagged frame'} className="h-24 rounded-lg border border-slate-300 object-cover" />
-                                                                        <span className="block text-[11px] font-bold text-slate-600">
-                                                                            {CATEGORY_LABEL[e.detail?.category || ''] || 'Flagged'} · {new Date(e.created_at).toLocaleTimeString()}
-                                                                        </span>
-                                                                    </a>
-                                                                ))}
+                                                                {evidence.map((e, i) => {
+                                                                    const safeEvidenceUrl = maskStorageUrl(e.evidence_url) || e.evidence_url || '';
+                                                                    return (
+                                                                        <a key={i} href={safeEvidenceUrl || '#'} target="_blank" rel="noreferrer" className="block">
+                                                                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                                            <img src={safeEvidenceUrl} alt={CATEGORY_LABEL[e.detail?.category || ''] || 'Flagged frame'} className="h-24 rounded-lg border border-slate-300 object-cover" />
+                                                                            <span className="block text-[11px] font-bold text-slate-600">
+                                                                                {CATEGORY_LABEL[e.detail?.category || ''] || 'Flagged'} · {new Date(e.created_at).toLocaleTimeString()}
+                                                                            </span>
+                                                                        </a>
+                                                                    );
+                                                                })}
                                                             </div>
                                                         </div>
                                                     )}

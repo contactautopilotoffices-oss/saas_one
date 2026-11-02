@@ -73,9 +73,7 @@ export async function POST(
             return NextResponse.json({ error: uploadError.message }, { status: 500 });
         }
 
-        const { data: publicData } = supabaseAdmin.storage
-            .from('sop-reference-photos')
-            .getPublicUrl(filePath);
+        const proxyUrl = `/api/storage/sop-reference-photos/${filePath}`;
 
         // Fetch existing reference photos
         const { data: existingItem } = await supabaseAdmin
@@ -92,7 +90,7 @@ export async function POST(
         const newPhotoObj = {
             id: `ref_${timestamp}`,
             label: label,
-            url: publicData.publicUrl,
+            url: proxyUrl,
             source: 'uploaded',
             created_at: new Date().toISOString(),
         };
@@ -103,7 +101,7 @@ export async function POST(
         const { error: updateError } = await supabaseAdmin
             .from('sop_checklist_items')
             .update({
-                reference_photo_url: updatedPhotos[0]?.url || publicData.publicUrl,
+                reference_photo_url: updatedPhotos[0]?.url || proxyUrl,
                 reference_photos: updatedPhotos,
                 reference_photo_source: 'uploaded',
             })
@@ -115,7 +113,7 @@ export async function POST(
 
         return NextResponse.json({
             success: true,
-            referencePhotoUrl: publicData.publicUrl,
+            referencePhotoUrl: proxyUrl,
             referencePhotos: updatedPhotos,
         }, { status: 201 });
     } catch (err) {

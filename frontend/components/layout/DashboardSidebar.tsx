@@ -39,9 +39,9 @@ export default function DashboardSidebar({
     const pathname = usePathname();
     const params = useParams();
     const searchParams = useSearchParams();
-    const orgId = params.orgId as string;
-    const currentTab = searchParams?.get('tab');
     const { signOut, user, membership } = useAuth();
+    const orgId = (params.orgId as string) || membership?.org_id || '';
+    const currentTab = searchParams?.get('tab');
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
 
@@ -82,39 +82,40 @@ export default function DashboardSidebar({
 
         if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
             return [
-                { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
-                { label: 'Notes Tracker', href: `/${orgId}/hr-tickets?tab=notes`, icon: FileText, domain: 'tickets' as const },
-                { label: 'Org Reporting Tree', href: `/${orgId}/hr-tickets?tab=tree`, icon: GitMerge, domain: 'tickets' as const },
-                { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
-                { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
-                { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
-                { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
-                { label: 'Task Manager', href: `/${orgId}/hr-tickets?tab=tasks`, icon: ClipboardList, domain: 'tickets' as const },
+                { label: 'Requests & Grievances', href: '/hr-tickets?tab=tickets', icon: Ticket, domain: 'tickets' as const },
+                { label: 'Notes Tracker', href: '/hr-tickets?tab=notes', icon: FileText, domain: 'tickets' as const },
+                { label: 'Org Reporting Tree', href: '/hr-tickets?tab=tree', icon: GitMerge, domain: 'tickets' as const },
+                { label: 'Employee Directory', href: '/hr-tickets?tab=directory', icon: Users, domain: 'tickets' as const },
+                { label: 'Identity Reconciliation', href: '/hr-tickets?tab=reconciliation', icon: UserCheck, domain: 'tickets' as const },
+                { label: 'Admin Config', href: '/hr-tickets?tab=config', icon: Settings, domain: 'tickets' as const },
+                { label: 'Analytics', href: '/hr-tickets?tab=analytics', icon: BarChart3, domain: 'tickets' as const },
+                { label: 'Task Manager', href: '/hr-tickets?tab=tasks', icon: ClipboardList, domain: 'tickets' as const },
                 // Owner 2026-10-29: the HR team's own Meeting Assistant (separate from Tech's and the Super Admin's)
-                { label: 'Meeting Assistant', href: `/${orgId}/hr-tickets?tab=meeting_assistant`, icon: Mic, domain: 'tickets' as const },
-                { label: 'Assessments', href: `/${orgId}/hr-tickets?tab=assessments`, icon: ClipboardCheck, domain: 'tickets' as const },
+                { label: 'Meeting Assistant', href: '/hr-tickets?tab=meeting_assistant', icon: Mic, domain: 'tickets' as const },
+                { label: 'Assessments', href: '/hr-tickets?tab=assessments', icon: ClipboardCheck, domain: 'tickets' as const },
             ];
         }
 
+        const dashPath = '/dashboard';
         const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
-            { label: 'Overview', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
-            { label: 'Tickets', href: `/${orgId}/dashboard?tab=requests`, icon: Ticket, domain: 'tickets' as const },
-            { label: 'Flow Map', href: `/${orgId}/flow-map`, icon: GitMerge, domain: 'tickets' as const },
-            { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
-            { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
-            { label: 'Monthly Requisitions', href: `/${orgId}/procurement-management?tab=monthly-requisitions`, icon: FileUp, domain: 'procurement' as const },
-            { label: 'HR & Grievances', href: `/${orgId}/dashboard?tab=grievance`, icon: ShieldCheck, domain: 'tickets' as const },
-            { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
+            { label: 'Overview', href: dashPath, icon: LayoutDashboard, domain: 'dashboards' as const },
+            { label: 'Tickets', href: `${dashPath}?tab=requests`, icon: Ticket, domain: 'tickets' as const },
+            { label: 'Flow Map', href: orgId ? `/${orgId}/flow-map` : '/flow-map', icon: GitMerge, domain: 'tickets' as const },
+            { label: 'Inventory', href: orgId ? `/${orgId}/procurement-management` : '/procurement-management', icon: Package, domain: 'procurement' as const },
+            { label: 'Procurement', href: orgId ? `/${orgId}/procurement-management` : '/procurement-management', icon: ShoppingCart, domain: 'procurement' as const },
+            { label: 'Monthly Requisitions', href: orgId ? `/${orgId}/procurement-management?tab=monthly-requisitions` : '/procurement-management?tab=monthly-requisitions', icon: FileUp, domain: 'procurement' as const },
+            { label: 'HR & Grievances', href: `${dashPath}?tab=grievance`, icon: ShieldCheck, domain: 'tickets' as const },
+            { label: 'Staff', href: orgId ? `/${orgId}/users` : '/users', icon: Users, domain: 'users' as const },
         ];
 
         if (isAdmin || userRole === 'org_super_admin') {
-            items.push({ label: 'AI Automation', href: `/${orgId}/dashboard?tab=ai_tickets`, icon: Bot, domain: 'dashboards' as const });
-            items.push({ label: 'Roster Management', href: `/${orgId}/dashboard?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
-            items.push({ label: 'Client Support', href: `/${orgId}/dashboard?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });
+            items.push({ label: 'AI Automation', href: `${dashPath}?tab=ai_tickets`, icon: Bot, domain: 'dashboards' as const });
+            items.push({ label: 'Roster Management', href: `${dashPath}?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
+            items.push({ label: 'Client Support', href: `${dashPath}?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });
         }
 
-        items.push({ label: 'Cafeteria', href: `/${orgId}/dashboard?tab=cafeteria`, icon: Coffee, domain: 'dashboards' as const });
-        items.push({ label: 'Water Level', href: `/${orgId}/dashboard?tab=water_logger`, icon: Droplets, domain: 'dashboards' as const });
+        items.push({ label: 'Cafeteria', href: `${dashPath}?tab=cafeteria`, icon: Coffee, domain: 'dashboards' as const });
+        items.push({ label: 'Water Level', href: `${dashPath}?tab=water_logger`, icon: Droplets, domain: 'dashboards' as const });
 
         // Petty Cash belongs to the general FMS for every non-tenant role — the API already
         // grants them create access (backend/lib/pettyCash/access.ts) but there was no way
@@ -146,46 +147,46 @@ export default function DashboardSidebar({
     const isCrmAdmin = userRole && userRole !== 'bd_rep';
     const CRM_NAV_ITEMS = React.useMemo(() => {
         const items = [
-            { label: 'Dashboard', href: `/${orgId}/crm`, icon: LayoutDashboard, domain: 'crm' as const },
-            { label: 'My Leads', href: `/${orgId}/crm/leads`, icon: UsersRound, domain: 'crm' as const },
-            { label: 'Follow Ups', href: `/${orgId}/crm/followups`, icon: BellRing, domain: 'crm' as const },
-            { label: 'Calendar', href: `/${orgId}/crm/calendar`, icon: Calendar, domain: 'crm' as const },
-            { label: 'Tasks', href: `/${orgId}/crm/tasks`, icon: ClipboardList, domain: 'crm' as const },
-            { label: 'Target', href: `/${orgId}/crm/target`, icon: Target, domain: 'crm' as const },
-            { label: 'AI Copilot', href: `/${orgId}/crm/ai`, icon: Sparkles, domain: 'crm' as const },
-            { label: 'Performance', href: `/${orgId}/crm/performance`, icon: TrendingUp, domain: 'crm' as const },
+            { label: 'Dashboard', href: '/crm', icon: LayoutDashboard, domain: 'crm' as const },
+            { label: 'My Leads', href: '/crm/leads', icon: UsersRound, domain: 'crm' as const },
+            { label: 'Follow Ups', href: '/crm/followups', icon: BellRing, domain: 'crm' as const },
+            { label: 'Calendar', href: '/crm/calendar', icon: Calendar, domain: 'crm' as const },
+            { label: 'Tasks', href: '/crm/tasks', icon: ClipboardList, domain: 'crm' as const },
+            { label: 'Target', href: '/crm/target', icon: Target, domain: 'crm' as const },
+            { label: 'AI Copilot', href: '/crm/ai', icon: Sparkles, domain: 'crm' as const },
+            { label: 'Performance', href: '/crm/performance', icon: TrendingUp, domain: 'crm' as const },
         ];
         if (isCrmAdmin) {
-            items.push({ label: 'Settings', href: `/${orgId}/crm/settings`, icon: Settings, domain: 'crm' as const });
+            items.push({ label: 'Settings', href: '/crm/settings', icon: Settings, domain: 'crm' as const });
         }
-        items.push({ label: 'Help & Support', href: `/${orgId}/crm/help`, icon: HelpCircle, domain: 'crm' as const });
+        items.push({ label: 'Help & Support', href: '/crm/help', icon: HelpCircle, domain: 'crm' as const });
         return items;
-    }, [orgId, isCrmAdmin]);
+    }, [isCrmAdmin]);
 
     // BD Super Admin (CEO) portal — grouped OVERVIEW / TOOLS sections.
     const BD_SUPER_NAV_SECTIONS = React.useMemo(() => [
         {
             title: 'Overview',
             items: [
-                { label: 'CEO Dashboard', href: `/${orgId}/crm`, icon: LayoutDashboard },
-                { label: 'Campaigns', href: `/${orgId}/crm/campaigns`, icon: Megaphone },
-                { label: 'Leads', href: `/${orgId}/crm/leads`, icon: UsersRound },
-                { label: 'ABM Tracker', href: `/${orgId}/crm/abm`, icon: Target },
-                { label: 'Team Performance', href: `/${orgId}/crm/performance`, icon: TrendingUp },
-                { label: 'Reports', href: `/${orgId}/crm/reports`, icon: BarChart3 },
+                { label: 'CEO Dashboard', href: '/crm', icon: LayoutDashboard },
+                { label: 'Campaigns', href: '/crm/campaigns', icon: Megaphone },
+                { label: 'Leads', href: '/crm/leads', icon: UsersRound },
+                { label: 'ABM Tracker', href: '/crm/abm', icon: Target },
+                { label: 'Team Performance', href: '/crm/performance', icon: TrendingUp },
+                { label: 'Reports', href: '/crm/reports', icon: BarChart3 },
             ],
         },
         {
             title: 'Tools',
             items: [
-                { label: 'AI Agent', href: `/${orgId}/crm/ai`, icon: Bot },
-                { label: 'Calendar', href: `/${orgId}/crm/calendar`, icon: Calendar },
-                { label: 'Tasks', href: `/${orgId}/crm/tasks`, icon: ClipboardList },
-                { label: 'Signals', href: `/${orgId}/crm/signals`, icon: Radio },
-                { label: 'Playbooks', href: `/${orgId}/crm/playbooks`, icon: BookOpen },
+                { label: 'AI Agent', href: '/crm/ai', icon: Bot },
+                { label: 'Calendar', href: '/crm/calendar', icon: Calendar },
+                { label: 'Tasks', href: '/crm/tasks', icon: ClipboardList },
+                { label: 'Signals', href: '/crm/signals', icon: Radio },
+                { label: 'Playbooks', href: '/crm/playbooks', icon: BookOpen },
             ],
         },
-    ], [orgId]);
+    ], []);
 
     const getUserInitials = (name: string) => {
         return name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U';

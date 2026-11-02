@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { AreaAuditScore } from './useCADReportData';
 import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface CADAreaInspectorProps {
     area: AreaAuditScore | null;
@@ -83,10 +84,10 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
     const proofs = displayArea.allProofs || [];
 
     const currentBenchmark = benchmarks[activeRefIndex] || benchmarks[0];
-    const refPhoto = currentBenchmark?.url || displayArea.benchmarkPhoto;
+    const refPhoto = maskStorageUrl(currentBenchmark?.url || displayArea.benchmarkPhoto);
 
     const currentProof = proofs[activeProofIndex] || proofs[0];
-    const proofPhoto = currentProof?.url || displayArea.previewPhoto;
+    const proofPhoto = maskStorageUrl(currentProof?.url || displayArea.previewPhoto);
 
     const totalPhotos = benchmarks.length + proofs.length;
 
@@ -846,7 +847,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
             <ImagePreviewModal
                 isOpen={Boolean(previewImageUrl)}
                 onClose={() => setPreviewImageUrl(null)}
-                imageUrl={previewImageUrl || ''}
+                imageUrl={maskStorageUrl(previewImageUrl) || ''}
                 title={previewImageTitle}
             />
         </div>

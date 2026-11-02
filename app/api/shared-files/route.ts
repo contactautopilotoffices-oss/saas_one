@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
             case 'complete':
                 return NextResponse.json({ success: true, ...(await SharedFilesService.complete(g.organizationId, body.id)) });
             case 'download_url':
-                return NextResponse.json({ success: true, ...(await SharedFilesService.downloadUrl(g.organizationId, body.id)) });
+                return NextResponse.json({ success: true, ...(await SharedFilesService.downloadUrl(g.organizationId, body.id, g.team)) });
             case 'delete':
                 return NextResponse.json({ success: true, ...(await SharedFilesService.remove(g.organizationId, body.id)) });
             default:

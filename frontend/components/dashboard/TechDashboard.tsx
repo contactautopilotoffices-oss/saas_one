@@ -98,12 +98,12 @@ interface Property { id: string; name: string; code: string; image_url?: string 
 interface Organization { id: string; name: string }
 
 export default function TechDashboard() {
-    const { user, signOut } = useAuth();
+    const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
     const supabase = useMemo(() => createClient(), []);
-    const orgId = decodeURIComponent((params?.orgId as string) || '').trim().replace(/\s+/g, '');
+    const orgId = decodeURIComponent((params?.orgId as string) || membership?.org_id || '').trim().replace(/\s+/g, '');
 
     const tabParam = searchParams.get('tab');
     const activeTab: TechTab = isTechTab(tabParam) ? tabParam : DEFAULT_TAB;
@@ -123,7 +123,9 @@ export default function TechDashboard() {
         if (!orgId) return;
         let cancelled = false;
         (async () => {
-            const { data, error } = await supabase.from('organizations').select('id, name').eq('id', orgId).is('deleted_at', null).maybeSingle();
+            const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId);
+            const query = supabase.from('organizations').select('id, name').is('deleted_at', null);
+            const { data, error } = await (isUUID ? query.eq('id', orgId) : query.eq('code', orgId)).maybeSingle();
             if (cancelled) return;
             if (error || !data) { setErrorMsg('Could not load your organisation.'); return; }
             setOrg(data);

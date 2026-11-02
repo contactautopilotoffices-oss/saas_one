@@ -172,6 +172,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 })).filter((p: any) => p.id) || []
             };
 
+            // Sync active org ID cookie for middleware rewrite support
+            if (membershipData.org_id && typeof document !== 'undefined') {
+                document.cookie = `saas_org_id=${membershipData.org_id}; path=/; max-age=2592000; SameSite=Lax`;
+            }
+
             // Cache the result
             membershipCache.set(userId, { data: membershipData, timestamp: Date.now() });
             setMembership(membershipData);

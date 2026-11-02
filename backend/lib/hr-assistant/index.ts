@@ -21,6 +21,7 @@ export type { HrPolicyVersion, VersionStatus } from "./ingest";
 export {
   deletePolicy,
   deleteVersion,
+  downloadVersionFile,
   getDownloadUrl,
   listPolicies,
   PolicyActionError,

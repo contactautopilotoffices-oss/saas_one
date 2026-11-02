@@ -105,12 +105,12 @@ export async function POST(
             return NextResponse.json({ error: 'Failed to upload photo' }, { status: 500 });
         }
 
-        const { data: { publicUrl } } = supabase.storage.from(BUCKET_NAME).getPublicUrl(fileName);
+        const proxyUrl = `/api/storage/${BUCKET_NAME}/${fileName}`;
 
         const updateField = photoType === 'before' ? 'photo_before_url' : 'photo_after_url';
         const { error: updateError } = await supabase
             .from('tickets')
-            .update({ [updateField]: publicUrl, updated_at: new Date().toISOString() })
+            .update({ [updateField]: proxyUrl, updated_at: new Date().toISOString() })
             .eq('id', ticketId);
 
         if (updateError) {
@@ -122,11 +122,11 @@ export async function POST(
             ticket_id: ticketId,
             user_id: user.id,
             action: `photo_${photoType}_uploaded`,
-            new_value: publicUrl,
+            new_value: proxyUrl,
             old_value: takenAt || new Date().toISOString(),
         });
 
-        return NextResponse.json({ success: true, url: publicUrl, type: photoType });
+        return NextResponse.json({ success: true, url: proxyUrl, type: photoType });
     } catch (error) {
         console.error('Photo upload error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -182,7 +182,7 @@ export async function PATCH(
                         .upload(poPath, buffer, { upsert: true, contentType: poFile.type || 'application/octet-stream' });
 
                     if (!poUploadErr && uploadData) {
-                        poFileUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+                        poFileUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
                         poFileName = poFile.name;
                     }
                 }
@@ -225,7 +225,7 @@ export async function PATCH(
                         .upload(quotePath, buffer, { upsert: true, contentType: quoteFile.type || 'application/octet-stream' });
 
                     if (!quoteUploadErr && uploadData) {
-                        fileUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+                        fileUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
                         fileName = quoteFile.name;
                     }
                 }

@@ -54,7 +54,7 @@ interface BDQuickStatsData {
 function AccountsWorkspaceRedirect({ orgId }: { orgId?: string | null }) {
     const router = useRouter();
     useEffect(() => {
-        if (orgId) router.replace(`/${orgId}/accounts`);
+        if (orgId) router.replace('/accounts');
     }, [orgId, router]);
 
     return (
@@ -180,7 +180,7 @@ const UnifiedDashboard = () => {
         if (dashboardContent === undefined && !isLoading && (role === 'bd_admin' || role === 'bd_super_admin' || role === 'bd_rep')) {
             const orgId = dashboardOrgId || session?.org_id;
             if (orgId) {
-                router.replace(`/${orgId}/crm`);
+                router.replace('/crm');
             }
         }
     }, [isLoading, role, dashboardOrgId, session?.org_id, router, dashboardContent]);

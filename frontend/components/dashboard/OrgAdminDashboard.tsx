@@ -42,6 +42,7 @@ const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicket
 const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
 const AdminSPOCDashboard = dynamic(() => import('../tickets/AdminSPOCDashboard'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const DieselAnalyticsDashboard = dynamic(() => import('../diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
 const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
 const ElectricityAnalyticsDashboard = dynamic(() => import('../electricity/ElectricityAnalyticsDashboard'), { loading: TabLoading });
@@ -174,10 +175,10 @@ const OrgAdminDashboard = () => {
     usePreloadTabs(TAB_PRELOADS);
     const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
-    const params = useParams();
+    const routeParams = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const orgSlugOrId = params?.orgId as string;
+    const orgSlugOrId = (routeParams?.orgId as string) || membership?.org_id || '';
 
     const isOpsTabScope = ['ops_super_admin', 'ops super admin'].includes((membership?.org_role || '').toLowerCase());
     const dashboardTab = resolveOrgDashboardTab(searchParams.get('tab'), isOpsTabScope);
@@ -429,21 +430,29 @@ const OrgAdminDashboard = () => {
 
         setErrorMsg('');
 
+        if (!orgSlugOrId) {
+            setIsLoading(false);
+            return;
+        }
+
         // 2. Decode URL param
         const decoded = decodeURIComponent(orgSlugOrId);
 
         // 2. Sanitize ID (Remove spaces/newlines that might have crept in)
-        // This fixes the issue if the URL somehow looks like "uuid part 1 - uuid part 2"
         const cleanId = decoded.trim().replace(/\s+/g, '');
+        if (!cleanId) {
+            setIsLoading(false);
+            return;
+        }
 
-
-        // 3. Fetch strict by ID
-        const { data, error } = await supabase
+        // 3. Fetch by ID (if UUID) or by Code (if slug)
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+        const query = supabase
             .from('organizations')
             .select('*')
-            .eq('id', cleanId)
-            .is('deleted_at', null)
-            .maybeSingle();
+            .is('deleted_at', null);
+
+        const { data, error } = await (isUUID ? query.eq('id', cleanId) : query.eq('code', cleanId)).maybeSingle();
 
         if (error) {
             console.error('❌ [Dashboard] Supabase Error:', error);
@@ -823,7 +832,7 @@ const OrgAdminDashboard = () => {
             params.set('view', requestsView);
         }
         
-        const path = dashboardContent !== undefined ? `/${orgSlugOrId}/dashboard` : window.location.pathname;
+        const path = dashboardContent !== undefined ? (typeof routeParams?.orgId === 'string' ? `/${orgSlugOrId}/dashboard` : '/dashboard') : window.location.pathname;
         if (dashboardContent !== undefined) router.push(`${path}?${params.toString()}`, { scroll: false });
         else pushDashboardNavigation(`${path}?${params.toString()}${window.location.hash}`);
     };
@@ -1887,6 +1896,11 @@ const OrgAdminDashboard = () => {
                         )}
 
                         {activeTab === 'settings' && <SettingsView />}
+                        {activeTab === 'petty-cash' && (
+                            <div className="w-full">
+                                <PettyCashDashboard orgId={org?.id || orgSlugOrId} />
+                            </div>
+                        )}
                         {activeTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
                                 <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">

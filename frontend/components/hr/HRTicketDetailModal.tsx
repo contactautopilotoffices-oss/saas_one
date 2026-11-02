@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Send, Lock, Clock, AlertTriangle, ShieldCheck, ShieldAlert, ArrowUpRight, User, UserCheck, CheckCircle, CheckCheck, MessageSquare, Paperclip, ExternalLink } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 import SLALiveTimer from '@/frontend/components/hr/SLALiveTimer';
 import { formatDateIN, formatDateTimeIN, formatDateTimeShortIN } from '@/frontend/lib/dateFormat';
 import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
@@ -1023,20 +1024,21 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                     </h4>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                         {ticket.attachment_urls.map((url: string, idx: number) => {
-                                            const isImage = /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(url);
-                                            const fileName = url.split('/').pop()?.split('_').slice(2).join('_') || url.split('/').pop() || `Attachment ${idx + 1}`;
+                                            const safeUrl = maskStorageUrl(url) || url;
+                                            const isImage = /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(safeUrl);
+                                            const fileName = safeUrl.split('/').pop()?.split('_').slice(2).join('_') || safeUrl.split('/').pop() || `Attachment ${idx + 1}`;
 
                                             return (
                                                 <a
                                                     key={idx}
-                                                    href={url}
+                                                    href={safeUrl}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
                                                     className="flex items-center gap-2.5 p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-all group shadow-2xs"
                                                 >
                                                     {isImage ? (
                                                         <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-200 shrink-0 border border-slate-300 dark:border-slate-700">
-                                                            <img src={url} alt={fileName} className="w-full h-full object-cover" />
+                                                            <img src={safeUrl} alt={fileName} className="w-full h-full object-cover" />
                                                         </div>
                                                     ) : (
                                                         <div className="w-9 h-9 rounded-lg bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 flex items-center justify-center shrink-0">
@@ -1234,27 +1236,28 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                                                                 {Array.isArray(comment.attachment_urls) && comment.attachment_urls.length > 0 && (
                                                                     <div className="mt-2 space-y-1 pt-1.5 border-t border-black/5 dark:border-white/5 clear-both">
                                                                         {comment.attachment_urls.map((attUrl: string, attIdx: number) => {
-                                                                            const isImg = /\.(jpg|jpeg|png|webp|gif)$/i.test(attUrl);
+                                                                            const safeAttUrl = maskStorageUrl(attUrl) || attUrl;
+                                                                            const isImg = /\.(jpg|jpeg|png|webp|gif)$/i.test(safeAttUrl);
                                                                             return isImg ? (
                                                                                 <a
                                                                                     key={attIdx}
-                                                                                    href={attUrl}
+                                                                                    href={safeAttUrl}
                                                                                     target="_blank"
                                                                                     rel="noreferrer"
                                                                                     className="block rounded-lg overflow-hidden border border-black/10 dark:border-white/10 max-w-[220px] hover:opacity-90 transition-opacity"
                                                                                 >
-                                                                                    <img src={attUrl} alt="attachment" referrerPolicy="no-referrer" className="w-full h-auto max-h-[160px] object-cover" />
+                                                                                    <img src={safeAttUrl} alt="attachment" referrerPolicy="no-referrer" className="w-full h-auto max-h-[160px] object-cover" />
                                                                                 </a>
                                                                             ) : (
                                                                                 <a
                                                                                     key={attIdx}
-                                                                                    href={attUrl}
+                                                                                    href={safeAttUrl}
                                                                                     target="_blank"
                                                                                     rel="noreferrer"
                                                                                     className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-black/5 dark:bg-white/5 rounded-lg text-[11px] font-medium hover:underline"
                                                                                 >
                                                                                     <Paperclip className="w-3 h-3 text-[#587e85]" />
-                                                                                    <span className="truncate max-w-[160px]">{attUrl.split('/').pop()}</span>
+                                                                                    <span className="truncate max-w-[160px]">{safeAttUrl.split('/').pop()}</span>
                                                                                 </a>
                                                                             );
                                                                         })}

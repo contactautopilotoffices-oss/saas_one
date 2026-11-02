@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Download, Maximize2 } from 'lucide-react';
+import { X, Download, Maximize2, ExternalLink } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface ImagePreviewModalProps {
     isOpen: boolean;
@@ -14,9 +15,11 @@ interface ImagePreviewModalProps {
 const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ isOpen, onClose, imageUrl, title }) => {
     if (!imageUrl) return null;
 
+    const safeUrl = maskStorageUrl(imageUrl) || imageUrl;
+
     const handleDownload = () => {
         const link = document.createElement('a');
-        link.href = imageUrl;
+        link.href = safeUrl;
         link.download = `checklist-audit-proof-${Date.now()}.webp`;
         document.body.appendChild(link);
         link.click();
@@ -54,6 +57,15 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ isOpen, onClose, 
                                 </p>
                             </div>
                             <div className="flex items-center gap-2">
+                                <a
+                                    href={safeUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 md:p-3 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-xl transition-all"
+                                    title="Open image in new tab"
+                                >
+                                    <ExternalLink size={20} />
+                                </a>
                                 <button
                                     onClick={handleDownload}
                                     className="p-2 md:p-3 text-slate-400 hover:text-primary hover:bg-primary/5 rounded-xl transition-all"
@@ -74,7 +86,7 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ isOpen, onClose, 
                         <div className="flex-1 overflow-auto bg-slate-50 flex items-center justify-center p-2 sm:p-4 min-h-0">
                             <motion.img
                                 layoutId="preview-image"
-                                src={imageUrl}
+                                src={safeUrl}
                                 alt="Preview"
                                 className="max-w-full max-h-[60vh] sm:max-h-[70vh] md:max-h-[75vh] object-contain rounded-lg shadow-lg border-2 sm:border-4 border-white"
                             />

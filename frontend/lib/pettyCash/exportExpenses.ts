@@ -22,6 +22,7 @@ export function generateCsvContent(expenses: Expense[]): string {
         'Payment Reference',
         'Purpose / Description',
         'Bills Attached',
+        'Receipt Links',
         'No Bill Reason',
         'Review Status',
         'Review Remarks'
@@ -32,6 +33,7 @@ export function generateCsvContent(expenses: Expense[]): string {
         const billsAttached = docNames.length
             ? `${docNames.length} bill(s) (${docNames.join('; ')})`
             : (exp.no_bill_reason ? 'No bill required' : 'None');
+        const receiptLinks = exp.documents?.map(d => `/api/petty-cash/documents/${d.id}/download`).join('; ') || '';
 
         return [
             exp.expense_date ? exp.expense_date.slice(0, 10) : '',
@@ -45,6 +47,7 @@ export function generateCsvContent(expenses: Expense[]): string {
             exp.payment_ref || '',
             exp.description || '',
             billsAttached,
+            receiptLinks,
             exp.no_bill_reason || '',
             exp.review_status || 'pending',
             exp.review_remarks || ''
@@ -82,10 +85,9 @@ export function generateExcelHtml(expenses: Expense[]): string {
         const bg = idx % 2 === 0 ? '#ffffff' : '#f8fafc';
         const modeBg = exp.spend_mode === 'Client' ? '#fef3c7' : '#e0e7ff';
         const modeColor = exp.spend_mode === 'Client' ? '#92400e' : '#3730a3';
-        const docNames = exp.documents?.map(d => d.file_name).filter(Boolean) || [];
-        const billsText = docNames.length
-            ? `${docNames.length} bill(s) (${docNames.join('; ')})`
-            : (exp.no_bill_reason ? 'No bill required' : 'None');
+        const billsHtml = exp.documents?.length
+            ? exp.documents.map(d => `<a href="/api/petty-cash/documents/${d.id}/download" target="_blank" style="color: #2563eb; text-decoration: underline; font-weight: 500;">${d.file_name}</a>`).join('<br/>')
+            : (exp.no_bill_reason ? '<span style="color: #64748b;">No bill required</span>' : '<span style="color: #94a3b8;">None</span>');
 
         return `<tr style="background-color: ${bg}; font-family: sans-serif; font-size: 12px;">
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; white-space: nowrap;">${exp.expense_date ? exp.expense_date.slice(0, 10) : ''}</td>
@@ -102,7 +104,7 @@ export function generateExcelHtml(expenses: Expense[]): string {
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.payment_mode || ''}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-family: monospace; font-size: 11px;">${exp.payment_ref || ''}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.description || ''}</td>
-            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-align: center;">${billsText}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${billsHtml}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.no_bill_reason || '—'}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-transform: capitalize;">${(exp.review_status || 'pending').replace('_', ' ')}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.review_remarks || ''}</td>

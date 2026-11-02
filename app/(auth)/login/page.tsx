@@ -358,18 +358,22 @@ function AuthContent() {
                         return ai - bi;
                     })[0];
 
+                    if (best?.organization_id && typeof document !== 'undefined') {
+                        document.cookie = `saas_org_id=${best.organization_id}; path=/; max-age=2592000; SameSite=Lax`;
+                    }
+
                     if (best.role === 'procurement') {
                         router.replace('/procurement');
                     } else if (best.role === 'hr' || best.role === 'hr_head') {
-                        router.replace(`/${best.organization_id}/hr-tickets`);
+                        router.replace('/hr-tickets');
                     } else if (best.role === 'bd_admin' || best.role === 'bd_super_admin' || best.role === 'bd_rep') {
                         // CRM users route to CRM module
-                        router.replace(`/${best.organization_id}/crm`);
+                        router.replace('/crm');
                     } else {
                         router.replace(
                             redirectPath && redirectPath !== '/'
                                 ? redirectPath
-                                : `/org/${best.organization_id}/dashboard`
+                                : '/dashboard'
                         );
                     }
                     return;

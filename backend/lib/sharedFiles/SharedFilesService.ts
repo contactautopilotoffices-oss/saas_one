@@ -182,16 +182,29 @@ export class SharedFilesService {
         return { ok: true };
     }
 
-    /** A short link that downloads the file under its own name. */
-    static async downloadUrl(organizationId: string, id: unknown) {
+    /** Internal streaming download URL that avoids exposing Supabase storage URLs. */
+    static async downloadUrl(organizationId: string, id: unknown, team?: string) {
         const r = await this.item(organizationId, id);
         if (r.kind !== 'file' || r.status !== 'ready' || !r.storage_path) throw new SharedFilesError(400, 'Only files can be downloaded.');
-        const { data, error } = await supabaseAdmin.storage.from(SHARED_FILES_BUCKET).createSignedUrl(r.storage_path, LINK_SECONDS, { download: r.name });
-        if (error || !data) {
-            console.error('[SharedFiles] download link failed:', error?.message);
-            throw new SharedFilesError(500, 'Could not prepare the download.');
+        const teamParam = team ? `&team=${encodeURIComponent(team)}` : (r.team ? `&team=${encodeURIComponent(r.team)}` : '');
+        return { url: `/api/shared-files/${r.id}/download?organization_id=${encodeURIComponent(organizationId)}${teamParam}` };
+    }
+
+    /** Download file directly as a buffer for authenticated streaming. */
+    static async downloadFile(organizationId: string, id: unknown): Promise<{ buffer: Buffer; name: string; contentType: string }> {
+        const r = await this.item(organizationId, id);
+        if (r.kind !== 'file' || r.status !== 'ready' || !r.storage_path) throw new SharedFilesError(400, 'Only files can be downloaded.');
+        const { data: fileBlob, error } = await supabaseAdmin.storage.from(SHARED_FILES_BUCKET).download(r.storage_path);
+        if (error || !fileBlob) {
+            console.error('[SharedFiles] download failed:', error?.message);
+            throw new SharedFilesError(500, 'Could not retrieve file.');
         }
-        return { url: data.signedUrl };
+        const buffer = Buffer.from(await fileBlob.arrayBuffer());
+        return {
+            buffer,
+            name: r.name,
+            contentType: r.mime_type || fileBlob.type || 'application/octet-stream',
+        };
     }
 
     /** Deletes a file, or a folder and everything inside it. */

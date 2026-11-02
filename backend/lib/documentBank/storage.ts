@@ -35,19 +35,7 @@ export async function ensureDocumentBankBucket(): Promise<void> {
  */
 export async function signDocumentBankFile(path: string | null | undefined): Promise<string | null> {
     if (!path) return null;
-    try {
-        const { data, error } = await supabaseAdmin.storage
-            .from(DOCUMENT_BANK_BUCKET)
-            .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
-        if (error) {
-            console.error('[document bank] sign failed:', error.message);
-            return null;
-        }
-        return data?.signedUrl ?? null;
-    } catch (e) {
-        console.error('[document bank] sign threw:', e);
-        return null;
-    }
+    return `/api/document-bank/download?path=${encodeURIComponent(path)}`;
 }
 
 export async function signDocumentBankFiles(paths: (string | null | undefined)[]): Promise<(string | null)[]> {
