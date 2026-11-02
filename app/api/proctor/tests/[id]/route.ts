@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import {
     resolveProctorAccess, isProctorAccessError, isPastDeadline, resolveSections,
-    EVIDENCE_BUCKET, type ProctorQuestion, type ProctorSection,
+    type ProctorQuestion, type ProctorSection,
 } from '@/backend/lib/proctor/access';
 import { loadStanding, standingFrom, type AttemptRow, type GrantRow } from '@/backend/lib/proctor/chances';
 import { parseTestBody } from '@/backend/lib/proctor/testBody';
@@ -10,9 +10,6 @@ import { removeEvidence } from '@/backend/lib/proctor/cleanup';
 
 const TEST_COLUMNS =
     'id, organization_id, title, instructions, duration_minutes, ai_monitoring, is_active, max_attempts, look_away_strikes, shuffle, public_token, sections, questions, created_at';
-
-/** Evidence frames are private; reviewers get a link that expires in an hour. */
-const SIGNED_URL_TTL_SECONDS = 3600;
 
 /**
  * GET /api/proctor/tests/[id]
@@ -74,15 +71,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             return { allowed: standing.allowed, used: standing.used, left: standing.left, completed: standing.completed };
         };
 
-        // One signed URL per saved frame, so the reviewer can open the evidence.
-        const paths = (events || [])
-            .map((e) => (e.detail as { evidence_path?: string } | null)?.evidence_path)
-            .filter(Boolean) as string[];
-        const signed = new Map<string, string>();
-        if (paths.length) {
-            const { data: urls } = await supabaseAdmin.storage.from(EVIDENCE_BUCKET).createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
-            (urls || []).forEach((u) => { if (u.path && u.signedUrl) signed.set(u.path, u.signedUrl); });
-        }
+        // Saved frames are served by our own authors-only route, not a signed Supabase
+        // link: the shared /api/storage proxy only reads public buckets, and this one is private.
+        const evidenceUrl = (attemptId: string, path: string | undefined) =>
+            path && path.startsWith(`${attemptId}/`)
+                ? `/api/proctor/attempts/${attemptId}/evidence/${encodeURIComponent(path.slice(attemptId.length + 1))}`
+                : null;
 
         return NextResponse.json({
             test: { ...test, questions, sections },
@@ -101,7 +95,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
                         .filter((e) => e.attempt_id === a.id && e.kind !== 'ai_ok')
                         .map((e) => {
                             const path = (e.detail as { evidence_path?: string } | null)?.evidence_path;
-                            return { ...e, evidence_url: path ? signed.get(path) || null : null };
+                            return { ...e, evidence_url: evidenceUrl(a.id, path) };
                         }),
                 };
             }),
