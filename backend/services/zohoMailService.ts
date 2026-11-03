@@ -27,6 +27,20 @@ export interface ZohoMailMessage {
     rfcMessageId: string | null;
 }
 
+/** A listed message plus the fields the mail archive needs and the digest does not. */
+export interface ZohoMailListItem extends ZohoMailMessage {
+    /**
+     * Zoho's sentDateInGMT. Derived from the email's Date header, so the same in
+     * every mailbox holding a copy — but shifted +7h (measured 2026-10-06), so
+     * usable as a fingerprint and NOT as a time.
+     */
+    sentHeaderMs: number | null;
+    sizeBytes: number | null;
+}
+
+/** Where a token comes from: an env grant prefix, or a mailbox connected through the console. */
+export type MailSource = { prefix: string } | { grant: { refreshToken: string; dc: string } };
+
 export interface ZohoMailAttachment {
     attachmentId: string;
     attachmentName: string;
@@ -302,14 +316,89 @@ export class ZohoMailService {
         return this.getMessageContentRaw(messageId, folderId, t.token, t.apiDomain, address);
     }
 
+    /**
+     * ONE page of the mailbox, newest first, at an exact position. For the mail
+     * archive's history crawler, which walks a whole mailbox a page per call and
+     * keeps its own bookmark between runs; listMessages() pages internally and
+     * stops at a date, so it cannot resume.
+     *
+     * Also keeps what listMessages() drops: Zoho's sent-time field — identical in
+     * every mailbox the email landed in, unlike receivedTime — and the size. `fetched` counts every row Zoho returned,
+     * undated ones included, so a bookmark advances by the true page length.
+     */
+    static async listPage(
+        source: MailSource,
+        opts: { start: number; limit?: number; address?: string },
+    ): Promise<{ items: ZohoMailListItem[]; fetched: number }> {
+        const { token, apiDomain } = await this.tokenFor(source);
+        const address = opts.address ?? ('prefix' in source ? mailboxAddress(source.prefix) : undefined);
+        const acct = await this.accountIdFor(token, apiDomain, address);
+        const params = new URLSearchParams({
+            start: String(Math.max(1, opts.start)),     // 1-based
+            limit: String(Math.min(PAGE_SIZE, opts.limit ?? PAGE_SIZE)),
+            includeto: 'true',
+        });
+        const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/view?${params}`, {
+            headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !Array.isArray(data?.data)) {
+            // Past the last email Zoho answers 404 / "no records": the end, not a failure.
+            if (res.status === 404 || data?.status?.code === 404) return { items: [], fetched: 0 };
+            throw new Error(`HTTP ${res.status}: ${data?.data?.errorCode || data?.status?.description || 'Failed to list messages from Zoho Mail'}`);
+        }
+        const items: ZohoMailListItem[] = [];
+        for (const m of data.data as Array<Record<string, unknown>>) {
+            const msg = this.toMessage(m);
+            if (!msg) continue;
+            const sent = Number(m?.sentDateInGMT);
+            const size = Number(m?.size);
+            items.push({
+                ...msg,
+                sentHeaderMs: Number.isFinite(sent) && sent > 0 ? sent : null,
+                sizeBytes: Number.isFinite(size) && size >= 0 ? size : null,
+            });
+        }
+        return { items, fetched: data.data.length };
+    }
+
+    /** The mailbox's folders, so the archive can leave out Spam, Trash and Drafts. */
+    static async listFolders(source: MailSource, address?: string): Promise<Array<{ folderId: string; folderName: string }>> {
+        const { token, apiDomain } = await this.tokenFor(source);
+        const acct = await this.accountIdFor(token, apiDomain, address ?? ('prefix' in source ? mailboxAddress(source.prefix) : undefined));
+        const res = await fetch(`${apiDomain}/api/accounts/${acct}/folders`, {
+            headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !Array.isArray(data?.data)) {
+            throw new Error(`HTTP ${res.status}: ${data?.data?.errorCode || data?.status?.description || 'Failed to list folders'}`);
+        }
+        return (data.data as Array<{ folderId?: string; folderName?: string }>)
+            .filter((f) => f.folderId)
+            .map((f) => ({ folderId: String(f.folderId), folderName: String(f.folderName ?? '') }));
+    }
+
+    /** Full content through either kind of grant. */
+    static async getMessageContentFrom(
+        source: MailSource, messageId: string, folderId: string | null | undefined, address?: string,
+    ): Promise<{ subject: string; content: string; fromAddress: string; rfcMessageId: string | null }> {
+        const { token, apiDomain } = await this.tokenFor(source);
+        return this.getMessageContentRaw(messageId, folderId, token, apiDomain,
+            address ?? ('prefix' in source ? mailboxAddress(source.prefix) : undefined));
+    }
+
+    private static tokenFor(source: MailSource): Promise<{ token: string; apiDomain: string }> {
+        return 'grant' in source ? this.tokenFromGrant(source.grant) : this.getAccessToken(source.prefix);
+    }
+
     /** Mint (and cache) an access token for a caller-supplied refresh token. */
-    private static async tokenFromGrant(grant: { refreshToken: string; dc: string }): Promise<{ token: string; apiDomain: string }> {
+    private static async tokenFromGrant(grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string }): Promise<{ token: string; apiDomain: string }> {
         const cacheKey = `grant:${grant.refreshToken.slice(-12)}`;
         const cached = tokenCache.get(cacheKey);
         if (cached && cached.expiresAt > Date.now()) return { token: cached.token, apiDomain: cached.apiDomain };
 
-        const clientId = process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
-        const clientSecret = process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
+        const clientId = grant.clientId ?? process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
+        const clientSecret = grant.clientSecret ?? process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
         if (!clientId || !clientSecret) throw new Error('No Zoho mail application configured (ZOHO_MAIL_APP_CLIENT_ID / _SECRET).');
 
         const dc = (grant.dc || 'com').trim();
@@ -326,6 +415,23 @@ export class ZohoMailService {
         const ttlMs = Math.max(0, (Number(data.expires_in) || 3600) * 1000 - TOKEN_SAFETY_MS);
         tokenCache.set(cacheKey, { token: data.access_token, apiDomain, expiresAt: Date.now() + ttlMs });
         return { token: data.access_token, apiDomain };
+    }
+
+    /**
+     * GET one Zoho Mail API path (e.g. `/api/tasks/me?from=0&limit=200`) with a caller-supplied grant.
+     * Read-only by construction; used by the Task Manager's Zoho task import.
+     */
+    static async getJsonWithGrant(grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string }, pathAndQuery: string): Promise<unknown> {
+        const t = await this.tokenFromGrant(grant);
+        const res = await fetch(`${t.apiDomain}${pathAndQuery}`, {
+            headers: { 'Authorization': `Zoho-oauthtoken ${t.token}`, Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+            const why = (data as { data?: { errorCode?: string }; status?: { description?: string } } | null);
+            throw new Error(`Zoho ${res.status}: ${why?.data?.errorCode ?? why?.status?.description ?? 'request failed'}`);
+        }
+        return data;
     }
 
     /** Addresses reachable on a caller-supplied grant — a console connection. */

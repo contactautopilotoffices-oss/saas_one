@@ -87,8 +87,10 @@ const SLA_THROTTLE_MS = 5 * 60 * 1000; // Check at most once every 5 minutes in 
 
 interface OrgConfigCacheEntry {
     flowAssigneesConfig: any;
+    flowLevelsConfig: any;
     manualEscalationConfig: any;
     profileNameMap: Map<string, string>;
+    profileDetailMap: Map<string, any>;
     timestamp: number;
 }
 const orgConfigCache = new Map<string, OrgConfigCacheEntry>();
@@ -344,14 +346,18 @@ export async function GET(request: Request) {
         // Load organization escalation config with server-side in-memory caching (60s TTL)
         const targetOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
         let flowAssigneesConfig: any = {};
+        let flowLevelsConfig: any = {};
         let manualEscalationConfig: any = {};
         let profileNameMap = new Map<string, string>();
+        let profileDetailMap = new Map<string, any>();
 
         const cachedConfig = orgConfigCache.get(targetOrgId);
         if (cachedConfig && (Date.now() - cachedConfig.timestamp < CONFIG_CACHE_TTL_MS)) {
             flowAssigneesConfig = cachedConfig.flowAssigneesConfig;
+            flowLevelsConfig = cachedConfig.flowLevelsConfig || {};
             manualEscalationConfig = cachedConfig.manualEscalationConfig;
             profileNameMap = cachedConfig.profileNameMap;
+            profileDetailMap = cachedConfig.profileDetailMap || new Map<string, any>();
         } else {
             try {
                 let orgSettingsQuery = supabaseAdmin
@@ -371,6 +377,7 @@ export async function GET(request: Request) {
                 while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
                     flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
                 }
+                flowLevelsConfig = configObj.flow_levels || {};
                 manualEscalationConfig = configObj.manual_escalation || {};
             } catch (e) {
                 console.warn('Could not read hr_escalation_config in tickets list:', e);
@@ -392,23 +399,39 @@ export async function GET(request: Request) {
                 const filterOr = Array.from(allCustomIds).map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
                 const { data: profs } = await supabaseAdmin
                     .from('employee_profiles')
-                    .select('id, user_id, user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
+                    .select('id, user_id, user:users!employee_profiles_user_id_fkey(full_name, email, user_photo_url), first_name, last_name, email, phone, employee_code, department, designation, location')
                     .or(filterOr);
 
                 (profs || []).forEach(p => {
                     const name = (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim();
+                    const detail = {
+                        id: p.user_id || p.id,
+                        profile_id: p.id,
+                        full_name: name,
+                        email: (p.user as any)?.email || p.email || '',
+                        phone: p.phone || '',
+                        photo_url: (p.user as any)?.user_photo_url || null,
+                        employee_code: p.employee_code || 'N/A',
+                        department: p.department || 'Operations',
+                        designation: p.designation || 'Level Owner',
+                        location: p.location && p.location.toLowerCase() !== 'hidden' ? p.location : 'Head Office'
+                    };
                     if (name) {
                         if (p.id) profileNameMap.set(p.id, name);
                         if (p.user_id) profileNameMap.set(p.user_id, name);
                     }
+                    if (p.id) profileDetailMap.set(p.id, detail);
+                    if (p.user_id) profileDetailMap.set(p.user_id, detail);
                 });
             }
 
             // Store in in-memory server cache
             orgConfigCache.set(targetOrgId, {
                 flowAssigneesConfig,
+                flowLevelsConfig,
                 manualEscalationConfig,
                 profileNameMap,
+                profileDetailMap,
                 timestamp: Date.now()
             });
         }
@@ -456,18 +479,36 @@ export async function GET(request: Request) {
             return true;
         });
 
-        // Map assigned_to user IDs to their actual employee_profiles record
+        // Map assigned_to user IDs to their actual employee_profiles record.
+        // Matched on user_id OR email so handlers whose profile is not yet linked to a users row
+        // (reconciliation_status = 'unlinked') still resolve their employee code & department.
         const assignedUserIds = Array.from(new Set(accessibleData.map(t => t.assigned_to_user_id).filter(Boolean)));
+        const assignedEmails = Array.from(new Set(
+            accessibleData.map(t => (t.assigned_to?.email || '').toLowerCase().trim()).filter(Boolean)
+        ));
         const assignedProfileMap = new Map<string, any>();
-        if (assignedUserIds.length > 0) {
+        const assignedProfileByEmail = new Map<string, any>();
+        if (assignedUserIds.length > 0 || assignedEmails.length > 0) {
+            const orParts: string[] = [];
+            if (assignedUserIds.length > 0) orParts.push(`user_id.in.(${assignedUserIds.join(',')})`);
+            if (assignedEmails.length > 0) orParts.push(`email.in.(${assignedEmails.map(e => `"${e}"`).join(',')})`);
             const { data: assignedProfiles } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('id, user_id, employee_code, first_name, last_name, email, phone, department, designation, location')
-                .in('user_id', assignedUserIds);
+                .or(orParts.join(','));
             (assignedProfiles || []).forEach(ap => {
-                if (ap.user_id) assignedProfileMap.set(ap.user_id, ap);
+                if (ap.user_id && !assignedProfileMap.has(ap.user_id)) assignedProfileMap.set(ap.user_id, ap);
+                const em = (ap.email || '').toLowerCase().trim();
+                if (em && !assignedProfileByEmail.has(em)) assignedProfileByEmail.set(em, ap);
             });
         }
+
+        const defaultLevelCounts: Record<string, number> = {
+            grievance: 4,
+            hr_query: 4,
+            confidential_feedback: 2,
+            anonymous_feedback: 2
+        };
 
         // Mask identity for anonymous tickets & attach dynamic current_level_owner & manual_escalation_enabled
         const sanitized = accessibleData.map(t => {
@@ -482,7 +523,23 @@ export async function GET(request: Request) {
                 }
             }
 
-            const assignedEmp = t.assigned_to_user_id ? assignedProfileMap.get(t.assigned_to_user_id) : null;
+            const handlerEmail = (t.assigned_to?.email || '').toLowerCase().trim();
+            const assignedEmp = (t.assigned_to_user_id ? assignedProfileMap.get(t.assigned_to_user_id) : null)
+                || (handlerEmail ? assignedProfileByEmail.get(handlerEmail) : null);
+
+            // Every user configured at this level in HR Admin Config owns the ticket, not only the primary assignee
+            const levelUsers: any[] = [];
+            if (Array.isArray(stepAssignees)) {
+                stepAssignees.forEach((cfgId: string) => {
+                    const detail = profileDetailMap.get(cfgId);
+                    if (detail && !levelUsers.some(lu => lu.id === detail.id)) levelUsers.push(detail);
+                });
+            }
+
+            // How many levels this flow actually has — drives whether a further escalation (and so a TAT) exists
+            const configuredLevels = Array.isArray(flowLevelsConfig?.[tType]) ? flowLevelsConfig[tType] : [];
+            const maxLevel = configuredLevels.length > 0 ? configuredLevels.length : (defaultLevelCounts[tType] || 4);
+
             const normType = tType.includes('query') ? 'hr_query' : tType.includes('grievance') ? 'grievance' : tType;
             const isManualEscalationOn = Boolean(
                 manualEscalationConfig?.[normType] === true ||
@@ -494,6 +551,8 @@ export async function GET(request: Request) {
             const item = {
                 ...t,
                 manual_escalation_enabled: isManualEscalationOn,
+                max_level: maxLevel,
+                has_next_level: curLvl < maxLevel,
                 current_level_owner: currentLevelOwner || t.assigned_to?.full_name || 'Manager / HR',
                 assigned_to_details: t.assigned_to ? {
                     id: t.assigned_to_user_id,
@@ -507,7 +566,20 @@ export async function GET(request: Request) {
                     employee_role: assignedEmp?.designation || 'Level Owner',
                     app_role: assignedEmp?.designation || 'Level Owner',
                     employee_code: assignedEmp?.employee_code || 'N/A'
-                } : null
+                } : null,
+                assigned_level_users: levelUsers.length > 0
+                    ? levelUsers
+                    : (t.assigned_to ? [{
+                        id: t.assigned_to_user_id,
+                        full_name: t.assigned_to.full_name || (assignedEmp ? `${assignedEmp.first_name || ''} ${assignedEmp.last_name || ''}`.trim() : t.assigned_to.email),
+                        email: t.assigned_to.email || assignedEmp?.email || '',
+                        phone: assignedEmp?.phone || '',
+                        photo_url: t.assigned_to.user_photo_url || null,
+                        employee_code: assignedEmp?.employee_code || 'N/A',
+                        department: assignedEmp?.department || 'Operations',
+                        designation: assignedEmp?.designation || 'Level Owner',
+                        location: assignedEmp?.location || 'Head Office'
+                    }] : [])
             };
 
             if (t.is_anonymous) {

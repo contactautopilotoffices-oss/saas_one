@@ -165,7 +165,13 @@ export default function ChecklistDeepLinkPage() {
                     templateId={templateId}
                     completionId={completionId}
                     propertyId={template?.property_id}
-
+                    onSessionStarted={(createdId) => {
+                        try {
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('completionId', createdId);
+                            window.history.replaceState(window.history.state, '', url.toString());
+                        } catch {}
+                    }}
                     onComplete={() => setDone(true)}
                     onCancel={() => router.back()}
                 />

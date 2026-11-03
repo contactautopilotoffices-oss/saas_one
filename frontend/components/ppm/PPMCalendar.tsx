@@ -5,6 +5,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface PPMSchedule {
     id: string;
@@ -762,7 +763,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         </div>
                                         {selectedTask.attachments?.certificate || selectedTask.completion_doc_url ? (
                                             <div className="flex items-center gap-2">
-                                                <a href={(selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Certificate</a>
+                                                <a href={maskStorageUrl((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!) || ((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!)} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Certificate</a>
                                                 {isEditMode && (
                                                     <button
                                                         onClick={() => handleAttachmentDelete(((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url)!, 'doc')}
@@ -802,7 +803,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         </div>
                                         {selectedTask.attachments?.invoice || selectedTask.invoice_url ? (
                                             <div className="flex items-center gap-2">
-                                                <a href={(selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Invoice</a>
+                                                <a href={maskStorageUrl((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!) || ((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!)} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Invoice</a>
                                                 {isEditMode && (
                                                     <button
                                                         onClick={() => handleAttachmentDelete(((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url)!, 'invoice')}
@@ -855,13 +856,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                 </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
-                                                <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.certificate) || selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
                                                     <FileText className="w-3.5 h-3.5 flex-shrink-0" /> Completion Certificate
                                                 </a>
                                             )}
                                             {selectedTask.attachments.invoice && (
-                                                <a href={selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.invoice) || selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
                                                     <Receipt className="w-3.5 h-3.5 flex-shrink-0" /> Invoice
                                                 </a>
@@ -930,13 +931,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                 </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
-                                                <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.certificate) || selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs text-emerald-700 hover:underline">
                                                     <FileText className="w-3.5 h-3.5 flex-shrink-0" /> Completion Certificate
                                                 </a>
                                             )}
                                             {selectedTask.attachments.invoice && (
-                                                <a href={selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.invoice) || selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs text-emerald-700 hover:underline">
                                                     <Receipt className="w-3.5 h-3.5 flex-shrink-0" /> Invoice
                                                 </a>
@@ -1113,7 +1114,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     >
                         <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
                             <a
-                                href={previewPhotoUrl}
+                                href={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={e => e.stopPropagation()}
@@ -1138,7 +1139,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             onClick={e => e.stopPropagation()}
                         >
                             <img
-                                src={previewPhotoUrl}
+                                src={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 alt="PPM Completion Proof"
                                 className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10"
                             />

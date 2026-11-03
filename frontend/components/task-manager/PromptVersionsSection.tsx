@@ -25,6 +25,8 @@ export default function PromptVersionsSection({ prompts, busy, post }: { prompts
   const [viewing, setViewing] = useState<any | null>(null);
   const [confirmRollback, setConfirmRollback] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  const deletable = prompts.filter(p => p.status !== 'active').length;
   const active = prompts.find(p => p.status === 'active');
   const activeSections: PromptSections = validSections(active?.sections) ? active.sections : BUILTIN_PROMPT_SECTIONS;
 
@@ -32,8 +34,19 @@ export default function PromptVersionsSection({ prompts, busy, post }: { prompts
     <section className="border border-slate-200 rounded-2xl p-5 space-y-3 min-w-0">
       <div className="flex flex-wrap gap-2 items-center justify-between">
         <h3 className="font-black text-slate-900">Prompt versions</h3>
-        <button type="button" disabled={busy || !active} onClick={() => setConfirmRollback(true)} className="px-3 py-2 rounded-xl bg-amber-100 text-amber-900 text-xs font-bold disabled:opacity-50">Roll back to previous</button>
+        <div className="flex flex-wrap gap-2">
+          {/* Owner 2026-10-29: delete every version except the one in use. */}
+          {deletable > 0 && <button type="button" disabled={busy} onClick={() => setConfirmClearAll(true)} className="px-3 py-2 rounded-xl text-rose-700 hover:bg-rose-50 text-xs font-bold disabled:opacity-50">🗑 Clear all</button>}
+          <button type="button" disabled={busy || !active} onClick={() => setConfirmRollback(true)} className="px-3 py-2 rounded-xl bg-amber-100 text-amber-900 text-xs font-bold disabled:opacity-50">Roll back to previous</button>
+        </div>
       </div>
+      {confirmClearAll && (
+        <div className="flex flex-wrap gap-2 items-center bg-rose-50 text-rose-900 rounded-xl p-3 text-sm">
+          <span>Delete all {deletable} version{deletable === 1 ? '' : 's'}{active ? ` except v${active.version}, the one in use` : ''}? This cannot be undone{active ? ', and Roll back will have no older version to go back to' : ''}.</span>
+          <button type="button" disabled={busy} onClick={async () => { await post({ action: 'delete_all_prompts' }); setConfirmClearAll(false); }} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Yes, delete all</button>
+          <button type="button" onClick={() => setConfirmClearAll(false)} className="px-3 py-1.5 rounded-lg text-xs font-bold">Cancel</button>
+        </div>
+      )}
       {confirmRollback && (
         <div className="flex flex-wrap gap-2 items-center bg-amber-50 text-amber-900 rounded-xl p-3 text-sm">
           <span>Go back from v{active?.version} to the version before it? The bot switches within a minute.</span>

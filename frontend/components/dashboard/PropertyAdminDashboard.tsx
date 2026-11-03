@@ -7,7 +7,7 @@ import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, ClipboardList, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck
+    Package, ClipboardCheck, ClipboardList, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck, Mic
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -48,6 +48,7 @@ const ElectricityAnalyticsDashboard = dynamic(() => import('@/frontend/component
 const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: TabLoading });
 const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
 const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
 const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
@@ -93,7 +94,7 @@ const TAB_PRELOADS = [
 ];
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'petty-cash';
 
 interface Property {
     id: string;
@@ -352,7 +353,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // State
     const [dashboardTab, setActiveTab] = useState<Tab>('overview');
-    const openTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
+    const activeTabFromSearch = searchParams?.get('tab');
+    const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKey = `property-${propertyId}`;
@@ -942,6 +944,15 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 <Bot className={`w-4 h-4 transition-transform ${openTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
                                 AI Automation
                             </button>
+                            {isElevatedRole && (property?.organization_id || membership?.org_id) && (
+                                <button
+                                    onClick={() => router.push(`/${property?.organization_id || membership?.org_id}/meetings`)}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
+                                >
+                                    <Mic className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('grievance')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
@@ -1120,6 +1131,11 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         />}
                         {openTab === 'roster' && property && <RosterDashboard propertyId={property.id} />}
                         {openTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
+                        {openTab === 'petty-cash' && (
+                            <div className="w-full">
+                                <PettyCashDashboard orgId={property?.organization_id || membership?.org_id || undefined} />
+                            </div>
+                        )}
 
                         {openTab === 'water_analytics' && property && <WaterAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'guest_experience' && property && <GuestExperienceDashboard propertyId={property.id} />}

@@ -37,6 +37,9 @@ export interface ReplyFacts {
     /** Part B: nothing is waiting for a yes after this reply, so it must NOT ask "should I…?" / "do you want me to…?" — a yes
      *  to such a question would have nothing to answer (2026-10-12: Harsh's "Yes add this task" → "nothing waiting"). */
     noYesNoQuestion?: boolean;
+    /** Owner 2026-10-21 (step 4): nothing changes with this reply (an answer, a chat, a list), so it may be written freely
+     *  and naturally. Set by the core, never by a domain: previews, confirmations and changes keep the strict rules. */
+    free?: boolean;
 }
 
 export interface ExecutionResult { values: Record<string, string>; summary: string }

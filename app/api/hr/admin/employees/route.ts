@@ -421,6 +421,9 @@ export async function PATCH(request: Request) {
                 .select('id')
                 .eq('raised_by_user_id', userIdToMatch)
                 .eq('current_level', 1)
+                .eq('ticket_type', 'grievance')
+                .eq('is_anonymous', false)
+                .eq('is_confidential', false)
                 .in('status', [
                     'new', 'assigned', 'in_progress', 
                     'awaiting_employee_response', 'awaiting_manager_response', 

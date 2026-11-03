@@ -5,6 +5,7 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import Loader from '@/frontend/components/ui/Loader';
+import AppZoom from '@/frontend/components/layout/AppZoom';
 import { useMasterAdminCheck } from '@/frontend/hooks/useMasterAdminCheck';
 
 export default function MasterPage() {
@@ -34,5 +35,5 @@ export default function MasterPage() {
 
     if (!user || !isMasterAdmin) return null;
 
-    return <MasterAdminDashboard />;
+    return <><AppZoom /><MasterAdminDashboard /></>;
 }

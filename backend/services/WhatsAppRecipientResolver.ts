@@ -131,7 +131,7 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     reminder_ticket_sla: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_slot_reminder: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_started: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
     checklist_overdue_alert: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
     checklist_rated: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     checklists: { enabled: true, roles: ['property_admin'], user_ids: [] },

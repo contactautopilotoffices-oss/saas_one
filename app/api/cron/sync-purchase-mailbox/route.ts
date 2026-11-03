@@ -25,13 +25,17 @@ export async function GET(request: NextRequest) {
     // would copy ONE tenant's inbox into every other tenant's rows the moment a second org
     // is onboarded — cross-tenant disclosure of a third party's correspondence with no
     // code change, only a config row. So the destination org must be pinned explicitly.
+    //
+    // Credentials WITHOUT a pin is a misconfiguration, not dormancy, so it answers 500.
+    // It used to answer 200 "ok", and the digest silently stopped for two months
+    // (10 Aug – 6 Oct 2026) while Vercel's cron log showed every run green.
     const pinnedOrgId = process.env.ZOHO_MAIL_ORG_ID;
     if (!pinnedOrgId) {
         return NextResponse.json({
-            ok: true,
+            ok: false,
             count: 0,
-            skipped: 'ZOHO_MAIL_ORG_ID is not set. The shared mailbox is a single global inbox, so the org that receives it must be named explicitly.',
-        });
+            error: 'ZOHO_MAIL_ORG_ID is not set. The shared mailbox is a single global inbox, so the org that receives it must be named explicitly.',
+        }, { status: 500 });
     }
 
     // Confirm the pinned org actually has the accounts workspace enabled before writing.
@@ -40,9 +44,9 @@ export async function GET(request: NextRequest) {
         .eq('organization_id', pinnedOrgId).eq('is_active', true).maybeSingle();
     if (!cfg) {
         return NextResponse.json({
-            ok: true, count: 0,
-            skipped: `ZOHO_MAIL_ORG_ID ${pinnedOrgId} has no active accounts_zoho_config row`,
-        });
+            ok: false, count: 0,
+            error: `ZOHO_MAIL_ORG_ID ${pinnedOrgId} has no active accounts_zoho_config row`,
+        }, { status: 500 });
     }
 
     const result = await syncPurchaseMailboxForOrg(pinnedOrgId);

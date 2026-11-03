@@ -153,6 +153,8 @@ export async function POST(request: NextRequest) {
         if (dupResult.isDuplicate) {
             ocrData.is_duplicate_ref = true;
             ocrData.duplicate_warning = dupResult.reason;
+        } else if (dupResult.warning) {
+            ocrData.duplicate_warning = dupResult.warning; // shown to the user, does not block saving
         }
 
         // Track Vision model usage per request in petty_cash_activity

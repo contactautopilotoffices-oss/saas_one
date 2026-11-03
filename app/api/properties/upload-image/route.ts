@@ -85,14 +85,12 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: uploadError.message }, { status: 500 });
         }
 
-        // Get public URL
-        const { data: { publicUrl } } = supabaseAdmin.storage
-            .from(BUCKET_NAME)
-            .getPublicUrl(filePath);
+        // Use internal proxy URL to avoid exposing Supabase project ID
+        const proxyUrl = `/api/storage/${BUCKET_NAME}/${filePath}`;
 
         return NextResponse.json({
             success: true,
-            url: publicUrl,
+            url: proxyUrl,
             path: filePath
         });
     } catch (err: any) {

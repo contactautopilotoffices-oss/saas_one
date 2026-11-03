@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { CARRY_LOOKBACK_DAYS, TaskDatabaseService, normalizeCarryForward } from './TaskDatabaseService';
+import { MAX_CARRY_DAYS, TaskDatabaseService, normalizeCarryForward } from './TaskDatabaseService';
 import { TaskAccessService } from './TaskAccessService';
 import { TaskNotificationService } from './TaskNotificationService';
 import { Employee, NotificationRule, NotificationRuleType, NotificationCustomTemplate } from './types';
@@ -266,8 +266,8 @@ export class DepartmentRulesService {
         this.requireEdit(ctx);
         const v = input && typeof input === 'object' ? input as Record<string, unknown> : {};
         const days = Number(v.days);
-        if (typeof v.enabled !== 'boolean' || !Number.isInteger(days) || days < 1 || days > CARRY_LOOKBACK_DAYS) {
-            throw new RulesError(400, `Choose on or off, and between 1 and ${CARRY_LOOKBACK_DAYS} days.`, 'INVALID');
+        if (typeof v.enabled !== 'boolean' || !Number.isInteger(days) || days < 1 || days > MAX_CARRY_DAYS) {
+            throw new RulesError(400, `Choose on or off, and between 1 and ${MAX_CARRY_DAYS} days.`, 'INVALID');
         }
         const setting = await TaskDatabaseService.saveCarryForward(ctx.departmentId, { enabled: v.enabled, days });
         await TaskDatabaseService.logAudit({

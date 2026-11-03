@@ -30,15 +30,106 @@ const securityHeaders = {
         "font-src 'self' data: https://fonts.gstatic.com",
         // api.openai.com: the council 1:1 voice call opens its WebRTC leg from
         // the browser with a server-minted ephemeral secret (never the API key).
-        `connect-src 'self' http://localhost:3000 ws://localhost:3000 ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com https://api.openai.com https://api.plivo.com`,
+        // *.livekit.cloud: meeting rooms (signalling over wss, region lookup over https).
+        // LIVEKIT_URL is added too, so a self-hosted LiveKit works without editing this line.
+        `connect-src 'self' http://localhost:3000 ws://localhost:3000 wss://*.livekit.cloud https://*.livekit.cloud ${process.env.LIVEKIT_URL ? `${process.env.LIVEKIT_URL} ${process.env.LIVEKIT_URL.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')}` : ''} ${process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://*.supabase.co'} ${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'wss://') || 'wss://*.supabase.co'} https://www.gstatic.com https://firebaseinstallations.googleapis.com https://fcmregistrations.googleapis.com https://*.firebaseio.com https://api.openai.com https://api.plivo.com https://api.elevenlabs.io wss://api.elevenlabs.io`,
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
     ].join('; '),
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const DASHBOARD_MODULES = new Set([
+    'accounts',
+    'ai-tickets',
+    'aop',
+    'book-room',
+    'crm',
+    'flow-map',
+    'hr-assistant',
+    'hr-tickets',
+    'meera',
+    'meetings',
+    'org-efficiency',
+    'org-progress',
+    'petty-cash',
+    'procurement-management',
+    'properties',
+    'rooms',
+    'satej',
+    'settings',
+    'users',
+]);
+
+function applySecurityHeaders(res: NextResponse): NextResponse {
+    Object.entries(securityHeaders).forEach(([key, value]) => {
+        res.headers.set(key, value);
+    });
+    return res;
+}
+
 export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
+
+    const isClientRsc = request.headers.get('rsc') === '1' || request.headers.has('next-router-state-tree');
+
+    // 0. Handle legacy /org/<uuid>/dashboard or /<uuid>/dashboard bookmarks -> /dashboard
+    if (
+        /^\/org\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/dashboard(\/.*)?$/i.test(pathname) ||
+        /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/dashboard(\/.*)?$/i.test(pathname)
+    ) {
+        if (isClientRsc) {
+            const rewriteUrl = request.nextUrl.clone();
+            rewriteUrl.pathname = '/dashboard';
+            return applySecurityHeaders(NextResponse.rewrite(rewriteUrl, { request }));
+        }
+        const url = request.nextUrl.clone();
+        url.pathname = '/dashboard';
+        return applySecurityHeaders(NextResponse.redirect(url, 307));
+    }
+
+    // Handle legacy /org/<uuid>/<module> bookmarks -> /<module>
+    const orgPrefixMatch = pathname.match(/^\/org\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/.*)?$/i);
+    if (orgPrefixMatch) {
+        const orgId = orgPrefixMatch[1];
+        const rest = orgPrefixMatch[2] || '';
+        if (isClientRsc) {
+            const rewriteUrl = request.nextUrl.clone();
+            rewriteUrl.pathname = rest ? rest : '/dashboard';
+            const rewriteRes = NextResponse.rewrite(rewriteUrl, { request });
+            rewriteRes.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
+            return applySecurityHeaders(rewriteRes);
+        }
+        const url = request.nextUrl.clone();
+        url.pathname = rest ? rest : '/dashboard';
+        const redirectRes = NextResponse.redirect(url, 307);
+        redirectRes.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
+        return applySecurityHeaders(redirectRes);
+    }
+
+    // Handle legacy /<uuid>/<module> bookmarks -> redirect to clean /<module>
+    const pathSegments = pathname.split('/').filter(Boolean);
+    if (pathSegments.length >= 1 && UUID_REGEX.test(pathSegments[0])) {
+        const orgId = pathSegments[0];
+        const moduleName = pathSegments[1];
+        if (moduleName && DASHBOARD_MODULES.has(moduleName)) {
+            const rest = '/' + pathSegments.slice(1).join('/');
+            if (isClientRsc) {
+                const rewriteUrl = request.nextUrl.clone();
+                rewriteUrl.pathname = rest;
+                const rewriteRes = NextResponse.rewrite(rewriteUrl, { request });
+                rewriteRes.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
+                return applySecurityHeaders(rewriteRes);
+            }
+            const url = request.nextUrl.clone();
+            url.pathname = rest;
+            const redirectRes = NextResponse.redirect(url, 307);
+            redirectRes.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
+            return applySecurityHeaders(redirectRes);
+        }
+    }
 
     // Define public routes that don't require authentication
     const publicRoutes = [
@@ -51,6 +142,7 @@ export async function proxy(request: NextRequest) {
         '/a/',         // Public asset QR scan page. Keep the trailing slash: the check is
                        // startsWith, and a bare '/a' would also unlock /<orgId>/... for any
                        // org id beginning with "a".
+        '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
         '/api',        // API routes handle their own auth
         '/kiosk',
         '/onboard',    // Public client onboarding QR route
@@ -134,6 +226,32 @@ export async function proxy(request: NextRequest) {
         const mode = request.nextUrl.searchParams.get('mode')
         if (!mode) {
             return NextResponse.redirect(new URL('/', request.url))
+        }
+    }
+
+    // 4. Clean dashboard sub-module rewrites for authenticated users
+    const segments = pathname.split('/').filter(Boolean);
+    if (segments.length >= 1 && DASHBOARD_MODULES.has(segments[0])) {
+        let orgId = request.cookies.get('saas_org_id')?.value;
+        if (!orgId && user) {
+            const { data: membership } = await supabase
+                .from('organization_memberships')
+                .select('organization_id')
+                .eq('user_id', user.id)
+                .eq('is_active', true)
+                .limit(1)
+                .maybeSingle();
+
+            if (membership?.organization_id) {
+                orgId = membership.organization_id;
+            }
+        }
+
+        if (orgId) {
+            const rewriteUrl = new URL(`/${orgId}${pathname}${request.nextUrl.search}`, request.url);
+            const rewriteResponse = applySecurityHeaders(NextResponse.rewrite(rewriteUrl, { request }));
+            rewriteResponse.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
+            return rewriteResponse;
         }
     }
 

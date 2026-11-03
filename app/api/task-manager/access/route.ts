@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { TaskAccessService, AccessNotProvisionedError } from '@/task-manager/TaskAccessService';
+import { TaskAccessService, AccessNotProvisionedError, TEAM_FEATURES, TeamFeature, COMPLETION_REMARK_MODES, CompletionRemarkMode, PERSON_SETTINGS, PersonSetting } from '@/task-manager/TaskAccessService';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
 import { resetBotSwitchCache } from '@/task-manager/BotSwitches';
 import { clearAllMemory } from '@/task-manager/ConversationMemory';
-import { requireTaskManagerAdmin } from '../_shared/adminGuard';
+import { requireControlCentre } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
     try {
         const orgId = request.nextUrl.searchParams.get('orgId') || '';
-        const guard = await requireTaskManagerAdmin(orgId);
+        const guard = await requireControlCentre(orgId);
         if (!guard.ok) return guard.response;
 
         const overview = await TaskAccessService.getOverview();
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
     try {
         const orgId = request.nextUrl.searchParams.get('orgId') || '';
-        const guard = await requireTaskManagerAdmin(orgId);
+        const guard = await requireControlCentre(orgId);
         if (!guard.ok) return guard.response;
 
         const body = await request.json().catch(() => ({}));
@@ -67,6 +67,67 @@ export async function POST(request: NextRequest) {
                     ? 'Team sharing ON: members of this department can see and assign each other\'s tasks.'
                     : 'Team sharing OFF: only the reporting chain applies.'
             });
+        }
+
+        // Owner 2026-10-19: "assign to anyone in team" (give tasks to anyone in the department; seeing stays by the chain)
+        if (body.action === 'set_team_assign') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamAssign(body.departmentId, body.enabled, guard.label);
+            return NextResponse.json({
+                success: true,
+                message: body.enabled
+                    ? 'Assign to anyone in team ON: members can give tasks to anyone in this department. They still only see their own tasks and those below them.'
+                    : 'Assign to anyone in team OFF: members can give tasks only to people below them.'
+            });
+        }
+
+        // Owner 2026-10-27: who in a department may send to other departments ('everyone' | 'selected'), and the ticks
+        if (body.action === 'set_cross_dept_scope') {
+            if (!body.departmentId || (body.scope !== 'everyone' && body.scope !== 'selected')) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or scope (everyone | selected)' }, { status: 400 });
+            }
+            await TaskAccessService.setCrossDeptScope(body.departmentId, body.scope, guard.label);
+            return NextResponse.json({ success: true, message: body.scope === 'selected' ? 'Only the ticked people can now send to other departments.' : 'Everyone in this department can now send to other departments.' });
+        }
+        if (body.action === 'set_cross_dept_person') {
+            if (!body.userId || typeof body.enabled !== 'boolean') {
+                return NextResponse.json({ success: false, error: 'Missing userId or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setCrossDeptPerson(body.userId, body.enabled, guard.label);
+            return NextResponse.json({ success: true, message: body.enabled ? 'Can now send to other departments.' : 'Can no longer send to other departments.' });
+        }
+
+        // Owner 2026-10-28: "Remark on completion" for a team (off | ask | required)
+        if (body.action === 'set_completion_remark') {
+            if (!body.departmentId || !COMPLETION_REMARK_MODES.includes(body.mode)) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId or mode (off | ask | required)' }, { status: 400 });
+            }
+            await TaskAccessService.setCompletionRemark(body.departmentId, body.mode as CompletionRemarkMode, guard.label);
+            return NextResponse.json({ success: true, message: 'Remark on completion saved.' });
+        }
+        // Owner 2026-10-28: one person's exception to a team switch (value null = follow the team), or reset them all
+        if (body.action === 'set_person_setting') {
+            if (!body.userId || !PERSON_SETTINGS.includes(body.setting) || !(body.value === null || typeof body.value === 'string')) {
+                return NextResponse.json({ success: false, error: 'Missing userId, setting or value' }, { status: 400 });
+            }
+            await TaskAccessService.setPersonSetting(body.userId, body.setting as PersonSetting, body.value, guard.label);
+            return NextResponse.json({ success: true, message: body.value === null ? 'Now follows the team.' : 'Saved for this person.' });
+        }
+        if (body.action === 'reset_person_settings') {
+            if (!body.userId) return NextResponse.json({ success: false, error: 'Missing userId' }, { status: 400 });
+            await TaskAccessService.resetPersonSettings(body.userId, guard.label);
+            return NextResponse.json({ success: true, message: 'Back to the team settings.' });
+        }
+
+        // Owner 2026-10-19: the other per-team switches (Pending on…, Protect given tasks, Assigned by me tab)
+        if (body.action === 'set_team_feature') {
+            if (!body.departmentId || typeof body.enabled !== 'boolean' || !TEAM_FEATURES.includes(body.feature)) {
+                return NextResponse.json({ success: false, error: 'Missing departmentId, feature or enabled (true/false)' }, { status: 400 });
+            }
+            await TaskAccessService.setTeamFeature(body.departmentId, body.feature as TeamFeature, body.enabled, guard.label);
+            return NextResponse.json({ success: true, message: body.enabled ? 'Switched ON for this department.' : 'Switched OFF for this department.' });
         }
 
         // Superuser role (Task Manager): make or remove a superuser. Admin-only; the last superuser cannot be removed.

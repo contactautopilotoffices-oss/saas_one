@@ -5,6 +5,7 @@ import { useRouter, useParams, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/frontend/utils/supabase/client";
 import Loader from "@/frontend/components/ui/Loader";
+import AppZoom from "@/frontend/components/layout/AppZoom";
 
 
 export default function PropertyLayout({
@@ -185,7 +186,7 @@ export default function PropertyLayout({
         );
     }
 
-    return <>{children}</>;
+    return <><AppZoom />{children}</>;
 }
 
 /**

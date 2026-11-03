@@ -14,17 +14,18 @@
  * the picture cannot disagree with the plan.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import AgentFlowCanvas from '@/frontend/components/agents/AgentFlowCanvas';
 import {
     AlertTriangle, ArrowRight, CheckCircle2, CircleHelp, Database, Globe,
-    GitBranch, PenLine, Send, ShieldCheck, Sparkles, Users, Wrench, XCircle,
+    GitBranch, Maximize2, Minimize2, PenLine, PhoneCall, Send, ShieldCheck, Sparkles, Users, Wrench, XCircle, Zap,
 } from 'lucide-react';
 
 /* ---- shapes (mirror backend/lib/agents/plan.ts) ------------------------- */
 
 export type PlanStepKind =
-    | 'resolve' | 'search' | 'fetch' | 'decide' | 'draft' | 'approve' | 'write' | 'notify';
+    | 'trigger' | 'resolve' | 'search' | 'fetch' | 'call' | 'decide' | 'draft' | 'approve' | 'write' | 'notify';
 
 export interface PlanSlot {
     key: string; question: string; why: string;
@@ -48,11 +49,17 @@ export interface AgentPlan {
     intent: string; module: string | null; source: 'rules' | 'model';
     slots: PlanSlot[]; steps: PlanStep[]; tools: ToolBinding[];
     roles: { name: string; does: string }[]; notes: string[];
+    /** The model was asked and failed; this is the rules template instead. */
+    fallbackReason?: string | null;
+    /** Set when the plan was saved onto the agent (oem_agents.config.plan). */
+    saved_at?: string | null;
 }
 
 /* ---- per-kind presentation ---------------------------------------------- */
 
 const KIND: Record<PlanStepKind, { label: string; icon: typeof Database; ring: string; chip: string }> = {
+    trigger: { label: 'Trigger',  icon: Zap,         ring: 'border-fuchsia-300', chip: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' },
+    call:    { label: 'Call',     icon: PhoneCall,   ring: 'border-cyan-300',    chip: 'bg-cyan-50 text-cyan-700 border-cyan-200' },
     resolve: { label: 'Resolve',  icon: CircleHelp,  ring: 'border-amber-300',   chip: 'bg-amber-50 text-amber-700 border-amber-200' },
     search:  { label: 'Search',   icon: Globe,       ring: 'border-sky-300',     chip: 'bg-sky-50 text-sky-700 border-sky-200' },
     fetch:   { label: 'Read',     icon: Database,    ring: 'border-slate-300',   chip: 'bg-slate-50 text-slate-700 border-slate-200' },
@@ -86,8 +93,14 @@ function columnsOf(steps: PlanStep[]): PlanStep[][] {
 
 /* ------------------------------------------------------------------------- */
 
-export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
+export default function AgentPlanCanvas({ plan, onAccept, accepting, toolCatalog, onStepsChange, variant = 'proposal' }: {
     plan: AgentPlan;
+    /** Every tool on this deployment with its live status — the flow palette offers all of them. */
+    toolCatalog?: ToolBinding[];
+    /** Edits made in the flow editor, handed up so they are what gets saved on accept. */
+    onStepsChange?: (steps: PlanStep[]) => void;
+    /** 'saved' shows an agent's stored workflow: no questions, no accept button. */
+    variant?: 'proposal' | 'saved';
     /**
      * WHAT ACCEPTING A PLAN ACTUALLY DOES.
      *
@@ -110,6 +123,24 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [selected, setSelected] = useState<string | null>(null);
     const [editing, setEditing] = useState(false);
+    /**
+     * FULL SCREEN. The builder sat in a 460 px box inside the console's right
+     * column — too small to rewire a nine-step flow. Full screen is a portal to
+     * <body>, so no dashboard transform or overflow can clip it. Esc closes.
+     */
+    const [full, setFull] = useState(false);
+    useEffect(() => {
+        if (!full) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false); };
+        const prev = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        window.addEventListener('keydown', onKey);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            document.body.style.overflow = prev;
+        };
+    }, [full]);
+    const saved = variant === 'saved';
 
     const required = plan.slots.filter((s) => s.required);
     // A multi slot with every box cleared is NOT answered — an empty required
@@ -132,15 +163,20 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-violet-500" />
-                    <span className="text-[13px] font-semibold">Proposed workflow</span>
+                    <span className="text-[13px] font-semibold">{saved ? 'Saved workflow' : 'Proposed workflow'}</span>
                     <span className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                        plan.source === 'rules'
-                            ? 'border-slate-200 bg-slate-50 text-slate-600'
-                            : 'border-violet-200 bg-violet-50 text-violet-700'}`}>
-                        {plan.source === 'rules' ? 'rule-based · no model ran' : 'model-enriched'}
+                        plan.fallbackReason
+                            ? 'border-rose-200 bg-rose-50 text-rose-700'
+                            : plan.source === 'rules'
+                                ? 'border-slate-200 bg-slate-50 text-slate-600'
+                                : 'border-violet-200 bg-violet-50 text-violet-700'}`}>
+                        {plan.fallbackReason ? 'model failed · generic template' : plan.source === 'rules' ? 'rule-based' : 'model-planned'}
                     </span>
+                    {saved && plan.saved_at && (
+                        <span className="text-[11px] text-text-tertiary">saved {new Date(plan.saved_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                    )}
                 </div>
-                <div className="flex items-center gap-2 text-[12px]">
+                {!saved && <div className="flex items-center gap-2 text-[12px]">
                     <span className={ready ? 'text-emerald-600' : 'text-amber-600'}>
                         {answered}/{required.length} questions answered
                     </span>
@@ -156,8 +192,17 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
                     >
                         {accepting ? 'Building…' : ready ? 'Accept plan & build' : 'Answer to continue'}
                     </button>
-                </div>
+                </div>}
             </div>
+
+            {/* ---- the model failed: say so, first ------------------------- */}
+            {plan.fallbackReason && (
+                <div className="rounded-[12px] border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[12px] leading-relaxed text-rose-800">
+                    <b>The model could not plan this description, so this is the generic rule-based template, not a plan
+                    for what you asked.</b> Why: {plan.fallbackReason} Press Plan workflow again; if it repeats, shorten the
+                    description or split the job in two.
+                </div>
+            )}
 
             {/* ---- notes -------------------------------------------------- */}
             {plan.notes.length > 0 && (
@@ -172,7 +217,7 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
             )}
 
             {/* ---- 1. the questions --------------------------------------- */}
-            <section className="rounded-[16px] border border-border bg-card p-4">
+            {!saved && <section className="rounded-[16px] border border-border bg-card p-4">
                 <h4 className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
                     Before it can act
                 </h4>
@@ -291,24 +336,49 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
                         </div>
                     ))}
                 </div>
-            </section>
+            </section>}
 
-            {/* ---- 2. the graph — editable ---------------------------------- */}
-            <section className="rounded-[16px] border border-border bg-card p-4">
+            {/* ---- 2. the graph — editable, and full screen on demand ------- */}
+            {full && <div className="rounded-[16px] border border-dashed border-border bg-card px-4 py-3 text-[12px] text-text-secondary">
+                The workflow is open in full screen. Press Esc or Exit full screen to come back.
+            </div>}
+            {(() => {
+                const graph = (
+            <section className={full
+                ? 'fixed inset-0 z-[90] flex flex-col bg-card p-5'
+                : 'rounded-[16px] border border-border bg-card p-4'}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <h4 className="text-[12px] font-semibold uppercase tracking-wide text-text-tertiary">
                         The workflow · {plan.steps.length} steps
                     </h4>
-                    <button type="button" onClick={() => setEditing((v) => !v)}
-                        className="rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] font-medium hover:border-primary/40">
-                        {editing ? 'Read-only view' : 'Edit the flow'}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                        {!saved && (
+                            <button type="button" onClick={() => setEditing((v) => !v)}
+                                className="rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] font-medium hover:border-primary/40">
+                                {editing ? 'Read-only view' : 'Edit the flow'}
+                            </button>
+                        )}
+                        <button type="button" onClick={() => setFull((v) => !v)}
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] font-medium hover:border-primary/40">
+                            {full ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+                            {full ? 'Exit full screen' : 'Full screen'}
+                        </button>
+                    </div>
                 </div>
-                {editing && (
-                    <AgentFlowCanvas steps={plan.steps} tools={plan.tools} />
+                {plan.steps.length === 0 && (
+                    <p className="text-[12px] text-text-secondary">This plan has no steps.</p>
                 )}
-                {!editing && (
-                <div className="overflow-x-auto pb-2">
+                {editing && plan.steps.length > 0 && (
+                    <AgentFlowCanvas
+                        steps={plan.steps}
+                        tools={plan.tools}
+                        catalog={toolCatalog}
+                        fill={full}
+                        onSave={onStepsChange}
+                    />
+                )}
+                {!editing && plan.steps.length > 0 && (
+                <div className={full ? 'min-h-0 flex-1 overflow-auto pb-2' : 'overflow-x-auto pb-2'}>
                     <div className="flex items-stretch gap-3" style={{ minWidth: 'min-content' }}>
                         {cols.map((col, ci) => (
                             <div key={ci} className="flex items-center gap-3">
@@ -380,6 +450,9 @@ export default function AgentPlanCanvas({ plan, onAccept, accepting }: {
                 </div>
                 )}
             </section>
+                );
+                return full && typeof document !== 'undefined' ? createPortal(graph, document.body) : graph;
+            })()}
 
             {/* ---- 3. tools + roles --------------------------------------- */}
             <div className="grid gap-3 md:grid-cols-2">

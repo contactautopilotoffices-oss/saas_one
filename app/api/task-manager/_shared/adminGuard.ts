@@ -34,6 +34,16 @@ export class TaskManagerAuth {
         const memberships = [...(orgRes.data ?? []), ...(propRes.data ?? [])] as { organization_id: string | null; role: string | null }[];
         return memberships.some(m => !!m.role && ADMIN_ROLES.includes(m.role) && (!orgId || m.organization_id === orgId));
     }
+
+    /**
+     * Owner 2026-10-22: true only for someone holding the 'tech' role (in that organisation, when an orgId is given).
+     * Super admins and master admins are NOT included: the Control Centre belongs to the Tech team alone.
+     */
+    static async isTech(userId: string, orgId?: string): Promise<boolean> {
+        const { data } = await supabaseAdmin.from('organization_memberships').select('organization_id, role').eq('user_id', userId).eq('is_active', true);
+        return ((data ?? []) as { organization_id: string | null; role: string | null }[])
+            .some(m => m.role === 'tech' && (!orgId || m.organization_id === orgId));
+    }
 }
 
 export type AdminGuardResult =
@@ -50,6 +60,14 @@ export async function requireTaskManagerAdmin(orgId = ''): Promise<AdminGuardRes
     const user = await TaskManagerAuth.currentUser();
     if (!user) return deny(401, 'Unauthorized');
     if (!(await TaskManagerAuth.isAdmin(user.id, orgId || undefined))) return deny(403, 'Forbidden: organization admin access required');
+    return { ok: true, userId: user.id, label: user.email || user.id };
+}
+
+/** The Task Manager Control Centre (settings, kill switches, roster, access, bot learning): the Tech team only. */
+export async function requireControlCentre(orgId = ''): Promise<AdminGuardResult> {
+    const user = await TaskManagerAuth.currentUser();
+    if (!user) return deny(401, 'Unauthorized');
+    if (!(await TaskManagerAuth.isTech(user.id, orgId || undefined))) return deny(403, 'Forbidden: the Control Centre is for the Tech team only');
     return { ok: true, userId: user.id, label: user.email || user.id };
 }
 

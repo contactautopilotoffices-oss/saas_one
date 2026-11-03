@@ -6,6 +6,7 @@ import {
     Plus, Search, Building2, Phone, Mail, CheckCircle2, AlertCircle,
     Loader2, ChevronDown, ChevronUp, X, Ban, RefreshCw, FileText, MapPin
 } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface Vendor {
     id: string;
@@ -440,7 +441,7 @@ export default function VendorManagement({ organizationId, propertyId, propertie
                                                             { label: 'MSME', num: vendor.msme_number, url: vendor.msme_doc_url },
                                                             { label: 'Cheque', url: vendor.cancelled_cheque_url },
                                                         ].map(({ label, num, url }) => url ? (
-                                                            <a key={label} href={url} target="_blank" rel="noopener noreferrer"
+                                                            <a key={label} href={maskStorageUrl(url) || url} target="_blank" rel="noopener noreferrer"
                                                                 className="flex items-center gap-1.5 text-xs text-primary hover:underline p-2 bg-white rounded-lg border border-primary/20">
                                                                 <FileText className="w-3.5 h-3.5" />
                                                                 <span>{label}{num ? ` (${num})` : ''}</span>

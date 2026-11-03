@@ -4,6 +4,7 @@ import { enqueueAssistantMessage, drainWhatsAppPhone } from '@/backend/lib/whats
 import { processIncomingMessage } from '@/backend/lib/whatsapp/processMessage';
 import { isGreetingMessage } from '@/backend/lib/whatsapp/greeting';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 import { handleFreeformTest } from '@/whatsapp-test/freeformTest';
 import { TaskMessageRouter } from '@/task-manager/TaskMessageRouter';
 import { TaskIdempotencyService } from '@/task-manager/TaskIdempotencyService';
@@ -11,7 +12,7 @@ import { claimTaskImport } from '@/task-manager/TaskImportInbound';
 import { scheduleShadow } from '@/task-manager/brain/shadow';
 import { claimSmartChat } from '@/task-manager/brain/live';
 import { claimVoiceNote } from '@/task-manager/voice/VoiceIntake';
-import { markRoute, recordInbound } from '@/task-manager/InboundLedger';
+import { markRoute, markReplied, recordInbound } from '@/task-manager/InboundLedger';
 import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
 import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
@@ -88,7 +89,8 @@ export async function POST(req: NextRequest) {
     }));
     // Conversation memory (WHATSAPP_MEMORY_ENABLED, OFF by default → returns at once): the person's message is stored only once a
     // Task Manager route has taken it — for Smart chat AFTER the AI has read the memory, so it never sees this message twice.
-    const remember = () => appendTurn(input?.phone, 'person', input?.text, receivedAt);
+    // 2026-11-02 batching: several messages answered as one turn are remembered as that one turn (their words, one per line).
+    const remember = (text?: string) => appendTurn(input?.phone, 'person', text ?? input?.text, receivedAt);
     // A Task Manager background job that crashes gets an immediate apology instead of silence (no-op while the switch is OFF).
     const guarded = (job: () => Promise<void>) => async () => {
         try { await job(); }
@@ -116,21 +118,52 @@ export async function POST(req: NextRequest) {
     // Smart chat (Phase 4): for people in a department with Smart chat ON, the brain answers plain-language messages. Anything it
     // does not take (rooms / tickets, the AI being down, an older conversation still open) comes back handled:false and the old
     // bot answers exactly as before. The slow part (carrying out, replying) runs after this webhook has answered.
+    // Batching (2026-11-02): several messages sent back to back are answered ONCE, by the newest message's webhook; the earlier
+    // ones come back handled with nothing to do. A batch that is not Smart chat's (only greetings, a ticket request) comes
+    // back with `rewrite` = their words, and the code below carries on with that, as for a confirmed voice note.
     const smartChat = await claimSmartChat(body);
     if (smartChat.handled) {
         if (smartChat.background) {
             await markRoute(input?.messageId, 'smart_chat', input?.phone, input?.text);
-            await remember();
+            await remember(smartChat.text);
             after(guarded(smartChat.background));
         }
         return NextResponse.json({ success: true, routedTo: 'SMART_CHAT' });
     }
+    if (smartChat.rewrite) { body = smartChat.rewrite; input = normalizeInbound(body); }
 
     // Task Brain shadow mode (Phase 3): beside the old bot, for the sandbox numbers only, the brain reads the message and only
     // LOGS what it would have done. It never replies and never changes anything; any failure is swallowed.
     if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
 
     if (!input) return NextResponse.json({ ok: true, ignored: true });
+
+    // CRM Inbound Lead Reply Ingestion:
+    // When a prospective lead replies with their preferred reach-out slot,
+    // update crm_leads followup date/notes, log the activity, and alert the assigned rep.
+    if (input.phone && input.text && !input.mediaUrl) {
+        try {
+            const isLead = await LeadOutreachService.isLeadPhone(input.phone);
+            if (isLead) {
+                const leadReply = await LeadOutreachService.handleInboundLeadReply({
+                    phone: input.phone,
+                    text: input.text,
+                    messageId: input.messageId || undefined,
+                });
+                if (leadReply.handled) {
+                    await markRoute(input.messageId, 'crm_lead_reply', input.phone, input.text);
+                    await markReplied(input.phone);
+                    console.info('[AiSensyWebhook] Inbound routed to CRM_LEAD_REPLY', {
+                        phone: input.phone,
+                        leadId: leadReply.leadId,
+                    });
+                    return NextResponse.json({ success: true, routedTo: 'CRM_LEAD_REPLY', leadId: leadReply.leadId });
+                }
+            }
+        } catch (leadReplyError) {
+            console.error('[AiSensyWebhook] Error processing lead reply:', leadReplyError);
+        }
+    }
 
     let interpreter = false;
     try { interpreter = await isInterpreterPilot(input); }

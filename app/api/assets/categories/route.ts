@@ -21,8 +21,17 @@ export async function GET(request: NextRequest) {
         byCode.set(row.code.toUpperCase(), row); // org rows processed last so they overwrite the global default
     }
 
-    return NextResponse.json({ categories: [...byCode.values()].sort((a, b) => a.sort_order - b.sort_order) });
+    // IT team: only the IT & Network category (null = every category)
+    const allowed = access.allowedCategoryIds;
+    const categories = [...byCode.values()].filter((c) => allowed === null || allowed.includes(c.id));
+    return NextResponse.json({ categories: categories.sort((a, b) => a.sort_order - b.sort_order) });
 }
+
+/** The IT team is limited to IT & Network, so it cannot add, edit or remove categories. */
+const categoryLimited = (access: { allowedCategoryIds: string[] | null }) =>
+    access.allowedCategoryIds !== null
+        ? NextResponse.json({ error: 'Forbidden: categories are managed by the admin team' }, { status: 403 })
+        : null;
 
 /** POST /api/assets/categories — add an org-specific category. Manager-only. */
 export async function POST(request: NextRequest) {
@@ -30,6 +39,8 @@ export async function POST(request: NextRequest) {
     const access = await resolveAssetAccess(request, readOrgId(request, body));
     if (isAssetAccessError(access)) return access;
     if (!access.canManage) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const limited = categoryLimited(access);
+    if (limited) return limited;
 
     const { name, code, color, default_lifecycle_years, amc_required_by_default, sort_order } = body;
     if (!name || !code) return NextResponse.json({ error: 'name and code are required' }, { status: 400 });
@@ -63,6 +74,8 @@ export async function PATCH(request: NextRequest) {
     const access = await resolveAssetAccess(request, readOrgId(request, body));
     if (isAssetAccessError(access)) return access;
     if (!access.canManage) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const limited = categoryLimited(access);
+    if (limited) return limited;
 
     const { data: existing } = await supabaseAdmin.from('asset_categories').select('organization_id').eq('id', id).maybeSingle();
     if (!existing) return NextResponse.json({ error: 'Category not found' }, { status: 404 });
@@ -86,6 +99,8 @@ export async function DELETE(request: NextRequest) {
     const access = await resolveAssetAccess(request, readOrgId(request));
     if (isAssetAccessError(access)) return access;
     if (!access.canManage) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    const limited = categoryLimited(access);
+    if (limited) return limited;
 
     const { data: existing } = await supabaseAdmin.from('asset_categories').select('organization_id').eq('id', id).maybeSingle();
     if (!existing) return NextResponse.json({ error: 'Category not found' }, { status: 404 });

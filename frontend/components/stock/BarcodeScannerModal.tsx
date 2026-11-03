@@ -186,7 +186,8 @@ export default function BarcodeScannerModal({
         const scanConfig = {
             fps: 30,
             qrbox: { width: 280, height: 200 },
-            aspectRatio: Infinity,
+            // No aspectRatio: html5-qrcode passes it to MediaStreamTrack.applyConstraints,
+            // and Chrome rejects a non-finite value, so Infinity stopped the camera from starting.
             disableFlip: false
         };
 

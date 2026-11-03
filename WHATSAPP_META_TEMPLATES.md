@@ -1523,7 +1523,7 @@ lists use ` | `. Each name can be overridden with the env variable shown (only n
 | Midday / Evening rule | `task_midday_reminder_v1` · `task_eod_summary_v1` | `AISENSY_TASK_MIDDAY_CAMPAIGN` · `AISENSY_TASK_EOD_CAMPAIGN` |
 | **Overdue alert** rule (Notifications tab) — only people with open tasks from earlier days | `task_overdue_alert_v1` | `AISENSY_TASK_OVERDUE_CAMPAIGN` |
 | **Midday rule → managers and superusers** get team progress **only if something is still pending**; **Evening rule → always** (each once a day) | `task_manager_team_digest_v1` | `AISENSY_TASK_TEAM_DIGEST_CAMPAIGN` |
-| A task is assigned (Tasks tab, WhatsApp AI, old Assign tab, "assign …") | `task_assigned_v1` | `AISENSY_TASK_ASSIGNED_CAMPAIGN` |
+| A task is assigned (Tasks tab, WhatsApp AI, old Assign tab, "assign …", Send tab, Meeting Assistant) — every department | `task_assigned_v2` (with a **Note** line; replaces v1 — v1 still works if the env says `task_assigned_v1`, the note then goes on the Task line) | `AISENSY_TASK_ASSIGNED_CAMPAIGN` |
 | A task is **handed over** ("Give to…") | `task_handover_v1` | `AISENSY_TASK_HANDOVER_CAMPAIGN` |
 | **Any** task someone gave you is completed → the giver | `task_completed_notice_v1` | `AISENSY_TASK_COMPLETED_CAMPAIGN` |
 | A superuser replies to a reminder ("working on it", "stuck", "done") → the giver | `task_update_v2` | `AISENSY_TASK_UPDATE_CAMPAIGN` |
@@ -1642,5 +1642,105 @@ Your Task Manager workspace is open for today ({{2}}).
   or with no tasks: `You have no tasks logged yet. Speak or type your priorities for today to add them to your board.`
 - **Sample:** `{{1}}` Harsh · `{{2}}` 12 Oct 2026 · `{{3}}` You have no tasks logged yet. Speak or type your priorities for today to add them to your board.
 
+---
+
+### Template 33: `task_assigned_v2` (New Task Assigned, with Note)
+*(Owner 2026-11-02. Replaces `task_assigned_v1` for every department: Tasks tab, WhatsApp AI, "assign …", the Send tab
+(other departments) and the Meeting Assistant. The only change from v1 is the **Note** line, so the note given with a task
+reaches WhatsApp. Several tasks for one person → still ONE message.)*
+
+> **Rollout:** create and get this approved in AiSensy / Meta **before** the code that uses it is deployed. Until then set
+> `AISENSY_TASK_ASSIGNED_CAMPAIGN=task_assigned_v1` in the deployment so alerts keep going out on v1 (the note is then
+> added to the Task line).
+
+- **Category:** `UTILITY` · **Language:** `English (en)` · **Header:** none (same as v1)
+- **Body:**
+```text
+🔔 A new task has been assigned to you.
+
+Task: {{1}}
+Note: {{2}}
+Assigned by: {{3}}
+Date: {{4}}
+
+Reply "tasks" to see your list and mark it done.
+```
+- **Button:** `Quick Reply` &rarr; `tasks` (same as v1)
+- **Params:** `[task(s), note(s), giver, date "2 Nov 2026"]` — all on one line. One task → its title and its note (at most
+  300 characters). Several tasks → `1. A | 2. B` and the notes numbered the same way, `1. note A | 3. note C` (tasks without a
+  note are left out). No note → `—` (Meta does not accept an empty blank).
+  A task with a due date (only once it is saved) has it in brackets on the Task line: `Title (Due: 5 Nov 2026, 5:00 PM)`,
+  or `Title (Due: 5 Nov 2026)` without a time. Several tasks → each its own: `1. Check AC (Due: 5 Nov 2026) | 2. Call vendor`.
+  The title is cut first, so the due date is never lost. (This is inside `{{1}}`, so the approved wording does not change.)
+- **Sample:** `{{1}}` Work on verification and validation testing (Due: 5 Nov 2026, 5:00 PM) · `{{2}}` Cover the login and payment flows first ·
+  `{{3}}` Autopilot (meeting "Meeting – 29 Oct") · `{{4}}` 2 Nov 2026
 
 
+
+
+---
+
+## 11. Meera — Vendor Discovery Agent
+
+Sent by `backend/lib/satej/clients/whatsapp.ts` through AiSensy. The full ranked
+summary never goes in a template (templates cannot carry new lines); the button
+opens the requirement on the Meera page, where the summary has a copy button.
+Names are configurable with `SATEJ_WA_SUMMARY_TEMPLATE` / `SATEJ_WA_INPUT_TEMPLATE`.
+
+### Template 27: `satej_input_needed_v1` (Meera needs an answer or an approval)
+- **Template Name:** `satej_input_needed_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor discovery: your input`
+- **Body:**
+```text
+Hello {{1}},
+
+Meera needs your input on {{2}} (ref {{3}}):
+
+{{4}}
+
+Open the requirement to continue.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open requirement`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{5}}`
+- **Sample Values:**
+  - `{{1}}`: `Meera`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `12 vendors are ready to call. Please check the list and approve the calls.`
+  - `{{5}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/meera?req=REQ-260928-4821`
+
+### Template 28: `satej_vendor_summary_v1` (Ranked shortlist is ready)
+- **Template Name:** `satej_vendor_summary_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `Vendor shortlist ready`
+- **Body:**
+```text
+Hello {{1}},
+
+Meera has finished vendor discovery for {{2}} (ref {{3}}).
+
+Vendors called: {{4}}
+Qualified: {{5}}
+Top pick: {{6}}
+Last call: {{7}}
+
+The ranked list, call recordings and transcripts are on the Meera page.
+```
+- **Footer:** `AutoPilot Procurement`
+- **Button Type:** `Call to Action (Dynamic URL)`
+  - **Button Text:** `Open shortlist`
+  - **URL Type:** `Dynamic` &rarr; `https://fms-dev-saas-one.vercel.app/{{8}}`
+- **Sample Values:**
+  - `{{1}}`: `Meera`
+  - `{{2}}`: `Gypsum false ceiling, Lower Parel office`
+  - `{{3}}`: `REQ-260928-4821`
+  - `{{4}}`: `6`
+  - `{{5}}`: `3`
+  - `{{6}}`: `Shree Ganesh Interiors (96/100)`
+  - `{{7}}`: `28 Sept 2026, 05:39 pm`
+  - `{{8}}` *(Dynamic URL Path)*: `211e1330-ad83-446d-941f-dcea48396798/meera?req=REQ-260928-4821`

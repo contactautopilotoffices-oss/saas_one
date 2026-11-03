@@ -9,14 +9,17 @@
 // Never gates a button on a role string — every action checks `can.align` / `can.complete`
 // as returned by GET /api/accounts/po/[id], the same rule AccountsDashboard follows.
 
+import { PoApprovalLine } from './AccountsDashboard';
+import PoOrderedItems from './PoOrderedItems';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { format, parseISO } from 'date-fns';
 import {
     ArrowLeft, IndianRupee, FileText, Building2, History, ClipboardList,
-    Mail, Bot, Upload, Loader2, Wrench, AlertCircle, CheckCircle2, RefreshCw, User,
+    Mail, Bot, Upload, Loader2, Wrench, AlertCircle, CheckCircle2, RefreshCw, User, Trash2,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
+import InvoiceLiveStatus from '../invoices/InvoiceLiveStatus';
 import { inr, liveStatusMeta, derivePoPaymentStatus, PurchaseOrder, PoPayment } from '@/frontend/lib/accounts/roles';
 import {
     PoDetailResponse, PoDocument, VendorDocument, PoActivityLogEntry, ComplianceStatus,
@@ -55,9 +58,10 @@ const COMPLIANCE_META: Record<ComplianceStatus, { label: string; cls: string }> 
     expired: { label: 'Expired', cls: 'text-error bg-error/10' },
 };
 
-interface Props { orgId: string; poId: string; }
+/** onBack: set when shown in a drawer, so Back closes the drawer instead of leaving the dashboard. */
+interface Props { orgId: string; poId: string; onBack?: () => void; }
 
-export default function PoDetailWorkspace({ orgId, poId }: Props) {
+export default function PoDetailWorkspace({ orgId, poId, onBack }: Props) {
     const router = useRouter();
     const [supabase] = useState(() => createClient());
 
@@ -135,7 +139,10 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
     const can = data.can || { align: false, complete: false };
     const payments = data.payments || [];
     const paymentStatus = po.payment_status || derivePoPaymentStatus(payments);
-    const meta = liveStatusMeta(paymentStatus);
+    // A PO with some tranches paid and value still unaligned is part-paid, not completed.
+    const partlyPaid = (po as { payment_state?: string }).payment_state === 'partially_paid';
+    const meta = partlyPaid ? { ...liveStatusMeta('aligned'), label: 'Part paid' } : liveStatusMeta(paymentStatus);
+    const hasRequested = payments.some(p => p.status === 'to_align');
     const pending = po.pending_amount ?? po.po_amount;
 
     const tabs: { key: Section; label: string; icon: typeof IndianRupee }[] = [
@@ -149,8 +156,8 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
     return (
         <div className="space-y-5">
             {/* Header */}
-            <div className="flex items-start gap-3">
-                <button onClick={() => router.push(`/${orgId}/accounts`)} className="p-2 -ml-2 mt-0.5 text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-elevated" aria-label="Back to tracker">
+            <div className="flex items-start gap-3 flex-wrap">
+                <button onClick={() => (onBack ? onBack() : router.push(`/${orgId}/accounts`))} className="p-2 -ml-2 mt-0.5 text-text-secondary hover:text-text-primary rounded-lg hover:bg-surface-elevated" aria-label="Back to tracker">
                     <ArrowLeft className="w-5 h-5" />
                 </button>
                 <div className="flex-1 min-w-0">
@@ -159,17 +166,22 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
                         <span className={`inline-flex items-center gap-1.5 text-xs font-bold ${meta.text}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} /> {meta.label}
                         </span>
+                        <span className="text-xs"><PoApprovalLine status={(po as { status?: string | null }).status} /></span>
                     </div>
                     <p className="text-sm text-text-secondary mt-0.5">
                         {po.vendor_name || 'Unknown vendor'} · <span className="tabular-nums font-medium text-text-primary">{inr(po.po_amount)}</span>
                         {po.department && <> · {po.department}</>}
                     </p>
                 </div>
-                {can.align && paymentStatus === 'to_align' && (
-                    <button onClick={() => setAlignOpen(true)} className="px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 whitespace-nowrap">
-                        Align payment ▸
-                    </button>
-                )}
+                <div className="flex items-center gap-2">
+                    {po.source !== 'manual' && <a href={`/api/accounts/po/${poId}/pdf?org_id=${orgId}`} target="_blank" rel="noopener noreferrer" className="px-3 py-2.5 border border-border rounded-xl text-sm font-bold text-text-secondary hover:bg-surface-elevated whitespace-nowrap inline-flex items-center gap-1.5" title="Open the PO PDF from Zoho Books"><FileText className="w-4 h-4" /> PO PDF</a>}
+                    {/* Same rule as the Payments tab: anything left to align can be aligned from here too. */}
+                    {can.align && pending > 0.5 && !hasRequested && (
+                        <button onClick={() => setAlignOpen(true)} className="px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-bold hover:bg-primary/90 whitespace-nowrap">
+                            Align payment ▸
+                        </button>
+                    )}
+                </div>
             </div>
 
             {!provisioned && (
@@ -193,14 +205,14 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
                 })}
             </div>
 
-            {section === 'overview' && <OverviewSection po={po} pending={pending} payments={payments} />}
+            {section === 'overview' && <OverviewSection po={po} pending={pending} payments={payments} orgId={orgId} poId={poId} />}
             {section === 'payments' && (
                 <PaymentsSection payments={payments} can={can} pending={pending}
                     onAlign={() => setAlignOpen(true)} onMarkPaid={p => setPayOpen(p)} />
             )}
             {section === 'documents' && (
                 provisioned
-                    ? <DocumentsSection poId={poId} orgId={orgId} documents={data.documents || []} onChanged={fetchDetail} />
+                    ? <DocumentsSection poId={poId} orgId={orgId} documents={data.documents || []} onChanged={fetchDetail} proofOnPayment={payments.some(p => !!p.payment_proof_url)} />
                     : <SectionSetupNotice label="document checklist" />
             )}
             {section === 'vendor' && (
@@ -215,11 +227,11 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
             )}
 
             {alignOpen && (
-                <AlignPaymentModal po={po as PurchaseOrder} onClose={() => setAlignOpen(false)}
+                <AlignPaymentModal po={po as PurchaseOrder} orgId={orgId} onClose={() => setAlignOpen(false)}
                     onDone={() => { setAlignOpen(false); fetchDetail(); }} />
             )}
             {payOpen && (
-                <MarkPaidModal payment={payOpen} onClose={() => setPayOpen(null)}
+                <MarkPaidModal payment={payOpen} orgId={orgId} onClose={() => setPayOpen(null)}
                     onDone={() => { setPayOpen(null); fetchDetail(); }} />
             )}
         </div>
@@ -229,7 +241,7 @@ export default function PoDetailWorkspace({ orgId, poId }: Props) {
 // ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
-function OverviewSection({ po, pending, payments }: { po: PoDetailResponse['po']; pending: number; payments: PoPayment[] }) {
+function OverviewSection({ po, pending, payments, orgId, poId }: { po: PoDetailResponse['po']; pending: number; payments: PoPayment[]; orgId: string; poId: string }) {
     if (!po) return null;
     const alignedTotal = po.aligned_total || 0;
     const completedTotal = po.completed_total || 0;
@@ -249,8 +261,8 @@ function OverviewSection({ po, pending, payments }: { po: PoDetailResponse['po']
             <div className="bg-surface rounded-xl border border-border p-4">
                 <h3 className="text-xs font-bold text-text-secondary uppercase tracking-wide mb-3">GST &amp; value breakdown</h3>
                 <dl className="space-y-2 text-sm">
-                    <Row label="Taxable value" value={po.taxable_value != null ? inr(po.taxable_value) : '—'} tabular />
-                    <Row label="GST amount" value={po.gst_amount != null ? inr(po.gst_amount) : '—'} tabular />
+                    {po.taxable_value != null && <Row label="Taxable value" value={inr(po.taxable_value)} tabular />}
+                    {po.gst_amount != null && <Row label="GST amount" value={inr(po.gst_amount)} tabular />}
                     <Row label="PO amount (total)" value={inr(po.po_amount)} bold tabular />
                     <Row label="Aligned so far" value={inr(alignedTotal)} tabular />
                     <Row label="Paid so far" value={inr(completedTotal)} tabular />
@@ -274,6 +286,7 @@ function OverviewSection({ po, pending, payments }: { po: PoDetailResponse['po']
                     </div>
                 )}
             </div>
+            <PoOrderedItems orgId={orgId} poId={poId} />
         </div>
     );
 }
@@ -361,29 +374,47 @@ function PaymentsSection({ payments, can, pending, onAlign, onMarkPaid }: {
 // ---------------------------------------------------------------------------
 // Documents — tax invoice, proforma, delivery challan, GRN, work completion.
 // ---------------------------------------------------------------------------
-function DocumentsSection({ poId, orgId, documents, onChanged }: { poId: string; orgId: string; documents: PoDocument[]; onChanged: () => void }) {
+function DocumentsSection({ poId, orgId, documents, onChanged, proofOnPayment = false }: { poId: string; orgId: string; documents: PoDocument[]; onChanged: () => void; proofOnPayment?: boolean }) {
     const [uploadingType, setUploadingType] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
-    const byType = new Map(documents.map(d => [d.doc_type, d]));
-    const acquired = PO_DOC_TYPES.filter(t => {
-        const d = byType.get(t.key);
-        return d && (d.status === 'uploaded' || d.status === 'verified');
-    }).length;
+    // One row per type, showing the NEWEST upload: the API lists newest first, so keep the first
+    // of each type (a Map built from the whole list would keep the last, i.e. the oldest).
+    const byType = new Map<string, PoDocument>();
+    // Older files of the same type stay listed under the row, so nothing on the PO is invisible:
+    // an earlier tax invoice still counts against the PO until it is removed.
+    const olderByType = new Map<string, PoDocument[]>();
+    for (const d of documents) {
+        if (!byType.has(d.doc_type)) byType.set(d.doc_type, d);
+        else olderByType.set(d.doc_type, [...(olderByType.get(d.doc_type) ?? []), d]);
+    }
+    // A payment proof attached when marking a tranche paid counts here too; "Other" is optional, so
+    // it is not part of the count a PO is expected to complete.
+    const has = (key: string) => { const d = byType.get(key); return !!d && (d.status === 'uploaded' || d.status === 'verified') || (key === 'payment_proof' && proofOnPayment); };
+    const expected = PO_DOC_TYPES.filter(t => t.key !== 'other');
+    const acquired = expected.filter(t => has(t.key)).length;
 
     const upload = async (docType: string, file: File | null) => {
         if (!file) return;
         setUploadingType(docType); setErr(null);
+        const previous = byType.get(docType) ?? null;
         try {
             const fd = new FormData(); fd.append('file', file);
-            const up = await fetch('/api/accounts/upload', { method: 'POST', body: fd });
-            if (!up.ok) throw new Error('Upload failed');
+            const up = await fetch(`/api/accounts/upload?org_id=${encodeURIComponent(orgId)}`, { method: 'POST', body: fd });
+            if (!up.ok) { const e = await up.json().catch(() => ({})); throw new Error(e.error || `Upload failed (HTTP ${up.status})`); }
             const uploaded = await up.json();
             const res = await fetch(`/api/accounts/po/${poId}/documents`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ organization_id: orgId, doc_type: docType, file_url: uploaded.url, file_name: uploaded.file_name }),
             });
-            if (res.status === 404) { setErr('Document registration isn’t wired up on the server yet — the file uploaded but couldn’t be recorded against this PO.'); return; }
             if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Could not save the document'); }
+            // A replacement retires the earlier file, and with it the invoice check made from it, so the
+            // old result cannot keep showing or keep a reviewer busy. The server refuses when the earlier
+            // invoice was already accepted; both then stay, and the message says so.
+            if (previous) {
+                const del = await fetch(`/api/accounts/po/${poId}/documents/${previous.id}?org_id=${encodeURIComponent(orgId)}`, { method: 'DELETE' });
+                if (!del.ok) { const e = await del.json().catch(() => ({})); setErr(`New file saved. The earlier one was kept: ${e.error || 'it could not be removed'}`); }
+            }
             onChanged();
         } catch (e) {
             setErr(e instanceof Error ? e.message : 'Upload failed');
@@ -392,17 +423,34 @@ function DocumentsSection({ poId, orgId, documents, onChanged }: { poId: string;
         }
     };
 
+    // Cancel an upload: the wrong file, a dummy file, or one that was replaced. The server decides what
+    // may be removed (a verified document, or proof of a completed payment, may not by everyone).
+    const remove = async (doc: PoDocument, label: string) => {
+        const extra = doc.doc_type === 'tax_invoice' ? '\n\nThe invoice check made from it will be withdrawn too.' : '';
+        if (!window.confirm(`Remove this ${label.toLowerCase()}${doc.file_name ? ` (${doc.file_name})` : ''}?${extra}`)) return;
+        setDeletingId(doc.id); setErr(null);
+        try {
+            const res = await fetch(`/api/accounts/po/${poId}/documents/${doc.id}?org_id=${encodeURIComponent(orgId)}`, { method: 'DELETE' });
+            if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Could not remove the document'); }
+            onChanged();
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : 'Could not remove the document');
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
     return (
         <div className="bg-surface rounded-xl border border-border overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                 <p className="text-sm font-bold text-text-primary">Document checklist</p>
-                <span className="text-xs font-bold text-text-secondary tabular-nums">{acquired} of {PO_DOC_TYPES.length} acquired</span>
+                <span className="text-xs font-bold text-text-secondary tabular-nums">{acquired} of {expected.length} acquired</span>
             </div>
             {err && <p className="px-4 pt-3 text-xs text-error">{err}</p>}
             <div className="divide-y divide-border">
                 {PO_DOC_TYPES.map(t => {
                     const doc = byType.get(t.key);
-                    const acquired_ = doc && (doc.status === 'uploaded' || doc.status === 'verified');
+                    const acquired_ = has(t.key);
                     return (
                         <div key={t.key} className="flex items-center justify-between gap-3 px-4 py-3">
                             <div className="flex items-center gap-2.5 min-w-0">
@@ -410,6 +458,14 @@ function DocumentsSection({ poId, orgId, documents, onChanged }: { poId: string;
                                 <div className="min-w-0">
                                     <p className="text-sm font-medium text-text-primary truncate">{t.label}</p>
                                     {doc?.invoice_no && <p className="text-xs text-text-tertiary truncate">Invoice {doc.invoice_no} · {fmtDate(doc.invoice_date)} · {doc.invoice_amount != null ? inr(doc.invoice_amount) : ''}</p>}
+                                    {t.key === 'tax_invoice' && doc && <div className="mt-1.5"><InvoiceLiveStatus key={doc.id} orgId={orgId} poId={poId} uploadedAt={doc.uploaded_at} /></div>}
+                                    {(olderByType.get(t.key) ?? []).map(o => (
+                                        <p key={o.id} className="mt-1 text-xs text-text-tertiary flex items-center gap-2 flex-wrap">
+                                            <span className="truncate max-w-[260px]">Earlier file: {o.file_name || 'unnamed'}{t.key === 'tax_invoice' ? ' · still counts against this PO' : ''}</span>
+                                            {o.file_url && <a href={o.file_url} target="_blank" rel="noopener noreferrer" className="text-primary font-bold">View</a>}
+                                            <button type="button" onClick={() => remove(o, t.label)} disabled={deletingId === o.id} className="text-error font-bold hover:underline disabled:opacity-50">{deletingId === o.id ? 'Removing…' : 'Remove'}</button>
+                                        </p>
+                                    ))}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
@@ -420,8 +476,14 @@ function DocumentsSection({ poId, orgId, documents, onChanged }: { poId: string;
                                 <label className="flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed border-border rounded-lg text-xs font-bold text-text-secondary cursor-pointer hover:border-primary/40">
                                     {uploadingType === t.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
                                     {doc ? 'Replace' : 'Upload'}
-                                    <input type="file" className="hidden" onChange={e => upload(t.key, e.target.files?.[0] || null)} accept="application/pdf,image/*" />
+                                    <input type="file" className="hidden" onChange={e => { const f = e.target.files?.[0] || null; e.target.value = ''; upload(t.key, f); }} accept="application/pdf,image/*" />
                                 </label>
+                                {doc && (
+                                    <button type="button" onClick={() => remove(doc, t.label)} disabled={deletingId === doc.id} title="Remove this document" aria-label={`Remove ${t.label}`}
+                                        className="p-1.5 border border-border rounded-lg text-text-tertiary hover:text-error hover:border-error/40 disabled:opacity-50">
+                                        {deletingId === doc.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                                    </button>
+                                )}
                             </div>
                         </div>
                     );
@@ -478,7 +540,8 @@ function VendorSection({ vendor, vendorDocuments }: { vendor: PoDetailResponse['
                 <div className="divide-y divide-border">
                     {VENDOR_DOC_TYPES.map(t => {
                         const doc = byType.get(t.key);
-                        const ok = doc && (doc.status === 'uploaded' || doc.status === 'verified');
+                        const expired = !!(doc as { is_expired?: boolean } | undefined)?.is_expired;
+                        const ok = doc && !expired && (doc.status === 'uploaded' || doc.status === 'verified');
                         return (
                             <div key={t.key} className="flex items-center justify-between gap-3 py-2.5">
                                 <div className="flex items-center gap-2.5 min-w-0">
@@ -486,7 +549,7 @@ function VendorSection({ vendor, vendorDocuments }: { vendor: PoDetailResponse['
                                     <span className="text-sm text-text-primary truncate">{t.label}</span>
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
-                                    {doc?.status === 'verified' && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold text-success bg-success/10">Verified</span>}
+                                    {expired ? <span className="px-2 py-0.5 rounded-full text-[11px] font-bold text-error bg-error/10">Expired</span> : doc?.status === 'verified' && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold text-success bg-success/10">Verified</span>}
                                     {doc?.expires_on && <span className="text-xs text-text-tertiary">exp. {fmtDate(doc.expires_on)}</span>}
                                     {doc?.file_url
                                         ? <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-primary text-xs font-bold inline-flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> View</a>

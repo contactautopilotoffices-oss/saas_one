@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveAssetAccess, isAssetAccessError, readOrgId, scopedPropertyIds, canAccessProperty } from '@/backend/lib/assets/access';
+import { resolveAssetAccess, isAssetAccessError, readOrgId, scopedPropertyIds, canAccessProperty, scopedCategoryIds, canAccessCategory } from '@/backend/lib/assets/access';
 import { ASSET_SELECT, enrichAssets } from '@/backend/lib/assets/enrich';
 
 /**
@@ -34,7 +34,12 @@ export async function GET(request: NextRequest) {
         .is('deleted_at', null);
 
     if (propIds !== null) query = query.in('property_id', propIds);
-    if (categoryId) query = query.eq('category_id', categoryId);
+    // Category: the requested one, limited for the IT team to IT & Network (null = no filter)
+    const catIds = scopedCategoryIds(access, categoryId);
+    if (catIds !== null) {
+        if (catIds.length === 0) return NextResponse.json({ assets: [], pagination: { page, page_size: pageSize, total: 0, total_pages: 1 } });
+        query = query.in('category_id', catIds);
+    }
     if (floor) query = query.eq('floor', floor);
     if (status) query = query.eq('status', status);
     if (search) query = query.or(`name.ilike.%${search}%,asset_code.ilike.%${search}%,serial_number.ilike.%${search}%,model.ilike.%${search}%`);
@@ -84,6 +89,9 @@ export async function POST(request: NextRequest) {
     }
     if (!canAccessProperty(access, property_id)) {
         return NextResponse.json({ error: 'Forbidden: no access to this property' }, { status: 403 });
+    }
+    if (!canAccessCategory(access, category_id)) {
+        return NextResponse.json({ error: 'Forbidden: you can only add assets in the IT & Network category' }, { status: 403 });
     }
 
     let code = (asset_code || '').trim();

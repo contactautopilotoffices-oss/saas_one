@@ -1109,7 +1109,7 @@ export default function HREscalationTreeVisualizer({
                                                      {employeesList && employeesList.length > 0 && (
                                                          <div className="pt-1.5 max-w-md space-y-2">
                                                              <SearchableEmployeeSelector
-                                                                 placeholder={`+ Assign specific employee to Level ${lvl.level}...`}
+                                                                 placeholder={`Assign specific employee to Level ${lvl.level}...`}
                                                                  employees={employeesList}
                                                                  selectedIds={displayAssignees.map(a => a.id || a.user_id)}
                                                                  onSelect={(id) => handleAddStepAssignee(selectedFlowId, lvl.level, id)}
@@ -1170,7 +1170,7 @@ export default function HREscalationTreeVisualizer({
                             className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-2xl text-xs font-black flex items-center gap-2 shadow-md shadow-indigo-500/20 transition-all hover:scale-105"
                         >
                             <Plus className="w-4 h-4" />
-                            <span>➕ Add New Escalation Level at End (Level {currentLevels.length + 1})</span>
+                            <span>Add New Escalation Level at End (Level {currentLevels.length + 1})</span>
                         </button>
                     </div>
                 </div>

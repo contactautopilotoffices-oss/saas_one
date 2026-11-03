@@ -197,7 +197,7 @@ export function SearchableEmployeeSelector({
             >
                 <span className="flex items-center gap-1.5 truncate">
                     <Plus className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{placeholder} (Select employee to add...)</span>
+                    <span className="truncate">{placeholder || 'Select employee to add...'}</span>
                 </span>
                 <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
             </button>

@@ -10,13 +10,17 @@ export async function GET(request: NextRequest) {
 
     const { data: categories } = await supabaseAdmin
         .from('asset_categories')
-        .select('name, code, organization_id')
+        .select('id, name, code, organization_id')
         .or(`organization_id.eq.${access.organizationId},organization_id.is.null`)
         .eq('is_active', true)
         .order('sort_order', { ascending: true });
 
     const seen = new Set<string>();
-    const list = (categories || []).filter((c) => (seen.has(c.code) ? false : (seen.add(c.code), true)));
+    // IT team: the template lists only IT & Network (null = every category)
+    const allowed = access.allowedCategoryIds;
+    const list = (categories || [])
+        .filter((c) => allowed === null || allowed.includes(c.id))
+        .filter((c) => (seen.has(c.code) ? false : (seen.add(c.code), true)));
 
     const buffer = await buildTemplateWorkbook(list);
     return new NextResponse(new Uint8Array(buffer), {

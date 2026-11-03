@@ -580,7 +580,7 @@ export default function TenantTicketingDashboard({
                                                                     </span>
                                                                 </div>
                                                                 <div className="min-w-0">
-                                                                    <p className="text-sm sm:text-xs font-semibold truncate">{u.full_name}</p>
+                                                                    <p className="text-sm sm:text-xs font-semibold truncate">{u.full_name}{u.role === 'it' && ' (IT)'}</p>
                                                                     {u.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{u.email}</p>}
                                                                 </div>
                                                             </div>

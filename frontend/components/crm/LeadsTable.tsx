@@ -6,6 +6,7 @@ import { Search, Filter, Download, Plus, ChevronDown, MoreHorizontal, Phone, Mai
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { CRMLead, LeadStatusConfig, LeadSource } from '@/frontend/types/crm';
+import { parseSeatCount, seatBucket } from '@/backend/lib/crm/seatRequirement';
 import { getStageVisual } from '@/frontend/lib/crm/stages';
 import { getSourceVisual } from '@/frontend/lib/crm/sourceIcons';
 import SourceBadge from '@/frontend/components/crm/SourceBadge';
@@ -22,18 +23,24 @@ interface LeadsTableProps {
     };
 }
 
-// Resolve seat count from the real `seats` column, or fall back to the
-// [seats=N] token the Meta sync embeds in `requirement` before the column exists.
-function seatInfo(lead: any): { count: number | null; bucket: string | null; cleanReq: string | null } {
+// Resolve seat count from the real `seats` column, or fall back to the typed
+// seat requirement, or to the [seats=N] token the Meta sync embeds in
+// `requirement` before the column exists. `tooltip` carries the words the rep
+// typed ("70 workstations and 4 cabins") plus the requirement text.
+function seatInfo(lead: any): { count: number | null; bucket: string | null; tooltip: string | null } {
     let count: number | null = typeof lead.seats === 'number' ? lead.seats : null;
     let cleanReq: string | null = lead.requirement || null;
+    if (count == null) count = parseSeatCount(lead.seats_detail);
     if (count == null && lead.requirement) {
         const m = lead.requirement.match(/\[seats=(\d+)/);
         if (m) count = parseInt(m[1]);
     }
     if (cleanReq) cleanReq = cleanReq.replace(/^\[seats=\d+;bucket=[^\]]*\]\s*/, '').trim() || null;
-    const bucket = count == null ? null : count < 25 ? '<25' : count <= 50 ? '25–50' : count <= 100 ? '50–100' : '100+';
-    return { count, bucket, cleanReq };
+    // Only worth showing when it says more than the number already on screen.
+    const detail = (lead.seats_detail || '').trim();
+    const seatText = detail && detail !== String(count) ? detail : null;
+    const tooltip = [seatText, cleanReq].filter(Boolean).join(' · ') || null;
+    return { count, bucket: seatBucket(count), tooltip };
 }
 
 export default function LeadsTable({ onLeadSelect, onCreateLead, updatedLead, refreshTrigger, filters }: LeadsTableProps) {
@@ -779,9 +786,9 @@ export default function LeadsTable({ onLeadSelect, onCreateLead, updatedLead, re
                                                 ) : (
                                                     <span className="font-medium text-text-tertiary text-sm">-</span>
                                                 )}
-                                                {si.cleanReq && (
+                                                {si.tooltip && (
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 max-w-xs truncate">
-                                                        {si.cleanReq}
+                                                        {si.tooltip}
                                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
                                                     </div>
                                                 )}

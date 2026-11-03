@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from '@/task-manager/TaskDatabaseService';
-import { requireTaskManagerAdmin } from '../_shared/adminGuard';
+import { requireControlCentre } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
     try {
-        const guard = await requireTaskManagerAdmin();
+        const guard = await requireControlCentre();
         if (!guard.ok) return guard.response;
 
         const { searchParams } = new URL(request.url);
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
-        const guard = await requireTaskManagerAdmin();
+        const guard = await requireControlCentre();
         if (!guard.ok) return guard.response;
 
         const body = await request.json().catch(() => ({}));
