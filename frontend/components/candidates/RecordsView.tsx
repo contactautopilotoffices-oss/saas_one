@@ -4,16 +4,17 @@ import React, { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, CircleAlert, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
 import {
     RECORD_STATUSES, STATUS_LABELS,
-    type CandidateListResponse, type CandidateRecord, type RecordStatus, type SheetsResponse,
+    type BulkResponse, type CandidateListResponse, type CandidateRecord, type RecordStatus, type SheetsResponse,
 } from '@/backend/lib/candidates/types';
 import ConfirmModal from '@/frontend/components/ui/ConfirmModal';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, qs } from './api';
+import { PERMANENT_PHRASE, TypedConfirmDialog } from './DangerDialogs';
 import { formatCount, formatDate, formatInr, formatMonths, formatNotice } from './format';
 import RecordForm from './RecordForm';
 import {
-    BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, StatusBadge, Toggle, useUi,
+    BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, StatusBadge, Toggle, useUi, WELL,
 } from './ui';
 
 const PAGE_SIZE = 50;
@@ -39,6 +40,11 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     const [editorOpen, setEditorOpen] = useState(false);
     const [confirmDelete, setConfirmDelete] = useState<CandidateRecord | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
+    // Ticked rows belong to one view (filters + page): a different view starts with nothing ticked.
+    const [selection, setSelection] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] });
+    // Bulk delete (owner 2026-11-03): ticked rows or all matching -> deleted (restorable); purge -> erased for good.
+    const [bulk, setBulk] = useState<{ kind: 'selected' | 'matching' | 'purge'; ids: string[]; count: number; open: boolean; key: number } | null>(null);
+    const [bulkBusy, setBulkBusy] = useState(false);
 
     // Debounced text search (300 ms); a new term starts again from page 1.
     useEffect(() => {
@@ -78,6 +84,36 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     const filtering = !!(q || status || sheetId);
 
     const reload = () => setNonce(n => n + 1);
+
+    const selectionKey = JSON.stringify([orgId, q, status, sheetId, deleted, page]);
+    const selected = selection.key === selectionKey ? selection.ids : [];
+    const allOnPage = records.length > 0 && records.every(r => selected.includes(r.id));
+    const toggleRow = (id: string) => setSelection(sel => {
+        const ids = sel.key === selectionKey ? sel.ids : [];
+        return { key: selectionKey, ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
+    });
+    const togglePage = () => setSelection({ key: selectionKey, ids: allOnPage ? [] : records.map(r => r.id) });
+    const openBulk = (kind: 'selected' | 'matching' | 'purge', ids: string[], count: number) =>
+        setBulk(b => ({ kind, ids, count, open: true, key: (b?.key ?? 0) + 1 }));
+
+    const doBulk = async () => {
+        if (!bulk) return;
+        setBulkBusy(true);
+        const json = bulk.kind === 'matching'
+            ? { orgId, action: 'delete', filter: { q: q.trim(), status, sheetId } }
+            : { orgId, action: bulk.kind === 'purge' ? 'purge' : 'delete', ids: bulk.ids };
+        const res = await api<BulkResponse>('/api/candidates/bulk', { json });
+        setBulkBusy(false);
+        if (!res.ok) { reportError(res); return; }
+        setBulk(b => (b ? { ...b, open: false } : b));
+        setSelection({ key: '', ids: [] });
+        const n = res.data.records;
+        notify(bulk.kind === 'purge'
+            ? `${formatCount(n)} ${n === 1 ? 'record' : 'records'} deleted permanently`
+            : `${formatCount(n)} ${n === 1 ? 'record' : 'records'} moved to deleted`, 'success');
+        setPage(1);
+        reload(); onDataChanged();
+    };
     const openEditor = (record: CandidateRecord | null) => { setEditor(e => ({ record, key: (e?.key ?? 0) + 1 })); setEditorOpen(true); };
 
     const doDelete = async () => {
@@ -102,9 +138,14 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     };
 
     const rowActions = (r: CandidateRecord, compact = false) => deleted ? (
-        <button type="button" onClick={() => void doRestore(r)} disabled={busyId === r.id} className={BTN_GHOST}>
-            <RotateCcw className="h-4 w-4" />Restore
-        </button>
+        <>
+            <button type="button" onClick={() => void doRestore(r)} disabled={busyId === r.id} className={BTN_GHOST}>
+                <RotateCcw className="h-4 w-4" />Restore
+            </button>
+            <button type="button" onClick={() => openBulk('purge', [r.id], 1)} disabled={busyId === r.id} className={BTN_DANGER_GHOST} aria-label={`Delete ${r.fullName} permanently`}>
+                <Trash2 className="h-4 w-4" />{compact ? 'Delete' : <span className="sr-only">Delete permanently</span>}
+            </button>
+        </>
     ) : (
         <>
             <button type="button" onClick={() => openEditor(r)} className={BTN_GHOST} aria-label={`Edit ${r.fullName}`}>
@@ -147,7 +188,24 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 </div>
             </div>
 
-            {deleted && <p className="text-sm text-text-secondary">Showing deleted records. Restore a record to bring it back into search.</p>}
+            {deleted && <p className="text-sm text-text-secondary">Showing deleted records. Restore a record to bring it back into search, or delete it permanently.</p>}
+
+            {selected.length > 0 && (
+                <div className={`${WELL} flex flex-wrap items-center gap-2 px-4 py-2`} aria-live="polite">
+                    <p className="text-sm text-text-primary"><span className="font-semibold tabular-nums">{formatCount(selected.length)}</span> selected</p>
+                    <button type="button" onClick={() => setSelection({ key: '', ids: [] })} className={BTN_GHOST}>Clear</button>
+                    <span className="flex-1" />
+                    {deleted ? (
+                        <button type="button" onClick={() => openBulk('purge', selected, selected.length)} className={BTN_DANGER_GHOST}>
+                            <Trash2 className="h-4 w-4" />Delete permanently
+                        </button>
+                    ) : (
+                        <button type="button" onClick={() => openBulk('selected', selected, selected.length)} className={BTN_DANGER_GHOST}>
+                            <Trash2 className="h-4 w-4" />Delete selected
+                        </button>
+                    )}
+                </div>
+            )}
 
             <div className={`${CARD} overflow-hidden`}>
                 {list?.error && !loading ? (
@@ -171,6 +229,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                             {records.map(r => (
                                 <li key={r.id} className="space-y-2 px-4 py-3">
                                     <div className="flex items-start gap-2">
+                                        <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="mt-1 h-4 w-4 shrink-0 accent-primary" />
                                         <div className="min-w-0 flex-1">
                                             <p className="break-words font-semibold text-text-primary">{r.fullName}</p>
                                             {r.role && <p className="text-sm text-primary-dark">For {r.role}</p>}
@@ -196,7 +255,10 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                             <table className="w-full min-w-[1080px] border-collapse text-sm">
                                 <thead className="bg-surface-elevated">
                                     <tr className={`${LABEL} text-left`}>
-                                        <th scope="col" className="px-4 py-3 font-semibold">Name</th>
+                                        <th scope="col" className="w-10 py-3 pl-4">
+                                            <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select every record on this page" className="h-4 w-4 accent-primary" />
+                                        </th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">Name</th>
                                         <th scope="col" className="px-3 py-3 font-semibold">Role sourced for</th>
                                         <th scope="col" className="px-3 py-3 font-semibold">Designation</th>
                                         <th scope="col" className="px-3 py-3 font-semibold">Location</th>
@@ -212,7 +274,10 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                 <tbody className="divide-y divide-border-subtle">
                                     {records.map(r => (
                                         <tr key={r.id} className="group align-middle hover:bg-surface-elevated">
-                                            <td className="max-w-[220px] px-4 py-3">
+                                            <td className="w-10 py-3 pl-4">
+                                                <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="h-4 w-4 accent-primary" />
+                                            </td>
+                                            <td className="max-w-[220px] px-3 py-3">
                                                 <p className="truncate font-semibold text-text-primary" title={r.fullName}>{r.fullName}</p>
                                                 {(r.email || r.phone) && <p className="truncate text-xs tabular-nums text-text-tertiary">{r.email || r.phone}</p>}
                                             </td>
@@ -238,9 +303,16 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
 
                 {total > 0 && (
                     <div className="flex items-center justify-between gap-3 border-t border-border-subtle px-4 py-3">
-                        <p className="text-xs text-text-secondary">
-                            <span className="tabular-nums">{formatCount(from)}–{formatCount(to)}</span> of <span className="font-semibold tabular-nums text-text-primary">{formatCount(total)}</span>
-                        </p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                            <p className="text-xs text-text-secondary">
+                                <span className="tabular-nums">{formatCount(from)}–{formatCount(to)}</span> of <span className="font-semibold tabular-nums text-text-primary">{formatCount(total)}</span>
+                            </p>
+                            {!deleted && (
+                                <button type="button" onClick={() => openBulk('matching', [], total)} disabled={loading} className={`${BTN_DANGER_GHOST} -ml-2.5 h-8 text-xs`}>
+                                    <Trash2 className="h-3.5 w-3.5" />Delete all {formatCount(total)}{filtering ? ' matching' : ''}
+                                </button>
+                            )}
+                        </div>
                         <div className="flex items-center gap-1">
                             <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading} className={BTN_GHOST} aria-label="Previous page">
                                 <ChevronLeft className="h-4 w-4" /><span className="hidden sm:inline">Previous</span>
@@ -275,7 +347,32 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                     message="This record is hidden from search and the table. You can restore it from Show deleted."
                     confirmText="Delete"
                 />
+                <ConfirmModal
+                    isOpen={!!bulk?.open && bulk.kind !== 'purge'}
+                    onClose={() => { if (!bulkBusy) setBulk(b => (b ? { ...b, open: false } : b)); }}
+                    onConfirm={() => void doBulk()}
+                    isLoading={bulkBusy}
+                    title={bulk?.kind === 'matching'
+                        ? `Delete all ${formatCount(bulk.count)}${filtering ? ' matching' : ''} records?`
+                        : `Delete ${formatCount(bulk?.count ?? 0)} selected ${bulk?.count === 1 ? 'record' : 'records'}?`}
+                    message="They are hidden from search and the table. You can restore them from Show deleted, or delete them permanently there."
+                    confirmText="Move to deleted"
+                />
             </ModalPortal>
+
+            <TypedConfirmDialog
+                key={bulk?.key ?? 0}
+                open={!!bulk?.open && bulk.kind === 'purge'}
+                labelId="purge-records-title"
+                title={`Delete ${formatCount(bulk?.count ?? 0)} ${bulk?.count === 1 ? 'record' : 'records'} permanently?`}
+                phrase={PERMANENT_PHRASE}
+                confirmText="Delete permanently"
+                busy={bulkBusy}
+                onClose={() => setBulk(b => (b ? { ...b, open: false } : b))}
+                onConfirm={() => void doBulk()}
+            >
+                The {bulk?.count === 1 ? 'record is' : 'records are'} erased for good. A candidate with no other record left is erased too. This cannot be undone.
+            </TypedConfirmDialog>
         </div>
     );
 }

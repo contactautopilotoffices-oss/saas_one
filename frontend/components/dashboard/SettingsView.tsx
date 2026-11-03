@@ -13,6 +13,7 @@ import {
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
 import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings';
+import ChangePasswordSection from '@/frontend/components/dashboard/ChangePasswordSection';
 
 import EmailServiceSettings from '@/frontend/components/admin/EmailServiceSettings';
 import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppServiceSettings';
@@ -936,6 +937,13 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                         </button>
                     </div>
                 </form>
+            )}
+
+            {/* Owner 2026-11-03: every role can change (or set) its password here */}
+            {activeTab === 'profile' && (
+                <div className="mt-6 md:mt-8">
+                    <ChangePasswordSection />
+                </div>
             )}
 
             {/* Omnichannel Notification & Communication Center Tab */}

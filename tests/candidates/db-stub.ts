@@ -32,6 +32,11 @@ const STUBS = `
 /** The Task Manager's model-settings table (20261028140001) and the follow-up that adds the Candidate Search jobs. */
 export const TASK_AI_MODELS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261028140001_task_manager_ai_models.sql"), "utf8");
 export const AI_MODELS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261102000004_candidate_search_ai_models.sql"), "utf8");
+/** Permanent delete, clear all, the AI fix log and the 'candidate_fix' job (owner 2026-11-03). */
+export const PURGE_AI_FIX_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261103000001_candidate_search_purge_and_ai_fix.sql"), "utf8");
+/** Automatic background indexing with Jina (owner 2026-11-03); same vector stub as MIGRATION. */
+export const AUTO_INDEXING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261103000002_candidate_search_auto_indexing.sql"), "utf8")
+  .replace(/extensions\.vector\(768\)/g, "extensions.vector");
 
 export async function freshDb(): Promise<PGlite> {
   const db = new PGlite();
@@ -39,6 +44,8 @@ export async function freshDb(): Promise<PGlite> {
   await db.exec(MIGRATION);
   await db.exec(TASK_AI_MODELS_MIGRATION);
   await db.exec(AI_MODELS_MIGRATION);
+  await db.exec(PURGE_AI_FIX_MIGRATION);
+  await db.exec(AUTO_INDEXING_MIGRATION);
   return db;
 }
 

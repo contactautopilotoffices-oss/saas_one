@@ -13,7 +13,9 @@ export type AiJob =
     | 'import_image' | 'import_text'
     | 'superuser_chat' | 'learning_loop' | 'duplicate_check'
     // Owner 2026-11-02: Candidate Search (Tech console tab) picks its models here too
-    | 'candidate_parse' | 'candidate_rank';
+    | 'candidate_parse' | 'candidate_rank'
+    // Owner 2026-11-03: the AI fix for flagged sheet rows (HR approves every change)
+    | 'candidate_fix';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech';
@@ -63,6 +65,8 @@ const IMPORT_DEFAULT = ['anthropic:claude-sonnet-5-5', 'qwen3.8-27b', 'glm-5.3-f
 const CHAT_PROVIDERS: readonly Provider[] = ['anthropic', 'engy', 'groq', 'gemini'];
 /** Owner 2026-11-02: Candidate Search runs on Claude Opus 5.5 unless the Control Center picks otherwise. */
 const CANDIDATE_DEFAULT = ['anthropic:claude-opus-5-5'] as const;
+/** AI fix: HR approves every suggested change, so a wrong one costs little; a fast tier first (doctrine L10). */
+const CANDIDATE_FIX_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:claude-sonnet-5-5'] as const;
 
 export const AI_JOBS: readonly JobInfo[] = [
     { key: 'wa_understand', label: 'Understanding the message', hint: 'Reads what the person wants (the step that decides actions)', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
@@ -77,6 +81,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'learning_loop', label: 'Learning loop', hint: 'Review summaries and nightly draft instructions (admin only)', group: 'Other', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
     { key: 'candidate_parse', label: 'Reading the search', hint: 'Turns an HR request or job description into filters (experience, notice, salary, location)', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
     { key: 'candidate_rank', label: 'Ranking candidates', hint: 'Scores the shortlisted records against the request and explains each pick', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
+    { key: 'candidate_fix', label: 'Fixing flagged rows', hint: 'Suggests corrected values for sheet rows with problems; HR approves each change', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_FIX_DEFAULT },
 ];
 
 export const jobInfo = (job: AiJob): JobInfo | undefined => AI_JOBS.find(j => j.key === job);

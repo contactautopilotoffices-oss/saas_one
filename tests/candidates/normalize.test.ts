@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   cleanText,
+  FIXED_PREFIX,
+  isFixedNote,
+  parseExpectedHike,
   formatMonths,
   parseDate,
   parseEmail,
@@ -40,10 +43,11 @@ describe("parseExperienceMonths", () => {
     assert.equal(months("3+ yrs"), 36);
     assert.equal(months(""), null);
   });
-  it("flags ranges and unreadable text", () => {
+  it("fixes ranges automatically and flags unreadable text", () => {
     const range = parseExperienceMonths("4-5 yrs");
     assert.equal(range.value, 48);
-    assert.match(range.issue ?? "", /range/);
+    assert.match(range.note ?? "", /range/);
+    assert.equal(range.issue, undefined);
     const junk = parseExperienceMonths("lots");
     assert.equal(junk.value, null);
     assert.match(junk.issue ?? "", /could not be read/);
@@ -64,10 +68,33 @@ describe("parseNoticeDays", () => {
     assert.equal(days(45), 45);
     assert.equal(days("90"), 90);
   });
-  it("uses the upper end of a range and flags it", () => {
+  it("uses the upper end of a range (fixed automatically)", () => {
     const r = parseNoticeDays("15-30 days");
     assert.equal(r.value, 30);
-    assert.match(r.issue ?? "", /range/);
+    assert.match(r.note ?? "", /range/);
+  });
+  it("reads immediate as typed in a hurry", () => {
+    for (const v of ["immedaite joiner", "Imidiate", "immediately", "Immediate"]) assert.equal(days(v), 0, v);
+  });
+  it("counts a last working day from the reference date", () => {
+    const named = parseNoticeDays("21st july - lwd", "2026-06-30");
+    assert.equal(named.value, 21);
+    assert.match(named.note ?? "", /last working day 2026-07-21/);
+    assert.equal(parseNoticeDays("30th Jul LWD", "2026-06-30").value, 30);
+    assert.equal(parseNoticeDays("15/07/2026", "2026-06-30").value, 15);
+    assert.equal(parseNoticeDays(46234, "2026-06-30").value, 31, "Excel date 2026-07-31");
+    const past = parseNoticeDays("1st june lwd", "2026-06-30");
+    assert.equal(past.value, 0);
+    assert.match(past.note ?? "", /before the sourcing date/);
+    assert.ok(parseNoticeDays("1 jan 2028", "2026-06-30").issue, "more than a year away is flagged");
+  });
+  it("keeps word answers as text", () => {
+    for (const v of ["np ( negotiable )", "As per company norms", "Negotiable"]) {
+      const r = parseNoticeDays(v);
+      assert.equal(r.value, null);
+      assert.equal(r.text, v);
+      assert.equal(r.issue, undefined);
+    }
   });
   it("flags serving notice", () => {
     assert.match(parseNoticeDays("Serving notice").issue ?? "", /serving/);
@@ -88,17 +115,53 @@ describe("parseRupeesMonthly", () => {
     assert.equal(rupees("Rs. 28000/-"), 28000);
     assert.equal(rupees(30000), 30000);
   });
-  it("treats lakh amounts as per year and flags them", () => {
+  it("treats lakh amounts as per year (fixed automatically; flagged under 1.5 lakh)", () => {
     const r = parseRupeesMonthly("3.6 LPA");
     assert.equal(r.value, 30000);
-    assert.match(r.issue ?? "", /per year/);
+    assert.match(r.note ?? "", /per year/);
+    assert.equal(r.issue, undefined);
     assert.equal(rupees("4 lakh"), 33333);
+    assert.match(parseRupeesMonthly("1L").issue ?? "", /check it was not per month/);
   });
-  it("flags guesses", () => {
+  it("reads routine shorthand automatically and flags real guesses", () => {
     assert.equal(parseRupeesMonthly("35").value, 35000);
-    assert.match(parseRupeesMonthly("35").issue ?? "", /thousands/);
+    assert.match(parseRupeesMonthly("35").note ?? "", /thousands/);
+    assert.equal(parseRupeesMonthly("30 in hand").value, 30000);
+    assert.equal(parseRupeesMonthly("30+K").value, 30000);
     assert.equal(parseRupeesMonthly("360000").value, 30000);
-    assert.equal(parseRupeesMonthly("abc").value, null);
+    assert.match(parseRupeesMonthly("0.3").issue ?? "", /lakh/);
+  });
+  it("keeps words in the remark instead of flagging them", () => {
+    for (const v of ["Negotiable", "As per company Norms", "abc", "Rejected/ Lack of exp in FE"]) {
+      const r = parseRupeesMonthly(v);
+      assert.equal(r.value, null, v);
+      assert.equal(r.text, v, v);
+      assert.equal(r.issue, undefined, v);
+    }
+  });
+  it("reads CTC amounts and says they are CTC", () => {
+    const r = parseRupeesMonthly("40 ctc");
+    assert.equal(r.value, 40000);
+    assert.match(r.note ?? "", /CTC, not in-hand/);
+    assert.equal(r.text, "40 ctc");
+  });
+});
+
+describe("parseExpectedHike", () => {
+  it("adds the lower percentage to the current in-hand", () => {
+    assert.equal(parseExpectedHike("30% Hike", 30000)?.value, 39000);
+    assert.equal(parseExpectedHike("30%-40% Hike", 30000)?.value, 39000);
+    assert.equal(parseExpectedHike("35%-40%", 20000)?.value, 27000);
+    assert.equal(parseExpectedHike("30% Hike", null)?.value, null);
+    assert.equal(parseExpectedHike("35K", 30000), null, "not a hike");
+    assert.equal(parseExpectedHike("30", 30000), null, "a bare number is not a hike");
+  });
+});
+
+describe("FIXED_PREFIX", () => {
+  it("marks automatic fixes apart from issues", () => {
+    assert.equal(isFixedNote(FIXED_PREFIX + "x"), true);
+    assert.equal(isFixedNote("Email is not valid"), false);
   });
 });
 
@@ -122,8 +185,12 @@ describe("parseDate", () => {
 describe("parseEmail / parsePhone", () => {
   it("keys valid emails in lower case and flags invalid ones", () => {
     assert.deepEqual(parseEmail("Er.Babu.Amit@Gmail.com"), { value: "Er.Babu.Amit@Gmail.com", key: "er.babu.amit@gmail.com" });
-    const bad = parseEmail("vbhoir868@@gmail.com");
-    assert.equal(bad.value, "vbhoir868@@gmail.com");
+    const repaired = parseEmail("vbhoir868@@gmail.com");
+    assert.equal(repaired.value, "vbhoir868@gmail.com");
+    assert.equal(repaired.key, "vbhoir868@gmail.com");
+    assert.match(repaired.note ?? "", /corrected/);
+    assert.equal(parseEmail("a@b,com").key, "a@b.com");
+    const bad = parseEmail("not-an-email");
     assert.equal(bad.key, null);
     assert.match(bad.issue ?? "", /not a valid/);
   });
@@ -135,6 +202,13 @@ describe("parseEmail / parsePhone", () => {
     assert.equal(bad.key, null);
     assert.ok(bad.issue);
   });
+  it("uses the first mobile when a cell has two", () => {
+    const two = parsePhone("8318014421 / 9721868252");
+    assert.equal(two.key, "8318014421");
+    assert.deepEqual(two.extra, ["9721868252"]);
+    assert.ok(two.note);
+    assert.equal(two.issue, undefined);
+  });
 });
 
 describe("splitOrganization", () => {
@@ -142,7 +216,8 @@ describe("splitOrganization", () => {
     const r = splitOrganization("MEP Engineer at Cushman & Wakefield", "MEP Engineer");
     assert.equal(r.organization, "Cushman & Wakefield");
     assert.equal(r.designation, "MEP Engineer");
-    assert.ok(r.issue);
+    assert.ok(r.note);
+    assert.equal(splitOrganization("Security guard at Private Eye,", null).organization, "Private Eye");
   });
   it("fills an empty designation from the split", () => {
     assert.equal(splitOrganization("Supervisor at Lodha Group", null).designation, "Supervisor");

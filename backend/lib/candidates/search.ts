@@ -9,10 +9,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { embedQuery } from "@/backend/lib/hr-assistant/embeddings";
-
 import type { JsonCaller } from "./models";
-import { comparePoolSize, MAX_QUERY_LENGTH } from "./config";
+import { comparePoolSize, EMBEDDING_MODEL, MAX_QUERY_LENGTH } from "./config";
+import { embedQuery } from "./embeddings";
 import { compact, parseQuery, searchTextFor, specChips, type SearchSpec } from "./query-spec";
 import { CandidateActionError, getRecordRows, toRecord } from "./records";
 import { rerank } from "./rerank";
@@ -70,18 +69,29 @@ export async function searchCandidates(
   try {
     embedding = await (deps.embed ?? embedQuery)(spec.summary ? `${spec.summary}. ${text}` : text);
   } catch (error) {
+    // Owner 2026-11-03: HR is not told about the embedding service; the search still uses filters and keywords.
     console.warn("[candidates] query embedding failed", error instanceof Error ? error.message : error);
-    notices.push("Meaning search was unavailable; results use filters and keywords only.");
   }
   const poolSize = comparePoolSize(topN);
-  const { data, error } = await client.rpc("hybrid_search_candidates", {
+  const args = {
     p_organization_id: orgId,
     p_filters: compact(spec.must),
     p_preferences: compact(spec.prefer),
     p_query_text: text,
-    p_query_embedding: embedding ? `[${embedding.join(",")}]` : null,
     p_match_count: poolSize,
+  };
+  // Meaning search compares only vectors of the same model (records still waiting, or embedded by an older model,
+  // are found by filters and keywords). Before migration 20261103000002 the function has no model argument: search
+  // without the vector rather than compare vectors of different models.
+  let { data, error } = await client.rpc("hybrid_search_candidates", {
+    ...args,
+    p_query_embedding: embedding ? `[${embedding.join(",")}]` : null,
+    p_embedding_model: EMBEDDING_MODEL,
   });
+  if (error?.code === "PGRST202") {
+    console.warn("[candidates] hybrid search without meaning search: migration 20261103000002 not applied");
+    ({ data, error } = await client.rpc("hybrid_search_candidates", { ...args, p_query_embedding: null }));
+  }
   if (error) {
     console.error("[candidates] hybrid search failed", error);
     throw new CandidateActionError(500, "The search failed. Please try again.");
@@ -95,7 +105,7 @@ export async function searchCandidates(
 
   // 3. Rank.
   const { results, aiRanked, model: rankModel } = await rerank(query, spec, records, topN, deps.caller);
-  if (records.length && !aiRanked) notices.push("The AI ranking was busy, so results are in search order without a match %.");
+  if (records.length && !aiRanked) notices.push("These results are in search order this time, without a match %.");
   if (!matchingCount) notices.push("No records matched all the must-haves. Try loosening one (e.g. experience or notice period).");
   else if (matchingCount < topN) notices.push(`Only ${matchingCount} record${matchingCount === 1 ? "" : "s"} matched the must-haves.`);
   const done = Date.now();
