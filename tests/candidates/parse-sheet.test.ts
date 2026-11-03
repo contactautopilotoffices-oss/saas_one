@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import * as XLSX from "xlsx";
 
-import { fieldForHeader, parseSheet, SheetError } from "../../backend/lib/candidates/parse-sheet";
+import { cleanRow, fieldForHeader, needsReview, parseSheet, SheetError } from "../../backend/lib/candidates/parse-sheet";
 import { buildSearchText } from "../../backend/lib/candidates/profile";
 import { groupPeople, recordKey } from "../../backend/lib/candidates/import";
 
@@ -82,9 +82,12 @@ describe("parseSheet", () => {
     assert.equal(chiter.clean?.expectedInhand, 30000);
     assert.equal(chiter.issues.length, 0);
 
-    assert.equal(vignesh.clean?.emailKey, null);
+    // "vbhoir868@@gmail.com" has one obvious repair: fixed automatically, not flagged.
+    assert.equal(vignesh.clean?.emailKey, "vbhoir868@gmail.com");
     assert.equal(vignesh.clean?.role, "Housekeeping Supervisor");
-    assert.ok(vignesh.issues.some((issue) => /not a valid address/.test(issue)));
+    assert.ok(vignesh.issues.some((issue) => issue.startsWith("Fixed: ") && /corrected/.test(issue)));
+    assert.equal(needsReview(vignesh.issues), false);
+    assert.equal(needsReview(amit.issues), false, "the organisation split is an automatic fix");
   });
 
   it("finds a header below title rows, skips blank rows, and skips rows with no name", () => {
@@ -107,6 +110,46 @@ describe("parseSheet", () => {
 
   it("rejects a sheet without a recognisable header", () => {
     assert.throws(() => parseSheet(xlsxFile([["a", "b"], [1, 2]]), "x.xlsx"), SheetError);
+  });
+});
+
+describe("cleanRow: real-sheet cases (owner 2026-11-03: too many rows were flagged)", () => {
+  const row = (over: Record<string, unknown>) =>
+    cleanRow({ fullName: "A", sourcingDate: "30-06-2026", currentInhand: "30K", remark: "Not responding", ...over });
+
+  it("keeps word answers in the remark, unflagged, and takes the status from the remark as written", () => {
+    const r = row({ expectedInhand: "Negotiable", notice: "NP ( Negotiable )" });
+    assert.equal(r.clean?.expectedInhand, null);
+    assert.equal(r.clean?.noticePeriodDays, null);
+    assert.equal(r.clean?.remark, "Not responding | Notice period: NP ( Negotiable ) | Expected in-hand: Negotiable");
+    assert.equal(r.clean?.status, "not_responding");
+    assert.equal(needsReview(r.issues), false);
+  });
+
+  it("reads a hike over the current in-hand, and keeps it in the remark when there is no current", () => {
+    const r = row({ currentInhand: "58000", expectedInhand: "25% Hike" });
+    assert.equal(r.clean?.expectedInhand, 72500);
+    assert.equal(needsReview(r.issues), false);
+    const none = row({ currentInhand: null, expectedInhand: "30%-40% Hike" });
+    assert.equal(none.clean?.expectedInhand, null);
+    assert.match(none.clean?.remark ?? "", /Expected in-hand: 30%-40% Hike/);
+  });
+
+  it("counts a last working day from the sourcing date", () => {
+    assert.equal(row({ notice: "21st july - lwd" }).clean?.noticePeriodDays, 21);
+    assert.equal(row({ notice: 46233 }).clean?.noticePeriodDays, 30); // Excel date 2026-07-30
+  });
+
+  it("uses the first of two phone numbers and keeps the other in the remark", () => {
+    const r = row({ phone: "8879181132/ 9321680850" });
+    assert.equal(r.clean?.phoneKey, "8879181132");
+    assert.match(r.clean?.remark ?? "", /Other phone: 9321680850/);
+    assert.equal(needsReview(r.issues), false);
+  });
+
+  it("still flags what needs a person: a yes/no experience, relevant over total", () => {
+    assert.equal(needsReview(row({ relevantExp: "yes" }).issues), true);
+    assert.equal(needsReview(row({ totalExp: "3 Yrs", relevantExp: "8 Yrs" }).issues), true);
   });
 });
 

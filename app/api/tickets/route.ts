@@ -99,11 +99,16 @@ export async function GET(request: NextRequest) {
         // Resolve user roles and memberships to prevent unauthorized ticket leaks
         const adminSupabase = createAdminClient();
         const [orgMemsRes, propMemsRes] = await Promise.all([
-            adminSupabase.from('organization_memberships').select('role, organization_id').eq('user_id', user.id),
+            adminSupabase.from('organization_memberships').select('role, organization_id, is_active').eq('user_id', user.id),
             adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
         ]);
 
         const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+        // Owner 2026-11-03: the org-level Tech team tracks every ticket of its own organisation(s) in the Tech console's
+        // Requests tab. Only those organisations; who may edit, assign or delete is unchanged.
+        const techOrgIds = Array.from(new Set((orgMemsRes.data || [])
+            .filter(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false && m.organization_id)
+            .map(m => m.organization_id as string)));
         const propMems = propMemsRes.data || [];
         const propRoles = propMems.map(m => (m.role || '').toLowerCase().trim());
         const userPropIds = Array.from(new Set(propMems.map(m => m.property_id).filter(Boolean)));
@@ -121,22 +126,33 @@ export async function GET(request: NextRequest) {
         // IT team is assigned tickets across properties it holds no property membership in).
         const isOwnAssignedQuery = assignedTo === user.id;
 
+        // Org-level Tech, asking for one of its own organisations (or not naming one): scoped to those organisations below.
+        const isTechScope = !isOrgSuperAdmin && techOrgIds.length > 0 && (isAllOrgs || techOrgIds.includes(organizationId as string));
+
         // Non-superadmins cannot query all properties across the organization (except their own assigned tickets)
-        if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
+        if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && !isTechScope) {
             if (userPropIds.length === 0) {
                 return NextResponse.json({ tickets: [], total: 0 });
             }
         }
 
-        // If a specific property is requested, ensure non-superadmin belongs to that property
+        // If a specific property is requested, ensure non-superadmin belongs to that property (or, for Tech, that the
+        // property belongs to one of its organisations)
         if (propertyId && !isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
             if (!userPropIds.includes(propertyId)) {
-                return NextResponse.json({ error: 'You do not have access to tickets for this property.' }, { status: 403 });
+                let techProperty = false;
+                if (isTechScope) {
+                    const { data: prop } = await adminSupabase.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+                    techProperty = !!prop && techOrgIds.includes(prop.organization_id as string);
+                }
+                if (!techProperty) {
+                    return NextResponse.json({ error: 'You do not have access to tickets for this property.' }, { status: 403 });
+                }
             }
         }
 
-        // Use admin client when user has verified admin permissions; else use user client
-        const queryClient = (isOrgSuperAdmin || isPropertyAdmin) ? adminSupabase : supabase;
+        // Use admin client when user has verified admin permissions (or Tech, scoped to its organisations); else user client
+        const queryClient = (isOrgSuperAdmin || isPropertyAdmin || isTechScope) ? adminSupabase : supabase;
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
@@ -163,6 +179,8 @@ export async function GET(request: NextRequest) {
 
         if (propertyId && !isAllProperties) {
             query = query.eq('property_id', propertyId);
+        } else if (isAllProperties && isTechScope && !isOwnAssignedQuery) {
+            query = query.in('organization_id', techOrgIds);
         } else if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && userPropIds.length > 0) {
             query = query.in('property_id', userPropIds);
         }

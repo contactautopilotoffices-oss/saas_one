@@ -145,8 +145,10 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const [allFloors, setAllFloors] = useState<(string | number)[]>([]);
     const [hasUnspecified, setHasUnspecified] = useState(false);
 
+    // Owner 2026-11-03: + 'tech' (the Tech console shows this list exactly as the Super Admin console does)
     const isHighAdmin = membership?.org_role === 'org_super_admin' || 
                         membership?.org_role === 'owner' ||
+                        membership?.org_role === 'tech' ||
                         membership?.properties.some(p => p.role === 'property_admin');
     
     // Note: The cacheKey logic heavily depends on the filter values so changes will cleanly bypass legacy state cache instances
@@ -648,7 +650,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             </button>
                         )}
                     </div>
-                    {propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner'].includes(membership?.org_role || '') && (
+                    {propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || '') && (
                         <button
                             onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
                             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-secondary/10 text-secondary text-[10px] sm:text-xs font-bold rounded-[var(--radius-md)] border border-secondary/20 hover:bg-secondary/20 transition-all active:scale-[0.98]"

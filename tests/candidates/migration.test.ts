@@ -6,7 +6,7 @@ import { after, before, describe, it } from "node:test";
 
 import type { PGlite } from "@electric-sql/pglite";
 
-import { AI_MODELS_MIGRATION, freshDb, MIGRATION, vec } from "./db-stub";
+import { AI_MODELS_MIGRATION, AUTO_INDEXING_MIGRATION, freshDb, MIGRATION, PURGE_AI_FIX_MIGRATION, vec } from "./db-stub";
 
 const ORG = "00000000-0000-0000-0000-00000000000a";
 const OTHER_ORG = "00000000-0000-0000-0000-00000000000b";
@@ -81,8 +81,13 @@ describe("candidate_search migration", () => {
 
   const ids = (rows: { application_id: string }[]) => rows.map((r) => r.application_id).sort();
 
-  it("is idempotent", async () => {
+  it("is idempotent (the whole chain, in order)", async () => {
     await db.exec(MIGRATION);
+    await db.exec(PURGE_AI_FIX_MIGRATION);
+    // Re-running 20261102000003 brings back the old 7-argument search; 20261103000002 replaces it again.
+    await db.exec(AUTO_INDEXING_MIGRATION);
+    const [{ n }] = await q<{ n: number }>("select count(*)::int as n from pg_proc where proname = 'hybrid_search_candidates'");
+    assert.equal(n, 1);
   });
 
   it("returns only this organisation's visible records", async () => {

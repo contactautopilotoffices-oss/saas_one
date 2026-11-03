@@ -61,7 +61,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .from('organization_memberships')
         .select('role')
         .eq('user_id', user.id).eq('organization_id', ticket.organization_id).eq('is_active', true)
-        .in('role', ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner'])
+        // Owner 2026-11-03: + 'tech' (the Tech console has the Super Admin console's Requests tab, for its own organisation)
+        .in('role', ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner', 'tech'])
+        .limit(1)
         .maybeSingle();
     const isAdmin = !!profile?.is_master_admin || !!orgAdminRow;
     if (!isAdmin && ticket.assigned_to !== user.id) {

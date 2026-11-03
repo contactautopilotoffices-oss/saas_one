@@ -120,7 +120,7 @@ export interface CandidateSheet {
   uploadCount: number;
   /** Records from this sheet that are not deleted. */
   liveRecordCount: number;
-  /** Records from this sheet still waiting for their meaning-search embedding. */
+  /** Records from this sheet still being prepared for meaning search (HR sees it as a progress bar). */
   pendingIndexCount: number;
   uploadedByEmail: string | null;
   createdAt: string;
@@ -144,7 +144,10 @@ export interface ImportSummary {
   recordsAdded: number;
   recordsUpdated: number;
   rowsSkipped: number;
+  /** Imported rows with at least one problem HR should review. */
   rowsFlagged: number;
+  /** Imported rows whose only problems were fixed automatically (shown in "View issues", not counted as flagged). */
+  rowsAutoFixed: number;
   newCandidates: number;
   matchedCandidates: number;
 }
@@ -162,8 +165,108 @@ export interface UploadConflict {
 /** GET /api/candidates/sheets/[id]/issues */
 export interface SheetIssueRow {
   rowNumber: number;
+  /** Problems HR should review. Empty when the row only had automatic fixes. */
   issues: string[];
+  /** What was fixed automatically, or resolved by HR (with or without an AI suggestion). */
+  fixed: string[];
+  /** Not imported (e.g. no name): fix it in the Excel file and upload again with Merge. */
+  skipped: boolean;
+  /** The record this row became (null when skipped or since deleted). */
+  applicationId: string | null;
   raw: Record<string, string>;
+}
+
+/** Record fields the AI fix may suggest a value for. Person fields apply to every record of that person. */
+export const AI_FIX_FIELDS = [
+  "email",
+  "phone",
+  "currentOrganization",
+  "currentDesignation",
+  "location",
+  "totalExpMonths",
+  "role",
+  "candidateSource",
+  "sourcingDate",
+  "relevantExpMonths",
+  "noticePeriodDays",
+  "currentInhand",
+  "expectedInhand",
+] as const;
+export type AiFixField = (typeof AI_FIX_FIELDS)[number];
+
+export const AI_FIX_FIELD_LABELS: Record<AiFixField, string> = {
+  email: "Email",
+  phone: "Phone",
+  currentOrganization: "Current organisation",
+  currentDesignation: "Current designation",
+  location: "Location",
+  totalExpMonths: "Total experience",
+  role: "Role sourced for",
+  candidateSource: "Candidate source",
+  sourcingDate: "Sourcing date",
+  relevantExpMonths: "Relevant experience",
+  noticePeriodDays: "Notice period",
+  currentInhand: "Current in-hand",
+  expectedInhand: "Expected in-hand",
+};
+
+/** One suggested change. Values use the record's units: months, days, rupees per month, YYYY-MM-DD, or text. */
+export interface AiFixChange {
+  field: AiFixField;
+  current: string | number | null;
+  proposed: string | number | null;
+  reason: string;
+}
+
+export interface AiFixProposal {
+  rowNumber: number;
+  applicationId: string;
+  fullName: string;
+  /** The row's "needs review" issues the suggestion is answering. */
+  issues: string[];
+  changes: AiFixChange[];
+  /** Issues the AI could not fix from what the row says (HR decides). */
+  cannotFix: string[];
+}
+
+/** POST /api/candidates/sheets/[id]/ai-fix */
+export interface AiFixResponse {
+  proposals: AiFixProposal[];
+  /** The fix log id, sent back with the apply call so the log records what HR accepted. */
+  logId: string | null;
+  /** The model that answered, as the Control Center names it. */
+  model: string | null;
+  /** Rows that were asked for but cannot be fixed here (skipped rows, deleted records, no open issues). */
+  notFixable: number[];
+}
+
+/** POST /api/candidates/sheets/[id]/ai-fix/apply: one row's approved changes ({} = "mark as reviewed" only). */
+export interface AiFixApproval {
+  rowNumber: number;
+  changes: Partial<Record<AiFixField, string | number | null>>;
+}
+
+export interface AiFixApplyResponse {
+  applied: number;
+  /** Rows that could not be saved, with the reason. */
+  failed: { rowNumber: number; error: string }[];
+  /** The sheet's flagged-row count after this. */
+  flaggedCount: number;
+}
+
+/** POST /api/candidates/bulk */
+export interface BulkResponse {
+  /** Records deleted (moved to deleted, or deleted permanently for "purge"). */
+  records: number;
+  /** People removed because they had no record left ("purge" only). */
+  people: number;
+}
+
+/** POST /api/candidates/clear and DELETE /api/candidates/sheets/[id]?permanent=1 */
+export interface PurgeResponse {
+  sheets: number;
+  records: number;
+  people: number;
 }
 
 export type CriterionKey = "role" | "experience" | "domain" | "location" | "notice" | "salary";
@@ -210,8 +313,11 @@ export interface SearchResponse {
   searchId: string | null;
 }
 
-/** POST /api/candidates/reindex */
+/** POST /api/candidates/reindex: the Sheets page's quiet nudge to the background worker (always 200). */
 export interface ReindexResponse {
   indexed: number;
+  /** Still waiting (counted up to 500; -1 when unknown). */
   remaining: number;
+  /** Nothing was done this time (paused after a busy answer, or another run is working). */
+  waiting: boolean;
 }

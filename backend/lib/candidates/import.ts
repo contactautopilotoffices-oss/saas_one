@@ -14,8 +14,8 @@ import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { sheetNameKey } from "./normalize";
-import type { CleanRow, ParsedSheet } from "./parse-sheet";
+import { FIXED_PREFIX, sheetNameKey } from "./normalize";
+import { needsReview, type CleanRow, type ParsedSheet } from "./parse-sheet";
 import { buildSearchText } from "./profile";
 import { CandidateActionError, refreshSearchText } from "./records";
 import type { ImportSummary, UploadMode } from "./types";
@@ -158,7 +158,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
   const skippedCount = parsed.rows.length - valid.length;
   const counts = {
     row_count: parsed.rows.length,
-    flagged_count: parsed.rows.filter((row) => row.clean && row.issues.length).length,
+    flagged_count: parsed.rows.filter((row) => row.clean && needsReview(row.issues)).length,
     skipped_count: skippedCount,
   };
 
@@ -284,7 +284,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
 
       const previousRow = firstRowForKey.get(key);
       if (previousRow !== undefined) {
-        rowIssues.set(row.rowNumber, [`Same candidate and role as row ${previousRow}; this row's values were used`]);
+        rowIssues.set(row.rowNumber, [`${FIXED_PREFIX}Same candidate and role as row ${previousRow}; this row's values were used`]);
       } else firstRowForKey.set(key, row.rowNumber);
 
       const existing = existingRecords.get(key);
@@ -384,6 +384,11 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       recordsUpdated,
       rowsSkipped: skippedCount,
       rowsFlagged: counts.flagged_count,
+      // Imported rows whose only notes are automatic fixes (including "same candidate as row N" added above).
+      rowsAutoFixed: parsed.rows.filter((row) => {
+        const all = [...row.issues, ...(rowIssues.get(row.rowNumber) ?? [])];
+        return row.clean && all.length > 0 && !needsReview(all);
+      }).length,
       newCandidates: [...people.values()].filter((p) => p.isNew).length,
       matchedCandidates: matchedIds.length,
     };
