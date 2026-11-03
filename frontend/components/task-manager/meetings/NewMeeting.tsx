@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useMemo, useRef, useState } from 'react';
-import { Check, Loader2, Lock, Mic, Plus, Search, Upload, X } from 'lucide-react';
+import { AudioLines, Check, Loader2, Lock, Mic, Plus, Search, Upload, X } from 'lucide-react';
 import { call, meetingsUrl, type MeetingPerson, type MeetingSpace } from './api';
+import VoiceServerStatus from '../voice/VoiceServerStatus';
+import { useVoiceInfo } from '../voice/voiceApi';
 
 /**
  * Owner 2026-10-29: start a meeting — its name, who is present (anyone in the Task Manager, from every department, plus
@@ -24,6 +26,10 @@ export default function NewMeeting({ space, people, onStarted, onCancel }: {
     const [busy, setBusy] = useState<'record' | 'upload' | null>(null);
     const [error, setError] = useState<string | null>(null);
     const fileInput = useRef<HTMLInputElement>(null);
+    // LiveVoice ID (owner 2026-11-02): the people picked here are the voices compared. Shown only when the person
+    // starting the meeting has voice recognition ON for their department.
+    const voice = useVoiceInfo();
+    const voiceOn = voice.info?.meetingVoiceOn === true;
 
     const shown = useMemo(() => {
         const q = query.trim().toLowerCase();
@@ -51,6 +57,8 @@ export default function NewMeeting({ space, people, onStarted, onCancel }: {
     };
 
     const count = selected.size + extra.length;
+    const voiceReadyOf = useMemo(() => new Set(people.filter(p => p.voiceReady).map(p => p.id)), [people]);
+    const readyPicked = [...selected].filter(id => voiceReadyOf.has(id)).length;
 
     return (
         <div className="mx-auto max-w-2xl space-y-5 rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
@@ -71,6 +79,7 @@ export default function NewMeeting({ space, people, onStarted, onCancel }: {
                     <div className="mt-2 flex flex-wrap gap-1.5">
                         {[...selected].map(id => (
                             <button key={id} type="button" onClick={() => toggle(id)} className="flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300">
+                                {voiceOn && voiceReadyOf.has(id) && <AudioLines className="h-3 w-3" aria-label="Voice ready" />}
                                 {nameOf.get(id)} <X className="h-3 w-3" />
                             </button>
                         ))}
@@ -95,6 +104,11 @@ export default function NewMeeting({ space, people, onStarted, onCancel }: {
                                 className={`flex w-full items-center gap-3 border-b border-zinc-100 px-3 py-2 text-left last:border-0 dark:border-zinc-800 ${on ? 'bg-indigo-50/60 dark:bg-indigo-950/30' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/50'}`}>
                                 <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${on ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-zinc-300 dark:border-zinc-600'}`}>{on && <Check className="h-3.5 w-3.5" strokeWidth={3} />}</span>
                                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-800 dark:text-zinc-200">{p.name}</span>
+                                {voiceOn && p.voiceReady && (
+                                    <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+                                        <AudioLines className="h-3 w-3" /> Voice ready
+                                    </span>
+                                )}
                                 <span className="shrink-0 text-[11px] font-semibold text-zinc-400">{p.department || ''}</span>
                             </button>
                         );
@@ -109,6 +123,22 @@ export default function NewMeeting({ space, people, onStarted, onCancel }: {
                     </button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-zinc-500">Typed names help the notes get names right, but tasks can only be sent to people in the Task Manager.</p>
+
+                {voiceOn && (
+                    <div className="mt-3 space-y-1.5 rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2.5 dark:border-emerald-900 dark:bg-emerald-950/20">
+                        <p className="flex items-center gap-1.5 text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                            <AudioLines className="h-3.5 w-3.5" />
+                            {selected.size
+                                ? `${readyPicked} of ${selected.size} people picked can be recognised by voice.`
+                                : 'Pick who is present: people with "Voice ready" will be named in the transcript.'}
+                        </p>
+                        {selected.size > readyPicked && (
+                            <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80">The others show as &ldquo;Speaker N&rdquo;. They can set up their voice in Settings → My voice.</p>
+                        )}
+                        {extra.length > 0 && <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80">Typed names cannot be recognised by voice.</p>}
+                        <VoiceServerStatus state={voice.info?.server.state ?? null} loading={voice.loading} onRefresh={() => void voice.refresh()} compact />
+                    </div>
+                )}
             </div>
 
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">

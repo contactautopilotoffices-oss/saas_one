@@ -3,7 +3,7 @@
  * Run: npx tsx task-manager/tests/test_meetings.ts
  */
 import {
-    checkSarvamJob, joinFiles, meetingAudioExtension, parseSarvamOutput, startSarvamJob, transcribeWithWhisper,
+    checkSarvamJob, joinFiles, joinFilesWithOffsets, meetingAudioExtension, parseSarvamOutput, startSarvamJob, transcribeWithWhisper,
     SARVAM_BASE, type AudioFile, type TranscriptLine,
 } from '../meetings/MeetingTranscriber';
 import {
@@ -11,6 +11,8 @@ import {
 } from '../meetings/MeetingExtractor';
 import { canSee, isMeetingSpace, spacesForRoles } from '../meetings/visibility';
 import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/meetingNotesMessage';
+import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
+import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
 
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
@@ -246,6 +248,106 @@ async function main() {
     check('role case ignored', spacesForRoles(['HR_HEAD']).has('hr'));
     check('several roles → several spaces', spacesForRoles(['tech', 'hr']).size === 2);
     check('only tech / hr / admin are spaces', isMeetingSpace('hr') && !isMeetingSpace('ops') && !isMeetingSpace(undefined));
+
+    // ── LiveVoice ID (2026-11-03) ──────────────────────────────────────────────
+    console.log('\nVoice naming: timeline of several recordings');
+    {
+        const j = joinFilesWithOffsets([
+            [{ speaker: 'Speaker 1', start: 0, end: 4, text: 'a' }, { speaker: 'Speaker 2', start: 4, end: 10, text: 'b' }],
+            [{ speaker: 'Speaker 1', start: 1, end: 6, text: 'c' }],
+        ]);
+        check('offsets: 2nd recording starts where the 1st ended', JSON.stringify(j.offsets) === '[0,10]', j.offsets);
+        check('joinFiles unchanged', JSON.stringify(joinFiles([[{ speaker: null, start: 0, end: 3, text: 'x' }], [{ speaker: null, start: 0, end: 1, text: 'y' }]]).map(l => l.start)) === '[0,3]');
+        check('moment → recording', fileIndexFor(3, [0, 10]) === 0 && fileIndexFor(10, [0, 10]) === 1 && fileIndexFor(12, [0, 10]) === 1);
+        const segs = segmentsFor(j.lines, j.offsets);
+        check('segments back in each recording\'s own time', segs[2].file === 1 && segs[2].start === 1 && segs[2].end === 6, segs);
+        check('lines without a voice label skipped', segmentsFor([{ speaker: null, start: 0, end: 5, text: 'z' }], [0]).length === 0);
+        check('zero-length line skipped', segmentsFor([{ speaker: 'Speaker 1', start: 5, end: 5, text: 'z' }], [0]).length === 0);
+        check('distinct labels', voiceLabels(j.lines).join() === 'Speaker 1,Speaker 2');
+    }
+
+    console.log('\nVoice naming: putting names on the lines');
+    {
+        const lines: TranscriptLine[] = [
+            { speaker: 'Speaker 1', start: 0, end: 4, text: 'Saniel, kal tak teen quotes le aao' },
+            { speaker: 'Speaker 2', start: 4, end: 8, text: 'Haan, bhej dunga' },
+            { speaker: 'Speaker 3', start: 8, end: 9, text: 'ok' },
+        ];
+        const names = new Map([['u-harsh', 'Harsh'], ['u-saniel', 'Saniel']]);
+        const r = applyNames(lines, [
+            { speaker: 'Speaker 1', match: 'u-harsh', score: 0.81, second: 0.3, seconds_used: 30, segments_used: 5, reason: 'matched' },
+            { speaker: 'Speaker 2', match: 'u-saniel', score: 0.77, second: 0.2, seconds_used: 22, segments_used: 4, reason: 'matched' },
+            { speaker: 'Speaker 3', match: null, score: 0.4, second: null, seconds_used: 0, segments_used: 0, reason: 'not_enough_speech' },
+        ], names);
+        check('Speaker 1 → Harsh', r.lines[0].speaker === 'Harsh' && r.lines[0].speakerUserId === 'u-harsh' && r.lines[0].voiceLabel === 'Speaker 1');
+        check('Speaker 2 → Saniel', r.lines[1].speaker === 'Saniel' && r.lines[1].speakerUserId === 'u-saniel');
+        check('not recognised → stays "Speaker 3"', r.lines[2].speaker === 'Speaker 3' && r.lines[2].speakerUserId === null);
+        check('2 matched', r.matched === 2 && r.mapping.length === 3);
+        const unsure = applyNames(lines, [{ speaker: 'Speaker 1', match: 'u-harsh', score: 0.7, second: 0.68, seconds_used: 30, segments_used: 5, reason: 'too_close' }], names);
+        check('unsure match is NOT used', unsure.lines[0].speaker === 'Speaker 1' && unsure.matched === 0);
+        const stranger = applyNames(lines, [{ speaker: 'Speaker 1', match: 'u-not-in-list', score: 0.9, second: 0.1, seconds_used: 30, segments_used: 5, reason: 'matched' }], names);
+        check('a match outside the people list is ignored', stranger.lines[0].speaker === 'Speaker 1');
+        const again = applyNames(r.lines, [{ speaker: 'Speaker 2', match: 'u-harsh', score: 0.9, second: 0.1, seconds_used: 30, segments_used: 5, reason: 'matched' }], names);
+        check('running again works from the original labels', again.lines[1].speaker === 'Harsh' && again.lines[0].speaker === 'Speaker 1');
+        check('segments use the original label after naming', segmentsFor(r.lines, [0])[0].speaker === 'Speaker 1');
+    }
+
+    console.log('\nVoice naming: the AI sees names and fills "asked by"');
+    {
+        const vpeople = buildPeople({ everyone: [{ id: 'u-harsh', name: 'Harsh', department: 'Tech' }, { id: 'u-saniel', name: 'Saniel', department: 'Tech' }], attendeeIds: ['u-harsh', 'u-saniel'], extraNames: [] });
+        const named: TranscriptLine[] = [
+            { speaker: 'Harsh', speakerUserId: 'u-harsh', voiceLabel: 'Speaker 1', start: 0, end: 4, text: 'Saniel, kal tak teen quotes le aao' },
+            { speaker: 'Speaker 3', start: 4, end: 8, text: 'Main report bhej dunga' },
+        ];
+        const prompt = buildExtractionPrompt({ title: 'T', meetingDate: '2026-11-03', people: vpeople, lines: named, namedSpeakers: true });
+        check('recognised line labelled with name and PEOPLE id', prompt.includes('Harsh (P1): Saniel, kal tak'), prompt.slice(prompt.indexOf('<<<'), prompt.indexOf('<<<') + 120));
+        check('unrecognised line keeps "Speaker 3"', prompt.includes('Speaker 3: Main report'));
+        check('asked_by asked for', prompt.includes('"asked_by"'));
+        const plain = buildExtractionPrompt({ title: 'T', meetingDate: '2026-11-03', people: vpeople, lines: named });
+        check('without voice naming the prompt has no asked_by', !plain.includes('asked_by') && !plain.includes('(P1):'));
+        const v = validateExtraction({ summary: 's', tasks: [
+            { title: 'Get three quotes', owner: 'P2', asked_by: 'P1', quote: 'kal tak teen quotes le aao' },
+            { title: 'Send report', owner: null, asked_by: 'P9' },
+            { title: 'Other', owner: 'P2', asked_by: 'u-harsh' },
+        ] }, vpeople, named);
+        check('asked_by P1 → Harsh, owner P2 → Saniel', v.tasks[0].askedByUserId === 'u-harsh' && v.tasks[0].ownerUserId === 'u-saniel');
+        check('unknown asked_by → nobody', v.tasks[1].askedByUserId === null);
+        check('raw user id as asked_by is NOT trusted', v.tasks[2].askedByUserId === null);
+    }
+
+    console.log('\nVoice server client (fake server)');
+    {
+        const VENV = { VOICE_ID_URL: 'https://team-voice-id.hf.space/', VOICE_ID_SECRET: 's3cret', VOICE_ID_HF_TOKEN: 'hf_x' };
+        check('no settings → not configured', voiceIdConfig({}) === null && (await voiceHealth({ env: {} })).state === 'not_configured');
+        check('plain http refused', voiceIdConfig({ VOICE_ID_URL: 'http://x', VOICE_ID_SECRET: 's' }) === null);
+        const up = fakeFetch([{ body: { ok: true, model: 'speechbrain/spkrec-ecapa-voxceleb' } }]);
+        const h = await voiceHealth({ env: VENV, fetch: up.f });
+        check('online', h.state === 'online');
+        check('health URL without double slash', up.calls[0].url === 'https://team-voice-id.hf.space/health');
+        check('secret + HF token sent', up.calls[0].headers['X-Voice-Id-Secret'] === 's3cret' && up.calls[0].headers.Authorization === 'Bearer hf_x');
+        const asleep = (async () => new Response('<html>Space is starting</html>', { status: 503 })) as unknown as typeof fetch;
+        check('web page / 503 → waking', (await voiceHealth({ env: VENV, fetch: asleep })).state === 'waking');
+        check('401 → offline', (await voiceHealth({ env: VENV, fetch: fakeFetch([{ status: 401 }]).f })).state === 'offline');
+        check('network error → offline, never throws', (await voiceHealth({ env: VENV, fetch: fakeFetch([{ throws: new Error('ECONNRESET') }]).f })).state === 'offline');
+
+        const vp = Array.from({ length: 192 }, (_, i) => (i === 0 ? 1 : 0));
+        const ok = await voiceEmbed(['a', 'b', 'c'], { env: VENV, fetch: fakeFetch([{ body: { ok: true, voiceprint: vp, clip_agreement: 0.82, model: 'm', revision: 'r', clips: [] } }]).f });
+        check('embed ok', ok.ok && ok.voiceprint.length === 192 && ok.clipAgreement === 0.82);
+        const bad = await voiceEmbed(['a', 'b', 'c'], { env: VENV, fetch: fakeFetch([{ body: { ok: false, reason: 'clip_quality', clips: [{ seconds: 1, rms: 0, problem: 'too_short' }] } }]).f });
+        check('clip problems passed back', !bad.ok && bad.reason === 'clip_quality' && bad.clips?.[0].problem === 'too_short');
+        const short = await voiceEmbed(['a', 'b', 'c'], { env: VENV, fetch: fakeFetch([{ body: { ok: true, voiceprint: [1, 2], clip_agreement: 1 } }]).f });
+        check('wrong-size voiceprint refused', !short.ok && short.reason === 'bad_reply');
+
+        const idf = fakeFetch([{ body: { ok: true, model: 'm', threshold: 0.6, margin: 0.08, timing_ms: 900, speakers: [{ speaker: 'Speaker 1', match: 'u-harsh', score: 0.8, second: 0.2, seconds_used: 20, segments_used: 4, reason: 'matched' }] } }]);
+        const id = await voiceIdentify({ files: [['https://x/a', 'https://x/b']], segments: [{ file: 0, start: 0, end: 4, speaker: 'Speaker 1' }], candidates: [{ id: 'u-harsh', voiceprint: vp }] }, { env: VENV, fetch: idf.f });
+        check('identify ok', id.ok && id.speakers[0].match === 'u-harsh');
+        const sent = JSON.parse(String(idf.calls[0].body));
+        check('pieces sent as files[].urls', sent.files[0].urls.length === 2 && sent.candidates[0].id === 'u-harsh');
+        const sleepy = await voiceIdentify({ files: [['https://x/a']], segments: [], candidates: [] }, { env: VENV, fetch: asleep });
+        check('asleep while identifying → try again later', !sleepy.ok && sleepy.retryable === true);
+        const refused = await voiceIdentify({ files: [['https://x/a']], segments: [], candidates: [] }, { env: VENV, fetch: fakeFetch([{ status: 400, body: { ok: false, reason: 'url_not_allowed' } }]).f });
+        check('bad request → give up (no retry)', !refused.ok && refused.retryable === false && refused.reason === 'url_not_allowed');
+    }
 
     console.log(failures ? `\n${failures} FAILED` : '\nAll meeting tests passed');
     process.exit(failures ? 1 : 0);

@@ -2,10 +2,11 @@
 
 /** Owner 2026-10-29 — Meeting Notes → Tasks (Tech dashboard "Meetings" tab). The server decides everything. */
 
-export type MeetingStatus = 'recording' | 'uploaded' | 'transcribing' | 'extracting' | 'ready' | 'failed' | 'discarded';
-export const PROCESSING: MeetingStatus[] = ['uploaded', 'transcribing', 'extracting'];
+export type MeetingStatus = 'recording' | 'uploaded' | 'transcribing' | 'identifying' | 'extracting' | 'ready' | 'failed' | 'discarded';
+export const PROCESSING: MeetingStatus[] = ['uploaded', 'transcribing', 'identifying', 'extracting'];
 
-export interface MeetingPerson { id: string; name: string; department: string | null }
+/** `voiceReady` (LiveVoice ID): the person has set up their voice, so it can be recognised in meetings */
+export interface MeetingPerson { id: string; name: string; department: string | null; voiceReady?: boolean }
 
 export interface MeetingListItem {
     id: string; title: string; meetingDate: string; status: MeetingStatus; error: string | null; confidential: boolean;
@@ -13,7 +14,11 @@ export interface MeetingListItem {
     tasks: { total: number; sent: number };
 }
 
-export interface TranscriptLine { speaker: string | null; start: number; end: number; text: string }
+/** `speakerUserId` set = the voice was recognised and `speaker` is the person's name; `voiceLabel` = "Speaker 2" as heard */
+export interface TranscriptLine { speaker: string | null; start: number; end: number; text: string; speakerUserId?: string | null; voiceLabel?: string | null }
+
+/** LiveVoice ID: what happened to voice naming for this meeting (null for meetings from before it existed) */
+export interface VoiceSummary { state: 'pending' | 'done' | 'skipped'; reason: string | null; matched: number; voices: number }
 
 export interface MeetingDetail {
     id: string; title: string; meetingDate: string; status: MeetingStatus; error: string | null; confidential: boolean;
@@ -24,6 +29,7 @@ export interface MeetingDetail {
     provider: string | null; canRetry: boolean;
     /** Last "Send notes on WhatsApp" */
     notesSentAt: string | null; notesSentCount: number | null;
+    voice: VoiceSummary | null;
 }
 
 export interface MeetingTask {
@@ -33,6 +39,8 @@ export interface MeetingTask {
     source: 'ai' | 'manual'; status: 'draft' | 'sending' | 'sent' | 'deleted'; sentAt: string | null; error: string | null;
     /** Owner 2026-11-02: who it went out as — "Autopilot" or "Name (Department)"; null = not sent, or no longer known */
     sentAs: string | null;
+    /** LiveVoice ID: who asked for it, when voices were recognised */
+    askedByUserId?: string | null; askedByName?: string | null;
 }
 
 /** Owner 2026-10-29: who the tasks are sent from */
@@ -70,6 +78,6 @@ export function niceDate(date: string): string {
 }
 
 export const STATUS_LABEL: Record<MeetingStatus, string> = {
-    recording: 'Recording', uploaded: 'Processing', transcribing: 'Turning speech into text', extracting: 'Writing notes and tasks',
+    recording: 'Recording', uploaded: 'Processing', transcribing: 'Turning speech into text', identifying: 'Recognising voices', extracting: 'Writing notes and tasks',
     ready: 'Ready', failed: 'Failed', discarded: 'Deleted',
 };

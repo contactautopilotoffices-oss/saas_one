@@ -1,10 +1,27 @@
 # LiveVoice ID: speaker identification for Meeting Notes to Tasks
 
-Status: **Updated 2026-11-02. Engine chosen: self-hosted SpeechBrain on Hugging Face Spaces (free). Python service
-written and offline-tested (`services/voice-id/`, not yet deployed). Next.js side (enrollment, department switch,
-meeting step) not built yet.**
+Status: **Updated 2026-11-03. Built (offline-tested), not yet run on a real meeting.** Engine: self-hosted SpeechBrain
+on Hugging Face Spaces (free). Voice server not yet deployed; migration `20261103000001_voice_id.sql` not yet applied.
 Branch: `feature/livevoice-speaker-id`
 Doctrine: [AGENT_DOCTRINE.md](AGENT_DOCTRINE.md) · Runbook: [AGENT_RUNBOOK.md](AGENT_RUNBOOK.md) · Builds on: [MEETING_TASKS_SPEC.md](MEETING_TASKS_SPEC.md)
+
+## 0. What is built (2026-11-03)
+
+| Part | Where |
+|---|---|
+| Voice server (Python, free Hugging Face Space) | `services/voice-id/` (setup steps in its README) |
+| Database: `voice_profiles`, department switch `voice_id`, status `identifying`, `meeting_note_tasks.asked_by_user_id` | `supabase/migrations/20261103000001_voice_id.sql` (apply by hand) |
+| Client for the voice server (health, embed, identify; never throws) | `task-manager/voice/VoiceIdClient.ts` |
+| "My voice" for every signed-in person: consent, 3 sentences, level bar, listen back, save, delete, server status | Settings → My voice: `frontend/components/task-manager/voice/VoiceSetup.tsx`, API `app/api/task-manager/voice/route.ts` |
+| Department switch "Recognise speakers by voice" (OFF everywhere; switch Tech ON after the migration) | Control Center: `TaskAccessService.ts`, `TaskAccessPanel.tsx` |
+| New meeting: "Voice ready" marks, "3 of 6 can be recognised", server status | `NewMeeting.tsx` (shown only when the creator's department has the switch ON) |
+| Step `identifying` between transcript and notes; waits up to 6 min for a sleeping server, then goes on without names; never fails a meeting | `MeetingService.stepIdentify`, pure helpers `MeetingSpeakers.ts` |
+| Names in the transcript, "Asked by" on tasks, a line saying how many voices were named or why not | `MeetingExtractor.ts` (prompt changes ONLY for meetings with named lines), `MeetingReview.tsx` |
+| Keep the free server awake (twice a day) | `app/api/cron/voice-id-keepalive/route.ts` + `vercel.json` (owner approved 2026-11-03) |
+
+Changes from the plan below: voiceprints are stored as `REAL[192]`, not pgvector (no search is needed, and plain
+arrays need no extension). Not built yet: relabelling a speaker on the review screen and re-running extraction
+(section 3.4), and editing "Asked by" by hand.
 
 ---
 
