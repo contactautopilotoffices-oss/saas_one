@@ -65,7 +65,7 @@ export async function GET(
                 categories: parsedData.categories || [],
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
-                site_notes: parsedData.site_notes || (typeof req.notes === 'string' ? req.notes : ''),
+                site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
                 vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 po_info: parsedData.po_info || null
