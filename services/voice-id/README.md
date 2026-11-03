@@ -28,44 +28,47 @@ Every call except `/health` needs the header `X-Voice-Id-Secret: <VOICE_ID_SECRE
 ## Test on your own computer, with a tunnel link (free, no card)
 
 For testing. The server runs on your computer; a free Cloudflare "quick tunnel" gives it a public `https://` link that
-our app calls. Your computer must stay on (and not sleep) while you test. Commands are for Windows PowerShell.
+our app calls. Your computer must stay on (and not sleep) while you test. No `winget` and no admin rights needed.
 
-1. **Install the tools** (once). Close and reopen PowerShell afterwards.
+1. **Python 3.11:** download the "Windows installer (64-bit)" from https://www.python.org/downloads/windows/ (any
+   3.11.x). On the first installer screen tick **"Add python.exe to PATH"**, then Install Now.
+2. **cloudflared:** download `cloudflared-windows-amd64.exe` from
+   https://github.com/cloudflare/cloudflared/releases/latest and leave it in your Downloads folder.
+3. **This folder:** on GitHub open branch `feature/livevoice-speaker-id` → Code → Download ZIP, and extract it, for
+   example to `C:\voice-test`. The server is in `...\services\voice-id`.
+4. **Open PowerShell** (Start → type "PowerShell" → open it normally, not as administrator) and install the packages
+   (once, about 5 minutes):
    ```powershell
-   winget install Python.Python.3.11
-   winget install Gyan.FFmpeg
-   winget install Cloudflare.cloudflared
-   ```
-2. **Install the server's packages** (once, about 5 minutes). From the repo folder, on branch `feature/livevoice-speaker-id`:
-   ```powershell
-   py -3.11 -m venv $HOME\voice-id-venv
+   cd C:\voice-test\saas_one-feature-livevoice-speaker-id\services\voice-id
+   python -m venv $HOME\voice-id-venv
    & $HOME\voice-id-venv\Scripts\Activate.ps1      # if Windows blocks it: Set-ExecutionPolicy -Scope Process Bypass
    pip install torch==2.7.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cpu
-   pip install -r services\voice-id\requirements.txt
+   pip install -r requirements.txt imageio-ffmpeg
    ```
-3. **Start the server** (window 1, keep it open):
+   (`imageio-ffmpeg` brings its own FFmpeg, so it does not have to be installed separately.)
+5. **Start the server** (same window, keep it open):
    ```powershell
-   & $HOME\voice-id-venv\Scripts\Activate.ps1
-   cd services\voice-id
    $env:VOICE_ID_SECRET = "<a long random password>"
    $env:ALLOWED_AUDIO_HOSTS = "<your-project>.supabase.co"
    uvicorn app:app --host 127.0.0.1 --port 7860
    ```
-   The first start downloads the voice model (~80 MB) into `%USERPROFILE%\.cache\voice-id`, outside the repo. It is ready
-   when it prints `model loaded`. Check in a browser: http://localhost:7860/health shows `"ok": true`.
-4. **Open the tunnel** (window 2, keep it open):
+   The first start downloads the voice model (~80 MB) into `%USERPROFILE%\.cache\voice-id`. It is ready when it prints
+   `model loaded`. Check in a browser: http://localhost:7860/health shows `"ok": true`.
+   Next time, open PowerShell, `cd` to the folder, run the `Activate.ps1` line, then the three lines above.
+6. **Open the tunnel** (a second PowerShell window, keep it open):
    ```powershell
-   cloudflared tunnel --url http://localhost:7860
+   cd $HOME\Downloads
+   .\cloudflared-windows-amd64.exe tunnel --url http://localhost:7860
    ```
    It prints a link like `https://random-words.trycloudflare.com`. Open `<that link>/health` to check it works.
-5. **Give the app the link.** Vercel → Project → Settings → Environment Variables (or `.env.local` if you run the app on
-   your computer): `VOICE_ID_URL` = the tunnel link, `VOICE_ID_SECRET` = the same password as step 3.
+7. **Give the app the link.** Vercel → Project → Settings → Environment Variables (or `.env.local` if you run the app on
+   your computer): `VOICE_ID_URL` = the tunnel link, `VOICE_ID_SECRET` = the same password as step 5.
    `VOICE_ID_HF_TOKEN` is not needed. Redeploy (or restart the app).
 
-**The quick-tunnel link changes every time `cloudflared` is restarted**: put the new link in `VOICE_ID_URL` and redeploy
+**The quick-tunnel link changes every time cloudflared is restarted**: put the new link in `VOICE_ID_URL` and redeploy
 again. Settings → My voice in the app shows "Voice server online" when everything is connected.
 
-Or with Docker Desktop instead of steps 1 to 3: `docker build -t voice-id services/voice-id` then
+With Docker Desktop instead of steps 1 and 3 to 5: `docker build -t voice-id services/voice-id` then
 `docker run --rm -p 7860:7860 -e VOICE_ID_SECRET=... -e ALLOWED_AUDIO_HOSTS=... voice-id`.
 
 ## Setup on Hugging Face Spaces (now needs a paid plan)

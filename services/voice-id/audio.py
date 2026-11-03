@@ -7,6 +7,7 @@ Nothing here writes audio to disk except a temporary file that is deleted straig
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -14,6 +15,21 @@ import numpy as np
 
 SAMPLE_RATE = 16_000
 FFMPEG_TIMEOUT_S = 240
+
+
+def _ffmpeg() -> str:
+    """ffmpeg on PATH (Docker image), else the copy that `pip install imageio-ffmpeg` brings (a test run on a computer)."""
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg  # optional: only for running outside Docker
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return "ffmpeg"  # fails below with a clear "decode_failed" reason
+
+
+FFMPEG = _ffmpeg()
 
 
 class AudioError(Exception):
@@ -33,12 +49,14 @@ def decode(data: bytes) -> np.ndarray:
             f.write(data)
         # A file is used instead of stdin: webm/m4a need seeking to be read reliably.
         proc = subprocess.run(
-            ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", path,
+            [FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", path,
              "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"],
             capture_output=True, timeout=FFMPEG_TIMEOUT_S, check=False,
         )
     except subprocess.TimeoutExpired as e:
         raise AudioError("decode_failed", "timed out") from e
+    except FileNotFoundError as e:
+        raise AudioError("decode_failed", "ffmpeg is not installed (pip install imageio-ffmpeg)") from e
     finally:
         try:
             os.remove(path)
