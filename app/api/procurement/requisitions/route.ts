@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
                 categories: parsedData.categories || [],
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
-                site_notes: parsedData.site_notes || req.notes || '',
+                site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
                 vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 is_over_budget: Boolean(isOverBudget),
@@ -235,7 +235,7 @@ export async function POST(request: NextRequest) {
             floorTag = (form.get('floor_tag') as string) || 'All Floors';
             requisitionMonth = parseInt(form.get('requisition_month') as string || '0');
             requisitionYear = parseInt(form.get('requisition_year') as string || '0');
-            siteNotes = form.get('notes') as string || '';
+            siteNotes = (form.get('site_notes') as string) || (form.get('notes') as string) || '';
             userId = form.get('user_id') as string;
 
             if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {

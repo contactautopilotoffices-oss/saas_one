@@ -40,6 +40,7 @@ interface MonthlyRequisition {
     file_name: string;
     file_size_bytes?: number;
     notes?: string;
+    site_notes?: string;
     status: string; // 'submitted' | 'uploaded' | 'acknowledged' | 'pending_approval' | 'approved' | 'rejected' | 'ordered'
     created_at: string;
     acknowledged_at?: string;
@@ -840,6 +841,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             <span className="block text-[11px] font-bold text-emerald-600">
                                                                 Floor: {req.floor_tag}
                                                             </span>
+                                                        )}
+                                                        {req.site_notes && (
+                                                            <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-1 truncate max-w-[220px]" title={`Creator note: ${req.site_notes}`}>
+                                                                <MessageSquare className="w-3 h-3 text-amber-600 shrink-0" />
+                                                                <span className="truncate italic">&quot;{req.site_notes}&quot;</span>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
