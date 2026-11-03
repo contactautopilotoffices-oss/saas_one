@@ -45,7 +45,17 @@ export default function ApproverRequisitionModal({
     const monthName = MONTH_NAMES[(requisition.requisition_month || 1) - 1] || 'Month';
     const items = requisition.items || [];
     const requestedCount = items.filter((i: any) => (i.requested_qty || 0) > 0).length;
-    const vendorQuotation = siteVendorQuotation(requisition);
+    const vendorQuotation = (() => {
+        try { return siteVendorQuotation(requisition); } catch { return null; }
+    })();
+    const estimatedTotal = (() => {
+        try {
+            return siteEstimatedAmount(requisition);
+        } catch {
+            const fallback = Number(requisition?.total_estimated_amount || 0);
+            return Number.isFinite(fallback) && fallback >= 0 ? fallback : 0;
+        }
+    })();
     const isAlreadyActioned = requisition.status === 'approved' || requisition.status === 'rejected';
 
     const userRole = (currentUser?.user_metadata?.role || '').toLowerCase();
@@ -182,7 +192,7 @@ export default function ApproverRequisitionModal({
                                     </span>
                                     <span className="text-slate-400">·</span>
                                     <span className="text-emerald-700 dark:text-emerald-400 font-black">
-                                        Total: ₹{siteEstimatedAmount(requisition).toLocaleString('en-IN')}
+                                        Total: ₹{estimatedTotal.toLocaleString('en-IN')}
                                     </span>
                                     {creatorNotes && (
                                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-0.5 rounded-md" title={creatorNotes}>
@@ -217,7 +227,7 @@ export default function ApproverRequisitionModal({
                                     <div className="bg-emerald-50/70 dark:bg-emerald-950/30 p-4 rounded-2xl border border-emerald-200/80 dark:border-emerald-800/50">
                                         <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider block">Total Estimated Amount</span>
                                         <span className="text-xl font-black text-emerald-800 dark:text-emerald-300 mt-0.5 block">
-                                            ₹{siteEstimatedAmount(requisition).toLocaleString('en-IN')}
+                                            ₹{estimatedTotal.toLocaleString('en-IN')}
                                         </span>
                                         <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium mt-1 block">
                                             {items.length} total line items ({requestedCount} with requested qty)

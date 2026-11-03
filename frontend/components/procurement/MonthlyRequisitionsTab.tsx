@@ -7,7 +7,8 @@ import {
     Building2, Calendar, Search, RefreshCw, Loader2, AlertCircle,
     Plus, FileSpreadsheet, Eye, UserCheck, X, ShieldCheck,
     DollarSign, User as UserIcon, ArrowRight, Send, ShoppingCart, Truck, PackageCheck, FileCheck2, Trash2,
-    IndianRupee
+    IndianRupee,
+    MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
