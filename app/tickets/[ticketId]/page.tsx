@@ -64,6 +64,7 @@ import { Toast } from "@/frontend/components/ui/Toast";
 import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
 import LogAssetWorkModal from "@/frontend/components/assets/LogAssetWorkModal";
 import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
+import TicketAttachments from "@/frontend/components/tickets/TicketAttachments";
 import { maskStorageUrl } from "@/frontend/utils/storageUrl";
 
 // Types
@@ -2900,6 +2901,9 @@ export default function TicketDetailPage() {
                 </div>
               </div>
             </div>
+
+            {/* Attachments — documents / images on the request (anyone who can open it may view and add) */}
+            <TicketAttachments ticketId={String(ticketId)} isDark={isDark} />
 
             {/* Escalation Timeline */}
             {escalationLogs.length > 0 && (
