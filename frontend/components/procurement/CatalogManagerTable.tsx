@@ -1093,7 +1093,7 @@ export default function CatalogManagerTable({
 
             {/* ── Table ────────────────────────────────────────────────────── */}
             <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-xs">
-                <div className="overflow-x-auto max-h-[62vh]">
+                <div className="overflow-x-auto max-h-[72vh] xl:max-h-[76vh] 2xl:max-h-[80vh]">
                     <table className="w-full text-xs border-collapse">
                         <thead className="sticky top-0 z-10 shadow-xs">
                             {/* Column Header Titles */}

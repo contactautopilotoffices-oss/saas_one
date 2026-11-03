@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
-    X, Search, ShoppingCart, Plus, Minus, Trash2, 
+    X, Search, Maximize2, Minimize2, ShoppingCart, Plus, Minus, Trash2, 
     ChevronRight, Loader2, Package, Tag, Info, AlertTriangle,
     CheckCircle2, ShoppingBag, IndianRupee, Clock, User, ArrowLeft,
     Upload, Camera, ImageIcon, Edit2, FileUp, Link2, Paperclip
@@ -128,6 +128,7 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
     const [isDeletingItemId, setIsDeletingItemId] = useState<string | null>(null);
     const [budgetType, setBudgetType] = useState<'rnm' | 'general'>('rnm');
     const [step, setStep] = useState<'browse' | 'finalize' | 'add'>('browse');
+    const [isMaximized, setIsMaximized] = useState<boolean>(false);
     // Standard items template import (download template -> fill -> upload -> preview -> apply)
     const [showTemplateUpload, setShowTemplateUpload] = useState(false);
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
@@ -573,8 +574,12 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
     );
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-stretch justify-stretch bg-white lg:bg-slate-500/20 lg:backdrop-blur-sm">
-            <div className="bg-slate-50 w-full h-full lg:max-w-[1200px] lg:h-[90vh] lg:m-auto lg:rounded-3xl lg:shadow-2xl flex flex-col overflow-hidden relative">
+        <div className={`fixed inset-0 z-[100] flex items-center justify-center ${isMaximized ? 'p-0 bg-slate-950/80' : 'p-0 lg:p-3 bg-white lg:bg-slate-950/70 lg:backdrop-blur-sm'}`}>
+            <div className={`bg-slate-50 w-full h-full flex flex-col overflow-hidden relative transition-all duration-200 ${
+                isMaximized
+                    ? 'max-w-none h-screen rounded-none'
+                    : 'lg:max-w-[97vw] 2xl:max-w-[1720px] lg:h-[95vh] lg:max-h-[96vh] lg:m-auto lg:rounded-3xl lg:shadow-2xl border border-slate-200/80'
+            }`}>
                 
                 {/* Header */}
                 <div className="bg-white px-4 py-3 lg:px-6 lg:py-4 flex items-center justify-between border-b border-slate-100 lg:border-slate-200 flex-shrink-0 z-20">
@@ -623,6 +628,14 @@ export default function ProcurementCatalogModal({ isOpen, onClose, ticketId, pro
                                     {cart.reduce((acc, i) => acc + i.quantity, 0)}
                                 </span>
                             )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setIsMaximized(prev => !prev)}
+                            className="hidden lg:flex p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-all cursor-pointer"
+                            title={isMaximized ? 'Restore size' : 'Expand full screen'}
+                        >
+                            {isMaximized ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
                         </button>
                         <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-50 text-slate-400 transition-all">
                             <X className="w-5 h-5" />
