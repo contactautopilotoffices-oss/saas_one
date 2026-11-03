@@ -5,7 +5,7 @@ import { useDashboardContent } from '@/frontend/components/layout/DashboardConte
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-    LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
+    LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan,
     Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets,
@@ -20,7 +20,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import TicketsView from './TicketsView';
+import RequestsWorkspace, { RequestsViewSwitcher } from '@/frontend/components/tickets/RequestsWorkspace';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import { assetCaps } from '@/frontend/lib/assets/roles';
@@ -40,7 +40,6 @@ const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/Ti
 const StockMovementModal = dynamic(() => import('@/frontend/components/stock/StockMovementModal'), { loading: () => null });
 const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
 const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
-const AdminSPOCDashboard = dynamic(() => import('../tickets/AdminSPOCDashboard'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const DieselAnalyticsDashboard = dynamic(() => import('../diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
@@ -59,7 +58,6 @@ const MeetingsHome = dynamic(() => import('@/frontend/components/meetings/Meetin
 const MeetingAssistantTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { loading: TabLoading });
 const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
-const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
 const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
 const BountyInbox = dynamic(() => import('../aop/BountyInbox'), { loading: TabLoading });
 const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
@@ -1475,46 +1473,17 @@ const OrgAdminDashboard = () => {
                             {/* Property Selector for Requests/Other tabs */}
                             {renderPropertySelector()}
 
-                            {/* Requests View Switcher */}
+                            {/* Requests View Switcher (shared with the Tech console) */}
                             {activeTab === 'requests' && (
-                                <div className="hidden lg:flex items-center gap-1 bg-surface-elevated border border-border p-1 rounded-xl shadow-sm">
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('list');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'list');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'list' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <Ticket className="w-3.5 h-3.5" />
-                                        List
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('board');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'board');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'board' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <LayoutDashboard className="w-3.5 h-3.5" />
-                                        Board
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('flow');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'flow');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'flow' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <Activity className="w-3.5 h-3.5" />
-                                        Flow Map
-                                    </button>
-                                </div>
+                                <RequestsViewSwitcher
+                                    view={requestsView}
+                                    onChange={view => {
+                                        setRequestsView(view);
+                                        const url = new URL(window.location.href);
+                                        url.searchParams.set('view', view);
+                                        window.history.pushState({}, '', url.toString());
+                                    }}
+                                />
                             )}
                             <div className="flex flex-col items-end">
                                 <span className="text-sm font-display font-semibold text-text-primary tracking-tight">System Status</span>
@@ -1636,38 +1605,18 @@ const OrgAdminDashboard = () => {
                             {/* Gated on activeTab, not on the wrapper: this block stays mounted with
                                 display:none on every other tab, and an always-mounted pulse would keep
                                 polling from screens that are not showing it. */}
-                            {activeTab === 'requests' && (
-                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.requests} consoleTab="agent_console" className="mb-3" />
-                            )}
-                            {requestsView === 'list' ? (
-                                <TicketsView
-                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                    organizationId={selectedPropertyId === 'all' ? org?.id : undefined}
-                                    canDelete={true}
-                                    initialStatusFilter={pendingStatusFilter}
-                                />
-                            ) : requestsView === 'board' ? (
-                                <AdminSPOCDashboard
-                                    organizationId={org?.id || ''}
-                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                    propertyName={selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
-                                    adminUser={{
-                                        full_name: user?.user_metadata?.full_name || 'Super Admin',
-                                        avatar_url: ''
-                                    }}
-                                    initialStatusFilter={pendingStatusFilter}
-                                    properties={properties}
-                                    onPropertyChange={handlePropertyChange}
-                                />
-                            ) : (
-                                <div className="w-full h-full min-h-[calc(100vh-12rem)] bg-white -mt-2 overflow-hidden flex flex-col rounded-2xl relative">
-                                    <TicketFlowMap
-                                        organizationId={org?.id}
-                                        propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                        isEmbedded={true}
-                                    />
-                                </div>
-                            )}
+                            <RequestsWorkspace
+                                view={requestsView}
+                                organizationId={org?.id}
+                                selectedPropertyId={selectedPropertyId}
+                                propertyName={activeProperty?.name}
+                                adminUserName={user?.user_metadata?.full_name || 'Super Admin'}
+                                properties={properties}
+                                onPropertyChange={handlePropertyChange}
+                                initialStatusFilter={pendingStatusFilter}
+                                showAgentPulse={activeTab === 'requests'}
+                                agentConsoleTab="agent_console"
+                            />
                         </div>
 
                         {activeTab === 'visitors' && org?.id && <VMSOrgVisitorDashboard key="visitors-tab" orgId={org.id} />}

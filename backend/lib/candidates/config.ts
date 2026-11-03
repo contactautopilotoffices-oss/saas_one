@@ -1,6 +1,4 @@
 /** All Candidate Search settings, in one place. */
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "@/backend/lib/hr-assistant/config";
-
 import type { CriterionKey } from "./types";
 
 /**
@@ -9,9 +7,28 @@ import type { CriterionKey } from "./types";
  */
 export const CANDIDATE_ACCESS_ROLES = ["hr", "hr_head", "hr_manager", "hr_ops", "org_super_admin", "tech"] as const;
 
-// Same embedding model and size as the HR Policy Assistant (768-dim Gemini), so no new key or migration type.
-// (Claude has no embeddings endpoint, so meaning search keeps Gemini embeddings.)
-export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
+/**
+ * Meaning-search embeddings (owner 2026-11-03): Jina jina-embeddings-v3 at 768 dimensions (key JINA_API_KEY), the same
+ * size as the column, so no migration of the vector type. One model for records and queries (see embeddings.ts).
+ * Changing the model is safe: records embedded with another model count as waiting and are re-embedded in the
+ * background, and search only compares vectors of this model meanwhile.
+ */
+export const EMBEDDING_MODEL = "jina-embeddings-v3";
+export const EMBEDDING_DIMENSIONS = 768;
+
+/**
+ * The background worker (indexing.ts): a cron every minute (/api/cron/candidate-indexing), right after an upload or
+ * edit, and while HR has the Sheets page open. HR never sees its errors; they pause the organisation and retry.
+ *   pauses after a "busy" answer: 1, 2, 5, then 10 minutes (and 10 from then on)
+ *   a record whose text the service rejects is tried EMBED_MAX_ATTEMPTS times, then set aside (still found by
+ *   filters and keywords)
+ *   EMBED_CALL_GAP_MS between calls keeps one worker under ~100 calls a minute
+ */
+export const INDEX_BACKOFF_SECONDS = [60, 120, 300, 600] as const;
+export const EMBED_MAX_ATTEMPTS = 3;
+export const EMBED_CALL_GAP_MS = 600;
+/** Time one run may spend: the cron route allows 60 s; the page's nudge and the after-upload run less. */
+export const INDEX_BUDGET_MS = { cron: 50_000, afterWrite: 40_000, nudge: 20_000 } as const;
 
 /**
  * Which models read the search and rank candidates is set in the Control Center ("AI models": jobs 'candidate_parse' and
@@ -23,6 +40,13 @@ export { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL };
  */
 export const PARSE_CALL = { effort: "low", maxTokens: 8000, otherMaxTokens: 1500, timeoutMs: 20_000, budgetMs: 35_000 } as const;
 export const RERANK_CALL = { effort: "medium", maxTokens: 16_000, otherMaxTokens: 8000, timeoutMs: 45_000, budgetMs: 60_000 } as const;
+
+/**
+ * AI fix for flagged sheet rows (Control Center job 'candidate_fix'; HR approves every change before it is saved).
+ * AI_FIX_BATCH rows per call keeps one prompt small; the portal sends the rows of a sheet in batches.
+ */
+export const AI_FIX_CALL = { effort: "low", maxTokens: 12_000, otherMaxTokens: 4000, timeoutMs: 40_000, budgetMs: 50_000 } as const;
+export const AI_FIX_BATCH = 15;
 
 export const MAX_QUERY_LENGTH = 4000;
 
@@ -60,12 +84,20 @@ export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 export const SUPPORTED_SHEET_EXTENSIONS = [".xlsx", ".xls", ".csv"] as const;
 export const MAX_SHEET_ROWS = 10_000;
 
-/** Embeddings computed per background run (the upload's after() and each "Index now" click). */
-export const INDEX_BATCH_LIMIT = 600;
 
 // Requests per user per minute.
 export const SEARCH_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 };
 export const UPLOAD_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
-export const REINDEX_RATE_LIMIT = { maxRequests: 12, windowMs: 60_000 };
+// The Sheets page nudges the background worker about every 20 s while records are being prepared.
+export const REINDEX_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
 // Add / edit (each one triggers a small background embedding run).
 export const WRITE_RATE_LIMIT = { maxRequests: 60, windowMs: 60_000 };
+// AI fix: each request is one model call of up to AI_FIX_BATCH rows.
+export const AI_FIX_RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
+// Bulk delete, permanent delete and clear all.
+export const DANGER_RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
+
+/** "Delete all matching" moves at most this many records in one request (an organisation has ~3,000). */
+export const MAX_BULK_RECORDS = 20_000;
+/** Typed by the user to confirm "Clear all candidate data"; the server checks it too. */
+export const CLEAR_ALL_CONFIRMATION = "DELETE ALL";

@@ -1,13 +1,20 @@
-/** Uploaded sheets: list, soft-delete, restore, data-quality report. */
+/** Uploaded sheets: list, soft-delete, restore, permanent delete, clear all, data-quality report. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { EMBEDDING_MODEL } from "./config";
 import type { SheetRowDb } from "./import";
-import { CandidateActionError } from "./records";
-import type { CandidateSheet, SheetIssueRow, SheetsResponse } from "./types";
+import { FIXED_PREFIX, isFixedNote } from "./normalize";
+import { CandidateActionError, rpcFail } from "./records";
+import type { CandidateSheet, PurgeResponse, SheetIssueRow, SheetsResponse } from "./types";
 
 function fail(context: string, error: unknown): never {
   console.error(`[candidates] ${context}`, error);
   throw new CandidateActionError(500, `Couldn't ${context}. Please try again.`);
+}
+
+function toPurge(data: unknown): PurgeResponse {
+  const d = (data ?? {}) as Partial<Record<keyof PurgeResponse, unknown>>;
+  return { sheets: Number(d.sheets) || 0, records: Number(d.records) || 0, people: Number(d.people) || 0 };
 }
 
 function toSheet(row: SheetRowDb, stats: Map<string | null, { live: number; pending: number }>): CandidateSheet {
@@ -30,8 +37,13 @@ function toSheet(row: SheetRowDb, stats: Map<string | null, { live: number; pend
   };
 }
 
+/**
+ * Per sheet: records not deleted, and how many are still waiting to be prepared for meaning search with the current
+ * model (the progress bar). Before migration 20261103000002, the older count (no model, no set-aside records).
+ */
 async function loadStats(client: SupabaseClient, orgId: string) {
-  const { data, error } = await client.rpc("candidate_index_stats", { p_organization_id: orgId });
+  let { data, error } = await client.rpc("candidate_index_progress", { p_organization_id: orgId, p_model: EMBEDDING_MODEL });
+  if (error?.code === "PGRST202") ({ data, error } = await client.rpc("candidate_index_stats", { p_organization_id: orgId }));
   if (error) fail("count the records", error);
   const stats = new Map<string | null, { live: number; pending: number }>();
   for (const row of (data ?? []) as { sheet_id: string | null; live_count: number; pending_count: number }[]) {
@@ -120,21 +132,45 @@ export async function restoreSheet(client: SupabaseClient, orgId: string, id: st
   return getSheetSummary(client, orgId, id);
 }
 
-/** Rows with problems from the sheet's latest upload. */
+/**
+ * Delete a sheet for good (live or already deleted): its records, uploaded rows and AI fix logs, and every person who
+ * has no record left anywhere. People who also appear in another sheet or were added by hand stay. One transaction.
+ */
+export async function purgeSheet(client: SupabaseClient, orgId: string, id: string): Promise<PurgeResponse> {
+  await getSheet(client, orgId, id);
+  const { data, error } = await client.rpc("candidate_purge_sheet", { p_organization_id: orgId, p_sheet_id: id });
+  if (error) rpcFail("delete the sheet permanently", error);
+  return toPurge(data);
+}
+
+/** Delete ALL Candidate Search data of the organisation (sheets, records, people, uploaded rows, AI fix logs). */
+export async function clearAllCandidateData(client: SupabaseClient, orgId: string): Promise<PurgeResponse> {
+  const { data, error } = await client.rpc("candidate_purge_org", { p_organization_id: orgId });
+  if (error) rpcFail("clear the candidate data", error);
+  return toPurge(data);
+}
+
+/** Rows with problems from the sheet's latest upload: "needs review" issues apart from automatic fixes. */
 export async function sheetIssues(client: SupabaseClient, orgId: string, id: string): Promise<SheetIssueRow[]> {
   const sheet = await getSheet(client, orgId, id);
   const { data, error } = await client
     .from("candidate_sheet_rows")
-    .select("row_number, issues, raw")
+    .select("row_number, issues, raw, skipped, application_id")
     .eq("sheet_id", sheet.id)
     .eq("upload_no", sheet.upload_count)
     .neq("issues", "{}")
     .order("row_number")
     .limit(2000);
   if (error) fail("load the issues", error);
-  return (data ?? []).map((row) => ({
-    rowNumber: row.row_number as number,
-    issues: row.issues as string[],
-    raw: row.raw as Record<string, string>,
-  }));
+  return (data ?? []).map((row) => {
+    const all = row.issues as string[];
+    return {
+      rowNumber: row.row_number as number,
+      issues: all.filter((issue) => !isFixedNote(issue)),
+      fixed: all.filter(isFixedNote).map((issue) => issue.slice(FIXED_PREFIX.length)),
+      skipped: Boolean(row.skipped),
+      applicationId: (row.application_id as string | null) ?? null,
+      raw: row.raw as Record<string, string>,
+    };
+  });
 }
