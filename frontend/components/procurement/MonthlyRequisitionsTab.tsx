@@ -490,6 +490,24 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         );
     }
 
+    // If inspecting / reviewing a requisition in-body (retains sidebar, top header, and full width)
+    if (approverModalReq) {
+        return (
+            <ApproverRequisitionModal
+                isInline={true}
+                isOpen={true}
+                requisition={approverModalReq}
+                allRequisitions={requisitions}
+                currentUser={user}
+                onClose={() => setApproverModalReq(null)}
+                onStatusUpdated={() => {
+                    fetchRequisitions();
+                    setApproverModalReq(null);
+                }}
+            />
+        );
+    }
+
     return (
         <div className="space-y-6">
             {/* Header Section */}
@@ -1308,18 +1326,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             </AnimatePresence>
             </ModalPortal>
 
-            {/* In-App Approver Review Modal */}
-            <ApproverRequisitionModal
-                isOpen={!!approverModalReq}
-                onClose={() => setApproverModalReq(null)}
-                requisition={approverModalReq}
-                allRequisitions={requisitions}
-                currentUser={user}
-                onStatusUpdated={() => {
-                    fetchRequisitions();
-                    setApproverModalReq(null);
-                }}
-            />
+            {/* Requisition review is rendered in-body when active */}
 
             {/* Property Monthly Requisition Budgets Manager Modal */}
             <PropertyBudgetManagerModal
