@@ -11,10 +11,15 @@ import { CLIP_PROBLEM_TEXT, VOICE_URL, useVoiceInfo, type ClipProblem } from './
  * The recordings stay in this browser tab until Save, are sent once, and are never stored. Plan: docs/LIVEVOICE_ID_PLAN.md
  */
 
-const SENTENCES = [
-    "Good morning everyone, let us review today's tasks and the pending purchase orders.",
-    'Kal tak teen quotes le aao, aur vendor se delivery date confirm kar lena.',
-    'The meeting room on the fifth floor needs a new projector before Friday.',
+/**
+ * The voice model is text independent: it learns how a voice SOUNDS, not the words or the language, so one setup works
+ * in every language. Recording 3 is in the person's own meeting language anyway, so a voice that sounds a little
+ * different in Hindi, Marathi, Tamil… is also covered. The words are never checked.
+ */
+const SENTENCES: ReadonlyArray<{ text: string; free?: boolean }> = [
+    { text: "Good morning everyone, let us review today's tasks and the pending purchase orders." },
+    { text: 'Kal tak teen quotes le aao, aur vendor se delivery date confirm kar lena.' },
+    { text: 'Now speak for about 5 seconds in the language you use most in meetings (Hindi, Marathi, Gujarati, Tamil, Bengali or any other). Say anything, for example what you worked on today.', free: true },
 ];
 const MAX_CLIP_MS = 9_000;
 const MIN_CLIP_MS = 2_500;
@@ -255,8 +260,10 @@ export default function VoiceSetup() {
                             const isRec = recordingIdx === i;
                             return (
                                 <li key={i} className={`rounded-2xl border p-4 ${isRec ? 'border-red-300 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20' : 'border-zinc-200 dark:border-zinc-800'}`}>
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Sentence {i + 1} of 3</p>
-                                    <p className="mt-1 text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">&ldquo;{sentence}&rdquo;</p>
+                                    <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Recording {i + 1} of 3{sentence.free ? ': your own language' : ''}</p>
+                                    {sentence.free
+                                        ? <p className="mt-1 text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-100">{sentence.text}</p>
+                                        : <p className="mt-1 text-base font-semibold leading-snug text-zinc-900 dark:text-zinc-100">&ldquo;{sentence.text}&rdquo;</p>}
                                     <div className="mt-3 flex flex-wrap items-center gap-2">
                                         {isRec ? (
                                             <button type="button" onClick={stopAll} className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-black text-white hover:bg-red-700">
@@ -287,7 +294,7 @@ export default function VoiceSetup() {
                         })}
                     </ol>
 
-                    <p className="text-xs text-zinc-500">Record in a quiet place, in your normal speaking voice, with the phone or laptop where it usually is in meetings.</p>
+                    <p className="text-xs text-zinc-500">Record in a quiet place, in your normal speaking voice, with the phone or laptop where it usually is in meetings. Your voice is recognised in any language you speak; the words do not matter.</p>
 
                     <div className="flex flex-col gap-2 sm:flex-row">
                         <button type="button" onClick={() => void save()} disabled={!consent || !allRecorded || recording || busy !== null}

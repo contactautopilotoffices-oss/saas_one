@@ -82,8 +82,11 @@ Task Manager (any user) → "Set up my voice" → consent screen → read 3 shor
 - The voiceprint is whatever the chosen engine produces (section 4a): a 192-number vector for self-hosted ECAPA, or
   the engine's own voiceprint string for pyannoteAI. Stored in our database either way.
 
-- Sentences are a mix of English and Hinglish (our meetings are Hinglish; the model is text independent, but people
-  speak more naturally in their own mix).
+- **Language (owner question 2026-11-03):** the voice model is text and language independent (it describes how a
+  voice sounds, not the words), so ONE setup per person works in every language. Recording 1 is English, 2 is
+  Hinglish, and 3 is free speech in the person's main meeting language, because some people sound a little different
+  in another language. Accuracy across languages is still to be measured in the Tech test; if one person is often
+  missed in one language, they can record again with that language.
 - Browser records 16 kHz mono 16-bit PCM (WAV) through Web Audio, not the meeting recorder's 24 kbps Opus. Enrollment
   quality matters more than size.
 - Quality checks in the browser: clip too quiet, clipping, too much silence. Server checks again: the 3 clips must
