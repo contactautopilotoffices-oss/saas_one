@@ -90,7 +90,8 @@ export async function invoiceVerdictForPo(orgId: string, poId: string): Promise<
         failedRules = [...new Set((results ?? [])
             .filter((r) => r.outcome !== 'pass' && !r.resolved_at)
             .map((r) => r.rule_code))];
-        detail = plainReasons(results ?? [], chosen.match_status);
+        detail = plainReasons(results ?? [], chosen.match_status, chosen.extraction_status);
+        if (chosen.extraction_status === 'failed') failedRules = ['EXTRACTION_FAILED'];
     }
 
     return {

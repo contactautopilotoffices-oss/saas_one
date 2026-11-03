@@ -45,6 +45,52 @@ interface ZohoPo {
     purchaseorder_id: string; purchaseorder_number: string; status: string; vendor_id?: string; vendor_name?: string; date?: string; total?: number; created_time?: string;
 }
 
+/**
+ * Keep the status the FMS SHOWS in step with Zoho between the full syncs.
+ *
+ * The full Zoho sync runs every 2 hours, so a PO the founder approved at 5:40 pm still read "awaiting
+ * approval" until about 7 pm. This asks Zoho only for POs changed in the last half hour (one to a few
+ * small read-only calls) and copies their status across. It does NOT message anyone and does not depend
+ * on the WhatsApp switch: it only keeps the screen true. A PO not yet in our table is left for the full sync.
+ */
+export async function refreshRecentPoStatuses(orgId: string, lookbackMinutes = 30): Promise<{ checked: number; changed: number; error?: string }> {
+    const z = await zohoContext(orgId);
+    if (!z) return { checked: 0, changed: 0, error: 'Could not sign in to Zoho Books.' };
+    const since = new Date(Date.now() - lookbackMinutes * 60_000).toISOString().replace(/\.\d+Z$/, '+0000');
+    const items = await listPos(z, { last_modified_time: since });
+    if (!items) return { checked: 0, changed: 0, error: 'Zoho did not answer the recent-changes list.' };
+    if (!items.length) return { checked: 0, changed: 0 };
+
+    const { data: local } = await supabaseAdmin.from('zoho_purchase_orders').select('id, zoho_po_id, status').eq('organization_id', orgId).in('zoho_po_id', items.map((i) => i.purchaseorder_id));
+    const byZoho = new Map((local ?? []).map((r) => [r.zoho_po_id as string, r]));
+    let changed = 0;
+    for (const it of items) {
+        const row = byZoho.get(it.purchaseorder_id);
+        if (!row || !it.status || row.status === it.status) continue;
+        const { error } = await supabaseAdmin.from('zoho_purchase_orders').update({ status: it.status }).eq('id', row.id).eq('organization_id', orgId);
+        if (!error) changed++;
+    }
+    return { checked: items.length, changed };
+}
+
+/**
+ * Ask Zoho for ONE PO's status right now and copy it into our table. This is what makes an approval show
+ * in the FMS in seconds: the webhook calls it the moment Zoho fires, and a PO page calls it when opened.
+ * Read-only against Zoho; changes only our own status column; never messages anyone.
+ */
+export async function refreshOnePoStatus(orgId: string, zohoPoId: string): Promise<{ status: string | null; changed: boolean; error?: string }> {
+    const z = await zohoContext(orgId);
+    if (!z) return { status: null, changed: false, error: 'Could not sign in to Zoho Books.' };
+    const res = await zohoGet(z, `purchaseorders/${encodeURIComponent(zohoPoId)}`);
+    if (!res.ok) return { status: null, changed: false, error: `Zoho answered HTTP ${res.status}.` };
+    const live = ((await res.json().catch(() => null)) as { purchaseorder?: { status?: string } } | null)?.purchaseorder?.status ?? null;
+    if (!live) return { status: null, changed: false, error: 'Zoho did not return a status.' };
+    const { data: row } = await supabaseAdmin.from('zoho_purchase_orders').select('id, status').eq('organization_id', orgId).eq('zoho_po_id', zohoPoId).maybeSingle();
+    if (!row || row.status === live) return { status: live, changed: false };
+    const { error } = await supabaseAdmin.from('zoho_purchase_orders').update({ status: live }).eq('id', row.id).eq('organization_id', orgId);
+    return error ? { status: live, changed: false, error: error.message } : { status: live, changed: true };
+}
+
 /** Handle ONE PO that Zoho now says is approved. Safe to call twice: the second call finds it already claimed or sent. */
 export async function handleApprovedPo(orgId: string, z: ZohoCtx, zohoPoId: string, mode: NoticeMode, autoSince: string | null): Promise<'notified' | 'no_phone' | 'failed' | 'skipped' | 'already' | 'error'> {
     const res = await zohoGet(z, `purchaseorders/${encodeURIComponent(zohoPoId)}`);

@@ -58,6 +58,17 @@ export interface ExtractedInvoice {
     other_charges: number | null;
     discount_amount: number | null;
     invoice_total: number | null;
+    /** Read for display and cross-checking only; nothing here decides a match. */
+    buyer_name?: string | null;
+    buyer_gstin?: string | null;
+    po_reference?: string | null;
+    due_date?: string | null;
+    cgst_amount?: number | null;
+    sgst_amount?: number | null;
+    igst_amount?: number | null;
+    round_off?: number | null;
+    /** Header fields worked out from other printed figures because the read disagreed with itself. Shown to the person. */
+    repairs?: string[];
     lines: ExtractedLine[];
     /** 0-100 per header field: invoice_number, invoice_date, taxable_amount, invoice_total, vendor. */
     field_confidence: Record<string, number>;
@@ -84,7 +95,9 @@ const SCHEMA_PROMPT = `You read Indian GST tax invoices and return ONLY one JSON
    "invoice_number": string|null, "invoice_date": "YYYY-MM-DD"|null,
    "vendor_name": string|null, "vendor_gstin": string|null, "currency": "INR"|string|null,
    "taxable_amount": number|null, "tax_amount": number|null,
-   "other_charges": number|null, "discount_amount": number|null, "invoice_total": number|null
+   "other_charges": number|null, "discount_amount": number|null, "invoice_total": number|null,
+   "buyer_name": string|null, "buyer_gstin": string|null, "po_reference": string|null, "due_date": "YYYY-MM-DD"|null,
+   "cgst_amount": number|null, "sgst_amount": number|null, "igst_amount": number|null, "round_off": number|null
  },
  "lines": [ { "description": string, "item_code": string|null, "hsn_or_sac": string|null,
               "quantity": number|null, "unit": string|null, "unit_rate": number|null,
@@ -95,21 +108,116 @@ const SCHEMA_PROMPT = `You read Indian GST tax invoices and return ONLY one JSON
 RULES
 1. The vendor is the SELLER who issued the invoice, not the buyer. vendor_gstin is the seller's 15-character GSTIN.
 2. Amounts are plain numbers in rupees with no currency symbol or thousands separators. "1,23,456.50" is 123456.5.
-3. taxable_amount is the value before GST. tax_amount is total GST (CGST+SGST or IGST together). invoice_total is the grand total payable.
+3. taxable_amount is the value GST is charged ON: the subtotal the CGST/SGST/IGST lines are calculated from, AFTER any service or management charge rows, and not an intermediate "Total" printed above them. tax_amount is total GST (CGST+SGST or IGST together). invoice_total is the grand total payable.
+3a. Every printed row that carries an amount is its own line, including percentage rows such as "Management & Consultancy Services 8%" (quantity and unit_rate null, taxable_amount the amount shown). Never merge two rows into one line, and never attach a row's description to a different row.
 4. other_charges is freight, packing and similar charges added to the bill. discount_amount is a positive number for any discount taken off.
 5. tax_rate on a line is the combined GST percentage (CGST 9% + SGST 9% is 18).
 6. Use null for anything you cannot read. NEVER calculate, estimate or invent a figure that is not printed. Do not make totals add up.
 7. Dates are YYYY-MM-DD. Indian dates are day first: 05/10/2026 is 5 October 2026.
 8. Confidence is per field, honest, and must vary: 90-100 clearly printed and labelled; 60-89 read but the layout was unclear; 1-59 smudged or you had to choose between candidates; 0 not readable (the value is null).
+10. A line's tax_rate, tax_amount and taxable_amount are filled ONLY when printed on that line. When the invoice prints tax once at the bottom (CGST/SGST/IGST totals), leave every line's tax_rate and tax_amount null. Never use 0 for "not printed". Do not output a row that has no amount (a heading or a description-only row): put its words into the description of the line it introduces.
+9. buyer_name and buyer_gstin are the BILL TO party (the customer being invoiced), never the seller. po_reference is a purchase-order number printed on the invoice. cgst_amount, sgst_amount and igst_amount are the tax amounts exactly as printed, each only if printed. round_off is the printed rounding adjustment (negative when it is subtracted). due_date is only a date printed as the payment due date.
 9. One entry in "lines" per row of the line-item table, in order. Do not include totals rows.`;
 
+
+/**
+ * Does taxable + tax (+ other charges - discount) equal the total, to within ₹2 of rounding?
+ * null when a figure is missing, so the question cannot be asked.
+ */
+function headerAddsUp(e: ExtractedInvoice): boolean | null {
+    if (e.taxable_amount == null || e.tax_amount == null || e.invoice_total == null) return null;
+    return Math.abs(e.taxable_amount + e.tax_amount + (e.other_charges ?? 0) - (e.discount_amount ?? 0) - e.invoice_total) <= 2;
+}
+
+/**
+ * Do the line amounts add up to the taxable amount? A read that dropped a row (it happens when a PDF's
+ * text comes out jumbled) fails this. Charges and discounts printed outside the lines are allowed for.
+ * null when there is nothing to compare.
+ */
+function linesAddUp(e: ExtractedInvoice): boolean | null {
+    if (e.taxable_amount == null || !e.lines.length) return null;
+    const amounts = e.lines.map((l) => l.taxable_amount ?? l.line_total).filter((v): v is number => v != null);
+    if (!amounts.length) return null;
+    const sum = amounts.reduce((a, b) => a + b, 0);
+    const tol = Math.max(2, e.taxable_amount * 0.001);
+    const other = e.other_charges ?? 0, disc = e.discount_amount ?? 0;
+    return [e.taxable_amount, e.taxable_amount - other, e.taxable_amount + disc, e.taxable_amount - other + disc].some((t) => Math.abs(sum - t) <= tol);
+}
+
+/** A read worth trusting without a second look: nothing essential missing, and the figures add up. */
+const readIsSound = (e: ExtractedInvoice) => missingKeyFields(e).length === 0 && headerAddsUp(e) !== false && linesAddUp(e) !== false;
+
+/** Lower is better: missing fields weigh most, then figures that do not add up. */
+const readScore = (e: ExtractedInvoice) => missingKeyFields(e).length * 10 + (headerAddsUp(e) === false ? 5 : 0) + (linesAddUp(e) === false ? 3 : 0);
+
+/** The fields every invoice must give us before a read can be trusted. */
+function missingKeyFields(e: ExtractedInvoice): string[] {
+    const gone: string[] = [];
+    if (!e.invoice_number) gone.push('invoice_number');
+    if (!e.invoice_date) gone.push('invoice_date');
+    if (e.invoice_total == null) gone.push('invoice_total');
+    return gone;
+}
+
+/**
+ * Put right a header figure the read got wrong, using only OTHER figures printed on the same invoice.
+ *   - Tax: when CGST and SGST (or IGST) were read and they do not add to the tax total, the printed
+ *     parts win. A model slips a digit in a total far more often than in both of its parts.
+ *   - Taxable: when taxable + tax does not equal the total, but the printed line amounts DO make it
+ *     equal, the line sum is the taxable amount.
+ * Nothing is invented: each repair must make the invoice add up, and is recorded in `repairs`.
+ */
+export function reconcile(e: ExtractedInvoice): ExtractedInvoice {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const repairs: string[] = [];
+    const out: ExtractedInvoice = { ...e, field_confidence: { ...e.field_confidence } };
+
+    const hasParts = (out.cgst_amount != null && out.sgst_amount != null) || out.igst_amount != null;
+    if (hasParts) {
+        const parts = r2((out.cgst_amount ?? 0) + (out.sgst_amount ?? 0) + (out.igst_amount ?? 0));
+        if (out.tax_amount == null || (Math.abs(parts - out.tax_amount) > 0.01 && Math.abs(parts - out.tax_amount) <= 10)) { out.tax_amount = parts; repairs.push('tax_amount'); }
+    }
+    if (headerAddsUp(out) === false) {
+        const amounts = out.lines.map((l) => l.taxable_amount ?? l.line_total).filter((v): v is number => v != null);
+        if (amounts.length) {
+            const candidate = r2(amounts.reduce((a, b) => a + b, 0));
+            if (headerAddsUp({ ...out, taxable_amount: candidate }) === true) {
+                out.taxable_amount = candidate; repairs.push('taxable_amount');
+                out.field_confidence.taxable_amount = Math.min(out.field_confidence.taxable_amount ?? 75, 75);
+            }
+        }
+    }
+    if (repairs.length) out.repairs = repairs;
+    return out;
+}
+
 export async function extractInvoice(bytes: Buffer, mime: string): Promise<ExtractResult> {
+    const r = await extractInvoiceRaw(bytes, mime);
+    return r.ok && r.extracted ? { ...r, extracted: reconcile(r.extracted) } : r;
+}
+
+async function extractInvoiceRaw(bytes: Buffer, mime: string): Promise<ExtractResult> {
     const isPdf = mime === 'application/pdf';
     try {
         if (isPdf) {
             let text = '';
             try { text = await extractPdfText(bytes); } catch { text = ''; }
-            if (text.length >= MIN_TEXT_CHARS) return await viaText(text.slice(0, TEXT_CHAR_LIMIT));
+            if (text.length >= MIN_TEXT_CHARS) {
+                const fromText = await viaText(text.slice(0, TEXT_CHAR_LIMIT));
+                if (fromText.ok && fromText.extracted && readIsSound(fromText.extracted)) return fromText;
+                // The text read is incomplete or does not add up. A PDF's text layer can be out of order or
+                // hold only fragments (labels drawn as shapes, a jumbled table), and a model reading it then
+                // guesses. Look at the page itself as well and keep the better read; the text read stays the
+                // fallback. "Better" is decided by arithmetic and completeness, never by which model sounds sure.
+                const seen = await rasterizePdf(bytes, { maxPages: MAX_PAGES });
+                if (seen.pages.length) {
+                    const fromImage = await viaVision('pdf_scan', seen.pages);
+                    if (fromImage.ok && fromImage.extracted && (!fromText.ok || !fromText.extracted || readScore(fromImage.extracted) < readScore(fromText.extracted))) {
+                        return { ...fromImage, pagesRead: seen.pages.length, totalPages: seen.totalPages, truncated: seen.totalPages > seen.pages.length };
+                    }
+                }
+                return fromText;
+            }
 
             const raster = await rasterizePdf(bytes, { maxPages: MAX_PAGES });
             if (!raster.pages.length) {
@@ -136,7 +244,7 @@ async function viaText(text: string): Promise<ExtractResult> {
         raw = await councilChat([
             { role: 'system', content: SCHEMA_PROMPT },
             { role: 'user', content: `Extract the invoice from this text:\n\n${text}` },
-        ], 'synthesis', { model: INVOICE_TEXT_MODEL });
+        ], 'synthesis', { model: INVOICE_TEXT_MODEL, thinkingOff: true });
     } catch (e) {
         return fail('pdf_text', e instanceof Error ? e.message : 'text model call failed');
     }
@@ -160,6 +268,7 @@ async function viaVision(path: 'pdf_scan' | 'image', pages: { buffer: Buffer; mi
             pages: batches[i] as Parameters<typeof visionExtract>[0]['pages'],
             json: true,
             maxTokens: 4000,
+            thinkingOff: true,
             instruction: `${SCHEMA_PROMPT}\n\n${batches.length === 1
                 ? 'Extract the invoice from these page images.'
                 : `These are pages ${i * PAGES_PER_CALL + 1}-${i * PAGES_PER_CALL + batches[i].length} of a ${pages.length}-page invoice. ` +
@@ -248,19 +357,28 @@ export function normalise(raw: Record<string, unknown>): ExtractedInvoice {
     const inv = (raw.invoice && typeof raw.invoice === 'object' ? raw.invoice : raw) as Record<string, unknown>;
     const conf = (raw.confidence && typeof raw.confidence === 'object' ? raw.confidence : {}) as Record<string, unknown>;
     // Tolerate "GSTIN: 27ABC..." and spaced-out forms: pull the 15-character GSTIN out of whatever came back.
-    const gstin = str(inv.vendor_gstin)?.toUpperCase().replace(/[\s\-:.]+/g, '').match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]/)?.[0] ?? null;
+    const cleanGstin = (v: unknown) => { const g = str(v)?.toUpperCase().replace(/[\s\-:.]+/g, '').match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]/)?.[0] ?? null; return g && /^[0-9A-Z]{15}$/.test(g) ? g : null; };
+    const gstin = cleanGstin(inv.vendor_gstin);
 
     const header = {
         invoice_number: str(inv.invoice_number),
         invoice_date: date(inv.invoice_date),
         vendor_name: str(inv.vendor_name),
-        vendor_gstin: gstin && /^[0-9A-Z]{15}$/.test(gstin) ? gstin : null,
+        vendor_gstin: gstin,
         currency: str(inv.currency)?.toUpperCase().slice(0, 3) ?? null,
         taxable_amount: num(inv.taxable_amount),
         tax_amount: num(inv.tax_amount),
         other_charges: num(inv.other_charges),
         discount_amount: num(inv.discount_amount),
         invoice_total: num(inv.invoice_total),
+        buyer_name: str(inv.buyer_name),
+        buyer_gstin: cleanGstin(inv.buyer_gstin),
+        po_reference: str(inv.po_reference),
+        due_date: date(inv.due_date),
+        cgst_amount: num(inv.cgst_amount),
+        sgst_amount: num(inv.sgst_amount),
+        igst_amount: num(inv.igst_amount),
+        round_off: num(inv.round_off),
     };
 
     // A field the reader could not fill must not carry confidence.

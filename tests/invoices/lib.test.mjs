@@ -179,3 +179,36 @@ test('AT-038: a missed deadline reads as overdue without touching any status; a 
     assert.equal(isDocOverdue('pending', future), false);
     for (const s of ['reconciled', 'closed', 'waived_by_policy']) assert.equal(isDocOverdue(s, past), false, s);
 });
+
+// --- reconcile: a wrong header figure is put right only from OTHER printed figures --------------------
+const { reconcile } = loadTs('backend/lib/invoices/extract.ts', { '@/backend/lib/documentBank/ocr': {}, '@/backend/lib/ocr/rasterize': {}, '@/backend/lib/ocr/vision': {}, '@/backend/lib/council/llm': {} });
+const rdr = (o = {}) => ({ invoice_number: 'X', invoice_date: '2026-10-03', vendor_name: 'V', vendor_gstin: null, currency: 'INR', taxable_amount: 79196.71, tax_amount: 14255.4, other_charges: null, discount_amount: null, invoice_total: 93452, cgst_amount: 7127.7, sgst_amount: 7127.7, igst_amount: null,
+    lines: [{ description: 'a', taxable_amount: 72702 }, { description: 'b', taxable_amount: 628.29 }, { description: 'c', taxable_amount: 5866.42 }], field_confidence: { taxable_amount: 90 }, ...o });
+
+test('reconcile: a taxable figure that does not add up is replaced by the printed line amounts, and the repair is recorded', () => {
+    const r = reconcile(rdr({ taxable_amount: 73330.29 }));
+    assert.equal(r.taxable_amount, 79196.71);
+    assert.deepEqual(JSON.parse(JSON.stringify(r.repairs)), ['taxable_amount']);
+    assert.ok(r.field_confidence.taxable_amount <= 75);
+});
+
+test('reconcile: a tax total that disagrees with its printed CGST and SGST is corrected to their sum', () => {
+    const r = reconcile(rdr({ tax_amount: 14254.4 }));
+    assert.equal(r.tax_amount, 14255.4);
+    assert.ok(r.repairs.includes('tax_amount'));
+});
+
+test('reconcile: a read that already adds up is left exactly as it is', () => {
+    const before = rdr();
+    const r = reconcile(before);
+    assert.equal(r.taxable_amount, 79196.71);
+    assert.equal(r.tax_amount, 14255.4);
+    assert.equal(r.repairs, undefined);
+});
+
+test('reconcile: it never invents a repair that would not make the invoice add up', () => {
+    // Lines sum to 5,000 and total is 93,452: no honest repair exists, so nothing changes.
+    const r = reconcile(rdr({ taxable_amount: 73330.29, lines: [{ description: 'a', taxable_amount: 5000 }] }));
+    assert.equal(r.taxable_amount, 73330.29);
+    assert.equal(r.repairs, undefined);
+});

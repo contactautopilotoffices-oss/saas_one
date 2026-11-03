@@ -91,6 +91,15 @@ export default function PoDetailWorkspace({ orgId, poId, onBack }: Props) {
     }, [poId, orgId]);
 
     useEffect(() => { fetchDetail(); }, [fetchDetail]);
+    // Opening a PO asks Zoho for its status right now, so a change made there a moment ago is already true here.
+    useEffect(() => {
+        let alive = true;
+        fetch(`/api/accounts/po/${poId}/refresh?org_id=${encodeURIComponent(orgId)}`, { method: 'POST' })
+            .then(r => (r.ok ? r.json() : null))
+            .then((d: { changed?: boolean } | null) => { if (alive && d?.changed) fetchDetail(); })
+            .catch(() => undefined);
+        return () => { alive = false; };
+    }, [poId, orgId, fetchDetail]);
 
     // Realtime — copied verbatim from app/tickets/[ticketId]/page.tsx's pattern (one channel,
     // scoped `.on()` per table, filtered to this row). A single debounce timer shared across
@@ -458,7 +467,10 @@ function DocumentsSection({ poId, orgId, documents, onChanged, proofOnPayment = 
                                 <div className="min-w-0">
                                     <p className="text-sm font-medium text-text-primary truncate">{t.label}</p>
                                     {doc?.invoice_no && <p className="text-xs text-text-tertiary truncate">Invoice {doc.invoice_no} · {fmtDate(doc.invoice_date)} · {doc.invoice_amount != null ? inr(doc.invoice_amount) : ''}</p>}
-                                    {t.key === 'tax_invoice' && doc && <div className="mt-1.5"><InvoiceLiveStatus key={doc.id} orgId={orgId} poId={poId} uploadedAt={doc.uploaded_at} /></div>}
+                                    {t.key === 'tax_invoice' && doc && (uploadingType === 'tax_invoice'
+                                        // While a replacement is on its way up, the old verdict is no longer true: say so instead of showing it.
+                                        ? <p className="mt-1.5 flex items-center gap-1.5 text-xs text-text-secondary" role="status"><Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> Uploading the new invoice…</p>
+                                        : <div className="mt-1.5"><InvoiceLiveStatus key={doc.id} orgId={orgId} poId={poId} uploadedAt={doc.uploaded_at} /></div>)}
                                     {(olderByType.get(t.key) ?? []).map(o => (
                                         <p key={o.id} className="mt-1 text-xs text-text-tertiary flex items-center gap-2 flex-wrap">
                                             <span className="truncate max-w-[260px]">Earlier file: {o.file_name || 'unnamed'}{t.key === 'tax_invoice' ? ' · still counts against this PO' : ''}</span>

@@ -265,3 +265,57 @@ test('tax shown only at the foot is checked against the PO tax rate', () => {
     assert.equal(find(out, 'TAX_CHECK', 'fail').length, 1);
     assert.notEqual(out.status, 'matched');
 });
+
+// ---- Mafatlal B Wing, MH-PO-26/27-0980 (2 Nov 2026): a correct invoice that used to fail ----
+
+const hk = {
+    poLines: [
+        { id: 'L1', item_id: null, name: 'HK Attendants (3 Nos)', description: '03 Nos HK Attendants: 90 Man Days', hsn_or_sac: '998514', unit: 'day', quantity: 90, rate: 807.8, tax_percentage: 18 },
+        { id: 'L2', item_id: null, name: 'Manpower Service Hrs', description: 'HK OT 7 Hrs', hsn_or_sac: '998514', unit: 'hrs', quantity: 7, rate: 89.7557, tax_percentage: 18 },
+        { id: 'L3', item_id: null, name: 'Manpower Service Charge', description: 'Management & Consultancy Services - 8%', hsn_or_sac: '998514', unit: 'Person', quantity: 1, rate: 5866.42, tax_percentage: 18 },
+    ],
+    line: (n, d, q, rate, tx) => ({ line_no: n, description: d, item_code: null, hsn_or_sac: '998514', quantity: q, unit: null, unit_rate: rate, taxable_amount: tx, tax_rate: null, tax_amount: null, line_total: tx }),
+};
+function hkInput(lines) {
+    return base({
+        po: { status: 'approved', amount: 93452, vendor_name: 'ONE SOLUTION SERVICES' }, poLines: hk.poLines, vendorGstin: '27BCDPP6906N1Z2',
+        invoice: { invoice_number: 'OSS/221/09/2627', invoice_date: '2026-10-03', vendor_name_read: 'One Solution Services', vendor_gstin_read: '27BCDPP6906N1Z2', taxable_amount: 79196.71, tax_amount: 14255.4,
+            other_charges: null, discount_amount: null, invoice_total: 93452, field_confidence: { invoice_number: 95, invoice_date: 95, taxable_amount: 90, invoice_total: 95, vendor: 90 }, extraction_ok: true },
+        lines, settings: { ...settings, rate_tolerance_pct: 1 }, today: '2026-11-02',
+    });
+}
+
+test('a rate column that cannot produce the invoice\'s own amount is judged by amount / quantity, and a flat charge equal to its PO line agrees', () => {
+    const out = matchInvoice(hkInput([
+        hk.line(1, '03 Nos HK Attendants: 90 Man Days HK Services for the period of 01/09/2026 To 30/09/2026', 90, 24234, 72702), // prints 24,234 per month; 72,702 / 90 = 807.80 per day
+        hk.line(2, 'OT - 7 Hrs', 7, 89.76, 628.29),
+        hk.line(3, 'Management & Consultancy Services 8%', null, null, 5866.42),                                                  // flat charge, no qty or rate
+    ]));
+    assert.equal(out.status, 'matched');
+    const rate1 = out.results.find((r) => r.rule_code === 'UNIT_RATE_CHECK' && r.invoice_line_no === 1);
+    assert.equal(rate1.outcome, 'pass');
+    assert.match(rate1.explanation, /does not produce the invoice's own amount/);
+    assert.match(rate1.explanation, /807\.8/);
+    assert.equal(out.results.filter((r) => r.outcome !== 'pass').length, 0);
+});
+
+test('judging by amount does not hide an overcharge: the same invoice at a real higher charge still fails', () => {
+    const out = matchInvoice(hkInput([
+        hk.line(1, '03 Nos HK Attendants: 90 Man Days', 90, 24234, 79000),   // amount / qty = 877.78, PO says 807.80
+        hk.line(2, 'OT - 7 Hrs', 7, 89.76, 628.29),
+        hk.line(3, 'Management & Consultancy Services 8%', null, null, 5866.42),
+    ]));
+    const rate1 = out.results.find((r) => r.rule_code === 'UNIT_RATE_CHECK' && r.invoice_line_no === 1);
+    assert.equal(rate1.outcome, 'fail');
+    assert.notEqual(out.status, 'matched');
+});
+
+test('a flat line whose amount differs from the PO line is still unknown, not waved through', () => {
+    const out = matchInvoice(hkInput([
+        hk.line(1, '03 Nos HK Attendants: 90 Man Days', 90, 807.8, 72702),
+        hk.line(2, 'OT - 7 Hrs', 7, 89.76, 628.29),
+        hk.line(3, 'Management & Consultancy Services 8%', null, null, 6000),   // PO line is 5,866.42
+    ]));
+    assert.ok(out.results.some((r) => r.rule_code === 'UNIT_RATE_CHECK' && r.invoice_line_no === 3 && r.outcome === 'unknown'));
+    assert.notEqual(out.status, 'matched');
+});

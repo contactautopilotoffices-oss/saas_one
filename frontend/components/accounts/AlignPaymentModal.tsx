@@ -104,7 +104,12 @@ export default function AlignPaymentModal({ po, onClose, onDone, orgId: orgIdPro
             })
             .catch(() => undefined)
             .finally(() => { if (alive) setInvoiceLoading(false); });
-        return () => { alive = false; };
+        // The invoice may be replaced in another tab or window while this is open: look again when the person comes back.
+        const again = () => {
+            fetch(`/api/invoices/verdict?${qs.toString()}`).then(r => (r.ok ? r.json() : null)).then(d => { if (alive && d) { setInvoiceWarn(d as InvoiceWarning); setReadingTooLong(false); } }).catch(() => undefined);
+        };
+        window.addEventListener('focus', again);
+        return () => { alive = false; window.removeEventListener('focus', again); };
     }, [po, poOrg]);
 
     // An invoice that has just been uploaded is still being read: look again every few seconds until the
@@ -233,6 +238,7 @@ export default function AlignPaymentModal({ po, onClose, onDone, orgId: orgIdPro
                                         value={invoiceReason}
                                         onChange={e => setInvoiceReason(e.target.value)}
                                         rows={2}
+                                        spellCheck={false} data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"
                                         placeholder="e.g. advance against PO, invoice to follow from the vendor"
                                         className="mt-2 w-full px-3 py-2 border border-amber-400/60 rounded-lg text-sm bg-surface text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                                     />

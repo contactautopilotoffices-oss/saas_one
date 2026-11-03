@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({
         invoice: inv,
         // What a person needs, in plain words: where it is, and if it is done, exactly what is wrong.
-        summary: { stage: invoiceStage(inv, current.length > 0), ...plainReasons(current, inv.match_status) },
+        summary: { stage: invoiceStage(inv, current.length > 0), ...plainReasons(current, inv.match_status, inv.extraction_status) },
         documents,
         lines: lines.data ?? [],
         po: po.data ? { ...po.data, po_amount: po.data.po_amount == null ? null : Number(po.data.po_amount) } : null,

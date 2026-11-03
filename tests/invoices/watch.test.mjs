@@ -173,3 +173,63 @@ test('end to end: the next run notices a watched PO has been approved and messag
     assert.equal(again.notified, 0);
     assert.equal(t.sent.length, 1, 'ten minutes later it is not sent again');
 });
+
+test('status refresh copies a Zoho approval into our table, touches nothing else, and never messages anyone', async () => {
+    const { mod, sent, db } = setup({
+        tables: { zoho_purchase_orders: [
+            { id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'pending_approval' },
+            { id: 'p2', organization_id: 'o1', zoho_po_id: 'z2', status: 'approved' },
+            { id: 'p3', organization_id: 'o1', zoho_po_id: 'z3', status: 'pending_approval' },
+        ] },
+        zoho: (path) => path === 'purchaseorders' ? { purchaseorders: [
+            { purchaseorder_id: 'z1', purchaseorder_number: 'A', status: 'approved' },   // approved just now
+            { purchaseorder_id: 'z2', purchaseorder_number: 'B', status: 'approved' },   // unchanged
+            { purchaseorder_id: 'z9', purchaseorder_number: 'C', status: 'approved' },   // not in our table yet: left for the full sync
+        ], page_context: { has_more_page: false } } : {},
+    });
+    const r = await mod.refreshRecentPoStatuses('o1');
+    assert.deepEqual(JSON.parse(JSON.stringify(r)), { checked: 3, changed: 1 });
+    const t = db.tables.zoho_purchase_orders;
+    assert.equal(t.find((x) => x.id === 'p1').status, 'approved');
+    assert.equal(t.find((x) => x.id === 'p3').status, 'pending_approval');   // not in Zoho's changed list: untouched
+    assert.equal(t.length, 3);                                               // nothing inserted
+    assert.equal(sent.length, 0);                                            // no vendor message from a status refresh
+});
+
+test('status refresh with nothing changed in Zoho makes no writes', async () => {
+    const { mod, db } = setup({ tables: { zoho_purchase_orders: [{ id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'pending_approval' }] }, zoho: () => ({ purchaseorders: [], page_context: { has_more_page: false } }) });
+    assert.deepEqual(JSON.parse(JSON.stringify(await mod.refreshRecentPoStatuses('o1'))), { checked: 0, changed: 0 });
+    assert.equal(db.tables.zoho_purchase_orders[0].status, 'pending_approval');
+});
+
+test('one-PO refresh: an approval made in Zoho is copied into our table straight away', async () => {
+    const { mod, sent, db } = setup({
+        tables: { zoho_purchase_orders: [{ id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'pending_approval' }] },
+        zoho: (path) => path === 'purchaseorders/z1' ? { purchaseorder: { status: 'approved' } } : {},
+    });
+    assert.deepEqual(JSON.parse(JSON.stringify(await mod.refreshOnePoStatus('o1', 'z1'))), { status: 'approved', changed: true });
+    assert.equal(db.tables.zoho_purchase_orders[0].status, 'approved');
+    assert.equal(sent.length, 0);   // a status refresh never messages anyone
+});
+
+test('one-PO refresh: nothing to change, an unknown PO and a Zoho answer with no status all leave our table alone', async () => {
+    const same = setup({ tables: { zoho_purchase_orders: [{ id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'approved' }] }, zoho: () => ({ purchaseorder: { status: 'approved' } }) });
+    assert.deepEqual(JSON.parse(JSON.stringify(await same.mod.refreshOnePoStatus('o1', 'z1'))), { status: 'approved', changed: false });
+
+    const unknown = setup({ tables: { zoho_purchase_orders: [] }, zoho: () => ({ purchaseorder: { status: 'approved' } }) });
+    assert.equal((await unknown.mod.refreshOnePoStatus('o1', 'z9')).changed, false);
+    assert.equal(unknown.db.tables.zoho_purchase_orders.length, 0);   // never inserts a PO it does not hold
+
+    const blank = setup({ tables: { zoho_purchase_orders: [{ id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'pending_approval' }] }, zoho: () => ({}) });
+    const r = await blank.mod.refreshOnePoStatus('o1', 'z1');
+    assert.equal(r.changed, false); assert.match(r.error, /did not return a status/);
+    assert.equal(blank.db.tables.zoho_purchase_orders[0].status, 'pending_approval');
+});
+
+test('one-PO refresh: a rejection and a cancellation in Zoho are copied too, not just approvals', async () => {
+    for (const status of ['rejected', 'cancelled']) {
+        const { mod, db } = setup({ tables: { zoho_purchase_orders: [{ id: 'p1', organization_id: 'o1', zoho_po_id: 'z1', status: 'pending_approval' }] }, zoho: () => ({ purchaseorder: { status } }) });
+        await mod.refreshOnePoStatus('o1', 'z1');
+        assert.equal(db.tables.zoho_purchase_orders[0].status, status);
+    }
+});

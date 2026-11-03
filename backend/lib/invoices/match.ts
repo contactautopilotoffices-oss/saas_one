@@ -276,6 +276,19 @@ export function matchInvoice(input: MatchInput): MatchOutput {
         }
     }
 
+    // A flat line: a percentage service charge or lump sum, printed with an amount but no quantity and no
+    // rate. When its amount equals what the mapped PO line comes to (quantity x rate), it agrees, and is
+    // judged by amount instead of being "unknown". Only an exact-amount match counts, so it cannot hide a difference.
+    // (It adds nothing to the per-line quantity tally; the PO balance check still stops a second billing.)
+    const flatLine = (l: MatchInvoiceLine): { po: MatchPoLine; amount: number } | null => {
+        const poId = lineMapping[l.line_no];
+        if (!poId || has(l.quantity) || has(l.unit_rate)) return null;
+        const amount = has(l.taxable_amount) ? l.taxable_amount : has(l.line_total) ? l.line_total : null;
+        const pl = poById.get(poId)!;
+        if (amount == null || !has(pl.quantity) || !has(pl.rate)) return null;
+        return Math.abs(amount - pl.quantity * pl.rate) <= Math.max(settings.amount_tolerance, 0.5) ? { po: pl, amount } : null;
+    };
+
     // QUANTITY_CHECK ------------------------------------------------------------
     {
         const billedNow: Record<string, number> = {};
@@ -283,7 +296,11 @@ export function matchInvoice(input: MatchInput): MatchOutput {
         for (const l of lines) {
             const poId = lineMapping[l.line_no];
             if (!poId) continue;
-            if (!has(l.quantity)) { unreadable.push(l.line_no); continue; }
+            if (!has(l.quantity)) {
+                const flat = flatLine(l);
+                if (flat) { add({ rule_code: 'QUANTITY_CHECK', severity: 'blocking', outcome: 'pass', invoice_line_no: l.line_no, po_line_item_id: flat.po.id, explanation: `Line ${l.line_no}: a flat charge of ${flat.amount}, the same as the PO line "${flat.po.name}".` }); continue; }
+                unreadable.push(l.line_no); continue;
+            }
             billedNow[poId] = (billedNow[poId] ?? 0) + l.quantity;
         }
         for (const lineNo of unreadable) {
@@ -311,6 +328,12 @@ export function matchInvoice(input: MatchInput): MatchOutput {
         const poId = lineMapping[l.line_no];
         if (!poId) continue;
         const pl = poById.get(poId)!;
+        const flat = flatLine(l);
+        if (flat) {
+            add({ rule_code: 'UNIT_RATE_CHECK', severity: 'blocking', outcome: 'pass', invoice_line_no: l.line_no, po_line_item_id: poId, expected: pl.rate, actual: flat.amount,
+                explanation: `Line ${l.line_no}: a flat charge of ${flat.amount}, equal to the PO line (${pl.quantity} x ${pl.rate}).` });
+            continue;
+        }
         if (!has(l.unit_rate) || !has(pl.rate)) {
             add({ rule_code: 'UNIT_RATE_CHECK', severity: 'blocking', outcome: 'unknown', invoice_line_no: l.line_no, po_line_item_id: poId,
                 explanation: `Line ${l.line_no}: ${!has(l.unit_rate) ? 'no rate on the invoice' : 'no rate on the PO line'}.` });
@@ -321,15 +344,25 @@ export function matchInvoice(input: MatchInput): MatchOutput {
                 explanation: `Line ${l.line_no}: invoice is priced per "${l.unit}", the PO per "${pl.unit}". The rates are not comparable.` });
             continue;
         }
-        const diff = l.unit_rate - pl.rate;
+        // A printed rate that cannot produce the line's own amount (for example a per-month figure beside a
+        // per-day quantity) says nothing about what was charged. What was charged is amount / quantity, so
+        // judge that, and say so. A rate that does reproduce the amount is judged as printed, as before.
+        let rate = l.unit_rate;
+        let basis = '';
+        const billed = has(l.taxable_amount) ? l.taxable_amount : has(l.line_total) ? l.line_total : null;
+        if (has(l.quantity) && l.quantity > 0 && billed != null && Math.abs(l.unit_rate * l.quantity - billed) > Math.max(1, Math.abs(billed) * 0.01)) {
+            rate = Math.round((billed / l.quantity) * 10_000) / 10_000;
+            basis = ` The rate column prints ${l.unit_rate}, which does not produce the invoice's own amount (${l.quantity} x ${l.unit_rate} is not ${billed}), so the charge was judged as ${billed} / ${l.quantity} = ${rate} per unit.`;
+        }
+        const diff = rate - pl.rate;
         const allowed = Math.abs(pl.rate) * settings.rate_tolerance_pct / 100 + 0.005;
         if (Math.abs(diff) > allowed) {
             add({ rule_code: 'UNIT_RATE_CHECK', severity: 'blocking', outcome: 'fail', invoice_line_no: l.line_no, po_line_item_id: poId,
-                expected: pl.rate, actual: l.unit_rate, difference: has(l.quantity) ? rupees(paise(diff * l.quantity)) : null,
-                explanation: `Line ${l.line_no} "${pl.name}": invoiced at ${l.unit_rate}, PO rate is ${pl.rate} (${diff > 0 ? '+' : ''}${Math.round(diff * 100) / 100} per unit).` });
+                expected: pl.rate, actual: rate, difference: has(l.quantity) ? rupees(paise(diff * l.quantity)) : null,
+                explanation: `Line ${l.line_no} "${pl.name}": invoiced at ${rate}, PO rate is ${pl.rate} (${diff > 0 ? '+' : ''}${Math.round(diff * 100) / 100} per unit).${basis}` });
         } else {
-            add({ rule_code: 'UNIT_RATE_CHECK', severity: 'blocking', outcome: 'pass', invoice_line_no: l.line_no, po_line_item_id: poId, expected: pl.rate, actual: l.unit_rate,
-                explanation: `Line ${l.line_no}: rate ${l.unit_rate} agrees with the PO.` });
+            add({ rule_code: 'UNIT_RATE_CHECK', severity: 'blocking', outcome: 'pass', invoice_line_no: l.line_no, po_line_item_id: poId, expected: pl.rate, actual: rate,
+                explanation: `Line ${l.line_no}: rate ${rate} agrees with the PO.${basis}` });
         }
     }
 

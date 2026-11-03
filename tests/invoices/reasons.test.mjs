@@ -105,3 +105,18 @@ test('a PO already used up by earlier invoices says so, instead of a negative ba
     assert.equal(r.reasons[0], 'Nothing is left on this PO: earlier invoices (₹4,09,696) already use up its value. This invoice adds ₹4,96,780. If an earlier invoice was a mistake, reject it first.');
     assert.ok(!r.reasons[0].includes('-'));
 });
+
+test('a failed read says one plain thing, not a list of contradictory findings', () => {
+    const stale = [
+        { rule_code: 'VENDOR_MATCH', outcome: 'unknown', severity: 'blocking', explanation: 'x' },
+        { rule_code: 'DUPLICATE_CHECK', outcome: 'fail', severity: 'blocking', explanation: 'same file' },
+        { rule_code: 'PO_BALANCE_CHECK', outcome: 'fail', severity: 'blocking', expected_value: -1, actual_value: 0, difference_amount: 1, explanation: 'x' },
+    ];
+    const r = plainReasons(stale, 'mismatched', 'failed');
+    assert.equal(r.headline, 'The invoice could not be read');
+    assert.equal(r.reasons.length, 1);
+    assert.match(r.reasons[0], /nothing on it was checked/);
+    assert.match(r.next, /Re-check/);
+    // A read that worked still reports its real findings.
+    assert.ok(plainReasons(stale, 'mismatched', 'completed').reasons.length > 1);
+});

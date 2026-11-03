@@ -1,3 +1,54 @@
+## 2026-11-03 — FMS: Zoho approvals reach the screen in seconds, and an OCR Monitor for the master admin
+
+**A PO approved, rejected or cancelled in Zoho Books now shows in the FMS within about 2 minutes (seconds once one Zoho setting is made), and the master admin has a live OCR log with a heartbeat. Nothing is deployed.**
+
+- **Why:** The founder approved a PO in Zoho and the FMS kept showing "awaiting approval" for up to 2 hours, because the full Zoho sync only runs every 2 hours. Separately, a reader that fails (as on the live site on 2 Nov) went unnoticed because failures only show when someone uploads.
+- **Structural decisions:**
+  - Approval sync has three layers, all independent of the WhatsApp switch and none sending any message: (1) a Zoho workflow rule calling the existing webhook, which now copies the PO's live status across the moment it fires; (2) a new job every 2 minutes copying the status of anything changed in the last 15 minutes (one small read-only Zoho call per organisation); (3) opening a PO asks Zoho for its status first. Polling alone was rejected because it can never be faster than its interval and spends Zoho's daily call allowance.
+  - The 10-minute job is back to doing only the vendor WhatsApp.
+  - Every OCR operation now runs inside a small logging context that collects its steps (PDF text, page images, each model call with tokens and cost) and writes one row. Lower layers log themselves, so no reader needed new arguments. A log failure can never break a read.
+  - The heartbeat reads a bundled fake invoice with a known answer every 15 minutes and on demand, and compares the result, so "the readers work" is a fact with a timestamp. It costs about a hundredth of a cent a run.
+- **What works now (after deploy and the steps below):** Master Admin has an OCR Monitor tab: heartbeat status with history, reads and success rate for the last hour and day, speed, cost, filters by reader, and a live feed where each row opens to show its steps. All OCR paths log: invoices, Document Bank, electricity bills, petty cash and meters. Until the migration is applied, the tab shows invoice reads from the invoice audit log.
+- **Left undone:**
+  - To switch on: apply supabase/migrations/20261103000001_ocr_activity_log.sql; set ZOHO_WEBHOOK_SECRET in Vercel (it is not set locally) and create the Zoho workflow rule that calls /api/webhooks/zoho-po-approved?secret=... on PO approved, rejected and edited.
+  - Not deployed or committed; two new scheduled jobs in vercel.json (every 2 and every 15 minutes). The 2-minute job adds about 720 Zoho calls a day; check this against your Zoho Books plan's daily limit.
+  - Not clicked through signed in: checked by type check, lint, tests and a local run of the probe.
+- **Open questions for the founder:** Is Zoho Books on a plan whose daily API limit comfortably allows the extra calls? Should the heartbeat alert someone (email or WhatsApp) when it fails twice in a row?
+
+## 2026-11-03 — FMS Invoice Control: the reader now returns every main field, and replacing an invoice clears the old warning
+
+**The invoice reader now returns buyer, tax split and round-off as well as vendor, GSTIN, number, date, total and lines, repairs its own arithmetic slips, and the PO's Documents tab shows what was read. Not deployed.**
+
+- **Why:** After the 2 Nov reader fixes the founder asked for the reader to capture the vendor, GST, total, invoice number, date, line items and all the main fields, and for the old warning to go when an invoice is replaced.
+- **Structural decisions:**
+  - New fields (billed-to name and GSTIN, PO number printed on the invoice, due date, CGST, SGST, IGST, round-off) are stored inside the existing saved reading, so there is no database change. They are shown and never used to decide a match.
+  - A header figure that does not add up is put right only from other figures printed on the same invoice (printed CGST and SGST for the tax total, the line amounts for the taxable amount). Each repair has to make the invoice add up and is recorded and shown to the person. The alternative, asking the model to calculate, was rejected because inventing figures is exactly what the reader must never do.
+  - A new copy of an invoice now retires earlier attempts on that PO that could never be read, so their warnings and queue entries disappear with it. Anything that was read, or that a person touched, is left alone.
+- **What works now:** On the Mafatlal B Wing invoice, six of six test reads returned the right vendor, GSTIN, invoice number, date, buyer, tax split, total and three lines (two used the page image and had the tax repaired). The PO's Documents tab has a "Show what was read from the invoice" link. While a replacement uploads, the old verdict is hidden. The Align screen re-checks when the window regains focus.
+- **Left undone:** Not committed or deployed; the PDF reader fix from 2 Nov must be deployed first or none of this works on the live site. Reading is still not perfectly repeatable, so a test on about 50 real invoices is still needed. Line items do not yet show the tax rate per line.
+- **Open questions for the founder:** Should an invoice addressed to a different company than ours be flagged? The buyer name is read now, but nothing compares it to anything.
+
+## 2026-11-02 — FMS Invoice Control: invoices could not be read on the live site, and correct invoices were failing
+
+**Every invoice read on the live site has been failing since it was deployed. The fixes are written and tested but not deployed.**
+
+- **Why:** The founder uploaded a correct invoice (MH-PO-26/27-0980, ₹93,452, matching the PO to the rupee) and the Align screen showed seven contradictory problems and would not let it go ahead. The Zoho status also lagged an approval.
+- **What was actually wrong, in three layers:**
+  1. The PDF reader's helper file was not packaged into the live build, so every PDF read crashed before reading anything. It worked on developer machines, which is why tests never saw it.
+  2. This particular invoice made the AI model "think" for its whole budget and return nothing. Turning the model's hidden reasoning off makes the same read take 4 seconds for a hundredth of a cent.
+  3. The invoice's PDF text is jumbled, so the model sometimes mis-split the amounts. The reader now checks that taxable plus tax equals the total, and if it does not, reads the page image too and keeps the better read.
+- **Structural decisions:**
+  - Matching now judges a line by amount divided by quantity when the printed rate cannot produce the invoice's own amount (this vendor printed a per-month rate beside a per-day quantity). A true overcharge still fails; this is tested.
+  - A flat charge line (such as "Management & Consultancy 8%") that equals its PO line exactly now counts as agreeing.
+  - A failed read now says one plain thing ("The invoice could not be read, nothing was checked") instead of listing findings from a run that checked nothing, and failed attempts no longer count as duplicates of each other.
+  - Zoho approvals now reach the screen within about 10 minutes, not up to 2 hours. A new 10-minute job copies status changes across and never messages anyone.
+- **What works now (after deploy):** The Mafatlal invoice reads correctly and matches all 16 checks in a dry run. 111 automated invoice tests pass and a production build succeeds.
+- **Left undone:**
+  - Not deployed or committed. After deploy, press Re-check on the latest invoice for 0980 (the failed attempts stay failed until re-run).
+  - The same PDF packaging fault very likely affects electricity-bill reading and petty-cash evidence reading on the live site. Those were not changed.
+  - Reading is not fully repeatable: one of five test runs misread the tax by ₹1. The matching checks catch this, but it is why the real-invoice accuracy test is still needed.
+- **Open questions for the founder:** Should a failed read be retried automatically after deploy, so nobody has to press Re-check?
+
 ## 2026-10-30 — FMS HR: proctored assessments brought onto main
 
 **The proctored aptitude test module, built in September on a side branch, is merged with the current app so it can go live.**
@@ -9,6 +60,72 @@
   - Not clicked through in a browser after the merge; checks were a type-check (no errors) and lint (no new errors; the existing ones in the HR page and sidebar are already on main).
   - Whether the AI provider settings (COUNCIL_PROVIDER, COUNCIL_BASE_URL, COUNCIL_API_KEY) are set on Vercel was not checked. Without them tests still run but camera frames are not checked.
 - **Open questions for the founder:** None new. The database tables and the private evidence bucket already exist in the live database.
+
+## 2026-10-28 — FMS: Grievance videos redone — slower, subtitled, Hinglish and Kannada
+
+**The four grievance lens videos (Employee, Manager, HR, Director) were rebuilt after team feedback. Each now runs 39–40 seconds at about 110 words a minute, with subtitles burned in and an end card showing the login link. Each comes in a Hinglish version and a Kannada-subtitle version.**
+
+- **Why:** The team reported four problems with the first cut:
+  - The voice was too fast.
+  - "TAT" sounded like "tatty".
+  - Words overlapped on screen.
+  - Most people will watch on WhatsApp with the sound off.
+- **Structural decisions:**
+  - **Three separate bands.** The screen sits on the left, the explanation on the right and the subtitles at the bottom. Nothing is drawn on top of app text any more. The jumbled words came from semi-transparent cards sitting over the screenshots, plus a motion-blur effect. Both are gone.
+  - **Clearer wording.** The voice says "timeline", not TAT, and "On-Time Resolution", not SLA Compliance. On-screen text says "Head of Department", not HOD. The Employee video ends on "until you confirm it's resolved".
+  - **Languages.** The Employee video has a Hinglish voice, English on-screen text and Hinglish subtitles. The Manager, HR and Director videos have an English voice with Hinglish subtitles. The founder chose Hinglish over pure Hindi. Every video also has a Kannada-subtitle version. The Kannada was written without a native speaker and should be checked before release.
+  - **Speech checked by machine.** Every voiceover was played back through speech-to-text and compared with its script. Three slurred words were caught and fixed.
+  - **Same screens as before.** No new login was possible, so the videos reuse the 14 October captures. Every name in them is invented.
+- **What works now:** 8 videos and 8 subtitle files are in `~/Downloads/grievance-videos/final_v3/`, ready to forward on WhatsApp.
+- **Left undone:**
+  - **App wording.** The app's own screens still say "TAT", "HOD" and "SLA Compliance". The videos change only the voice and overlay text. Renaming them in the app is a small code change, not yet made.
+  - **Kannada voice.** Kannada is subtitles only. No Kannada voiceover was made.
+  - **More screens.** Real frames of HR's Notes Tracker, Org Tree, Directory and Reconciliation need a fresh login.
+- **Open questions for the founder:**
+  - Should the app's labels change to "timeline", "Head of Department" and "On-Time Resolution" to match the videos?
+  - Who can proofread the Kannada subtitles?
+  - Two demo surnames (Mehta, Tiwari) also belong to real staff with different first names. Should they be renamed? That needs one more login to recapture.
+
+## 2026-10-27 — FMS: PO approvals for the founders, an MCP plan, and a build-buy-partner paper
+
+**Org super admins can now review and decide pending POs in the FMS (switched off until set up), the plan to open the FMS to AI assistants is written, and a 13-page market comparison says what to build and what to partner for.**
+
+- **Why:** Founders approve POs in Zoho today, away from the context that helps them judge. They also want to work from an AI assistant, and they asked whether to keep building, adopt a product, or partner.
+- **Structural decisions:**
+  - Approvals use each founder's own Zoho link, so Zoho records who approved. The alternative, one shared Zoho login, would have shown every approval under one name and may be refused by Zoho for a non-approver.
+  - Nothing is marked approved in the FMS until Zoho confirms it, and a refusal leaves everything unchanged.
+  - The MCP plan is founders only, permanently, with a preview-and-confirm step on every write.
+  - Model routing will use Engy only, with a US$25 a month cap (assumed, to be confirmed).
+- **What works now:**
+  - A "PO Approvals" entry in the org super admin sidebar (org super admins only) listing the 143 POs now pending, with lines, last rate paid by the same vendor, terms, and Approve, Reject (reason required) or Ask Purchase buttons.
+  - The market paper is at docs/research/FMS_P2P_Market_Comparison_2026-10-27.pdf. Its answer: keep the FMS as the control layer, partner for Tally, GST and payouts, and run four short tests before choosing partners.
+- **Left undone:**
+  - Approve and Reject stay off until the migration 20261026000001_po_approver.sql is applied and each founder links their Zoho. The Zoho client needs the callback address registered, and its approval permission is unconfirmed.
+  - No automated tests yet for the approval rules. Nothing browser-verified: the check was type-check, lint and a test that the routes refuse anonymous callers.
+  - The MCP server itself is not started; only the plan exists.
+  - The market paper has no Reddit or review-site evidence (blocked to the tools used), and its pass marks are suggestions.
+- **Open questions for the founder:** Confirm the US$25 monthly cap. Should an AI assistant be allowed to approve a PO at all, with the confirm step? Who will run the four vendor tests?
+
+## 2026-10-26 — FMS Login: sign in with a one-time code by email or mobile
+
+**The login page now has a "Password / One-time code" switch; the code can go to an email address or a mobile number.**
+
+- **Why:** The founder wants people to sign in with an SMS code from our own SMS provider, without signing up with Twilio or another provider that Supabase lists. Supabase allows this through its "Send SMS" auth hook: Supabase makes the code and hands it to us to deliver. The email code already existed in the code but had no button on the page.
+- **Structural decisions:** One input box takes either an email or a mobile number, and the app works out which it is. A bare 10-digit number is treated as Indian (+91). Supabase still makes and checks the code, so the SMS provider only delivers the text. The alternative, letting the provider make and check its own code, would need a separate login system beside Supabase, and was not chosen.
+- **What works now:** On the Sign In tab, "One-time code" hides the password box, takes an email or a mobile number, and sends a 6-digit code. The existing code-entry screen checks it, with "Change Number" or "Change Email" to go back. Password sign-in is unchanged.
+- **SMS delivery:** Codes go out through APITxT (apitxt.com). Supabase calls our new endpoint `/api/auth/send-sms-hook` with the code. The endpoint checks that the call really came from Supabase (a signed secret), then asks APITxT to send that exact code to the number. APITxT lets us supply our own code, so it fits with Supabase checking the code.
+- **Left undone:** Local only, not committed or deployed. No real SMS was sent; the endpoint was tested against a stand-in for APITxT (correct request, wrong signature refused, stale call refused, APITxT error reported). Supabase cannot reach a laptop, so a real end-to-end test needs the app deployed, or a public tunnel to localhost. Setup steps for a person: switch on Supabase phone sign-in (dummy Twilio values), enable the Send SMS hook pointing at the endpoint, and add the hook secret and APITxT key to the environment.
+- **Open questions for the founder:** Which DLT-approved template should APITxT use, or is its default acceptable? Should new mobile numbers be allowed to create accounts, or only numbers already on a user profile?
+
+## 2026-10-26 — FMS CRM: lead edits that looked saved but were not
+
+**Typing a seat range such as "51 - 100" or a rupee figure into a lead's inline edit box no longer reports "updated successfully" while saving nothing.**
+
+- **Why:** Sales reported that lead data they updated was not showing. Three leads were touched on 26 Oct with no field actually changed. Seat Requirement and Deal Value are number columns; any text that was not a plain number was silently sent as empty, the row was stamped as updated, the green "updated successfully" message appeared, and the field still read "–". Deal Value could never be saved inline at all, because the edit box opened with the formatted "₹…" text.
+- **Structural decisions:** None. The check lives in the lead drawer's save step; the server rules are unchanged.
+- **What works now:** Seat Requirement and Deal Value accept plain numbers (commas and the ₹ sign are stripped). Anything else is refused with a clear red message and the box stays open, so nothing is lost. Deal Value opens with the raw number.
+- **Left undone:** Not tried in the browser: the local app sits behind the real login, and the database rule for this repo forbids test writes. The seat form on the Meta ad collects a range ("51 - 100"); the drawer still needs a single number, so a rep must pick one. The other reason data can "not update" on a phone is that the pencil icon only appears on mouse hover; that was not changed.
+- **Open questions for the founder:** Should Seat Requirement allow a range (two numbers) to match what the ad form collects? Should the edit pencils be always visible on touch screens?
 
 ## 2026-10-23 — FMS Invoice Control & Payment Tracker: one screen for every login, and a sweep of small bugs
 

@@ -1,7 +1,8 @@
 /**
- * Every 10 minutes (vercel.json): notice POs the founder has approved in Zoho and WhatsApp the
- * vendor the approved PO. When the switch (po_notify_settings.auto_mode) is off, or nothing has
- * changed, this returns after at most three small read-only Zoho list calls.
+ * Every 10 minutes (vercel.json): notice POs the founder has approved in Zoho and WhatsApp the vendor
+ * the approved PO, for organisations that switched the vendor message on (po_notify_settings.auto_mode).
+ * (Keeping the status SHOWN in the FMS true is a separate, faster job: /api/cron/po-status-refresh.)
+ * When nothing has changed this is at most three small read-only Zoho list calls.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
     }
     if (request.headers.get('authorization') !== `Bearer ${cronSecret}`) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Only organisations that switched it on cost anything.
+    // Only organisations that switched the vendor message on cost anything.
     const { data: orgs, error } = await supabaseAdmin.from('po_notify_settings').select('organization_id').in('auto_mode', ['test', 'live']);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

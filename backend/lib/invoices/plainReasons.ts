@@ -106,8 +106,20 @@ export function reasonFor(r: ReasonRow): string {
     }
 }
 
+/**
+ * A read that FAILED is not a verdict on the invoice. Whatever check rows exist came from a run with
+ * nothing to check, so they contradict each other ("vendor not confirmed", "nothing left on the PO",
+ * "already submitted"). Say the one true thing instead.
+ */
+export const UNREADABLE: Reasons = {
+    headline: 'The invoice could not be read',
+    reasons: ['The system could not read this file, so nothing on it was checked. This is not a finding about the invoice itself.'],
+    next: 'Press Re-check in Invoice Control. If it fails again, upload a clearer copy or a photo of the invoice.',
+};
+
 /** Reasons for every check that has not passed and has not been resolved by a person. */
-export function plainReasons(rows: ReasonRow[], matchStatus?: string | null): Reasons {
+export function plainReasons(rows: ReasonRow[], matchStatus?: string | null, extractionStatus?: string | null): Reasons {
+    if (extractionStatus === 'failed') return { ...UNREADABLE, reasons: [...UNREADABLE.reasons] };
     const open = rows.filter((r) => r.outcome !== 'pass' && !r.resolved_at);
     const out: { code: string; text: string }[] = [];
 

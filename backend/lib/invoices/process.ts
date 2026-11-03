@@ -7,6 +7,7 @@ import { downloadObject, detectContentType } from './storage';
 import { logInvoiceEvent } from './audit';
 import { syncInvoiceMatchFlag } from './flags';
 import { istDate } from './istDate';
+import { logOcr, withOcrActivity } from '@/backend/lib/ocr/activity';
 import { syncDocumentationState } from './docState';
 import { effectivePoStatus } from '@/backend/lib/accounts/poApproval';
 
@@ -64,6 +65,7 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
         const { data: same } = await supabaseAdmin.from('invoices')
             .select('id, invoice_number, invoice_total').eq('organization_id', orgId).eq('vendor_key', inv.vendor_key)
             .eq('invoice_number_norm', inv.invoice_number_norm).neq('id', invoiceId)
+            .neq('extraction_status', 'failed')
             .not('review_status', 'in', '(rejected,resubmission_required)');
         for (const d of same ?? []) duplicates.push({ id: d.id, reason: 'same_number', invoice_number: d.invoice_number, invoice_total: num(d.invoice_total) });
     }
@@ -72,10 +74,12 @@ export async function runMatching(invoiceId: string, actorUserId?: string | null
         const hashes = (mine ?? []).map((d) => d.sha256_hash);
         if (hashes.length) {
             const { data: same } = await supabaseAdmin.from('invoice_documents')
-                .select('invoice_id, invoices!inner(id, invoice_number, invoice_total, review_status)')
+                .select('invoice_id, invoices!inner(id, invoice_number, invoice_total, review_status, extraction_status)')
                 .eq('organization_id', orgId).in('sha256_hash', hashes).neq('invoice_id', invoiceId);
-            for (const d of (same ?? []) as unknown as { invoice_id: string; invoices: { invoice_number: string | null; invoice_total: unknown; review_status: string } }[]) {
+            for (const d of (same ?? []) as unknown as { invoice_id: string; invoices: { invoice_number: string | null; invoice_total: unknown; review_status: string; extraction_status?: string } }[]) {
                 if (['rejected', 'resubmission_required'].includes(d.invoices.review_status)) continue;
+                // An earlier attempt that could not be read is not an invoice already received: same file, never read.
+                if (d.invoices.extraction_status === 'failed') continue;
                 if (!duplicates.some((x) => x.id === d.invoice_id)) {
                     duplicates.push({ id: d.invoice_id, reason: 'same_file', invoice_number: d.invoices.invoice_number, invoice_total: num(d.invoices.invoice_total) });
                 }
@@ -188,16 +192,31 @@ export async function processInvoice(invoiceId: string, actorUserId?: string | n
     if (!claimed) return { ok: false, error: 'This invoice is already being processed.' };
     const inv = claimed;
 
-    const { data: doc } = await supabaseAdmin.from('invoice_documents').select('storage_path, content_type')
+    const { data: doc } = await supabaseAdmin.from('invoice_documents').select('storage_path, content_type, original_filename')
         .eq('invoice_id', invoiceId).order('uploaded_at', { ascending: false }).limit(1).maybeSingle();
-    if (!doc) return fail(inv, 'No document is stored for this invoice.');
+    const meta = { source: 'invoice' as const, orgId: inv.organization_id as string, referenceId: invoiceId, filename: (doc?.original_filename as string | null) ?? null, userId: actorUserId ?? null };
+    if (!doc) { await logOcr(meta, { ok: false, error: 'No document is stored for this invoice.' }); return fail(inv, 'No document is stored for this invoice.'); }
 
     const bytes = await downloadObject(doc.storage_path);
-    if (!bytes) return fail(inv, 'The stored file could not be read.');
+    if (!bytes) { await logOcr(meta, { ok: false, error: 'The stored file could not be read.' }); return fail(inv, 'The stored file could not be read.'); }
     const type = detectContentType(bytes);
-    if (!type) return fail(inv, 'The stored file is not a PDF, JPEG or PNG.');
+    if (!type) { await logOcr({ ...meta, bytes: bytes.length }, { ok: false, error: 'The stored file is not a PDF, JPEG or PNG.' }); return fail(inv, 'The stored file is not a PDF, JPEG or PNG.'); }
 
-    const read = await extractInvoice(bytes, type);
+    const read = await withOcrActivity(
+        { ...meta, contentType: type, bytes: bytes.length },
+        () => extractInvoice(bytes, type),
+        (r) => {
+            const e = r.extracted;
+            return {
+                ok: r.ok && !!e, path: r.path, error: r.error ?? null, pages: r.pagesRead ?? null,
+                fields: e ? {
+                    invoice_number: !!e.invoice_number, invoice_date: !!e.invoice_date, vendor: !!e.vendor_name, vendor_gstin: !!e.vendor_gstin,
+                    total: e.invoice_total != null, lines: e.lines.length, buyer: !!e.buyer_name,
+                    lowest_confidence: Math.min(...Object.values(e.field_confidence).filter((v) => v > 0), 100), repairs: e.repairs ?? [],
+                } : null,
+            };
+        },
+    );
     if (!read.ok || !read.extracted) return fail(inv, read.error ?? 'The invoice could not be read.', { provider: read.provider, model: read.model });
     const x = read.extracted;
 

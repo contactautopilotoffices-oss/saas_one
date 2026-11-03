@@ -62,6 +62,7 @@ const VendorManagement = dynamic(() => import('@/frontend/components/vendors/Ven
 const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
 const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
 const BountyInbox = dynamic(() => import('../aop/BountyInbox'), { loading: TabLoading });
+const PoApprovals = dynamic(() => import('../approvals/PoApprovals'), { loading: TabLoading });
 const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
 const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
 const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
@@ -1190,6 +1191,18 @@ const OrgAdminDashboard = () => {
                                 <FileCheck2 className="w-4 h-4" />
                                 Invoice Control
                             </button>
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('po-approvals')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'po-approvals'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <FileCheck2 className="w-4 h-4" />
+                                    PO Approvals
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('bounty')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'bounty'
@@ -1602,6 +1615,7 @@ const OrgAdminDashboard = () => {
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {isOrgSuperAdmin && activeTab === 'po-approvals' && org && <PoApprovals orgId={org.id} />}
                         {activeTab === 'bounty' && org && (
                             <div className="space-y-3">
                                 <div>

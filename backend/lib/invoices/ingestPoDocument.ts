@@ -4,6 +4,8 @@ import { PO_DOCS_BUCKET } from '@/backend/lib/accounts/documents';
 import { INVOICE_BUCKET, detectContentType, ensureInvoiceBucket, internalObjectPath, safeFilename, sha256 } from './storage';
 import { processInvoice } from './process';
 import { syncDocumentationState } from './docState';
+import { logInvoiceEvent } from './audit';
+import { syncInvoiceMatchFlag } from './flags';
 
 /**
  * An invoice uploaded in the PO's own page (the Documents tab, type "tax invoice") must reach
@@ -35,6 +37,26 @@ async function readDocument(fileUrl: string): Promise<Buffer | null> {
     const { data, error } = await supabaseAdmin.storage.from(PO_DOCS_BUCKET).download(fileUrl);
     if (error || !data) return null;
     return Buffer.from(await data.arrayBuffer());
+}
+
+/**
+ * A newer copy has arrived. Earlier attempts on this PO that the system could never READ (and that nobody
+ * has acted on) are not invoices anyone is waiting on: their warnings and queue entries only get in the way.
+ * Retire them as superseded. Anything that WAS read, or that a person has touched, is left alone.
+ */
+async function retireUnreadAttempts(orgId: string, poId: string, keepId: string, userId: string): Promise<void> {
+    const { data: old } = await supabaseAdmin.from('invoices').select('id')
+        .eq('organization_id', orgId).eq('po_id', poId).neq('id', keepId)
+        .eq('extraction_status', 'failed').eq('review_status', 'pending');
+    const now = new Date().toISOString();
+    for (const o of old ?? []) {
+        const { error } = await supabaseAdmin.from('invoices')
+            .update({ review_status: 'rejected', review_note: 'Superseded: a newer copy was uploaded, and this one could not be read.', reviewed_at: now, updated_at: now })
+            .eq('id', o.id).eq('review_status', 'pending');
+        if (error) continue;
+        await logInvoiceEvent({ organizationId: orgId, invoiceId: o.id, poId, actorUserId: userId, actorType: 'user', eventType: 'invoice_withdrawn', details: { reason: 'superseded_by_new_upload', replaced_by: keepId } }).catch(() => undefined);
+        await syncInvoiceMatchFlag({ orgId, invoiceId: o.id, matchStatus: 'matched', poNumber: null, vendorName: null, failedRules: [] }).catch(() => undefined);
+    }
 }
 
 export async function ingestTaxInvoiceDocument(input: {
@@ -71,6 +93,7 @@ export async function ingestTaxInvoiceDocument(input: {
     }
     if (r.outcome !== 'created' || !r.invoice_id) return { ok: false, reason: 'The invoice could not be registered.' };
 
+    await retireUnreadAttempts(input.orgId, input.poId, r.invoice_id, input.userId);
     await syncDocumentationState(input.orgId, input.poId);
     await processInvoice(r.invoice_id, input.userId);
     return { ok: true, invoiceId: r.invoice_id };
