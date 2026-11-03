@@ -5,6 +5,9 @@ import { NotificationService } from '@/backend/services/NotificationService';
 
 const AUTOPILOT_ORG_ID = process.env.NEXT_PUBLIC_AUTOPILOT_ORG_ID;
 
+// Roles that join the organization directly, with no property membership.
+const ORG_ONLY_ROLES = ['accounts', 'it', 'design'];
+
 export async function POST(request: NextRequest) {
     try {
         const supabase = await createClient();
@@ -40,8 +43,10 @@ export async function POST(request: NextRequest) {
         let finalPropId = selectedPropertyId;
         let targetOrgId = AUTOPILOT_ORG_ID;
 
-        if (selectedRole === 'accounts') {
-            // Finance joins the configured organization, without a property assignment.
+        const isOrgOnlyRole = ORG_ONLY_ROLES.includes(selectedRole);
+
+        if (isOrgOnlyRole) {
+            // Finance, IT and Design join the configured organization, without a property assignment.
             finalPropId = null;
             if (!targetOrgId) {
                 return NextResponse.json({ error: 'Organization is not configured.' }, { status: 400 });
@@ -86,14 +91,14 @@ export async function POST(request: NextRequest) {
             ? 'soft_service_manager'
             : selectedRole;
 
-        // 3. Accounts applicants have only a pending organization membership.
-        if (selectedRole === 'accounts') {
+        // 3. Accounts, IT and Design applicants have only a pending organization membership.
+        if (isOrgOnlyRole) {
             const { error: orgMembErr } = await adminClient
                 .from('organization_memberships')
                 .upsert({
                     user_id: authUser.id,
                     organization_id: targetOrgId,
-                    role: 'accounts',
+                    role: selectedRole,
                     is_active: false
                 }, { onConflict: 'user_id,organization_id' });
 
