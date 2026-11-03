@@ -1,4 +1,6 @@
 /** All Candidate Search settings, in one place. */
+import { EMBEDDING_MODEL as GEMINI_EMBEDDING_MODEL } from "@/backend/lib/hr-assistant/config";
+
 import type { CriterionKey } from "./types";
 
 /**
@@ -8,12 +10,22 @@ import type { CriterionKey } from "./types";
 export const CANDIDATE_ACCESS_ROLES = ["hr", "hr_head", "hr_manager", "hr_ops", "org_super_admin", "tech"] as const;
 
 /**
- * Meaning-search embeddings (owner 2026-11-03): Jina jina-embeddings-v3 at 768 dimensions (key JINA_API_KEY), the same
- * size as the column, so no migration of the vector type. One model for records and queries (see embeddings.ts).
- * Changing the model is safe: records embedded with another model count as waiting and are re-embedded in the
- * background, and search only compares vectors of this model meanwhile.
+ * Meaning-search embeddings: which provider is chosen by the environment variable EMBEDDING_PROVIDER (owner
+ * 2026-11-03: Gemini's free tier by default; "jina" when the Jina account has credit).
+ *   gemini : gemini-embedding-001 at 768 dims, key GEMINI_API_KEY (the HR Policy Assistant's key and model)
+ *   jina   : jina-embeddings-v3 at 768 dims, key JINA_API_KEY
+ * Both are 768 dims, the column's size, so switching needs no migration. One model for records and queries at a time
+ * (see embeddings.ts): after a switch, records embedded with the other model count as waiting and are re-embedded in
+ * the background, and search only compares vectors of the current model meanwhile.
  */
-export const EMBEDDING_MODEL = "jina-embeddings-v3";
+export type EmbeddingProvider = "gemini" | "jina";
+export const EMBEDDING_MODELS: Record<EmbeddingProvider, string> = {
+  gemini: GEMINI_EMBEDDING_MODEL,
+  jina: "jina-embeddings-v3",
+};
+export const EMBEDDING_PROVIDER: EmbeddingProvider =
+  (process.env.EMBEDDING_PROVIDER ?? "").trim().toLowerCase() === "jina" ? "jina" : "gemini";
+export const EMBEDDING_MODEL = EMBEDDING_MODELS[EMBEDDING_PROVIDER];
 export const EMBEDDING_DIMENSIONS = 768;
 
 /**
@@ -22,11 +34,17 @@ export const EMBEDDING_DIMENSIONS = 768;
  *   pauses after a "busy" answer: 1, 2, 5, then 10 minutes (and 10 from then on)
  *   a record whose text the service rejects is tried EMBED_MAX_ATTEMPTS times, then set aside (still found by
  *   filters and keywords)
- *   EMBED_CALL_GAP_MS between calls keeps one worker under ~100 calls a minute
+ *   per provider: inputs per call and the gap between calls. Gemini's free tier is small (its limits are not
+ *   published), so it goes in smaller, slower steps; a "busy" answer then pauses and the work simply continues later.
  */
 export const INDEX_BACKOFF_SECONDS = [60, 120, 300, 600] as const;
 export const EMBED_MAX_ATTEMPTS = 3;
-export const EMBED_CALL_GAP_MS = 600;
+export const EMBED_PACE: Record<EmbeddingProvider, { batch: number; gapMs: number }> = {
+  gemini: { batch: 50, gapMs: 2_000 },
+  jina: { batch: 100, gapMs: 600 },
+};
+export const EMBED_BATCH = EMBED_PACE[EMBEDDING_PROVIDER].batch;
+export const EMBED_CALL_GAP_MS = EMBED_PACE[EMBEDDING_PROVIDER].gapMs;
 /** Time one run may spend: the cron route allows 60 s; the page's nudge and the after-upload run less. */
 export const INDEX_BUDGET_MS = { cron: 50_000, afterWrite: 40_000, nudge: 20_000 } as const;
 

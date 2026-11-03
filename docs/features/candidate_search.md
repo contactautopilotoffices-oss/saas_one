@@ -27,7 +27,7 @@ Every HR login may use it: `hr`, `hr_head`, `hr_manager`, `hr_ops`, plus `org_su
 | Who can permanently delete / clear all | Every HR login (same as every other action here) |
 | "Delete all matching" on the Candidates tab | Moves to deleted (restorable); permanent removal only from Show deleted or Clear all |
 | Too many flagged rows | Routine readings are **fixed automatically** and no longer counted; the rest gets an **AI fix** that HR approves change by change |
-| Embeddings | **Jina** `jina-embeddings-v3` (768 dims) for records and searches; Gemini's free tier ran out on big sheets. No per-call fallback to Gemini: vectors of different models cannot be compared |
+| Embeddings | Chosen by the env var `EMBEDDING_PROVIDER`: **`gemini`** (default, free tier, `gemini-embedding-001`, key `GEMINI_API_KEY`) or `jina` (`jina-embeddings-v3`, key `JINA_API_KEY`, needs account credit). Both 768 dims. One provider at a time: no per-call fallback, because vectors of different models cannot be compared. (Owner 2026-11-03: Jina first, then back to Gemini when the Jina account had no balance; the background worker now hides Gemini's small free quota by pausing and continuing) |
 | What HR sees while processing | Upload progress bar, then "Preparing NN%" per sheet. No "Index now", no indexing / rate-limit errors. Errors HR can fix (file type, size, no header row) are still shown in plain words |
 
 Confirmation: permanent deletes need the typed word `DELETE`; Clear all needs `DELETE ALL` (checked by the server too).
@@ -37,7 +37,7 @@ Confirmation: permanent deletes need the typed word `DELETE`; Clear all needs `D
 ```
 Excel / CSV ─► parse-sheet.ts (header matching, normalize.ts) ─► import.ts (dedupe by email / phone, new / replace / merge)
             ─► candidates (person) + candidate_applications (record) + candidate_sheet_rows (raw, audit)
-            ─► indexing.ts (Jina jina-embeddings-v3, 768 dims, in the background: cron every minute + after upload)
+            ─► indexing.ts (Gemini or Jina per EMBEDDING_PROVIDER, 768 dims, in the background: cron every minute + after upload)
 
 Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
       ─► hybrid_search_candidates() SQL: must-have filters → structured + keyword (FTS) + meaning (pgvector) → RRF
@@ -86,7 +86,7 @@ Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
   `backend/lib/candidates/models.ts` runs the chain: Claude models through the official SDK with JSON-schema output and
   an effort setting (`CLAUDE_API_KEY`, the key the Control Center checks), other models through the Task Manager's
   shared transport. The next model is tried on an error, a timeout or a reply in the wrong shape, within a time budget
-  per step. Which model answered is logged (`parse_model`, `rank_model`). Embeddings are Jina (Claude has none; see above).
+  per step. Which model answered is logged (`parse_model`, `rank_model`). Embeddings are Gemini or Jina (Claude has none; see above).
 
 ## Files
 
@@ -226,8 +226,11 @@ Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
   search degrades (text-only search or search order without a match %) and says so. Claude's server-side refusal fallback needs a newer SDK than the
   installed 0.82 (dependency upgrades are out of scope).
 - Search can take longer on Claude Opus 5.5 than on a fast model (the route allows 120 s; each step has a time budget: 35 s to read the search, 60 s to rank).
-- Embedding needs `JINA_API_KEY` (and migration `20261103000002`). Without the key, sheets stay at "Preparing" and the
-  logs say why; search still works with filters and keywords. Jina's free-key limits were not confirmed from an
-  official page (check the Jina dashboard); the worker paces itself to ~100 calls a minute and pauses on a 429.
+- Embedding needs the provider's key (`GEMINI_API_KEY` by default, `JINA_API_KEY` with `EMBEDDING_PROVIDER=jina`) and
+  migration `20261103000002`. Without them, sheets stay at "Preparing" and the logs say why; search still works with
+  filters and keywords. A key out of quota or credit (429 / 402 / 403) only pauses the work.
+- Gemini's free-tier limits are not published (an unofficial figure is ~1,000 requests a day). The worker sends 50
+  records per call, 2 s apart, and pauses on a 429, so a large sheet may take a day or more to be fully prepared;
+  filters and keywords work meanwhile. Jina goes 100 per call, 0.6 s apart.
 - The cron needs `CRON_SECRET` in the Vercel environment (the route refuses calls without it) and a plan that runs
   per-minute crons (the project already has several).
