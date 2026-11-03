@@ -42,6 +42,8 @@ interface RequestUsage {
     totalTokens: number;
     promptTokens: number;
     completionTokens: number;
+    costInr?: number;
+    costUsd?: number;
     latestScanAt: string;
     models: string[];
     scans: ScanItem[];
@@ -55,6 +57,14 @@ interface VisionUsageResponse {
         prompt_tokens: number;
         completion_tokens: number;
         estimated_cost_inr: number;
+        cost_usd?: number;
+        pricing_config?: {
+            provider: string;
+            primary_model: string;
+            input_per_m_usd: number;
+            output_per_m_usd: number;
+            usd_to_inr_rate: number;
+        };
         model_breakdown: Record<string, { count: number; tokens: number }>;
     };
     per_request: RequestUsage[];
@@ -208,7 +218,7 @@ export default function VisionUsageAudit({
                         {loading ? '…' : `₹${(data?.summary.estimated_cost_inr || 0).toFixed(2)}`}
                     </div>
                     <span className="text-[10px] text-slate-400 font-medium mt-1 block">
-                        Calculated at ~₹0.04 / 1k tokens
+                        {data?.summary.pricing_config ? `ENGY exact: $${data.summary.pricing_config.input_per_m_usd} in / $${data.summary.pricing_config.output_per_m_usd} out per 1M (₹${data.summary.pricing_config.usd_to_inr_rate}/$)` : 'ENGY exact vision model rates'}
                     </span>
                 </div>
 
@@ -283,7 +293,7 @@ export default function VisionUsageAudit({
                             <tbody className="divide-y divide-slate-100 dark:divide-[#30363d]/60">
                                 {filteredRequests.map(req => {
                                     const isExpanded = expandedRequest === req.requestId;
-                                    const costInr = (req.totalTokens / 1000) * 0.04;
+                                    const costInr = req.costInr !== undefined ? req.costInr : (req.totalTokens / 1000) * 0.04;
                                     const dateStr = new Date(req.latestScanAt).toLocaleDateString('en-IN', {
                                         day: 'numeric',
                                         month: 'short',

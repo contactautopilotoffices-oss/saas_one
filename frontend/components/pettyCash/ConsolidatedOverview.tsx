@@ -21,7 +21,8 @@ import {
     ArrowUpRight,
     Search,
     ChevronLeft,
-    RotateCcw
+    RotateCcw,
+    Sparkles
 } from 'lucide-react';
 import { inr, PC_STATUS_META } from '@/frontend/lib/pettyCash/roles';
 import { overviewGroups } from '@/frontend/lib/pettyCash/overviewGroups';
@@ -110,12 +111,14 @@ export default function ConsolidatedOverview({
     org,
     onOpen,
     countsIssue,
-    context: contextProp
+    context: contextProp,
+    onSwitchTab,
 }: {
     org: string;
     onOpen: (id: string) => void;
     countsIssue?: string;
     context?: Context;
+    onSwitchTab?: (tabKey: string) => void;
 }) {
     const [period, setPeriod] = useState('all');
     const [attention, setAttention] = useState<AttentionKey | null>(null);
@@ -134,6 +137,38 @@ export default function ConsolidatedOverview({
     const [breakdownTab, setBreakdownTab] = useState<'property' | 'requester'>('property');
     const [analyzedProperty, setAnalyzedProperty] = useState<string>('');
     const [analyzedRequester, setAnalyzedRequester] = useState<string>('');
+
+    // Vision AI usage state for Org Super Admin
+    const [visionSummary, setVisionSummary] = useState<{
+        total_scans: number;
+        total_tokens: number;
+        estimated_cost_inr: number;
+    } | null>(null);
+    const [loadingVision, setLoadingVision] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        if (contextProp?.caps.isAdmin) {
+            setLoadingVision(true);
+            pcFetch<{ ok: boolean; summary: { total_scans: number; total_tokens: number; estimated_cost_inr: number } }>(
+                `/api/petty-cash/vision-usage?org_id=${org}`
+            )
+                .then(res => {
+                    if (active && res.ok && res.summary) {
+                        setVisionSummary(res.summary);
+                    }
+                })
+                .catch(() => {
+                    // Non-blocking
+                })
+                .finally(() => {
+                    if (active) setLoadingVision(false);
+                });
+        }
+        return () => {
+            active = false;
+        };
+    }, [org, contextProp?.caps.isAdmin]);
 
     // Full organization metadata
     const [orgUsers, setOrgUsers] = useState<{ id: string; full_name: string; email?: string }[]>([]);
@@ -700,7 +735,7 @@ export default function ConsolidatedOverview({
                 </div>
 
                 {/* Financial KPI Cards */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+                <div className={`grid grid-cols-2 sm:grid-cols-3 ${contextProp?.caps.isAdmin ? 'xl:grid-cols-7' : 'xl:grid-cols-6'} gap-3`}>
                     <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-[#1c2128] border border-slate-100 dark:border-[#30363d]">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500 block">
                             Requested
@@ -760,6 +795,41 @@ export default function ConsolidatedOverview({
                         </div>
                         <span className="text-[10px] text-sky-600 dark:text-sky-400 block mt-0.5">Cash in hand</span>
                     </div>
+
+                    {contextProp?.caps.isAdmin && (
+                        <div
+                            onClick={() => onSwitchTab?.('vision_usage')}
+                            className={`p-4 rounded-2xl bg-gradient-to-br from-purple-50/80 via-indigo-50/40 to-slate-50 dark:from-purple-950/30 dark:via-indigo-950/20 dark:to-[#1c2128] border border-purple-200/70 dark:border-purple-800/40 relative overflow-hidden transition-all duration-200 ${
+                                onSwitchTab ? 'cursor-pointer hover:border-purple-400 dark:hover:border-purple-500 hover:shadow-md hover:scale-[1.01]' : ''
+                            }`}
+                            title="Click to view full Vision AI Usage & Inference Audit"
+                        >
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 dark:text-purple-300 flex items-center gap-1">
+                                    <Sparkles size={11} className="text-purple-600 dark:text-purple-400" />
+                                    Vision AI Spend
+                                </span>
+                                <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-mono">
+                                    ENGY
+                                </span>
+                            </div>
+                            <div className="text-lg font-black text-purple-900 dark:text-purple-100 tabular-nums mt-1">
+                                {loadingVision ? (
+                                    <span className="text-xs font-semibold text-purple-400 animate-pulse">Calculating...</span>
+                                ) : (
+                                    `₹${(visionSummary?.estimated_cost_inr ?? 0).toFixed(2)}`
+                                )}
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-purple-600 dark:text-purple-400 mt-0.5">
+                                <span className="font-semibold">
+                                    {visionSummary ? `${(visionSummary.total_tokens || 0).toLocaleString()} tokens` : '0 tokens'}
+                                </span>
+                                <span className="text-[9px] text-purple-500/80">
+                                    ({visionSummary?.total_scans || 0} bills)
+                                </span>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
