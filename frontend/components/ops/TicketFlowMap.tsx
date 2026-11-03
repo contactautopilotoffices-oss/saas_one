@@ -191,7 +191,8 @@ export default function TicketFlowMap({
         const checkAdmin = () => {
             const orgRole = membership.org_role;
             const isMaster = (user as any)?.user_metadata?.is_master_admin || (user as any)?.is_master_admin;
-            return isMaster || ['org_admin', 'org_super_admin', 'owner'].includes(orgRole || '');
+            // Owner 2026-11-03: + 'tech' (the Tech console has the Super Admin console's Requests tab)
+            return isMaster || ['org_admin', 'org_super_admin', 'owner', 'tech'].includes(orgRole || '');
         };
 
         const adminStatus = checkAdmin();
@@ -475,7 +476,7 @@ export default function TicketFlowMap({
             return;
         }
 
-        const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'owner', 'admin', 'org_admin'].includes(membership?.org_role || '');
+        const isOrgLevelAdmin = membership?.is_master_admin || ['org_super_admin', 'owner', 'admin', 'org_admin', 'tech'].includes(membership?.org_role || '');
         const effectiveOrgId = organizationId || membership?.org_id;
 
         if (isOrgLevelAdmin) {

@@ -57,7 +57,12 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<ApiResul
     }
 
     const body: unknown = await res.json().catch(() => null);
-    if (res.ok) return { ok: true, status: res.status, data: body as T };
+    return resultFrom<T>(res.status, body);
+}
+
+function resultFrom<T>(status: number, body: unknown): ApiResult<T> {
+    if (status >= 200 && status < 300) return { ok: true, status, data: body as T };
+    const res = { status };
 
     const serverError =
         body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
@@ -71,4 +76,27 @@ export async function api<T>(path: string, init: ApiInit = {}): Promise<ApiResul
               ? 'Too many requests. Please wait a moment and try again.'
               : `Something went wrong (error ${res.status}). Please try again.`);
     return { ok: false, status: res.status, error, body, noAccess, aborted: false };
+}
+
+/**
+ * POST a multipart form and report how much of it has been sent (0-1), for the upload progress bar. fetch() cannot
+ * report upload progress, so this one uses XMLHttpRequest. `onSent` fires when the file is fully sent and the server is
+ * working on it. Same result shape as api(); never throws.
+ */
+export function apiUpload<T>(path: string, form: FormData, onProgress: (fraction: number) => void, onSent?: () => void): Promise<ApiResult<T>> {
+    return new Promise(resolve => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', path);
+        xhr.responseType = 'text';
+        xhr.upload.onprogress = e => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total)); };
+        xhr.upload.onload = () => { onProgress(1); onSent?.(); };
+        xhr.onload = () => {
+            let body: unknown = null;
+            try { body = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { body = null; }
+            resolve(resultFrom<T>(xhr.status, body));
+        };
+        xhr.onerror = () => resolve({ ok: false, status: 0, error: NETWORK_MESSAGE, body: null, noAccess: false, aborted: false });
+        xhr.onabort = () => resolve({ ok: false, status: 0, error: 'Cancelled', body: null, noAccess: false, aborted: true });
+        xhr.send(form);
+    });
 }

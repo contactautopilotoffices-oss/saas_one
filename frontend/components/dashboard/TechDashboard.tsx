@@ -7,12 +7,13 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, Plus, ScanFace, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import TabLoading from './TabLoading';
+import { isRequestsView, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
 
 /**
  * Tech console (owner 2026-10-22): the Tech team's own dashboard. It is a separate copy, not the Super Admin console:
@@ -40,16 +41,25 @@ const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), {
 const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), { loading: TabLoading });
 // Owner 2026-11-02: the Super Admin console's "New" ticket quick action
 const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
+// Owner 2026-11-03: Requests = the Super Admin console's Requests tab (one shared component: List / Board / Flow Map,
+// tickets agent strip, every ticket of the organisation) and Settings (shared Settings screen, with Change password)
+const RequestsWorkspace = dynamic(() => import('@/frontend/components/tickets/RequestsWorkspace'), { loading: TabLoading });
+const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 
 type TechTab =
+    | 'requests'
     | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
-    | 'profile';
+    | 'profile' | 'settings';
 
 interface NavItem { id: TechTab; label: string; icon: React.ComponentType<{ className?: string }> }
 
 const NAV: Array<{ section: string; items: NavItem[] }> = [
+    {
+        section: 'Core Operations',
+        items: [{ id: 'requests', label: 'Requests', icon: Ticket }],
+    },
     {
         section: 'Tech',
         items: [
@@ -84,7 +94,10 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
     },
     {
         section: 'Personal',
-        items: [{ id: 'profile', label: 'Profile', icon: UserCircle }],
+        items: [
+            { id: 'profile', label: 'Profile', icon: UserCircle },
+            { id: 'settings', label: 'Settings', icon: Settings },
+        ],
     },
 ];
 const ALL_TABS = NAV.flatMap(s => s.items);
@@ -116,6 +129,8 @@ export default function TechDashboard() {
     const [assistantOpened, setAssistantOpened] = useState(false);
     if (activeTab === 'meetings' && !assistantOpened) setAssistantOpened(true);
     const selectedPropertyId = searchParams.get('propertyId') || 'all';
+    const viewParam = searchParams.get('view');
+    const requestsView: RequestsView = isRequestsView(viewParam) ? viewParam : 'list';
 
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
@@ -124,6 +139,8 @@ export default function TechDashboard() {
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [showSignOut, setShowSignOut] = useState(false);
     const [showTicketCreate, setShowTicketCreate] = useState(false);
+    // Bumped when "New" creates a ticket, so the Requests list reloads.
+    const [ticketsVersion, setTicketsVersion] = useState(0);
 
     useEffect(() => {
         if (!orgId) return;
@@ -147,7 +164,7 @@ export default function TechDashboard() {
         router.replace(`${window.location.pathname}?${next.toString()}`, { scroll: false });
     }, [router]);
 
-    const openTab = (tab: TechTab) => { setSidebarOpen(false); setQuery({ tab }); };
+    const openTab = (tab: TechTab) => { setSidebarOpen(false); setQuery({ tab, view: null }); };
     const pickProperty = (id: string) => { setSelectorOpen(false); setQuery({ propertyId: id === 'all' ? null : id }); };
 
     const activeProperty = properties.find(p => p.id === selectedPropertyId) || null;
@@ -269,6 +286,7 @@ export default function TechDashboard() {
                     isAdminMode={true}
                     organizations={[org]}
                     properties={properties}
+                    onSuccess={() => setTicketsVersion(v => v + 1)}
                 />
             )}
 
@@ -281,7 +299,13 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && propertySelector}
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                        <div className="flex items-center gap-3">
+                            {propertySelector}
+                            {/* Requests view switcher: the Super Admin console's, shared */}
+                            {activeTab === 'requests' && <RequestsViewSwitcher view={requestsView} onChange={view => setQuery({ view })} />}
+                        </div>
+                    )}
                 </header>
 
                 <div className="p-4 md:p-8">
@@ -295,6 +319,21 @@ export default function TechDashboard() {
                         </div>
                     ) : (
                         <>
+                            {activeTab === 'requests' && org && (
+                                <RequestsWorkspace
+                                    key={`tech-requests-${ticketsVersion}`}
+                                    view={requestsView}
+                                    organizationId={org.id}
+                                    selectedPropertyId={selectedPropertyId}
+                                    propertyName={activeProperty?.name}
+                                    adminUserName={fullName}
+                                    properties={properties}
+                                    onPropertyChange={pickProperty}
+                                    showAgentPulse={true}
+                                    onNewRequest={() => setShowTicketCreate(true)}
+                                />
+                            )}
+                            {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}

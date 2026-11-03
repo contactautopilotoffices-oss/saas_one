@@ -83,19 +83,24 @@ describe("import + CRUD against the real schema", () => {
 
     const [sheet] = await q<{ status: string; flagged_count: number }>("select status, flagged_count from public.candidate_sheets where id = $1", [juneId]);
     assert.equal(sheet.status, "ready");
-    assert.equal(sheet.flagged_count, 2); // Amit's organisation split, Vignesh's email
+    // Amit's organisation split and Vignesh's "@@" email are fixed automatically: shown, but not counted as flagged.
+    assert.equal(sheet.flagged_count, 0);
+    assert.equal(result.rowsFlagged, 0);
+    assert.equal(result.rowsAutoFixed, 3);
 
     const issues = await sheetIssues(client, ORG, juneId);
     assert.deepEqual(issues.map((i) => i.rowNumber), [2, 4, 5]);
-    assert.match(issues.find((i) => i.rowNumber === 5)!.issues.join(), /Same candidate and role as row 3/);
+    assert.ok(issues.every((i) => i.issues.length === 0 && i.fixed.length > 0 && !i.skipped && i.applicationId));
+    assert.match(issues.find((i) => i.rowNumber === 5)!.fixed.join(), /Same candidate and role as row 3/);
+    assert.equal(records.find((r) => r.fullName === "Vignesh Pandit Bhoir")!.email, "vbhoir868@gmail.com");
 
     const [search] = await q<{ search_text: string }>("select search_text from public.candidate_applications where id = $1", [amit.id]);
     assert.doesNotMatch(search.search_text, /@|7534855802/);
   });
 
   it("indexes records with a (fake) embedder and reports what is left", async () => {
-    const result = await indexPending(client, ORG, 600, async (texts) => texts.map((_, i) => [1, i, 0]));
-    assert.deepEqual(result, { indexed: 3, remaining: 0 });
+    const result = await indexPending(client, ORG, { embed: async (texts) => texts.map((_, i) => [1, i, 0]), sleep: async () => {} });
+    assert.deepEqual(result, { indexed: 3, remaining: 0, waiting: false });
     assert.ok((await visible()).every((r) => r.indexed));
   });
 

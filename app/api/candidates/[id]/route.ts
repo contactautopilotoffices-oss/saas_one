@@ -40,7 +40,7 @@ export async function PATCH(request: Request, { params }: Params) {
   delete fields.orgId;
   try {
     const record = await updateRecord(auth.admin, auth.orgId, auth.user.id, id, fields);
-    after(() => indexPending(auth.admin, auth.orgId, 50));
+    after(() => indexPending(auth.admin, auth.orgId));
     return NextResponse.json({ record });
   } catch (error) {
     return errorResponse(error, "Couldn't save the changes");

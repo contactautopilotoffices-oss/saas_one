@@ -177,6 +177,20 @@ function fail(context: string, error: unknown): never {
   throw new CandidateActionError(500, `Couldn't ${context}. Please try again.`);
 }
 
+/**
+ * Errors from the functions added by 20261103000001: "busy importing" -> 409, "not found" -> 404, function missing
+ * (migration not applied yet) -> 503 with what to do. Anything else -> 500.
+ */
+export function rpcFail(context: string, error: { code?: string; message?: string } | null): never {
+  if (error?.code === "55006") throw new CandidateActionError(409, "A sheet is still importing. Try again in a moment.");
+  if (error?.code === "P0002") throw new CandidateActionError(404, "That sheet no longer exists.");
+  if (error?.code === "PGRST202" || error?.code === "PGRST205" || error?.code === "42883" || error?.code === "42P01") {
+    console.error(`[candidates] ${context}: migration 20261103000001 not applied`, error);
+    throw new CandidateActionError(503, "This needs a database update first: run 20261103000001_candidate_search_purge_and_ai_fix.sql in Supabase.");
+  }
+  fail(context, error);
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -190,21 +204,34 @@ export interface ListOptions {
   pageSize?: number;
 }
 
+/** The subset of a supabase-js filter builder that the table's filters use. */
+interface Filterable<T> {
+  eq(column: string, value: string | boolean): T;
+  is(column: string, value: null): T;
+  not(column: string, operator: "is", value: null): T;
+  ilike(column: string, pattern: string): T;
+}
+
+/** The table's filters (visible records only), shared by the list and "Delete all matching". */
+function applyFilters<T extends Filterable<T>>(query: T, options: ListOptions): T {
+  let q = query.eq("sheet_live", true);
+  q = options.deleted ? q.not("deleted_at", "is", null) : q.is("deleted_at", null);
+  if (options.status && (RECORD_STATUSES as readonly string[]).includes(options.status)) q = q.eq("status", options.status);
+  if (options.sheetId === "manual") q = q.is("sheet_id", null);
+  else if (options.sheetId) q = q.eq("sheet_id", options.sheetId);
+  const text = options.q?.trim().toLowerCase().slice(0, 100);
+  if (text) q = q.ilike("lookup_text", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  return q;
+}
+
 export async function listRecords(client: SupabaseClient, orgId: string, options: ListOptions): Promise<CandidateListResponse> {
   const whole = (value: number | undefined, fallback: number) => (Number.isFinite(value) ? Math.floor(value as number) : fallback);
   const page = Math.min(100_000, Math.max(1, whole(options.page, 1)));
   const pageSize = Math.min(100, Math.max(1, whole(options.pageSize, 50)));
-  let query = client
-    .from("candidate_records")
-    .select(RECORD_COLUMNS, { count: "exact" })
-    .eq("organization_id", orgId)
-    .eq("sheet_live", true);
-  query = options.deleted ? query.not("deleted_at", "is", null) : query.is("deleted_at", null);
-  if (options.status && (RECORD_STATUSES as readonly string[]).includes(options.status)) query = query.eq("status", options.status);
-  if (options.sheetId === "manual") query = query.is("sheet_id", null);
-  else if (options.sheetId) query = query.eq("sheet_id", options.sheetId);
-  const q = options.q?.trim().toLowerCase().slice(0, 100);
-  if (q) query = query.ilike("lookup_text", `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+  const query = applyFilters(
+    client.from("candidate_records").select(RECORD_COLUMNS, { count: "exact" }).eq("organization_id", orgId),
+    options,
+  );
 
   const from = (page - 1) * pageSize;
   const { data, error, count } = await query
@@ -407,6 +434,64 @@ export async function deleteRecord(client: SupabaseClient, orgId: string, userId
     .eq("organization_id", orgId)
     .is("deleted_at", null);
   if (error) fail("delete the record", error);
+}
+
+const ID_CHUNK = 200;
+
+/** Soft-delete these records (restorable). Ids from another organisation or already deleted are ignored. */
+export async function deleteRecords(client: SupabaseClient, orgId: string, userId: string, ids: string[]): Promise<number> {
+  let deleted = 0;
+  const now = new Date().toISOString();
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { data, error } = await client
+      .from("candidate_applications")
+      .update({ deleted_at: now, deleted_by: userId })
+      .eq("organization_id", orgId)
+      .in("id", ids.slice(i, i + ID_CHUNK))
+      .is("deleted_at", null)
+      .select("id");
+    if (error) fail("delete the records", error);
+    deleted += data?.length ?? 0;
+  }
+  return deleted;
+}
+
+/** Ids of every visible record matching the table's filters (for "Delete all matching"), at most `max`. */
+export async function matchingRecordIds(client: SupabaseClient, orgId: string, options: ListOptions, max: number): Promise<string[]> {
+  const ids: string[] = [];
+  const page = 1000; // PostgREST's default row cap
+  // Typed as string (like RECORD_COLUMNS) so supabase-js does not parse the column list into a deep type.
+  const columns: string = "id";
+  for (let from = 0; from < max; from += page) {
+    const { data, error } = await applyFilters(client.from("candidate_records").select(columns).eq("organization_id", orgId), {
+      ...options,
+      deleted: false,
+    })
+      .order("id")
+      .range(from, Math.min(from + page, max) - 1);
+    if (error) fail("find the matching records", error);
+    const rows = (data ?? []) as unknown as { id: string }[];
+    ids.push(...rows.map((row) => row.id));
+    if (rows.length < page) break;
+  }
+  return ids;
+}
+
+/**
+ * Delete records for good. Only records already deleted (from "Show deleted") are removed; people left with no record
+ * anywhere go too. Needs migration 20261103000001.
+ */
+export async function purgeRecords(client: SupabaseClient, orgId: string, ids: string[]): Promise<{ records: number; people: number }> {
+  let records = 0;
+  let people = 0;
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { data, error } = await client.rpc("candidate_purge_records", { p_organization_id: orgId, p_ids: ids.slice(i, i + ID_CHUNK) });
+    if (error) rpcFail("delete the records permanently", error);
+    const d = (data ?? {}) as { records?: number; people?: number };
+    records += Number(d.records) || 0;
+    people += Number(d.people) || 0;
+  }
+  return { records, people };
 }
 
 export async function restoreRecord(client: SupabaseClient, orgId: string, userId: string, id: string): Promise<CandidateRecord> {

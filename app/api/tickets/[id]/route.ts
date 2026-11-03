@@ -40,7 +40,7 @@ export async function GET(
         let isTenantOrVendor = false;
         if (user) {
             const [orgMemsRes, propMemsRes] = await Promise.all([
-                adminSupabase.from('organization_memberships').select('role').eq('user_id', user.id),
+                adminSupabase.from('organization_memberships').select('role, organization_id').eq('user_id', user.id),
                 adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
             ]);
             const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
@@ -48,7 +48,9 @@ export async function GET(
             const isStaffOrAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r)) ||
                 propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r)) ||
                 // Owner 2026-11-02: the org-level IT team works the tickets assigned to them like staff do
-                (orgRoles.includes('it') && ticket.assigned_to === user.id);
+                (orgRoles.includes('it') && ticket.assigned_to === user.id) ||
+                // Owner 2026-11-03: the org-level Tech team (internal staff) tracks its own organisation's tickets
+                (orgMemsRes.data || []).some(m => (m.role || '').toLowerCase().trim() === 'tech' && m.organization_id === ticket.organization_id);
             isTenantOrVendor = !isStaffOrAdmin;
         }
 
@@ -596,6 +598,17 @@ export async function PATCH(
 
                     if (om) canEditContent = true;
                 }
+
+                // Owner 2026-11-03: the org-level Tech team has the Super Admin console's Requests tab, with its actions,
+                // for its own organisation
+                if (!canEditContent && currentTicket.organization_id) {
+                    const { data: techRows } = await adminSupabase
+                        .from('organization_memberships')
+                        .select('role, is_active')
+                        .eq('user_id', user.id)
+                        .eq('organization_id', currentTicket.organization_id);
+                    if ((techRows || []).some(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)) canEditContent = true;
+                }
             }
 
             if (!canEditContent) {
@@ -765,7 +778,10 @@ export async function DELETE(
             const validOm = omList?.find(m =>
                 adminRoles.includes(m.role) ||
                 adminRoles.includes(m.role?.toLowerCase()) ||
-                adminRoles.includes(m.role?.toUpperCase())
+                adminRoles.includes(m.role?.toUpperCase()) ||
+                // Owner 2026-11-03: the org-level Tech team deletes like the Super Admin console (own organisation only;
+                // a property-level 'tech' membership is not enough)
+                ((m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)
             );
 
             if (validOm) {

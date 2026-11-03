@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   delete fields.orgId;
   try {
     const { record, matchedExisting } = await createRecord(auth.admin, auth.orgId, auth.user.id, fields);
-    after(() => indexPending(auth.admin, auth.orgId, 50));
+    after(() => indexPending(auth.admin, auth.orgId));
     return NextResponse.json({ record, matchedExisting }, { status: 201 });
   } catch (error) {
     return errorResponse(error, "Couldn't save the candidate");

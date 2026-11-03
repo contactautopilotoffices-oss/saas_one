@@ -8,14 +8,18 @@ import * as XLSX from "xlsx";
 import { MAX_SHEET_ROWS } from "./config";
 import {
   cleanText,
+  FIXED_PREFIX,
+  isFixedNote,
   parseDate,
   parseEmail,
+  parseExpectedHike,
   parseExperienceMonths,
   parseNoticeDays,
   parsePhone,
   parseRupeesMonthly,
   splitOrganization,
   statusFromRemark,
+  type Parsed,
 } from "./normalize";
 import type { RecordStatus } from "./types";
 
@@ -109,11 +113,18 @@ export class SheetError extends Error {
   readonly status = 422;
 }
 
-/** Clean one row of cells (already keyed by field). Exported for tests. */
+/**
+ * Clean one row of cells (already keyed by field). Exported for tests.
+ * `issues` holds both kinds: "needs review" problems as written, and automatic fixes prefixed with FIXED_PREFIX.
+ * Cells that answer in words ("Negotiable") and extra phone numbers are appended to the remark, so HR still sees them.
+ */
 export function cleanRow(cells: Partial<Record<SheetField, unknown>>): { clean: CleanRow | null; issues: string[] } {
   const issues: string[] = [];
-  const take = <T>(parsed: { value: T | null; issue?: string }): T | null => {
+  const remarkExtras: string[] = [];
+  const take = <T>(parsed: Parsed<T>, remarkLabel?: string): T | null => {
     if (parsed.issue) issues.push(parsed.issue);
+    if (parsed.note) issues.push(FIXED_PREFIX + parsed.note);
+    if (parsed.text && remarkLabel) remarkExtras.push(`${remarkLabel}: ${parsed.text}`);
     return parsed.value;
   };
 
@@ -121,19 +132,30 @@ export function cleanRow(cells: Partial<Record<SheetField, unknown>>): { clean: 
   if (!fullName) return { clean: null, issues: ["No candidate name; row skipped"] };
 
   const email = parseEmail(cells.email);
-  if (email.issue) issues.push(email.issue);
+  take(email);
   const phone = parsePhone(cells.phone);
-  if (phone.issue) issues.push(phone.issue);
+  take(phone);
+  if (phone.extra?.length) remarkExtras.push(`Other phone: ${phone.extra.join(", ")}`);
 
   const split = splitOrganization(cleanText(cells.currentOrganization), cleanText(cells.currentDesignation));
-  if (split.issue) issues.push(split.issue);
+  if (split.note) issues.push(FIXED_PREFIX + split.note);
 
   const totalExpMonths = take(parseExperienceMonths(cells.totalExp, "Total experience"));
   const relevantExpMonths = take(parseExperienceMonths(cells.relevantExp, "Relevant experience"));
   if (totalExpMonths !== null && relevantExpMonths !== null && relevantExpMonths > totalExpMonths) {
     issues.push("Relevant experience is more than total experience");
   }
-  const remark = cleanText(cells.remark);
+  const sourcingDate = take(parseDate(cells.sourcingDate));
+  const noticePeriodDays = take(parseNoticeDays(cells.notice, sourcingDate), "Notice period");
+  const currentInhand = take(parseRupeesMonthly(cells.currentInhand, "Current in-hand"), "Current in-hand");
+  const expectedInhand = take(
+    parseExpectedHike(cells.expectedInhand, currentInhand) ?? parseRupeesMonthly(cells.expectedInhand, "Expected in-hand"),
+    "Expected in-hand",
+  );
+
+  // The status comes from the remark as HR wrote it, before anything is appended.
+  const writtenRemark = cleanText(cells.remark);
+  const remark = [writtenRemark, ...remarkExtras].filter(Boolean).join(" | ") || null;
 
   return {
     issues,
@@ -149,15 +171,20 @@ export function cleanRow(cells: Partial<Record<SheetField, unknown>>): { clean: 
       totalExpMonths,
       role: cleanText(cells.role),
       candidateSource: cleanText(cells.candidateSource),
-      sourcingDate: take(parseDate(cells.sourcingDate)),
+      sourcingDate,
       relevantExpMonths,
-      noticePeriodDays: take(parseNoticeDays(cells.notice)),
-      currentInhand: take(parseRupeesMonthly(cells.currentInhand, "Current in-hand")),
-      expectedInhand: take(parseRupeesMonthly(cells.expectedInhand, "Expected in-hand")),
+      noticePeriodDays,
+      currentInhand,
+      expectedInhand,
       remark,
-      status: statusFromRemark(remark),
+      status: statusFromRemark(writtenRemark),
     },
   };
+}
+
+/** A row counts as flagged when it was imported and has at least one "needs review" issue. */
+export function needsReview(issues: string[]): boolean {
+  return issues.some((issue) => !isFixedNote(issue));
 }
 
 function cellText(value: unknown): string {
