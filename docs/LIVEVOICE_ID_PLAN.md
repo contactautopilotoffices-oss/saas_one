@@ -200,6 +200,10 @@ should confirm the hosting choice before it is built.
 
 ## 4a. Is hosting needed? (owner question 2026-11-02)
 
+**Update 2026-11-03:** Hugging Face now requires a paid plan for Docker Spaces, so the free Space is not possible.
+Owner decision: for testing, run the server on a computer and expose it with a free Cloudflare quick tunnel (steps in
+`services/voice-id/README.md`). A permanent free host (for example Google Cloud Run) is to be chosen after the test.
+
 **Decision (owner, 2026-11-02): no paid services. Self-hosted SpeechBrain on Hugging Face Spaces, free "CPU basic"
 (2 vCPU, 16 GB RAM, sleeps after 48 h idle).** Other free hosts offered and not chosen: Google Cloud Run free tier
 (needs a card), Oracle Cloud Always Free VM (card, capacity often unavailable), an office machine behind a Cloudflare

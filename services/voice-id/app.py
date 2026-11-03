@@ -41,7 +41,9 @@ log = logging.getLogger("voice-id")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 MODEL_ID = os.environ.get("MODEL_ID", "speechbrain/spkrec-ecapa-voxceleb")
-MODEL_DIR = os.environ.get("MODEL_DIR", "model")
+# Docker sets MODEL_DIR; a run on a computer (testing) keeps the model in the user's cache, outside the repo
+_CACHE = os.path.join(os.path.expanduser("~"), ".cache", "voice-id")
+MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(_CACHE, "model"))
 MODEL_REVISION = os.environ.get("MODEL_REVISION", "unknown")
 
 MAX_CLIP_BYTES = 2 * 1024 * 1024
@@ -74,11 +76,20 @@ class SpeechBrainEncoder:
     def __init__(self) -> None:
         import torch
         from speechbrain.inference.speaker import EncoderClassifier
+        from speechbrain.utils.fetching import LocalStrategy
 
         torch.set_num_threads(int(os.environ.get("TORCH_THREADS", "2")))
         self._torch = torch
+        # The Docker image downloads the model while building. Run directly on a computer (testing), it is downloaded
+        # here on the first start (~80 MB) and reused after that.
+        if not os.path.isfile(os.path.join(MODEL_DIR, "hyperparams.yaml")):
+            from huggingface_hub import snapshot_download
+            log.info("downloading the voice model (first start only)")
+            snapshot_download(MODEL_ID, revision=os.environ.get("MODEL_REVISION", "main"), local_dir=MODEL_DIR)
+        # COPY, not the default symlinks: Windows refuses symlinks unless Python runs as administrator
         self._model = EncoderClassifier.from_hparams(
-            source=MODEL_DIR, savedir=os.environ.get("MODEL_RUN_DIR", "model_run"), run_opts={"device": "cpu"},
+            source=MODEL_DIR, savedir=os.environ.get("MODEL_RUN_DIR", os.path.join(_CACHE, "model_run")), run_opts={"device": "cpu"},
+            local_strategy=LocalStrategy.COPY,
         )
 
     def embed(self, wave: np.ndarray) -> np.ndarray:
