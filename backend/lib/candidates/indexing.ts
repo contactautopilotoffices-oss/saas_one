@@ -7,7 +7,7 @@
  * (candidate_index_claim) keeps two runs from embedding the same records.
  *
  * Per run, until its time budget is used:
- *   take up to EMBED_BATCH waiting records -> embed (Jina) -> store (candidate_set_embeddings)
+ *   take up to EMBED_BATCH waiting records -> embed (EMBEDDING_PROVIDER: Gemini or Jina) -> store (candidate_set_embeddings)
  *   service busy / down / not configured -> stop, pause the organisation (1, 2, 5, then 10 min), try again later
  *   service rejects the text             -> retry those records one by one; a record rejected EMBED_MAX_ATTEMPTS times
  *                                           is set aside (still found by filters and keywords)
@@ -16,8 +16,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { EMBED_CALL_GAP_MS, EMBED_MAX_ATTEMPTS, EMBEDDING_MODEL, INDEX_BACKOFF_SECONDS, INDEX_BUDGET_MS } from "./config";
-import { EMBED_BATCH, EmbedError, embedDocuments } from "./embeddings";
+import { EMBED_BATCH, EMBED_CALL_GAP_MS, EMBED_MAX_ATTEMPTS, EMBEDDING_MODEL, INDEX_BACKOFF_SECONDS, INDEX_BUDGET_MS } from "./config";
+import { EmbedError, embedDocuments } from "./embeddings";
 
 export type Embedder = (texts: string[]) => Promise<number[][]>;
 

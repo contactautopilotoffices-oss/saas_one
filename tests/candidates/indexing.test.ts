@@ -9,7 +9,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "../../backend/lib/candidates/config";
-import { EmbedError, embedDocuments, embedQuery } from "../../backend/lib/candidates/embeddings";
+import { EmbedError, geminiEmbeddings, jinaEmbeddings } from "../../backend/lib/candidates/embeddings";
 import { indexAllOrganisations, indexOrganisation, type Embedder } from "../../backend/lib/candidates/indexing";
 import { createRecord, updateRecord } from "../../backend/lib/candidates/records";
 import { listSheets } from "../../backend/lib/candidates/sheets";
@@ -121,7 +121,7 @@ describe("background indexing (Jina, pause and retry)", () => {
   });
 
   it("re-embeds records stored with another model, and search never compares vectors of different models", async () => {
-    await q("update public.candidate_applications set embedding_model = 'gemini-embedding-001', embedding = $2 where organization_id = $1", [ORG, vec(1)]);
+    await q("update public.candidate_applications set embedding_model = 'some-older-model', embedding = $2 where organization_id = $1", [ORG, vec(1)]);
     assert.equal(await waiting(), 7);
     const progress = await listSheets(client, ORG, false);
     assert.equal(progress.pendingIndexTotal, 7, "old-model records show as being prepared");
@@ -131,7 +131,7 @@ describe("background indexing (Jina, pause and retry)", () => {
         "select semantic_rank from public.hybrid_search_candidates($1, '{}'::jsonb, '{}'::jsonb, '', $2, 30, 50, $3)",
         [ORG, vec(1), model],
       );
-    assert.ok((await search(EMBEDDING_MODEL)).every((r) => r.semantic_rank === null), "Gemini vectors are ignored by a Jina query");
+    assert.ok((await search(EMBEDDING_MODEL)).every((r) => r.semantic_rank === null), "vectors of another model are ignored");
     assert.ok((await search(null)).some((r) => r.semantic_rank !== null), "without a model the old behaviour stays");
 
     assert.equal((await indexOrganisation(client, ORG, { embed: ok, sleep: noSleep })).indexed, 7);
@@ -180,7 +180,7 @@ describe("Jina client", () => {
     process.env.JINA_API_KEY = "test-key";
     const seen: { url: string; init: RequestInit }[] = [];
     respond(200, { data: [{ index: 1, embedding: vector() }, { index: 0, embedding: vector().map((v) => -v) }] }, seen);
-    const out = await embedDocuments(["a", "b"]);
+    const out = await jinaEmbeddings.documents(["a", "b"]);
     assert.equal(out.length, 2);
     assert.ok(out[0][1] < 0, "results are put back in input order");
     const body = JSON.parse(String(seen[0].init.body));
@@ -188,19 +188,56 @@ describe("Jina client", () => {
     assert.equal((seen[0].init.headers as Record<string, string>).Authorization, "Bearer test-key");
 
     respond(200, { data: [{ index: 0, embedding: vector() }] }, seen);
-    await embedQuery("bms operator");
+    await jinaEmbeddings.query("bms operator");
     assert.equal(JSON.parse(String(seen[1].init.body)).task, "retrieval.query");
   });
 
   it("calls busy, down, unauthorised and missing-key answers retryable, and rejected input not", async () => {
     delete process.env.JINA_API_KEY;
-    await assert.rejects(embedDocuments(["a"]), (e: EmbedError) => e.retryable && /JINA_API_KEY/.test(e.message));
+    await assert.rejects(jinaEmbeddings.documents(["a"]), (e: EmbedError) => e.retryable && /JINA_API_KEY/.test(e.message));
     process.env.JINA_API_KEY = "k";
     for (const [status, retryable] of [[429, true], [503, true], [401, true], [400, false], [422, false]] as const) {
       respond(status, "nope");
-      await assert.rejects(embedDocuments(["a"]), (e: EmbedError) => e instanceof EmbedError && e.retryable === retryable, String(status));
+      await assert.rejects(jinaEmbeddings.documents(["a"]), (e: EmbedError) => e instanceof EmbedError && e.retryable === retryable, String(status));
     }
     respond(200, { data: [{ index: 0, embedding: [1, 2, 3] }] });
-    await assert.rejects(embedDocuments(["a"]), (e: EmbedError) => e.retryable && /dimensions/.test(e.message));
+    await assert.rejects(jinaEmbeddings.documents(["a"]), (e: EmbedError) => e.retryable && /dimensions/.test(e.message));
+  });
+});
+
+describe("Gemini client (the default provider)", () => {
+  const realFetch = globalThis.fetch;
+  const realKeys = { g: process.env.GEMINI_API_KEY, a: process.env.GOOGLE_AI_API_KEY };
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    for (const [name, value] of [["GEMINI_API_KEY", realKeys.g], ["GOOGLE_AI_API_KEY", realKeys.a]] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  const respond = (status: number, body: unknown) => {
+    globalThis.fetch = (async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status })) as typeof fetch;
+  };
+  const vector = () => Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0.1);
+
+  it("is the default and embeds at 768 dims", async () => {
+    const { EMBEDDING_PROVIDER } = await import("../../backend/lib/candidates/config");
+    if (!process.env.EMBEDDING_PROVIDER) assert.equal(EMBEDDING_PROVIDER, "gemini");
+    process.env.GEMINI_API_KEY = "test-key";
+    respond(200, { embeddings: [{ values: vector() }, { values: vector() }] });
+    assert.equal((await geminiEmbeddings.documents(["a", "b"])).length, 2);
+    respond(200, { embeddings: [{ values: vector() }] });
+    assert.equal((await geminiEmbeddings.query("bms")).length, EMBEDDING_DIMENSIONS);
+  });
+
+  it("calls a busy or exhausted free tier retryable, a rejected input not, and a missing key retryable", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    for (const [status, retryable] of [[429, true], [503, true], [403, true], [400, false]] as const) {
+      respond(status, "nope");
+      await assert.rejects(geminiEmbeddings.documents(["a"]), (e: EmbedError) => e instanceof EmbedError && e.retryable === retryable, String(status));
+    }
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_AI_API_KEY;
+    await assert.rejects(geminiEmbeddings.documents(["a"]), (e: EmbedError) => e instanceof EmbedError && e.retryable && /GEMINI_API_KEY/.test(e.message));
   });
 });
