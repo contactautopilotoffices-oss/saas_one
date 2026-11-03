@@ -1,20 +1,20 @@
 /**
- * Candidate Search embeddings: Jina jina-embeddings-v3 at 768 dimensions (owner 2026-11-03; replaces Gemini here, which
- * ran out of free quota on big sheets). One model for records AND queries: vectors of different models cannot be
- * compared, so there is no per-call fallback to another provider. A busy or unreachable service is reported as a
- * retryable EmbedError; the background worker (indexing.ts) pauses and tries again later.
- * The HR Policy Assistant keeps its own Gemini embeddings (backend/lib/hr-assistant/embeddings.ts).
- *
- * REST, no SDK: POST https://api.jina.ai/v1/embeddings with JINA_API_KEY.
+ * Candidate Search embeddings. The provider is set by EMBEDDING_PROVIDER (config.ts; owner 2026-11-03: Gemini's free
+ * tier by default, Jina when its account has credit). Both give 768-dim vectors.
+ *   gemini : the HR Policy Assistant's Gemini client (backend/lib/hr-assistant/embeddings.ts), GEMINI_API_KEY
+ *   jina   : jina-embeddings-v3 over REST, JINA_API_KEY
+ * One model for records AND queries: vectors of different models cannot be compared, so there is no per-call fallback
+ * to the other provider. A busy, unreachable or unconfigured service is a retryable EmbedError (the background worker
+ * in indexing.ts pauses and tries again later); a rejected input is not retryable (that record is set aside).
  */
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./config";
+import {
+  embedDocuments as geminiDocuments,
+  embedQuery as geminiQuery,
+} from "@/backend/lib/hr-assistant/embeddings";
 
-const ENDPOINT = "https://api.jina.ai/v1/embeddings";
-/** Inputs per call. */
-export const EMBED_BATCH = 100;
-const TIMEOUT_MS = 30_000;
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODELS, EMBEDDING_PROVIDER } from "./config";
 
-/** `retryable`: busy, down, timed out, or not configured (try later). Otherwise the input itself was rejected. */
+/** `retryable`: busy, down, timed out, out of credit, or not configured (try later). Otherwise the input was rejected. */
 export class EmbedError extends Error {
   constructor(
     message: string,
@@ -24,35 +24,85 @@ export class EmbedError extends Error {
   }
 }
 
-type Task = "retrieval.passage" | "retrieval.query";
+/** 429 / 5xx: busy or down. 401 / 402 / 403: key, quota or credit problem — "try later", never the records' fault. */
+function retryableStatus(status: number): boolean {
+  return status === 429 || status >= 500 || status === 401 || status === 402 || status === 403;
+}
+
+export interface EmbeddingClient {
+  documents: (texts: string[]) => Promise<number[][]>;
+  query: (text: string) => Promise<number[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Gemini (reuses the HR assistant's client; its errors read "Gemini embeddings failed (<status>): ...")
+// ---------------------------------------------------------------------------
+function asEmbedError(error: unknown): EmbedError {
+  if (error instanceof EmbedError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  const status = /failed \((\d{3})\)/.exec(message)?.[1];
+  // No status = network failure, missing key or an empty answer: try again later.
+  return new EmbedError(message, status ? retryableStatus(Number(status)) : true);
+}
+
+function checkDimensions(vectors: number[][]): number[][] {
+  for (const v of vectors) {
+    if (v.length !== EMBEDDING_DIMENSIONS) throw new EmbedError(`Embedding has ${v.length} dimensions, expected ${EMBEDDING_DIMENSIONS}`, true);
+  }
+  return vectors;
+}
+
+export const geminiEmbeddings: EmbeddingClient = {
+  documents: async (texts) => {
+    try {
+      return checkDimensions(await geminiDocuments(texts));
+    } catch (error) {
+      throw asEmbedError(error);
+    }
+  },
+  query: async (text) => {
+    try {
+      return checkDimensions([await geminiQuery(text)])[0];
+    } catch (error) {
+      throw asEmbedError(error);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Jina
+// ---------------------------------------------------------------------------
+const JINA_ENDPOINT = "https://api.jina.ai/v1/embeddings";
+const JINA_BATCH = 100;
+const JINA_TIMEOUT_MS = 30_000;
+
+type JinaTask = "retrieval.passage" | "retrieval.query";
 
 interface JinaResponse {
   data?: { index?: number; embedding?: number[] }[];
 }
 
-async function jina(texts: string[], task: Task): Promise<number[][]> {
+async function jina(texts: string[], task: JinaTask): Promise<number[][]> {
   const key = (process.env.JINA_API_KEY ?? "").trim();
   if (!key) throw new EmbedError("JINA_API_KEY is not set", true);
 
   const vectors: number[][] = [];
-  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-    const batch = texts.slice(i, i + EMBED_BATCH);
+  for (let i = 0; i < texts.length; i += JINA_BATCH) {
+    const batch = texts.slice(i, i + JINA_BATCH);
     let res: Response;
     try {
-      res = await fetch(ENDPOINT, {
+      res = await fetch(JINA_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model: EMBEDDING_MODEL, task, dimensions: EMBEDDING_DIMENSIONS, embedding_type: "float", input: batch }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify({ model: EMBEDDING_MODELS.jina, task, dimensions: EMBEDDING_DIMENSIONS, embedding_type: "float", input: batch }),
+        signal: AbortSignal.timeout(JINA_TIMEOUT_MS),
       });
     } catch (error) {
       throw new EmbedError(`Jina unreachable: ${error instanceof Error ? error.message : String(error)}`, true);
     }
     if (!res.ok) {
       const detail = (await res.text().catch(() => "")).slice(0, 300);
-      // 429 / 5xx: busy or down. 401 / 403 / 402: key or credit problem — also "try later", never the records' fault.
-      const retryable = res.status === 429 || res.status >= 500 || res.status === 401 || res.status === 402 || res.status === 403;
-      throw new EmbedError(`Jina embeddings failed (${res.status}): ${detail}`, retryable);
+      throw new EmbedError(`Jina embeddings failed (${res.status}): ${detail}`, retryableStatus(res.status));
     }
     const data = ((await res.json().catch(() => ({}))) as JinaResponse).data ?? [];
     if (data.length !== batch.length) throw new EmbedError(`Jina returned ${data.length} embeddings for ${batch.length} inputs`, true);
@@ -67,13 +117,22 @@ async function jina(texts: string[], task: Task): Promise<number[][]> {
   return vectors;
 }
 
+export const jinaEmbeddings: EmbeddingClient = {
+  documents: (texts) => jina(texts, "retrieval.passage"),
+  query: async (text) => (await jina([text], "retrieval.query"))[0],
+};
+
+// ---------------------------------------------------------------------------
+// The configured provider
+// ---------------------------------------------------------------------------
+const ACTIVE: EmbeddingClient = EMBEDDING_PROVIDER === "jina" ? jinaEmbeddings : geminiEmbeddings;
+
 /** Records' search text, for storage. */
 export function embedDocuments(texts: string[]): Promise<number[][]> {
-  return jina(texts, "retrieval.passage");
+  return ACTIVE.documents(texts);
 }
 
 /** A search, for comparing against stored records. */
-export async function embedQuery(text: string): Promise<number[]> {
-  const [vector] = await jina([text], "retrieval.query");
-  return vector;
+export function embedQuery(text: string): Promise<number[]> {
+  return ACTIVE.query(text);
 }
