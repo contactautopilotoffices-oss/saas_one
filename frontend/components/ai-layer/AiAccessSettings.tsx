@@ -132,7 +132,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                 </label>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
                     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.channels.app_chat} onChange={e => set({ channels: { ...config.channels, app_chat: e.target.checked } })} /> In-app chat</label>
-                    <label className="flex items-center gap-2 text-sm text-slate-400" title={whatsappReady ? '' : 'Available once the WhatsApp webhook verifies its sender'}><input type="checkbox" disabled={!whatsappReady} checked={config.channels.whatsapp && whatsappReady} onChange={e => set({ channels: { ...config.channels, whatsapp: e.target.checked } })} /> WhatsApp (not yet available)</label>
+                    <label className={`flex items-center gap-2 text-sm ${whatsappReady ? '' : 'text-slate-400'}`} title={whatsappReady ? '' : 'Needs the AiSensy webhook secret (AISENSY_AI_LAYER_SECRET) to be set up first'}><input type="checkbox" disabled={!whatsappReady} checked={config.channels.whatsapp && whatsappReady} onChange={e => set({ channels: { ...config.channels, whatsapp: e.target.checked } })} /> WhatsApp{whatsappReady ? '' : ' (needs webhook secret)'}</label>
                     <label className="flex items-center gap-2 text-sm text-slate-400"><input type="checkbox" disabled checked={false} readOnly /> In-app voice (coming later)</label>
                 </div>
             </section>

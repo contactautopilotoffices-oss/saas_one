@@ -61,7 +61,8 @@ export interface AiData {
     listTickets(q: TicketQuery, limit: number): Promise<TicketListRow[]>;
     readingsStatus(propertyIds: string[], date: string): Promise<ReadingsStatusRow[]>;
     consumption(propertyIds: string[], from: string, to: string): Promise<ConsumptionRow[]>;
-    createTicket(input: { propertyId: string; description: string; title?: string; priority?: string }): Promise<{ ticketNumber: string; status: string; assigneeName: string | null }>;
+    /** opId = the confirmed operation; a channel that can, uses it so the same operation never creates two tickets. */
+    createTicket(input: { opId: string; propertyId: string; description: string; title?: string; priority?: string }): Promise<{ ticketNumber: string; status: string; assigneeName: string | null }>;
 }
 
 export type TicketStatusGroup = 'open' | 'closed' | 'all';

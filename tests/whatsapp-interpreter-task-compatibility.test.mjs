@@ -39,6 +39,7 @@ function setup({facilityActive=false,choice=false,testingConfig=null}={}){
         '@/backend/services/LeadOutreachService': { LeadOutreachService: { isLeadPhone: async () => false, handleInboundLeadReply: async () => ({ handled: false }) } },
         '@/task-manager/InboundLedger':{recordInbound:async()=>{},markRoute:async()=>{},markReplied:async()=>{}},'@/task-manager/NeverSilentWatchdog':{apologiseAfterCrash:async()=>{}},'@/task-manager/ConversationMemory':{appendTurn:async()=>{}},
         '@/backend/lib/whatsapp/interpreter/coordinator.mjs':{isExplicitTaskCommand,isDirectBookingRequest},
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => ({ handled: false, why: 'no_secret' }) },
         '@/backend/lib/whatsapp/interpreter/context':{isInterpreterPilot:async()=>true,lookupQuotedContext:async()=>({workflow:'task'}),
             getConversationRoutingState:async()=>({taskActive:contexts.has('TASK_MANAGER'),taskChoicePending:contexts.get('TASK_MANAGER')?.context_data?.state==='AWAITING_SYSTEM_CHOICE',facilityActive})},
     });

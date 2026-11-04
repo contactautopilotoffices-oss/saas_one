@@ -45,11 +45,14 @@ export const DEFAULT_SETTINGS: AiSettings = settingsSchema.parse({});
 export const PLATFORM_LIMITS = { perUserPerHour: 60, actionsPerUserPerDay: 100 } as const;
 
 /**
- * WhatsApp stays off in code until the AiSensy webhook verifies its sender (plan section 4, S1). Without that, anyone who
- * knows the webhook URL could pretend to be an org super admin's phone and read org-wide data. In-app chat is safe
- * because it uses the logged-in session.
+ * WhatsApp is usable only once the AiSensy webhook proves the message came from AiSensy: AISENSY_AI_LAYER_SECRET must
+ * be set (at least 24 characters) and sent with every webhook call. Without it, anyone who knows the webhook URL could
+ * pretend to be an org super admin's phone and read org-wide data, so the channel stays off whatever the settings say.
+ * In-app chat doesn't need this: it uses the logged-in session.
  */
-export const WHATSAPP_CHANNEL_READY = false;
+export function whatsappChannelReady(env: Record<string, string | undefined> = process.env): boolean {
+    return String(env.AISENSY_AI_LAYER_SECRET ?? '').trim().length >= 24;
+}
 
 export function parseSettings(raw: unknown): AiSettings {
     const parsed = settingsSchema.safeParse(raw ?? {});
@@ -71,9 +74,9 @@ const isStaffRole = (r: string) => !(AI_TENANT_ROLES as readonly string[]).inclu
  * Checks 2 to 6 of the plan (the global kill switch is the AI_LAYER_DISABLED env var, checked by the route).
  * Returns the actor narrowed to the enabled properties, or the reason for refusing.
  */
-export function gate(actor: ActorContext, s: AiSettings, channel: Channel): { ok: true; actor: ActorContext } | { ok: false; reason: GateRefusal } {
+export function gate(actor: ActorContext, s: AiSettings, channel: Channel, env: Record<string, string | undefined> = process.env): { ok: true; actor: ActorContext } | { ok: false; reason: GateRefusal } {
     if (!s.enabled) return { ok: false, reason: 'org_off' };
-    if (!s.channels[channel] || (channel === 'whatsapp' && !WHATSAPP_CHANNEL_READY)) return { ok: false, reason: 'channel_off' };
+    if (!s.channels[channel] || (channel === 'whatsapp' && !whatsappChannelReady(env))) return { ok: false, reason: 'channel_off' };
     if (s.blockedUserIds.includes(actor.userId)) return { ok: false, reason: 'blocked' };
 
     const byPerson = s.access.userIds.includes(actor.userId);

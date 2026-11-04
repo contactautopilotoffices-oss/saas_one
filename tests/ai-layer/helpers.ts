@@ -41,7 +41,7 @@ export class FakeData implements AiData {
     tickets: Array<{ propertyId: string; status: string; category: string | null; raisedBy: string; assignedTo: string | null; createdAt: string; title: string; number: string; priority: string }> = [];
     meters: ReadingsStatusRow[] = [];
     readings: ConsumptionRow[] = [];
-    created: Array<{ propertyId: string; description: string; title?: string; priority?: string }> = [];
+    created: Array<{ opId?: string; propertyId: string; description: string; title?: string; priority?: string }> = [];
     queries: TicketQuery[] = [];
     failCreate = false;
 
@@ -65,9 +65,10 @@ export class FakeData implements AiData {
     async consumption(propertyIds: string[], from: string, to: string): Promise<ConsumptionRow[]> {
         return this.readings.filter(r => propertyIds.includes(r.propertyId) && r.date >= from && r.date < to);
     }
-    async createTicket(input: { propertyId: string; description: string; title?: string; priority?: string }) {
+    async createTicket(input: { opId: string; propertyId: string; description: string; title?: string; priority?: string }) {
         if (this.failCreate) throw new Error('boom');
-        this.created.push(input);
+        const { opId: _op, ...rest } = input; void _op;
+        this.created.push(rest);
         return { ticketNumber: `TKT-${this.created.length}`, status: 'assigned', assigneeName: 'Suresh' };
     }
 }

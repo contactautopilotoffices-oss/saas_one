@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { computeActor, type ScopeRows } from '../../backend/lib/aiLayer/scope';
-import { gate, effectiveLimits, parseSettings, WHATSAPP_CHANNEL_READY } from '../../backend/lib/aiLayer/settings';
+import { gate, effectiveLimits, parseSettings, whatsappChannelReady } from '../../backend/lib/aiLayer/settings';
 import { catalogFor } from '../../backend/lib/aiLayer/catalog';
 import { ANDHERI, NAMES, ORG, OTHER_ORG, PAREL, THANE, USER, OTHER_USER, actor, settings } from './helpers';
 
@@ -82,10 +82,20 @@ describe('settings gate: configurable, and can only narrow', () => {
         assert.deepEqual(gate(actor(), parseSettings({}), 'app_chat'), { ok: false, reason: 'org_off' });
     });
 
-    it('WhatsApp stays refused in code until the webhook is secured, even if switched on', () => {
-        assert.equal(WHATSAPP_CHANNEL_READY, false);
-        const s = settings({ channels: { app_chat: true, whatsapp: true, app_voice: false } });
-        assert.deepEqual(gate(actor(), s, 'whatsapp'), { ok: false, reason: 'channel_off' });
+    it('WhatsApp stays refused until the webhook secret is configured, even if switched on', () => {
+        const saved = process.env.AISENSY_AI_LAYER_SECRET;
+        try {
+            delete process.env.AISENSY_AI_LAYER_SECRET;
+            assert.equal(whatsappChannelReady(), false);
+            const s = settings({ channels: { app_chat: true, whatsapp: true, app_voice: false } });
+            assert.deepEqual(gate(actor(), s, 'whatsapp'), { ok: false, reason: 'channel_off' });
+            assert.equal(whatsappChannelReady({ AISENSY_AI_LAYER_SECRET: 'short' }), false);
+            process.env.AISENSY_AI_LAYER_SECRET = 'x'.repeat(32);
+            assert.equal(gate(actor(), s, 'whatsapp').ok, true);
+            assert.equal(gate(actor(), settings(), 'whatsapp').ok, false, 'still off when the org has not switched WhatsApp on');
+        } finally {
+            if (saved === undefined) delete process.env.AISENSY_AI_LAYER_SECRET; else process.env.AISENSY_AI_LAYER_SECRET = saved;
+        }
     });
 
     it('selected people / selected roles / both', () => {

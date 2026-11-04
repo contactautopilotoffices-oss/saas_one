@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getOrganizationUsers } from '@/backend/lib/whatsapp/interpreter/organization-users.mjs';
-import { CATALOG, PLATFORM_LIMITS, WHATSAPP_CHANNEL_READY, settingsSchema } from '@/backend/lib/aiLayer';
+import { CATALOG, PLATFORM_LIMITS, whatsappChannelReady, settingsSchema } from '@/backend/lib/aiLayer';
 import { loadSettings } from '@/backend/lib/aiLayer/server';
 import { requireOrgSuperAdmin } from '../_lib/auth';
 
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     try {
         const [{ settings, tableMissing }, directory] = await Promise.all([loadSettings(supabaseAdmin, organizationId), orgDirectory(organizationId)]);
         return NextResponse.json({
-            config: settings, tableMissing, whatsappReady: WHATSAPP_CHANNEL_READY, platformLimits: PLATFORM_LIMITS,
+            config: settings, tableMissing, whatsappReady: whatsappChannelReady(), platformLimits: PLATFORM_LIMITS,
             entries: CATALOG.map(e => ({ id: e.id, kind: e.kind, module: e.module, defaultMode: e.defaultMode, label: e.abilities.en })),
             ...directory,
         }, { headers: { 'Cache-Control': 'private, no-store' } });

@@ -149,3 +149,48 @@ export function brainInterpretLlm(): InterpretLlm {
         },
     };
 }
+
+/**
+ * WhatsApp has no logged-in session, so tickets can't go through the app's cookie-based ticket route. They go through
+ * the same helper the WhatsApp facility assistant already uses (processIncomingMessage), as the identified person
+ * (userId), for the building already checked against their scope. requestId = the confirmed operation id, which that
+ * helper stores in wa_assistant_request_id, so the same operation can never create two tickets.
+ */
+export function whatsappAiData(admin: SupabaseClient, phone: string, userId: string): AiData {
+    const base = supabaseAiData(admin, 'http://localhost');
+    return {
+        ...base,
+        async createTicket(input) {
+            const { processIncomingMessage } = await import('@/backend/lib/whatsapp/processMessage');
+            const ticket = await processIncomingMessage(phone, input.description, null, null, false, null, null, false, input.propertyId, null,
+                { userId, requestId: input.opId, suppressReply: true, throwOnError: true, skipTaskRouting: true }) as { ticket_number?: string; status?: string; assigned_to?: string | null } | null | undefined;
+            if (!ticket?.ticket_number) throw new Error('ticket helper returned no ticket');
+            let assigneeName: string | null = null;
+            if (ticket.assigned_to) {
+                const u = await admin.from('users').select('full_name').eq('id', ticket.assigned_to).maybeSingle();
+                assigneeName = (u.data?.full_name || '').split(' ')[0] || null;
+            }
+            return { ticketNumber: String(ticket.ticket_number), status: String(ticket.status || 'open'), assigneeName };
+        },
+    };
+}
+
+/** Conversation state for channels that can't carry it themselves (WhatsApp). Expires after 30 minutes. */
+export const STATE_TTL_MS = 30 * 60_000;
+
+export function supabaseStateStore(admin: SupabaseClient) {
+    return {
+        async load(orgId: string, userId: string, channel: string): Promise<unknown | null> {
+            const { data, error } = await admin.from('ai_conversation_state').select('state, updated_at')
+                .eq('organization_id', orgId).eq('user_id', userId).eq('channel', channel).maybeSingle();
+            if (error || !data) return null;
+            return Date.now() - Date.parse(String(data.updated_at)) > STATE_TTL_MS ? null : data.state;
+        },
+        async save(orgId: string, userId: string, channel: string, state: unknown): Promise<void> {
+            const { error } = await admin.from('ai_conversation_state').upsert(
+                { organization_id: orgId, user_id: userId, channel, state, updated_at: new Date().toISOString() },
+                { onConflict: 'organization_id,user_id,channel' });
+            if (error) throw new Error(error.message);
+        },
+    };
+}

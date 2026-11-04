@@ -1,4 +1,4 @@
--- AI Action Layer: per-org access settings, settings history, and the AI action log.
+-- AI Action Layer: per-org access settings, settings history, the AI action log, and conversation state.
 -- Plan: docs/AI_ACTION_LAYER_PLAN.md (sections 6.5, 8.3). NOT applied automatically: a human runs this migration.
 --
 -- Until this runs, the AI layer stays OFF for every org (a missing settings table is treated as "disabled").
@@ -120,3 +120,19 @@ CREATE POLICY ai_action_log_hr_read ON public.ai_action_log
         )
     );
 -- No INSERT / UPDATE / DELETE policies: rows are written by the server only and never edited.
+
+-- ---------------------------------------------------------------------------
+-- 4. Conversation state for WhatsApp (the in-app chat keeps its own). One row per person, org and channel; the server
+--    treats rows older than 30 minutes as expired. Holds only the draft being filled in. Server-only, no read policy.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.ai_conversation_state (
+    organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_id         uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    channel         text NOT NULL CHECK (channel IN ('whatsapp', 'app_voice')),
+    state           jsonb NOT NULL DEFAULT '{}'::jsonb,
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (organization_id, user_id, channel)
+);
+
+ALTER TABLE public.ai_conversation_state ENABLE ROW LEVEL SECURITY;
+-- No policies: only the server (service role) reads and writes conversation state.

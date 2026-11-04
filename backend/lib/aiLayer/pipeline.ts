@@ -54,7 +54,11 @@ export interface TurnInput {
     state: TurnState | null;
 }
 
-export interface TurnOutput { reply: TurnReply; state: TurnState }
+/**
+ * outcome = 'unsupported' when the layer had nothing to offer (no entry fits, or nothing is switched on for this person)
+ * and no draft is in progress. On WhatsApp such a message is handed back to the existing bot instead of being answered.
+ */
+export interface TurnOutput { reply: TurnReply; state: TurnState; outcome: 'handled' | 'unsupported' }
 
 const MAX_ASKS = 6;
 
@@ -80,7 +84,8 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     };
     const safeAudit = (a: Parameters<typeof audit>[0]) => audit(a).catch(() => undefined);
     const done = (text: string, extra: Partial<TurnReply> = {}, draft: Draft | null = null): TurnOutput =>
-        ({ reply: { text, ...extra }, state: { lang, draft } });
+        ({ reply: { text, ...extra }, state: { lang, draft }, outcome: 'handled' });
+    const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null }, outcome: 'unsupported' });
 
     const limits = effectiveLimits(settings);
     // Per-hour limit: the in-memory check is fast but per server instance, so the database count backs it up.
@@ -94,7 +99,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     const available = catalogFor(actor, settings);
     if (!available.length) {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'nothing_enabled' });
-        return done(t('nothing_enabled', lang));
+        return unsupported(t('nothing_enabled', lang));
     }
     const abilities = available.map(a => a.entry.abilities[lang]).join(', ');
     const writeMode = available.find(a => a.entry.id === ticketCreate.id)?.mode ?? null;
@@ -131,7 +136,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     }
     if (v.entry === 'none') {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'unsupported', topic: 'topic' in v ? v.topic : null, ...usage });
-        return done(t('unknown', lang, { abilities }));
+        return unsupported(t('unknown', lang, { abilities }));
     }
     const entry = CATALOG.find(e => e.id === v.entry) as CatalogEntry;
     const fields = 'fields' in v ? v.fields : {};
@@ -297,7 +302,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
             const description = d.location ? `${d.description} (Location: ${d.location})` : d.description;
             // Only staff may mark a ticket urgent; for tenants and vendors the classifier decides the priority.
             const priority = d.urgent && !actor.ownRecordsOnly ? 'high' : undefined;
-            const created = await deps.data.createTicket({ propertyId: d.propertyId, description, title: d.description.slice(0, 100), priority });
+            const created = await deps.data.createTicket({ opId: d.opId, propertyId: d.propertyId, description, title: d.description.slice(0, 100), priority });
             await safeAudit({ entryId: d.entryId, decision: 'acted', opId: d.opId, resultRef: created.ticketNumber });
             return done(t('ticket_created', lang, {
                 number: created.ticketNumber, property: actor.propertyNames[d.propertyId], status: created.status,
