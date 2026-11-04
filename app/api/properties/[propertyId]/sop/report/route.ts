@@ -30,7 +30,7 @@ export async function GET(
         .maybeSingle();
     
     const userRole = (membership?.role || '').toLowerCase();
-    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole);
+    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole);
 
     if (!isAdmin) {
         return NextResponse.json({ error: 'Forbidden: Admin access required' }, { status: 403 });

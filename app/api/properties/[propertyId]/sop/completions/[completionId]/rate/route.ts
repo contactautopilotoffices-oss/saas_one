@@ -26,7 +26,7 @@ export async function POST(
             .eq('is_active', true)
             .single();
 
-        const adminRoles = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'];
+        const adminRoles = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'];
         if (!membership || !adminRoles.includes(membership.role)) {
             return NextResponse.json({ error: 'Forbidden: only admins can rate items' }, { status: 403 });
         }
