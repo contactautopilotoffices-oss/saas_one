@@ -17,7 +17,7 @@ import { SuperuserReminder, normalizeReminder } from './pingMessage';
 export const TECH_DEPARTMENT_ID = '94a74961-2dd8-453d-9728-f6f2b9ade99b';
 
 /** Owner 2026-10-19: per-team switches stored as columns of task_manager_department_settings. */
-export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab', 'due_dates', 'cross_dept_collab'] as const;
+export const TEAM_FEATURES = ['pending_on', 'protect_given', 'assigned_tab', 'due_dates', 'cross_dept_collab', 'voice_id'] as const;
 export type TeamFeature = typeof TEAM_FEATURES[number];
 
 /**
@@ -474,6 +474,25 @@ export class TaskAccessService {
         });
     }
 
+    // ── Owner 2026-11-02: "Recognise speakers by voice" (LiveVoice ID, 20261103000001_voice_id.sql) ──────────────────
+    // Team only (no personal exception). FAIL-CLOSED: OFF for everyone when the column cannot be read.
+    //   ON  = Meeting Assistant meetings started by someone in the department name who spoke, from voices people set up.
+    //   OFF = meetings keep "Speaker 1", "Speaker 2" as before. Anyone can still set up their voice.
+    static async getVoiceIdDepartments(): Promise<{ departments: Set<string>; columnMissing: boolean }> {
+        try {
+            const { data, error } = await supabaseAdmin.from('task_manager_department_settings').select('department_id, voice_id');
+            if (error) return { departments: new Set(), columnMissing: true };
+            return { departments: new Set((data || []).filter(r => (r as Record<string, unknown>).voice_id === true).map(r => r.department_id as string)), columnMissing: false };
+        } catch {
+            return { departments: new Set(), columnMissing: true };
+        }
+    }
+
+    static async isVoiceIdEnabled(departmentId: string | null | undefined): Promise<boolean> {
+        if (!departmentId) return false;
+        return (await this.getVoiceIdDepartments()).departments.has(departmentId);
+    }
+
     static async isDueDatesEnabled(departmentId: string | null | undefined, userId?: string | null): Promise<boolean> {
         if (!departmentId) return false;
         const own = await this.personSwitch(userId, 'due_dates');
@@ -510,7 +529,8 @@ export class TaskAccessService {
                 { onConflict: 'department_id' });
         if (error) {
             const file = feature === 'due_dates' ? '20261027100001_task_manager_due_dates.sql'
-                : feature === 'cross_dept_collab' ? '20261027100002_task_manager_cross_department_switch.sql' : '20261019000001_task_manager_team_controls.sql';
+                : feature === 'cross_dept_collab' ? '20261027100002_task_manager_cross_department_switch.sql'
+                    : feature === 'voice_id' ? '20261103000001_voice_id.sql' : '20261019000001_task_manager_team_controls.sql';
             throw new Error(`Could not save that setting. Run supabase/migrations/${file} in the Supabase SQL Editor first.`);
         }
 
@@ -932,6 +952,7 @@ export class TaskAccessService {
         teamAssignColumnMissing: boolean;
         teamFeaturesColumnMissing: boolean;
         dueDatesColumnMissing: boolean;
+        voiceIdColumnMissing: boolean;
         crossDeptColumnMissing: boolean;
         crossDeptScopeColumnMissing: boolean;
         notificationsColumnMissing: boolean;
@@ -950,6 +971,7 @@ export class TaskAccessService {
             protectGiven: boolean;
             assignedTab: boolean;
             dueDates: boolean;
+            voiceId: boolean;
             crossDeptCollab: boolean;
             crossDeptScope: 'everyone' | 'selected';
             notificationsDelegated: boolean;
@@ -979,6 +1001,7 @@ export class TaskAccessService {
         const teamAssign = await this.getTeamAssignDepartments();
         const features = await this.getTeamFeatures();
         const dueDates = await this.getDueDatesDepartments();
+        const voiceId = await this.getVoiceIdDepartments();
         const crossDept = await this.getCrossDeptOff();
         const crossScope = await this.getCrossDeptScope();
         const delegated = await this.getDelegatedDepartments();
@@ -1010,6 +1033,7 @@ export class TaskAccessService {
             teamAssignColumnMissing: teamAssign.columnMissing,
             teamFeaturesColumnMissing: features.columnMissing,
             dueDatesColumnMissing: dueDates.columnMissing,
+            voiceIdColumnMissing: voiceId.columnMissing,
             crossDeptColumnMissing: crossDept.columnMissing,
             crossDeptScopeColumnMissing: crossScope.columnMissing,
             notificationsColumnMissing: delegated.columnMissing,
@@ -1051,6 +1075,7 @@ export class TaskAccessService {
                     protectGiven: features.protectGiven.has(d.id),
                     assignedTab: features.assignedTab.has(d.id),
                     dueDates: dueDates.departments.has(d.id),
+                    voiceId: voiceId.departments.has(d.id),
                     crossDeptCollab: !crossDept.allOff && !crossDept.off.has(d.id),
                     crossDeptScope: (crossScope.selected.has(d.id) ? 'selected' : 'everyone') as 'everyone' | 'selected',
                     notificationsDelegated: delegated.departments.has(d.id),

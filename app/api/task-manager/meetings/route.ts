@@ -17,7 +17,8 @@ export async function GET(request: NextRequest) {
     const guard = await requireMeetingSpace(request);
     if (!guard.ok) return guard.response;
     try {
-        const [meetings, people] = await Promise.all([MeetingService.list(guard.userId, guard.space), MeetingService.people()]);
+        // LiveVoice ID: each person carries `voiceReady` (they set up their voice) for the New meeting picker
+        const [meetings, people] = await Promise.all([MeetingService.list(guard.userId, guard.space), MeetingService.peopleWithVoice()]);
         return NextResponse.json({ success: true, meetings, people });
     } catch (err) {
         return meetingFail(err, 'MeetingsAPI');
