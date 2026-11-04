@@ -10,6 +10,15 @@ import { requireOrgSuperAdmin } from '../_lib/auth';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
+/** The answers a teacher can pick: every catalog entry, plus "about tasks" and "nothing". */
+function entryList() {
+    return [
+        ...CATALOG.map(e => ({ id: e.id, kind: e.kind, label: e.abilities.en })),
+        { id: 'tasks', kind: 'special', label: 'about tasks (send to Task Manager)' },
+        { id: 'none', kind: 'special', label: 'nothing (the AI should say it can\'t help)' },
+    ];
+}
+
 const missing = (e: { code?: string } | null) => !!e && ['42P01', 'PGRST205'].includes(e.code ?? '');
 
 /** Everything the "Learning" section shows: flagged messages, taught examples, instruction versions. Org super admin only. */
@@ -24,7 +33,7 @@ export async function GET(request: NextRequest) {
         supabaseAdmin.from('ai_prompt_versions').select('id, created_at, instructions, status, pass_rate, tested_count, tested_at, activated_at')
             .eq('organization_id', organizationId).order('created_at', { ascending: false }).limit(20),
     ]);
-    if (missing(review.error) || missing(examples.error) || missing(versions.error)) return NextResponse.json({ tableMissing: true, review: [], examples: [], versions: [], entries: [] });
+    if (missing(review.error) || missing(examples.error) || missing(versions.error)) return NextResponse.json({ tableMissing: true, review: [], examples: [], versions: [], entries: entryList() });
     for (const r of [review, examples, versions]) if (r.error) return NextResponse.json({ error: "Couldn't load learning data" }, { status: 500 });
     const ids = [...new Set(((review.data || []) as Array<{ user_id: string | null }>).map(r => r.user_id).filter((x): x is string => !!x))];
     const names = new Map<string, string>();
@@ -37,11 +46,7 @@ export async function GET(request: NextRequest) {
         review: ((review.data || []) as Array<Record<string, unknown> & { user_id: string | null }>).map(r => ({ ...r, user_name: r.user_id ? names.get(r.user_id) ?? 'Unknown' : null })),
         examples: examples.data || [],
         versions: versions.data || [],
-        entries: [
-            ...CATALOG.map(e => ({ id: e.id, kind: e.kind, label: e.abilities.en })),
-            { id: 'tasks', kind: 'special', label: 'about tasks (send to Task Manager)' },
-            { id: 'none', kind: 'special', label: 'nothing (the AI should say it can\'t help)' },
-        ],
+        entries: entryList(),
     }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 

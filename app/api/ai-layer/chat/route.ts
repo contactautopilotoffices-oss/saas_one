@@ -4,7 +4,8 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { gate, handleTurn, loadActor, stateSchema, t, detectLang } from '@/backend/lib/aiLayer';
 import { brainInterpretLlm, loadSettings, supabaseAiData, supabaseAuditStore, supabaseLearning } from '@/backend/lib/aiLayer/server';
-import { requireSession } from '../_lib/auth';
+import { requireOrgSuperAdmin, requireSession } from '../_lib/auth';
+import { trainingSettings } from '@/backend/lib/aiLayer/settings';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -13,6 +14,8 @@ const body = z.object({
     organizationId: z.string().uuid(),
     message: z.string().trim().min(1).max(1500),
     state: stateSchema.nullish(),
+    /** Training chat (Settings → AI Assistant → Training chat): org super admins only. */
+    training: z.boolean().optional(),
 }).strict();
 
 /**
@@ -36,15 +39,22 @@ export async function POST(request: NextRequest) {
     try {
         const actor = await loadActor(supabaseAdmin, session.user.id, organizationId);
         if (!actor) return notEnabled();
-        const { settings } = await loadSettings(supabaseAdmin, organizationId);
+        const training = parsed.data.training === true;
+        if (training) {
+            const admin = await requireOrgSuperAdmin(organizationId);
+            if (admin.error) return admin.error;
+        }
+        const saved = (await loadSettings(supabaseAdmin, organizationId)).settings;
+        const settings = training ? trainingSettings(saved, actor.roles, actor.userId) : saved;
         const g = gate(actor, settings, 'app_chat');
         if (!g.ok) return notEnabled(); // the person is told only that it's off, not why or what others can do
+        const learningStore = supabaseLearning(supabaseAdmin);
 
         const out = await handleTurn({
             data: supabaseAiData(supabaseAdmin, request.url),
             llm: brainInterpretLlm(),
             audit: supabaseAuditStore(supabaseAdmin),
-            learning: supabaseLearning(supabaseAdmin),
+            learning: { load: orgId => learningStore.load(orgId, training), flag: f => learningStore.flag(f) },
             now: () => new Date(),
             allowMessage: (key, perHour) => checkRateLimit(key, { maxRequests: perHour, windowMs: 3_600_000 }).allowed,
         }, { actor: g.actor, settings, channel: 'app_chat', message, state: parsed.data.state ?? null });

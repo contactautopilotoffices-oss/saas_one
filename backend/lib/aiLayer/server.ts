@@ -207,9 +207,10 @@ export const clearLearningCache = (orgId: string) => learningCache.delete(orgId)
  */
 export function supabaseLearning(admin: SupabaseClient) {
     return {
-        async load(orgId: string): Promise<LearningContext> {
+        /** fresh = skip the cache (training chat: a just-taught example applies to the very next message). */
+        async load(orgId: string, fresh = false): Promise<LearningContext> {
             const hit = learningCache.get(orgId);
-            if (hit && Date.now() - hit.at < 60_000) return hit.value;
+            if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.value;
             const [ex, pv] = await Promise.all([
                 admin.from('ai_examples').select('id, message_text, entry_id, fields').eq('organization_id', orgId).order('created_at', { ascending: false }).limit(200),
                 admin.from('ai_prompt_versions').select('instructions').eq('organization_id', orgId).eq('status', 'active').maybeSingle(),

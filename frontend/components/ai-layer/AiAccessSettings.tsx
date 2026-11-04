@@ -152,9 +152,12 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
 
     return (
         <div className="space-y-4">
-            <div>
-                <h2 className="text-lg font-black text-slate-900">AI Assistant access</h2>
-                <p className="text-sm text-slate-500">Choose who can use the AI assistant and for what. People never get more than their role already allows in the app.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 className="text-lg font-black text-slate-900">AI Assistant access</h2>
+                    <p className="text-sm text-slate-500">Choose who can use the AI assistant and for what. People never get more than their role already allows in the app.</p>
+                </div>
+                <a href={`/${organizationId}/ai-assistant/train`} className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90">💬 Open training chat</a>
             </div>
 
             {!config.enabled && (

@@ -6,22 +6,13 @@
  * Modelled on the Task Manager's "Review mistakes" + "Prompt versions" (frontend/components/task-manager/BotLearningPanel.tsx).
  */
 import { useCallback, useEffect, useState } from 'react';
+import AnswerPicker, { type Entry } from './AnswerPicker';
 
-interface Entry { id: string; kind: string; label: string }
 interface ReviewItem { id: string; created_at: string; user_name: string | null; channel: string; message_text: string; follow_up_text: string | null; bot_reply: string | null; entry_id: string | null; triggers: string[] }
 interface ExampleRow { id: string; created_at: string; message_text: string; entry_id: string; fields: Record<string, unknown> }
 interface Version { id: string; created_at: string; instructions: string; status: 'draft' | 'active' | 'retired'; pass_rate: number | null; tested_count: number | null; tested_at: string | null }
 interface Report { total: number; passed: number; passRate: number; failures: Array<{ message: string; expected: string; got: string }> }
 
-const PERIODS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'], ['last_7_days', 'Last 7 days'], ['this_month', 'This month'], ['last_month', 'Last month']] as const;
-/** Which details each answer takes, so the teach form only shows what matters. */
-const FIELDS: Record<string, Array<'period' | 'status' | 'day' | 'property_name' | 'urgent'>> = {
-    'tickets.count': ['period', 'status', 'property_name'],
-    'tickets.list': ['period', 'status', 'property_name'],
-    'electricity.readings_status': ['day', 'property_name'],
-    'electricity.consumption': ['period', 'property_name'],
-    'ticket.create': ['urgent'],
-};
 const TRIGGER_LABEL: Record<string, string> = {
     unknown: "Didn't understand", correction: 'Person said "no / I meant"', rephrase: 'Person asked again',
     repeated_clarify: 'Kept asking the same question', too_many_questions: 'Gave up after too many questions',
@@ -32,26 +23,6 @@ const h = 'text-sm font-black text-slate-900';
 const sub = 'text-xs text-slate-500 mt-1';
 const btn = 'rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold hover:bg-slate-50 disabled:opacity-50';
 const primary = 'rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50';
-
-/** The "what should it have done" picker: an answer + its details. */
-function AnswerPicker({ entries, value, onChange }: { entries: Entry[]; value: { entryId: string; fields: Record<string, unknown> }; onChange: (v: { entryId: string; fields: Record<string, unknown> }) => void }) {
-    const want = FIELDS[value.entryId] || [];
-    const setField = (k: string, v: unknown) => onChange({ ...value, fields: { ...value.fields, [k]: v === '' ? undefined : v } });
-    const sel = 'rounded-lg border border-slate-200 px-2 py-1 text-xs';
-    return (
-        <div className="flex flex-wrap items-center gap-2">
-            <select className={sel} value={value.entryId} onChange={e => onChange({ entryId: e.target.value, fields: {} })}>
-                <option value="">Choose the right answer…</option>
-                {entries.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
-            </select>
-            {want.includes('period') && <select className={sel} value={String(value.fields.period ?? 'today')} onChange={e => setField('period', e.target.value)}>{PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}
-            {want.includes('day') && <select className={sel} value={String(value.fields.day ?? 'today')} onChange={e => setField('day', e.target.value)}><option value="today">Today</option><option value="yesterday">Yesterday</option></select>}
-            {want.includes('status') && <select className={sel} value={String(value.fields.status ?? 'all')} onChange={e => setField('status', e.target.value)}><option value="all">All</option><option value="open">Open</option><option value="closed">Closed</option></select>}
-            {want.includes('property_name') && <input className={sel} placeholder="Property (optional)" value={String(value.fields.property_name ?? '')} onChange={e => setField('property_name', e.target.value)} />}
-            {want.includes('urgent') && <label className="text-xs flex items-center gap-1"><input type="checkbox" checked={value.fields.urgent === true} onChange={e => setField('urgent', e.target.checked)} /> urgent</label>}
-        </div>
-    );
-}
 
 export default function AiLearningPanel({ organizationId }: { organizationId: string }) {
     const [data, setData] = useState<{ tableMissing: boolean; review: ReviewItem[]; examples: ExampleRow[]; versions: Version[]; entries: Entry[] } | null>(null);
@@ -99,7 +70,7 @@ export default function AiLearningPanel({ organizationId }: { organizationId: st
         <div className="space-y-4">
             <div>
                 <h2 className="text-lg font-black text-slate-900">Learning</h2>
-                <p className="text-sm text-slate-500">Teach the AI assistant what people mean. Turn on <b>Learning loop</b> above so it flags its likely mistakes here.</p>
+                <p className="text-sm text-slate-500">Teach the AI assistant what people mean. Turn on <b>Learning loop</b> above so it flags its likely mistakes here, or teach it directly in the <a className="font-bold text-primary hover:underline" href={`/${organizationId}/ai-assistant/train`}>training chat</a>.</p>
                 {status && <p className="mt-2 text-sm text-slate-700">{status}</p>}
             </div>
 

@@ -60,6 +60,26 @@ export function parseSettings(raw: unknown): AiSettings {
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
 }
 
+/**
+ * Training chat (org super admin only): the admin talks to the AI as themselves, with every capability their OWN app
+ * access allows (the grid and the org switches only narrow, so lifting them never widens what the app allows), ticket
+ * creation forced to test mode so nothing real is created, and no mistake-flagging (the admin teaches directly).
+ */
+export function trainingSettings(s: AiSettings, actorRoles: string[], userId: string): AiSettings {
+    return {
+        ...s,
+        enabled: true,
+        channels: { ...s.channels, app_chat: true },
+        access: { mode: 'selected_people', userIds: [userId], roles: [] },
+        blockedUserIds: [],
+        propertyIds: null,
+        grid: Object.fromEntries(actorRoles.map(r => [r, { tickets: 'questions_actions' as const, electricity_readings: 'questions' as const }])),
+        entryModes: { 'ticket.create': 'shadow' },
+        learning: { enabled: false },
+        limits: { ...s.limits, perUserPerHour: PLATFORM_LIMITS.perUserPerHour },
+    };
+}
+
 export function effectiveLimits(s: AiSettings) {
     return {
         perUserPerHour: Math.min(s.limits.perUserPerHour, PLATFORM_LIMITS.perUserPerHour),

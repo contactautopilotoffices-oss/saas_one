@@ -73,7 +73,9 @@ export interface TurnInput {
  * outcome = 'unsupported' when the layer had nothing to offer (no entry fits, or nothing is switched on for this person)
  * and no draft is in progress. On WhatsApp such a message is handed back to the existing bot instead of being answered.
  */
-export interface TurnOutput { reply: TurnReply; state: TurnState; outcome: 'handled' | 'unsupported' }
+/** What the AI understood this turn (shown in the training chat so an admin can confirm or correct it). */
+export interface Understood { entryId: string | null; fields: Record<string, unknown> | null }
+export interface TurnOutput { reply: TurnReply; state: TurnState; outcome: 'handled' | 'unsupported'; understood?: Understood }
 
 const MAX_ASKS = 6;
 
@@ -103,9 +105,12 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     let lastFields: Record<string, unknown> | null = null;
     const last = (text: string): NonNullable<TurnState['last']> =>
         ({ text: clip(message, 300), at: deps.now().toISOString(), entryId: lastEntryId, fields: lastFields, reply: clip(text, 300) });
+    // 'tasks' / 'none' / 'forbidden' / 'hr' for those answers; otherwise the catalog entry used this turn.
+    let understoodAs: string | null = null;
+    const understood = (): Understood => ({ entryId: understoodAs ?? lastEntryId, fields: lastFields });
     const done = (text: string, extra: Partial<TurnReply> = {}, draft: Draft | null = null): TurnOutput =>
-        ({ reply: { text, ...extra }, state: { lang, draft, last: last(text) }, outcome: 'handled' });
-    const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null, last: last(text) }, outcome: 'unsupported' });
+        ({ reply: { text, ...extra }, state: { lang, draft, last: last(text) }, outcome: 'handled', understood: understood() });
+    const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null, last: last(text) }, outcome: 'unsupported', understood: understood() });
 
     // Learning loop: what this org taught the AI, and flagging likely mistakes (only while the org has it switched on).
     const learning: LearningContext = deps.learning ? await deps.learning.load(actor.orgId).catch(() => NO_LEARNING) : NO_LEARNING;
@@ -140,6 +145,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
 
     // HR matters never go to the AI or into a facility ticket, even in the middle of a draft (the draft is dropped).
     if (isHrMatter(message)) {
+        understoodAs = 'hr';
         await safeAudit({ entryId: 'hr.redirect', decision: 'refused', refusalReason: 'hr_matter' });
         return done(t('hr_redirect', lang));
     }
@@ -156,6 +162,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     }
 
     if (isForbiddenRequest(message)) {
+        understoodAs = 'forbidden';
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'forbidden_request' });
         // On WhatsApp the Task Manager AI decides about its own tasks (e.g. "delete task 3"); this layer still does nothing.
         return passOn(t('forbidden', lang));
@@ -180,14 +187,17 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     const v = result.value;
 
     if (v.entry === 'forbidden') {
+        understoodAs = 'forbidden';
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'forbidden_request', ...usage });
         return passOn(t('forbidden', lang));
     }
     if (v.entry === 'tasks') {
+        understoodAs = 'tasks';
         await safeAudit({ entryId: null, decision: 'handed_off', refusalReason: 'to_task_manager', ...usage });
         return unsupported(t('tasks_elsewhere', lang));
     }
     if (v.entry === 'none') {
+        understoodAs = 'none';
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'unsupported', topic: 'topic' in v ? v.topic : null, ...usage });
         const reply = t('unknown', lang, { abilities });
         flag(['unknown'], { botReply: reply });
@@ -226,6 +236,8 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     }
 
     // ticket.create: start a draft from what the message already contains.
+    lastEntryId = 'ticket.create';
+    lastFields = { urgent: fields.urgent === true };
     const description = grounded(typeof fields.description === 'string' ? fields.description : null, message) ?? null;
     const draft: Draft = {
         entryId: 'ticket.create', opId: randomUUID(),
