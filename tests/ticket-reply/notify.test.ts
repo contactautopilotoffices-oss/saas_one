@@ -79,6 +79,48 @@ describe('the TICKET_REPLY event', () => {
     });
 });
 
+describe('the real path from event to queue', () => {
+    /** Only the database is fake: the processor, resolver and queue service below are the real ones. */
+    function database(configError: { code: string; message: string } | null) {
+        const queued: Record<string, unknown>[] = [];
+        admin.from = (table: string) => {
+            const result = () => {
+                if (table === 'system_config') return { data: null, error: configError };
+                if (table === 'organization_settings') return { data: { notification_matrix: {}, whatsapp_service_config: {}, whatsapp_templates: {} }, error: null };
+                if (table === 'users') return { data: [{ id: 'lohit', phone: '9876543210', full_name: 'Lohit' }], error: null };
+                return { data: [], error: null };
+            };
+            const query = {
+                select: () => query, eq: () => query, in: () => query, gte: () => query,
+                insert: (rows: Record<string, unknown>[]) => { queued.push(...rows); return query; },
+                maybeSingle: async () => ({ data: table === 'users' ? { full_name: 'Rahul Verma' } : result().data, error: null }),
+                then: (resolve: (value: unknown) => unknown) => Promise.resolve(result()).then(resolve),
+            };
+            return query;
+        };
+        return queued;
+    }
+
+    it('queues the message when the system_config table does not exist (live 2026-11-04)', async () => {
+        WhatsAppEventProcessor.dispatch = realDispatch;
+        const queued = database({ code: 'PGRST205', message: "Could not find the table 'public.system_config' in the schema cache" });
+        await WhatsAppEventProcessor.processEvent({ event_type: 'TICKET_REPLY', payload });
+        assert.equal(queued.length, 1);
+        assert.equal(queued[0].user_id, 'lohit');
+        assert.equal(queued[0].entity_id, 'comment-1');
+        assert.equal(queued[0].event_type, 'TICKET_REPLY');
+        assert.equal(queued[0].template_name, 'ticket_reply_v1');
+        assert.deepEqual(queued[0].template_params, ['Lohit', 'Rahul Verma', 'TICK-1042', 'Company emails creation', 'I need the email approval attachment first.']);
+    });
+
+    it('still stops on a real read failure, so a switch that is set cannot be skipped', async () => {
+        WhatsAppEventProcessor.dispatch = realDispatch;
+        const queued = database({ code: '08006', message: 'connection failure' });
+        await assert.rejects(WhatsAppEventProcessor.processEvent({ event_type: 'TICKET_REPLY', payload }));
+        assert.equal(queued.length, 0);
+    });
+});
+
 describe('saving the sent message id for swipe-reply', () => {
     function capture() {
         const saved: { table: string; rows: Record<string, unknown>[] }[] = [];

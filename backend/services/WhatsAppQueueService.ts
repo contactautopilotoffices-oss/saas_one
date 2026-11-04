@@ -51,7 +51,9 @@ export class WhatsAppQueueService {
             .select('key, value')
             .in('key', keys);
 
-        if (configError && payload.durableBatch) throw configError;
+        // No system_config table means no switch is set, so sending stays on. Any other read failure is still a real failure.
+        const configTableMissing = configError?.code === 'PGRST205' || configError?.code === '42P01';
+        if (configError && payload.durableBatch && !configTableMissing) throw configError;
         const configMap = (configs || []).reduce((acc, row) => ({ ...acc, [row.key]: row.value === true }), {} as Record<string, boolean>);
         
         const isGlobalEnabled = configMap['whatsapp_notifications_enabled'] !== false;
