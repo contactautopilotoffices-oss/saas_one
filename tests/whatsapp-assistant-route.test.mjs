@@ -294,13 +294,26 @@ test('AI layer: a message it takes is answered in the background and nothing old
     assert.equal(route.callbacks.length, 1, 'the reply is sent after the webhook answers');
 });
 
-test('AI layer runs AFTER the Task Manager brain: a message the brain takes never reaches it', async () => {
+test('AI layer reads the message BEFORE Smart chat (owner 2026-11-04): a message it takes never reaches the task brain', async () => {
+    const order = [];
     const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
-        '@/task-manager/brain/live': { claimSmartChat: async () => ({ handled: true, background: async () => {} }) },
-        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => assert.fail('the brain took it first') },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => { order.push('ai'); return { handled: true, background: async () => {} }; } },
+        '@/task-manager/brain/live': { claimSmartChat: async () => assert.fail('the AI layer took it first') },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'AI_LAYER');
+    assert.deepEqual(order, ['ai']);
+});
+
+test('a message the AI layer passes on (e.g. about tasks) goes to Smart chat exactly as before', async () => {
+    const order = [];
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => { order.push('ai'); return { handled: false, why: 'unsupported' }; } },
+        '@/task-manager/brain/live': { claimSmartChat: async () => { order.push('brain'); return { handled: true, background: async () => {} }; } },
     });
     const response = await route.POST(request());
     assert.equal((await response.json()).routedTo, 'SMART_CHAT');
+    assert.deepEqual(order, ['ai', 'brain']);
 });
 
 test('a swipe-reply to a ticket notification is taken before voice, task import, smart chat and the facility bot',async()=>{

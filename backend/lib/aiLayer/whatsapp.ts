@@ -30,7 +30,15 @@ export interface WhatsAppDeps {
     saveState(orgId: string, userId: string, state: unknown): Promise<void>;
     runTurn(input: TurnInput, phone: string, userId: string): Promise<TurnOutput>;
     sendReply(phone: string, text: string): Promise<boolean>;
+    /** Optional cached version of resolveWhatsAppPerson (live: 60 s per phone, so every WhatsApp message stays cheap). */
+    resolvePerson?(phone: string): Promise<WhatsAppPerson>;
 }
+
+/**
+ * Short replies that belong to whatever the Task Manager AI or the old bot just asked ("yes", "2", "done 3", "undo").
+ * When this layer has no conversation of its own going, these skip it entirely: no AI call, no delay for task replies.
+ */
+const SHORT_REPLY = /^(y|yes|n|no|ok|okay|haan|han|ha|ji|nahi|nahin|cancel|undo|menu|help|tasks?|my tasks|\d{1,2}|done( all| \d{1,2}([ ,&and]+\d{1,2})*)?)[\s.!]*$/i;
 
 export type WhatsAppClaim = { handled: false; why: string } | { handled: true; background: () => Promise<void> };
 
@@ -64,13 +72,14 @@ export async function claimWhatsApp(deps: WhatsAppDeps, input: WhatsAppInbound |
         if (deps.env.AI_LAYER_DISABLED === 'true') return { handled: false, why: 'kill_switch' };
         if (!input?.phone || !input.text?.trim() || input.mediaUrl) return { handled: false, why: 'not_text' };
 
-        const person = await resolveWhatsAppPerson(deps, input.phone);
+        const person = deps.resolvePerson ? await deps.resolvePerson(input.phone) : await resolveWhatsAppPerson(deps, input.phone);
         if (!person.ok) return { handled: false, why: person.why };
         const { orgId, actor, settings } = person;
         const user = { id: person.userId };
 
         const saved = stateSchema.safeParse(await deps.loadState(orgId, user.id) ?? {});
         const state = saved.success ? saved.data : null;
+        if (!state?.draft && SHORT_REPLY.test(input.text.trim())) return { handled: false, why: 'short_reply' };
         const out = await deps.runTurn({ actor, settings, channel: 'whatsapp', message: input.text, state }, input.phone, user.id);
         if (out.outcome === 'unsupported') return { handled: false, why: 'unsupported' };
 
