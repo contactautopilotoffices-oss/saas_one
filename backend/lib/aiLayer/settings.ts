@@ -32,6 +32,10 @@ export const settingsSchema = z.object({
     grid: z.record(z.string().min(1).max(64), moduleGrid).default({}),
     /** catalog entry id → off / shadow / live. Missing = the entry's default (writes start in shadow). */
     entryModes: z.record(z.string().min(1).max(64), entryMode).default({}),
+    /** Learning loop (owner 2026-11-04): flag likely mistakes for review, so an org super admin can teach the AI. */
+    learning: z.object({ enabled: z.boolean().default(false) }).strict().default({ enabled: false }),
+    /** Property nicknames: property id → other names people use for it ("DMC", "Mafatlal"). */
+    aliases: z.record(z.string().uuid(), z.array(z.string().trim().min(2).max(40)).max(10)).default({}),
     limits: z.object({
         perUserPerHour: z.number().int().min(1).max(1000).default(30),
         actionsPerUserPerDay: z.number().int().min(1).max(1000).default(50),

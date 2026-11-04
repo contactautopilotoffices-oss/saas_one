@@ -82,6 +82,7 @@ export async function PUT(request: NextRequest) {
         const badUser = [...config.access.userIds, ...config.blockedUserIds].find(id => !userIds.has(id));
         if (badUser) return NextResponse.json({ error: 'Every selected or blocked person must belong to this organization' }, { status: 400 });
         if (config.propertyIds?.some(id => !propertyIds.has(id))) return NextResponse.json({ error: 'Every selected property must belong to this organization' }, { status: 400 });
+        if (Object.keys(config.aliases).some(id => !propertyIds.has(id))) return NextResponse.json({ error: 'Nicknames can only be set for this organization\'s properties' }, { status: 400 });
         const badRole = [...config.access.roles, ...Object.keys(config.grid)].find(r => !ROLE.test(r));
         if (badRole) return NextResponse.json({ error: `Unknown role: ${badRole}` }, { status: 400 });
         const knownEntries = new Set(CATALOG.map(e => e.id));

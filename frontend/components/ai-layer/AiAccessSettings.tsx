@@ -6,6 +6,7 @@
  * already gives their role.
  */
 import { useEffect, useMemo, useState } from 'react';
+import AiLearningPanel from './AiLearningPanel';
 
 type GridLevel = 'off' | 'questions' | 'questions_actions';
 type ModuleId = 'tickets' | 'electricity_readings';
@@ -18,6 +19,8 @@ interface Config {
     grid: Record<string, Partial<Record<ModuleId, GridLevel>>>;
     entryModes: Record<string, 'off' | 'shadow' | 'live'>;
     limits: { perUserPerHour: number; actionsPerUserPerDay: number };
+    learning: { enabled: boolean };
+    aliases: Record<string, string[]>;
 }
 interface Entry { id: string; kind: 'question' | 'write'; module: ModuleId; defaultMode: 'off' | 'shadow' | 'live'; label: string }
 interface Person { id: string; name: string; email: string }
@@ -214,6 +217,33 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
             </section>
 
             <section className={card}>
+                <p className={h}>Property nicknames</p>
+                <p className={sub}>Other names people use for a property, separated by commas (e.g. &ldquo;DMC, Mafatlal&rdquo;). The AI then recognises them, and small spelling mistakes too.</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {properties.map(p => (
+                        <label key={p.id} className="text-sm">
+                            <span className="text-slate-700">{p.name}</span>
+                            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm" placeholder="Nicknames…"
+                                defaultValue={(config.aliases?.[p.id] || []).join(', ')}
+                                onBlur={e => {
+                                    const list = e.target.value.split(',').map(x => x.trim()).filter(x => x.length >= 2).slice(0, 10).map(x => x.slice(0, 40));
+                                    const next = { ...(config.aliases || {}) };
+                                    if (list.length) next[p.id] = list; else delete next[p.id];
+                                    set({ aliases: next });
+                                }} />
+                        </label>
+                    ))}
+                </div>
+            </section>
+
+            <section className={card}>
+                <label className="flex items-center justify-between gap-4">
+                    <span><span className={h}>Learning loop</span><span className={`block ${sub}`}>When on, messages the AI probably got wrong (didn&apos;t understand, &ldquo;no, I meant…&rdquo;, asked again, going in circles) are kept for 30 days in <b>Review mistakes</b> below, so you can teach it. Phone numbers are masked; HR complaints are never kept.</span></span>
+                    <input type="checkbox" className="h-5 w-5" checked={config.learning?.enabled === true} onChange={e => set({ learning: { enabled: e.target.checked } })} />
+                </label>
+            </section>
+
+            <section className={card}>
                 <p className={h}>What each role can use</p>
                 <p className={sub}>Answers are always limited to the buildings and records the person can already see.</p>
                 <div className="mt-3 overflow-x-auto">
@@ -297,6 +327,8 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                     </div>
                 )}
             </section>
+
+            <AiLearningPanel organizationId={organizationId} />
         </div>
     );
 }

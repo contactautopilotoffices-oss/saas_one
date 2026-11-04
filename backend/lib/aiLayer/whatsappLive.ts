@@ -7,7 +7,7 @@ import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from './scope';
 import { gate } from './settings';
 import { handleTurn } from './pipeline';
-import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseStateStore, whatsappAiData } from './server';
+import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseLearning, supabaseStateStore, whatsappAiData } from './server';
 import { claimWhatsApp, resolveWhatsAppPerson, type WhatsAppDeps, type WhatsAppInbound, type WhatsAppPerson } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
@@ -57,6 +57,7 @@ export function liveWhatsAppDeps(): WhatsAppDeps {
             data: whatsappAiData(supabaseAdmin, phone, userId),
             llm: brainInterpretLlm(),
             audit: supabaseAuditStore(supabaseAdmin),
+            learning: supabaseLearning(supabaseAdmin),
             now: () => new Date(),
             allowMessage: (key, perHour) => checkRateLimit(key, { maxRequests: perHour, windowMs: 3_600_000 }).allowed,
         }, input),

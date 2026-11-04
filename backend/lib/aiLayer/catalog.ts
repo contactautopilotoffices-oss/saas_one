@@ -120,6 +120,28 @@ export const readingsStatus: QuestionEntry<z.infer<typeof readingsFields>> = {
         const day = rangeFor(f.day, now).fromDate;
         const rows = await data.readingsStatus(propertyIds, day);
         const label = periodLabel(f.day, lang);
+        // Many properties (org-wide roles): one summary line + one short line each, worst first. Details for one property.
+        if (propertyIds.length > 3) {
+            const per = propertyIds.map(pid => {
+                const mine = rows.filter(r => r.propertyId === pid);
+                const active = mine.filter(r => r.meterStatus === 'active');
+                return {
+                    pid, active: active.length, logged: active.filter(r => r.logged).length,
+                    critical: mine.filter(r => r.alertStatus === 'critical').length,
+                    faulty: mine.filter(r => r.meterStatus === 'faulty').length,
+                };
+            }).filter(p => p.active > 0 || p.faulty > 0);
+            if (!per.length) return { ok: true, reply: t('readings_no_meters', lang, { property: scopeLabel(propertyIds.map(id => actor.propertyNames[id]), lang) }) };
+            per.sort((a, b) => (a.logged / Math.max(a.active, 1)) - (b.logged / Math.max(b.active, 1)) || b.active - a.active);
+            const total = per.reduce((n, p) => n + p.active, 0); const done = per.reduce((n, p) => n + p.logged, 0);
+            const lines = per.slice(0, 12).map(p => t('readings_line', lang, {
+                property: actor.propertyNames[p.pid], logged: p.logged, active: p.active,
+                extra: `${p.critical ? `, 🔴 ${p.critical} critical` : ''}${p.faulty ? `, 🛠️ ${p.faulty} faulty` : ''}`,
+            }));
+            if (per.length > 12) lines.push(`+${per.length - 12}`);
+            return { ok: true, reply: [t('readings_summary', lang, { period: label, logged: done, active: total, count: per.length }), ...lines,
+                t('readings_more', lang, { example: actor.propertyNames[per[0].pid] })].join('\n') };
+        }
         const out: string[] = [];
         for (const pid of propertyIds) {
             const mine = rows.filter(r => r.propertyId === pid);
@@ -214,16 +236,74 @@ function clip(s: string, n: number): string {
 function list(xs: string[]): string { return xs.slice(0, 8).join(', ') + (xs.length > 8 ? ` +${xs.length - 8}` : ''); }
 function fmt(n: number): string { return Math.round(n).toLocaleString('en-IN'); }
 
-/** Match a building name the AI extracted against the actor's properties. null = no match. */
-export function matchProperty(name: string, names: Record<string, string>): string | null {
-    const q = name.toLowerCase().replace(/[^a-z0-9ऀ-ॿ ]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (!q) return null;
-    const entries = Object.entries(names);
-    const exact = entries.filter(([, n]) => n.toLowerCase() === q);
-    if (exact.length === 1) return exact[0][0];
-    const partial = entries.filter(([, n]) => {
-        const low = n.toLowerCase();
-        return low.includes(q) || q.split(' ').filter(w => w.length >= 4).some(w => low.includes(w));
-    });
-    return partial.length === 1 ? partial[0][0] : null;
+/** Lower-case, letters and digits only, single spaces. */
+function norm(s: string): string {
+    return s.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N} ]/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Edit distance, capped: enough to forgive "maftalal" for "mafatlal" (a swap = 2 edits) on longer words. */
+function editDistance(a: string, b: string, cap = 3): number {
+    if (Math.abs(a.length - b.length) > cap) return cap + 1;
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+        const cur = [i];
+        let best = i;
+        for (let j = 1; j <= b.length; j++) {
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            best = Math.min(best, cur[j]);
+        }
+        if (best > cap) return cap + 1;
+        prev = cur;
+    }
+    return prev[b.length];
+}
+
+/** Does word w (from what the person typed) match word t (from a property name), allowing small spelling mistakes? */
+function wordMatches(w: string, t: string): boolean {
+    if (w === t) return true;
+    if (w.length >= 4 && (t.startsWith(w) || w.startsWith(t) && t.length >= 4)) return true;
+    if (w.length >= 5 && t.length >= 5) return editDistance(w, t, 2) <= 2;
+    return false;
+}
+
+/**
+ * How well what the person typed matches one property (its name and its nicknames): 0..1. Every typed word must find a
+ * matching word for a full score; generic words like "the" or "office" count for less.
+ */
+const WEAK = new Set(['the', 'office', 'building', 'property', 'site', 'chambers', 'tower', 'plaza', 'house', 'park', 'centre', 'center']);
+function scoreName(typed: string[], name: string): number {
+    const target = norm(name).split(' ').filter(Boolean);
+    if (!typed.length || !target.length) return 0;
+    if (typed.join(' ') === target.join(' ')) return 1;
+    let got = 0; let total = 0;
+    for (const w of typed) {
+        const weight = WEAK.has(w) || w.length <= 2 ? 0.3 : 1;
+        total += weight;
+        if (target.some(t => wordMatches(w, t))) got += weight;
+    }
+    return total ? got / total : 0;
+}
+
+export function rankProperties(name: string, names: Record<string, string>, aliases: Record<string, string[]> = {}): Array<{ id: string; score: number }> {
+    const typed = norm(name).split(' ').filter(Boolean);
+    return Object.entries(names)
+        .map(([id, n]) => ({ id, score: Math.max(scoreName(typed, n), ...(aliases[id] || []).map(a => scoreName(typed, a))) }))
+        .filter(r => r.score > 0)
+        .sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Match a property name the person or the AI gave against the actor's properties (names and nicknames), forgiving
+ * small spelling mistakes. null = no clear single match (then use suggestProperties for "Did you mean…?").
+ */
+export function matchProperty(name: string, names: Record<string, string>, aliases: Record<string, string[]> = {}): string | null {
+    const ranked = rankProperties(name, names, aliases);
+    if (!ranked.length || ranked[0].score < 0.75) return null;
+    if (ranked.length > 1 && ranked[1].score >= ranked[0].score - 0.1) return null; // two look the same: don't guess
+    return ranked[0].id;
+}
+
+/** Up to 5 likely properties for "Did you mean…?". */
+export function suggestProperties(name: string, names: Record<string, string>, aliases: Record<string, string[]> = {}): string[] {
+    return rankProperties(name, names, aliases).filter(r => r.score >= 0.3).slice(0, 5).map(r => r.id);
 }

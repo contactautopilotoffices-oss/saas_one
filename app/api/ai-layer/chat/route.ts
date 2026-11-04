@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { gate, handleTurn, loadActor, stateSchema, t, detectLang } from '@/backend/lib/aiLayer';
-import { brainInterpretLlm, loadSettings, supabaseAiData, supabaseAuditStore } from '@/backend/lib/aiLayer/server';
+import { brainInterpretLlm, loadSettings, supabaseAiData, supabaseAuditStore, supabaseLearning } from '@/backend/lib/aiLayer/server';
 import { requireSession } from '../_lib/auth';
 
 export const runtime = 'nodejs';
@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
             data: supabaseAiData(supabaseAdmin, request.url),
             llm: brainInterpretLlm(),
             audit: supabaseAuditStore(supabaseAdmin),
+            learning: supabaseLearning(supabaseAdmin),
             now: () => new Date(),
             allowMessage: (key, perHour) => checkRateLimit(key, { maxRequests: perHour, windowMs: 3_600_000 }).allowed,
         }, { actor: g.actor, settings, channel: 'app_chat', message, state: parsed.data.state ?? null });

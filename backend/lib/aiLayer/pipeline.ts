@@ -13,7 +13,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { ActorContext, AiData, Channel, Lang, TurnReply } from './types';
-import { CATALOG, catalogFor, matchProperty, ticketCreate, type CatalogEntry, type QuestionEntry } from './catalog';
+import { CATALOG, catalogFor, matchProperty, suggestProperties, ticketCreate, type CatalogEntry, type QuestionEntry } from './catalog';
+import { followUpTriggers, selectExamples, type FlagTrigger, type LearningContext, type ReviewFlag } from './learning';
 import { interpret, isForbiddenRequest, isHrMatter, type InterpretLlm } from './interpret';
 import { CHANGE, NO, SKIP, YES, detectLang, t } from './language';
 import { buildAuditRow, type AuditInput, type AuditStore } from './audit';
@@ -33,6 +34,14 @@ export const stateSchema = z.object({
         asked: z.enum(['property', 'description', 'location', 'confirm', 'change']).nullish(),
         askCount: z.number().int().min(0).max(50).default(0),
     }).strict().nullish(),
+    /** The previous turn, kept 10 minutes: lets "what is missing" follow an answer, and spots "no, I meant…" / asking again. */
+    last: z.object({
+        text: z.string().max(300),
+        at: z.string().max(40),
+        entryId: z.string().max(64).nullish(),
+        fields: z.record(z.string(), z.unknown()).nullish(),
+        reply: z.string().max(300).nullish(),
+    }).strict().nullish(),
 }).strict();
 export type TurnState = z.infer<typeof stateSchema>;
 type Draft = NonNullable<TurnState['draft']>;
@@ -44,7 +53,13 @@ export interface PipelineDeps {
     now(): Date;
     /** true = allowed. Per person per hour. */
     allowMessage(key: string, perHour: number): boolean;
+    /** Learning loop (optional): what this org has taught the AI, and where likely mistakes are flagged for review. */
+    learning?: { load(orgId: string): Promise<LearningContext>; flag(f: ReviewFlag): Promise<void> };
 }
+
+const NO_LEARNING: LearningContext = { enabled: false, examples: [], instructions: null };
+const FOLLOW_UP_MS = 10 * 60_000;
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 export interface TurnInput {
     actor: ActorContext;
@@ -83,9 +98,23 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
         }
     };
     const safeAudit = (a: Parameters<typeof audit>[0]) => audit(a).catch(() => undefined);
+    // What this turn answered, remembered for the next one (follow-ups and "no, I meant…").
+    let lastEntryId: string | null = state.draft ? state.draft.entryId : null;
+    let lastFields: Record<string, unknown> | null = null;
+    const last = (text: string): NonNullable<TurnState['last']> =>
+        ({ text: clip(message, 300), at: deps.now().toISOString(), entryId: lastEntryId, fields: lastFields, reply: clip(text, 300) });
     const done = (text: string, extra: Partial<TurnReply> = {}, draft: Draft | null = null): TurnOutput =>
-        ({ reply: { text, ...extra }, state: { lang, draft }, outcome: 'handled' });
-    const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null }, outcome: 'unsupported' });
+        ({ reply: { text, ...extra }, state: { lang, draft, last: last(text) }, outcome: 'handled' });
+    const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null, last: last(text) }, outcome: 'unsupported' });
+
+    // Learning loop: what this org taught the AI, and flagging likely mistakes (only while the org has it switched on).
+    const learning: LearningContext = deps.learning ? await deps.learning.load(actor.orgId).catch(() => NO_LEARNING) : NO_LEARNING;
+    // Taught examples and the live instructions always apply; FLAGGING only while the org's learning loop is on.
+    const flag = (triggers: FlagTrigger[], f: Partial<ReviewFlag>) => {
+        if (settings.learning?.enabled !== true || !deps.learning || !triggers.length) return;
+        void deps.learning.flag({ orgId: actor.orgId, userId: actor.userId, channel, messageText: message, triggers, ...f }).catch(() => undefined);
+    };
+    const aliases = settings.aliases ?? {};
     // WhatsApp (owner 2026-11-04): this layer reads the message BEFORE the Task Manager AI. Whatever it can't or shouldn't
     // answer (tasks, a request it may not do, its own limit, the AI being down) is passed on, so the Task Manager AI and
     // the old bot answer exactly as before. In-app chat has nobody to pass to, so it answers.
@@ -115,6 +144,12 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
         return done(t('hr_redirect', lang));
     }
 
+    // "no, I meant…" or the same question again: the PREVIOUS answer was probably wrong. Flag that one for review.
+    if (!state.draft && state.last) {
+        const fu = followUpTriggers(state.last, message, deps.now());
+        if (fu.length) flag(fu, { messageText: state.last.text, followUpText: message, botReply: state.last.reply ?? null, entryId: state.last.entryId ?? null });
+    }
+
     // A draft in progress, but only while ticket creation is still allowed for this person.
     if (state.draft && writeMode) {
         return continueDraft(state.draft);
@@ -128,7 +163,15 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
 
     let result;
     try {
-        result = await interpret(deps.llm, message, available.map(a => a.entry), Object.values(actor.propertyNames), null);
+        const recent = state.last && state.last.entryId && deps.now().getTime() - Date.parse(state.last.at) <= FOLLOW_UP_MS ? state.last : null;
+        const context = recent
+            ? `The previous question (a few minutes ago) was ${JSON.stringify({ entry: recent.entryId, fields: recent.fields ?? {} })}. If this message is a short follow-up to it (e.g. "what is missing", "and yesterday?", "only SS Plaza", "details"), use the same entry and change only what the person changed.`
+            : null;
+        const propertyList = actor.propertyIds.map(id => actor.propertyNames[id] + (aliases[id]?.length ? ` (${aliases[id].join(', ')})` : ''));
+        result = await interpret(deps.llm, message, available.map(a => a.entry), propertyList, context, {
+            examples: selectExamples(message, learning.examples, available.map(a => a.entry.id)),
+            instructions: learning.instructions,
+        });
     } catch {
         await safeAudit({ entryId: null, decision: 'error', refusalReason: 'ai_unavailable' });
         return passOn(t('ai_down', lang));
@@ -146,7 +189,9 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     }
     if (v.entry === 'none') {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'unsupported', topic: 'topic' in v ? v.topic : null, ...usage });
-        return unsupported(t('unknown', lang, { abilities }));
+        const reply = t('unknown', lang, { abilities });
+        flag(['unknown'], { botReply: reply });
+        return unsupported(reply);
     }
     const entry = CATALOG.find(e => e.id === v.entry) as CatalogEntry;
     const fields = 'fields' in v ? v.fields : {};
@@ -155,7 +200,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     const named = typeof fields.property_name === 'string' && fields.property_name.trim() ? fields.property_name.trim() : null;
     let propertyIds = actor.propertyIds;
     if (named) {
-        const match = matchProperty(named, actor.propertyNames);
+        const match = matchProperty(named, actor.propertyNames, aliases);
         if (!match) {
             await safeAudit({ entryId: entry.id, decision: 'refused', refusalReason: 'out_of_scope_property', ...usage });
             return done(t('out_of_scope', lang, { properties: Object.values(actor.propertyNames).slice(0, 5).join(', ') }));
@@ -169,6 +214,8 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
         const f = parsed.success ? parsed.data : q.fields.parse({});
         try {
             const out = await q.run({ actor, data: deps.data, lang, now: deps.now() }, f, propertyIds);
+            lastEntryId = entry.id;
+            lastFields = { ...f, ...(named ? { property_name: named } : {}) };
             await safeAudit({ entryId: entry.id, decision: 'answered', fields: { ...f, property_count: propertyIds.length }, ...usage });
             return done(out.reply);
         } catch (err) {
@@ -196,13 +243,15 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     async function nextStep(d: Draft, usage: Partial<AuditInput> = {}): Promise<TurnOutput> {
         if (d.askCount >= MAX_ASKS) {
             await safeAudit({ entryId: d.entryId, decision: 'handed_off', refusalReason: 'too_many_questions', fields: d, ...usage });
+            flag(['too_many_questions'], { entryId: d.entryId, botReply: t('handoff', lang) });
             return done(t('handoff', lang));
         }
         if (!d.propertyId && actor.propertyIds.length === 1) d = { ...d, propertyId: actor.propertyIds[0] };
         if (!d.propertyId) {
+            // Always numbered (owner 2026-11-04: "where are the numbers"), up to 40; beyond that, by name.
             const names = actor.propertyIds.map(id => actor.propertyNames[id]);
-            const options = names.length <= 10 ? names : undefined;
-            const text = options ? `${t('ask_property', lang)}\n${options.map((n, i) => `${i + 1}) ${n}`).join('\n')}` : `${t('ask_property', lang)} ${t('pick_number', lang)}`;
+            const options = names.length <= 40 ? names : undefined;
+            const text = options ? `${t('ask_property', lang)}\n${options.map((n, i) => `${i + 1}) ${n}`).join('\n')}\n${t('pick_number', lang)}` : `${t('ask_property', lang)} ${t('pick_number', lang)}`;
             await safeAudit({ entryId: d.entryId, decision: 'asked', fields: { asked: 'property' }, ...usage });
             return done(text, { options }, { ...d, asked: 'property', askCount: d.askCount + 1 });
         }
@@ -235,8 +284,15 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
             case 'property': {
                 const n = /^\d+$/.test(message) ? Number(message) : NaN;
                 const byNumber = Number.isInteger(n) && n >= 1 && n <= actor.propertyIds.length ? actor.propertyIds[n - 1] : null;
-                const id = byNumber ?? matchProperty(message, actor.propertyNames);
-                return nextStep({ ...d, propertyId: id });
+                const id = byNumber ?? matchProperty(message, actor.propertyNames, aliases);
+                if (id) return nextStep({ ...d, propertyId: id });
+                // Not clear: "Did you mean…?" with the same numbers as the full list, or the full list again.
+                if (d.askCount >= 2) flag(['repeated_clarify'], { entryId: d.entryId });
+                const near = suggestProperties(message, actor.propertyNames, aliases);
+                if (!near.length || d.askCount >= MAX_ASKS) return nextStep({ ...d, propertyId: null });
+                await safeAudit({ entryId: d.entryId, decision: 'asked', fields: { asked: 'property' } });
+                const lines = near.map(pid => `${actor.propertyIds.indexOf(pid) + 1}) ${actor.propertyNames[pid]}`);
+                return done(`${t('property_not_found', lang, { typed: clip(message, 40) })}\n${lines.join('\n')}\n${t('pick_number', lang)}`, {}, { ...d, asked: 'property', askCount: d.askCount + 1 });
             }
             case 'description':
                 return nextStep({ ...d, description: message.length >= 3 ? message.slice(0, 1000) : null });
@@ -264,7 +320,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
             if (r.value.entry === ticketCreate.id && 'fields' in r.value) {
                 const f = r.value.fields;
                 if (typeof f.property_name === 'string' && f.property_name.trim()) {
-                    const m = matchProperty(f.property_name, actor.propertyNames);
+                    const m = matchProperty(f.property_name, actor.propertyNames, aliases);
                     if (!m) return done(t('out_of_scope', lang, { properties: Object.values(actor.propertyNames).slice(0, 5).join(', ') }), {}, { ...d, asked: 'change' });
                     next.propertyId = m;
                 }
