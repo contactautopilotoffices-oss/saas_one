@@ -7,7 +7,7 @@ import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from './scope';
 import { handleTurn } from './pipeline';
 import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseStateStore, whatsappAiData } from './server';
-import { claimWhatsApp, type WhatsAppDeps, type WhatsAppInbound } from './whatsapp';
+import { claimWhatsApp, resolveWhatsAppPerson, type WhatsAppDeps, type WhatsAppInbound } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
     const [orgs, props] = await Promise.all([
@@ -62,6 +62,20 @@ async function anyOrgHasWhatsApp(): Promise<boolean> {
     const value = !error && (data || []).length > 0; // a missing table means "off"
     anyOn = { value, at: Date.now() };
     return value;
+}
+
+/**
+ * For the Task Manager brain ("one switch"): the user id the AI layer is switched on for at this phone on WhatsApp, or
+ * null. Cheap while no org has WhatsApp on (one cached check a minute). Never throws.
+ */
+export async function aiLayerWhatsAppUserFor(phone: string): Promise<string | null> {
+    try {
+        if (process.env.AI_LAYER_DISABLED === 'true' || !(await anyOrgHasWhatsApp())) return null;
+        const person = await resolveWhatsAppPerson(liveWhatsAppDeps(), phone);
+        return person.ok ? person.userId : null;
+    } catch {
+        return null;
+    }
 }
 
 /** Called by the AiSensy webhook. Never throws; { handled: false } = carry on exactly as before. */

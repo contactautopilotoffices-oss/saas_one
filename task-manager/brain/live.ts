@@ -187,6 +187,8 @@ export interface LiveIO {
     getSmartChatDepartments(): Promise<ReadonlySet<string>>;
     /** Owner 2026-10-28: personal exceptions to Smart chat (missing = everyone follows their team). */
     personalSmartChat?(): Promise<{ anyOn: boolean; of: (userId: string) => boolean | null }>;
+    /** Owner 2026-11-04 ("one switch"): the user id the AI Action Layer is switched on for at this phone on WhatsApp, or null. */
+    aiLayerOnFor?(phone: string): Promise<string | null>;
     getConfig(): Promise<TestingConfig>;
     getEmployee(phone: string): Promise<Employee | null>;
     checkAccess(employee: Employee): Promise<AccessDecision>;
@@ -334,10 +336,16 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
         // Group 2 "faster replies" (2026-10-13): reads that do not depend on each other run side by side (they used to run one
         // after another). The same checks, in the same order of meaning: any "no" still means the old bot answers.
         const t0 = Date.now();
-        const [teamDepartments, employee, personal] = await Promise.all([real.getSmartChatDepartments(), real.getEmployee(cand.phone), real.personalSmartChat ? real.personalSmartChat() : Promise.resolve(null)]);
-        if (teamDepartments.size === 0 && !personal?.anyOn) return NOT_HANDLED;
-        // Owner 2026-10-28: the person's own exception wins over their department's switch
-        const departments = withPersonalSwitch(teamDepartments, employee?.department_id, employee && personal ? personal.of(employee.id) : null);
+        const [teamDepartments, employee, personal, aiLayerUser] = await Promise.all([real.getSmartChatDepartments(), real.getEmployee(cand.phone), real.personalSmartChat ? real.personalSmartChat() : Promise.resolve(null), real.aiLayerOnFor ? real.aiLayerOnFor(cand.phone).catch(() => null) : Promise.resolve(null)]);
+        // Owner 2026-11-04 ("one switch"): an org super admin switching the AI on for this person on WhatsApp also turns
+        // Smart chat on for them, as if their personal switch were ON. Only when the AI layer's exact phone match is the
+        // same person as the Task Manager's.
+        const aiLayerOn = !!employee && aiLayerUser === employee.id;
+        if (teamDepartments.size === 0 && !personal?.anyOn && !aiLayerOn) return NOT_HANDLED;
+        // Owner 2026-10-28: the person's own exception wins over their department's switch (and over the AI layer switch:
+        // an explicit OFF for this person in the Task Access panel still turns Smart chat off)
+        const own = employee && personal ? personal.of(employee.id) : null;
+        const departments = withPersonalSwitch(teamDepartments, employee?.department_id, own ?? (aiLayerOn ? true : null));
         if (!employee?.department_id || !departments.has(employee.department_id)) return NOT_HANDLED;
         const [access, config] = await Promise.all([real.checkAccess(employee), real.getConfig()]);
         // Same people as the Task Manager itself, in a department with the switch ON, inside the sandbox while it is ON.
@@ -960,6 +968,10 @@ export async function defaultLiveIO(): Promise<LiveIO> {
     return {
         getSmartChatDepartments: async () => (await TaskAccessService.getSmartChatDepartments()).departments,
         personalSmartChat: () => TaskAccessService.personalSwitches('smart_chat'),
+        aiLayerOnFor: async phone => {
+            const { aiLayerWhatsAppUserFor } = await import('@/backend/lib/aiLayer/whatsappLive');
+            return aiLayerWhatsAppUserFor(phone);
+        },
         getConfig: () => TaskDatabaseService.getTestingConfig(),
         getEmployee: phone => TaskDatabaseService.getEmployeeByPhone(phone),
         checkAccess: e => TaskAccessService.check({ userId: e.id, departmentId: e.department_id }),
