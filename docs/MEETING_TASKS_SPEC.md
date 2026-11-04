@@ -45,7 +45,7 @@ Files: `supabase/migrations/20261029100001_meeting_notes.sql` (tables `meeting_n
 2. Processing only moves while someone has the meeting open (no background job, so no change to deployment config). Closing the page pauses it; opening it again continues.
 3. A recorded piece that never uploaded before the tab was closed is lost (pieces are kept in memory, not on disk).
 4. An "Autopilot" task has no human sender, so in the Task Manager it behaves like the person's own task (they can edit/delete it; nobody gets a "done" notice).
-5. Sarvam's diarization is beta; speaker labels are voices, not names.
+5. Sarvam's diarization is beta; speaker labels are voices, not names. Since 2026-11-03, LiveVoice ID can put names on them from voices people set up (department switch, OFF by default): see [LIVEVOICE_ID_PLAN.md](LIVEVOICE_ID_PLAN.md).
 6. Sarvam and Anthropic (and Groq on fallback) process the meeting text/audio.
 
 ---

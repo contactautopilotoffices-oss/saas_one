@@ -129,7 +129,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                     // Check if they are an admin on ANY of the properties being viewed
                     const hasAdminRole = membership?.properties?.some(p => 
                         propertyIds.includes(p.id) && 
-                        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(p.role?.toLowerCase() || '')
+                        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(p.role?.toLowerCase() || '')
                     );
                     
                     if (hasAdminRole) {
@@ -152,7 +152,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         fetchUserRole();
     }, [propertyId, propertyIds, membership, isMultiProperty]);
 
-    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole.toLowerCase());
+    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole.toLowerCase());
     const isOrgSuperAdmin = Boolean(
         membership?.is_master_admin ||
         (membership?.org_role && ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(membership.org_role.toLowerCase())) ||
@@ -447,7 +447,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                             templateId={selectedTemplateId}
                                             completionId={selectedCompletionId || undefined}
                                             completionDate={selectedCompletionDate || undefined}
-                                            isSuperAdmin={['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole.toLowerCase())}
+                                            isSuperAdmin={['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole.toLowerCase())}
                                             propertyId={viewingPropertyId!}
                                             onSessionStarted={handleSessionStarted}
                                             onComplete={handleChecklistComplete}

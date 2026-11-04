@@ -4,6 +4,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
 import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 // Extract floor number from description
 function extractFloorNumber(description: string): number | null {
@@ -435,7 +436,9 @@ export async function POST(request: NextRequest) {
         }
 
         // 3. CREATE TICKET
-        const ticketNumber = `TKT-${Date.now()}`;
+        const ticketNumber = propId
+            ? await generateNextTicketNumber(supabase, propId, orgId)
+            : `AP-GEN-${Date.now()}`;
 
         const { data: ticket, error: insertError } = await supabase
             .from('tickets')

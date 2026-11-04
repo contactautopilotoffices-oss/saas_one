@@ -72,6 +72,10 @@
       "schedule": "0 0 1 * *"
     },
     {
+      "path": "/api/cron/voice-id-keepalive",
+      "schedule": "17 */12 * * *"
+    },
+    {
       "path": "/api/cron/meeting-room-reminders",
       "schedule": "* * * * *"
     },

@@ -38,6 +38,8 @@ interface AccessDepartment {
     assignedTab?: boolean;
     /** Owner 2026-10-27: deadlines on tasks (countdown, "due soon" reminder, on-time / late). */
     dueDates?: boolean;
+    /** Owner 2026-11-02: Meeting Assistant names who spoke, from voices people set up (LiveVoice ID). */
+    voiceId?: boolean;
     /** Owner 2026-10-27: the Send tab's "Other departments" side (ON by default). */
     crossDeptCollab?: boolean;
     /** Owner 2026-10-27: who may SEND to other departments: everyone, or only the ticked people. */
@@ -139,6 +141,7 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
     const [teamAssignColumnMissing, setTeamAssignColumnMissing] = useState(false);
     const [teamFeaturesColumnMissing, setTeamFeaturesColumnMissing] = useState(false);
     const [dueDatesColumnMissing, setDueDatesColumnMissing] = useState(false);
+    const [voiceIdColumnMissing, setVoiceIdColumnMissing] = useState(false);
     const [crossDeptColumnMissing, setCrossDeptColumnMissing] = useState(false);
     const [crossDeptScopeColumnMissing, setCrossDeptScopeColumnMissing] = useState(false);
     const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
@@ -168,6 +171,7 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             setTeamAssignColumnMissing(Boolean(data.teamAssignColumnMissing));
             setTeamFeaturesColumnMissing(Boolean(data.teamFeaturesColumnMissing));
             setDueDatesColumnMissing(Boolean(data.dueDatesColumnMissing));
+            setVoiceIdColumnMissing(Boolean(data.voiceIdColumnMissing));
             setCrossDeptColumnMissing(Boolean(data.crossDeptColumnMissing));
             setCrossDeptScopeColumnMissing(Boolean(data.crossDeptScopeColumnMissing));
             setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
@@ -261,9 +265,13 @@ People in ${n} can no longer send anything to other departments, and other depar
             on: (n: string) => `Switch "Due dates" ON for ${n}?\n\nPeople in ${n} can give a task a deadline (a date, and a time if they want). Cards count down ("Due in 3 h", "Overdue by 40 min"), a task that takes several days is not "carried forward" before its deadline, and finished tasks show "Done on time" or how late. People in ${n} get ONE reminder before a deadline (2 hours before a set time, or 5 pm the day before) in the app and on WhatsApp (template task_due_soon_v1; kill switches and Pretend Mode apply).`,
             off: (n: string) => `Switch "Due dates" OFF for ${n}?\n\nPeople in ${n} can no longer set deadlines and get no more "due soon" reminders. Deadlines already set still show on the cards. No task is changed.`,
         },
+        voice_id: {
+            on: (n: string) => `Switch "Recognise speakers by voice" ON for ${n}?\n\nWhen someone in ${n} records a meeting in the Meeting Assistant, the people picked as present who have set up their voice (Settings → My voice) are recognised in the recording: the transcript shows their names instead of "Speaker 1", and tasks show who asked for them. Voices that are not recognised stay "Speaker N". Needs the voice server to be running.`,
+            off: (n: string) => `Switch "Recognise speakers by voice" OFF for ${n}?\n\nNew meetings started by people in ${n} keep "Speaker 1", "Speaker 2". Voices already set up are kept, and meetings already processed are not changed.`,
+        },
     } as const;
     type TeamFeatureKey = keyof typeof TEAM_FEATURE_TEXT;
-    const featureValue = (d: AccessDepartment, f: TeamFeatureKey) => ({ pending_on: d.pendingOn, protect_given: d.protectGiven, assigned_tab: d.assignedTab, due_dates: d.dueDates, cross_dept_collab: d.crossDeptCollab !== false })[f] === true;
+    const featureValue = (d: AccessDepartment, f: TeamFeatureKey) => ({ pending_on: d.pendingOn, protect_given: d.protectGiven, assigned_tab: d.assignedTab, due_dates: d.dueDates, cross_dept_collab: d.crossDeptCollab !== false, voice_id: d.voiceId })[f] === true;
     const toggleTeamFeature = (d: AccessDepartment, feature: TeamFeatureKey) => {
         const next = !featureValue(d, feature);
         if (!window.confirm(next ? TEAM_FEATURE_TEXT[feature].on(d.name) : TEAM_FEATURE_TEXT[feature].off(d.name))) return;
@@ -493,6 +501,13 @@ Their files and images go back to being handled exactly as before.`;
                 </div>
             )}
 
+            {provisioned && voiceIdColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Recognising speakers by voice needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261103000001_voice_id.sql</code> once in the Supabase SQL Editor. Until then the switch is disabled and meetings keep &quot;Speaker 1&quot;, &quot;Speaker 2&quot;.</p>
+                </div>
+            )}
+
             {provisioned && (completionRemarkColumnMissing || personSettingsTableMissing) && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Remark on completion and personal settings need one more SQL file</p>
@@ -657,6 +672,7 @@ Their files and images go back to being handled exactly as before.`;
                                             { key: 'protect_given', label: 'Protect given tasks', hint: 'The holder cannot delete or rename a given task', on: featureValue(d, 'protect_given'), disabled: !provisioned || teamFeaturesColumnMissing, onToggle: () => toggleTeamFeature(d, 'protect_given') },
                                             { key: 'assigned_tab', label: 'Assigned by me', hint: 'A tab with every task they gave, and its status', on: featureValue(d, 'assigned_tab'), disabled: !provisioned || teamFeaturesColumnMissing, onToggle: () => toggleTeamFeature(d, 'assigned_tab') },
                                             { key: 'due_dates', label: 'Due dates', hint: 'Deadlines, countdown, a reminder and on-time tracking', on: featureValue(d, 'due_dates'), disabled: !provisioned || dueDatesColumnMissing, onToggle: () => toggleTeamFeature(d, 'due_dates') },
+                                            { key: 'voice_id', label: 'Recognise speakers by voice', hint: 'Meeting Assistant names who spoke, from voices people set up', on: featureValue(d, 'voice_id'), disabled: !provisioned || voiceIdColumnMissing, onToggle: () => toggleTeamFeature(d, 'voice_id') },
                                         ],
                                     },
                                 ]).map(group => (

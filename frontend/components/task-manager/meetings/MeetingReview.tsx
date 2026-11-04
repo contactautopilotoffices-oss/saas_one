@@ -2,12 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Trash2, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Trash2, X,
 } from 'lucide-react';
 import {
     PROCESSING, STATUS_LABEL, call, clock, meetingUrl, niceDate, type MeetingDetail, type MeetingPerson, type MeetingTask, type MeetingSpace, type SendAs,
 } from './api';
 import { exportPdf, exportWord } from './exportNotes';
+import { SKIP_REASON_TEXT } from '../voice/voiceApi';
 
 /**
  * Owner 2026-10-29: one meeting. While it is processing, this screen polls (each poll moves the work forward one step).
@@ -252,7 +253,7 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
             {/* Processing */}
             {PROCESSING.includes(m.status) && (
                 <Panel>
-                    <Steps status={m.status} />
+                    <Steps status={m.status} withVoice={m.status === 'identifying' || m.voice?.state === 'done' || m.voice?.state === 'pending'} />
                     <p className="mt-4 text-xs font-semibold text-zinc-500">This usually takes a few minutes for an hour-long meeting. Keep this page open until it is done.</p>
                 </Panel>
             )}
@@ -369,10 +370,13 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                     </button>
                     {showTranscript && (
                         <div className="max-h-[32rem] space-y-1.5 overflow-y-auto border-t border-zinc-100 p-5 dark:border-zinc-800">
+                            <VoiceNote voice={m.voice} />
                             {m.transcript.map((l, i) => (
                                 <p key={i} id={`t-${Math.floor(l.start)}`} className="text-sm text-zinc-700 dark:text-zinc-300">
                                     <span className="mr-2 font-mono text-[11px] text-zinc-400">{clock(l.start)}</span>
-                                    {l.speaker && <span className="mr-1 font-bold text-zinc-500">{l.speaker}:</span>}
+                                    {l.speaker && (l.speakerUserId
+                                        ? <span className="mr-1 inline-flex items-center gap-1 font-bold text-indigo-700 dark:text-indigo-300" title={`Recognised by voice${l.voiceLabel ? ` (${l.voiceLabel})` : ''}`}><AudioLines className="h-3 w-3" aria-hidden />{l.speaker}:</span>
+                                        : <span className="mr-1 font-bold text-zinc-500">{l.speaker}:</span>)}
                                     {l.text}
                                 </p>
                             ))}
@@ -413,10 +417,13 @@ function Bullets({ items }: { items: string[] }) {
     return <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;
 }
 
-function Steps({ status }: { status: MeetingDetail['status'] }) {
-    // The step being worked on now: the recording is received as soon as processing starts
-    const at = status === 'extracting' ? 2 : 1;
-    const labels = ['Recording received', 'Turning speech into text', 'Writing notes and tasks'];
+function Steps({ status, withVoice }: { status: MeetingDetail['status']; withVoice: boolean }) {
+    // The step being worked on now: the recording is received as soon as processing starts.
+    // LiveVoice ID: "Recognising voices" is shown only for meetings that go through it.
+    const labels = withVoice
+        ? ['Recording received', 'Turning speech into text', 'Recognising voices', 'Writing notes and tasks']
+        : ['Recording received', 'Turning speech into text', 'Writing notes and tasks'];
+    const at = status === 'extracting' ? labels.length - 1 : status === 'identifying' ? 2 : 1;
     return (
         <ol className="space-y-2.5">
             {labels.map((label, i) => (
@@ -427,6 +434,22 @@ function Steps({ status }: { status: MeetingDetail['status'] }) {
                 </li>
             ))}
         </ol>
+    );
+}
+
+/** LiveVoice ID: one line above the transcript saying whether voices were named, and why not. */
+function VoiceNote({ voice }: { voice: MeetingDetail['voice'] }) {
+    if (!voice || voice.state === 'pending') return null;
+    // Switched off or no labels from the speech service: nothing to report, the meeting is as it always was
+    if (voice.state === 'skipped' && (voice.reason === 'switched_off' || voice.reason === 'no_speaker_labels' || voice.reason === 'not_set_up')) return null;
+    const text = voice.state === 'done'
+        ? `Recognised by voice: ${voice.matched} of ${voice.voices} speaker${voice.voices === 1 ? '' : 's'} named. The rest stay "Speaker N".`
+        : `Voices were not recognised: ${SKIP_REASON_TEXT[voice.reason ?? ''] ?? 'the voice server could not be used'}.`;
+    return (
+        <p className={`mb-3 flex items-start gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${voice.state === 'done'
+            ? 'bg-indigo-50 text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200' : 'bg-zinc-50 text-zinc-600 dark:bg-zinc-800/60 dark:text-zinc-300'}`}>
+            <AudioLines className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {text}
+        </p>
     );
 }
 
@@ -448,6 +471,7 @@ function SentCard({ task: t }: { task: MeetingTask }) {
             <dl className="space-y-1.5 pl-7">
                 {row('Note', t.note ? <span className="whitespace-pre-line">{t.note}</span> : <span className="text-zinc-400">No note</span>)}
                 {row('Sent to', t.ownerNames.join(', ') || '—')}
+                {t.askedByName && row('Asked by', t.askedByName)}
                 {row('Due', t.dueDate ? `${niceDate(t.dueDate)}${t.dueTime ? ` ${t.dueTime}` : ''}` : <span className="text-zinc-400">No due date</span>)}
                 {row('Sent on', when || '—')}
                 {row('Sent as', t.sentAs || <span className="text-zinc-400">Not known</span>)}
@@ -552,6 +576,11 @@ function TaskCard({ task: t, space, meetingId, groups, busy, track, justAdded, o
                     <input type="time" value={t.dueTime || ''} disabled={!t.dueDate} onChange={e => void save({ dueTime: e.target.value || null })} className={`${input} mt-1 disabled:opacity-40`} />
                 </label>
             </div>
+            {t.askedByName && (
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                    <AudioLines className="h-3.5 w-3.5" /> Asked by {t.askedByName}
+                </p>
+            )}
             {unmatched && <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Heard &ldquo;{t.ownerName}&rdquo; — not matched to anyone in the Task Manager. Choose who it is for.</p>}
 
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} maxLength={1000} placeholder="Note (optional)" aria-label="Note"
