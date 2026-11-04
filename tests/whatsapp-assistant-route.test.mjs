@@ -30,7 +30,7 @@ function handler(env, enqueue = async () => 'event-1', overrides = {}) {
         '@/task-manager/InboundLedger': { recordInbound: async () => {}, markRoute: async () => {}, markReplied: async () => {} }, '@/task-manager/NeverSilentWatchdog': { apologiseAfterCrash: async () => {} }, '@/task-manager/ConversationMemory': { appendTurn: async () => {} },
         '@/backend/lib/whatsapp/interpreter/context': {isInterpreterPilot:async()=>false,lookupQuotedContext:async()=>null,getConversationRoutingState:async()=>({taskActive:false,facilityActive:false})},
         '@/backend/lib/whatsapp/interpreter/coordinator.mjs': {isExplicitTaskCommand,isDirectBookingRequest},
-        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => ({ handled: false, why: 'no_secret' }) },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => ({ handled: false, why: 'off' }) },
         ...overrides,
     };
     imports['@/backend/lib/whatsapp/interpreter/context']={getConversationRoutingState:async()=>({taskActive:false,facilityActive:false}),...imports['@/backend/lib/whatsapp/interpreter/context']};
@@ -284,14 +284,11 @@ test('voice intake passing (switch OFF / not a voice note) leaves the original m
 test('AI layer: a message it takes is answered in the background and nothing older sees it', async () => {
     let given = null;
     const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => assert.fail('the old queue must not see it'), {
-        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async (input, secret) => { given = { input, secret }; return { handled: true, background: async () => {} }; } },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async (input) => { given = { input }; return { handled: true, background: async () => {} }; } },
         '@/task-manager/TaskMessageRouter': { TaskMessageRouter: { routeInboundMessage: () => assert.fail('the old task router must not see it') } },
     });
-    const response = await route.POST(new next.NextRequest('https://example.com/api/webhooks/aisensy?ai_layer_secret=abc', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-    }));
+    const response = await route.POST(request());
     assert.equal((await response.json()).routedTo, 'AI_LAYER');
-    assert.equal(given.secret, 'abc');
     assert.equal(given.input.text, 'Hi');
     assert.equal(route.callbacks.length, 1, 'the reply is sent after the webhook answers');
 });

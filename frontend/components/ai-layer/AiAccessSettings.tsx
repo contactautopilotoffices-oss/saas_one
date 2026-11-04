@@ -45,7 +45,6 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
     const [people, setPeople] = useState<Person[]>([]);
     const [limits, setLimits] = useState({ perUserPerHour: 60, actionsPerUserPerDay: 100 });
     const [tableMissing, setTableMissing] = useState(false);
-    const [whatsappReady, setWhatsappReady] = useState(false);
     const [activity, setActivity] = useState<ActivityRow[]>([]);
     const [status, setStatus] = useState('');
     const [busy, setBusy] = useState(false);
@@ -61,7 +60,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
             fetch(`/api/ai-layer/activity?${q}`, { signal: controller.signal, cache: 'no-store' }).then(r => r.json()).catch(() => ({ rows: [] })),
         ]).then(([d, a]) => {
             setConfig(d.config); setEntries(d.entries); setRoles(d.roles); setProperties(d.properties); setPeople(d.users);
-            setLimits(d.platformLimits); setTableMissing(d.tableMissing); setWhatsappReady(d.whatsappReady); setActivity(a.rows || []);
+            setLimits(d.platformLimits); setTableMissing(d.tableMissing); setActivity(a.rows || []);
         }).catch(err => { if (err.name !== 'AbortError') setStatus(err.message); });
         return () => controller.abort();
     }, [organizationId]);
@@ -132,7 +131,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                 </label>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
                     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.channels.app_chat} onChange={e => set({ channels: { ...config.channels, app_chat: e.target.checked } })} /> In-app chat</label>
-                    <label className={`flex items-center gap-2 text-sm ${whatsappReady ? '' : 'text-slate-400'}`} title={whatsappReady ? '' : 'Needs the AiSensy webhook secret (AISENSY_AI_LAYER_SECRET) to be set up first'}><input type="checkbox" disabled={!whatsappReady} checked={config.channels.whatsapp && whatsappReady} onChange={e => set({ channels: { ...config.channels, whatsapp: e.target.checked } })} /> WhatsApp{whatsappReady ? '' : ' (needs webhook secret)'}</label>
+                    <label className="flex items-center gap-2 text-sm" title="Keep WhatsApp to a few trusted people: WhatsApp messages are matched by phone number only"><input type="checkbox" checked={config.channels.whatsapp} onChange={e => set({ channels: { ...config.channels, whatsapp: e.target.checked } })} /> WhatsApp</label>
                     <label className="flex items-center gap-2 text-sm text-slate-400"><input type="checkbox" disabled checked={false} readOnly /> In-app voice (coming later)</label>
                 </div>
             </section>

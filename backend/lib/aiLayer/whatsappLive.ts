@@ -50,9 +50,26 @@ export function liveWhatsAppDeps(): WhatsAppDeps {
     };
 }
 
+/**
+ * Is WhatsApp switched on for ANY org? Checked once a minute (cached), so until an org super admin turns WhatsApp on,
+ * the webhook does no lookups at all for the AI layer and every message goes straight on to the existing bot.
+ */
+let anyOn: { value: boolean; at: number } | null = null;
+async function anyOrgHasWhatsApp(): Promise<boolean> {
+    if (anyOn && Date.now() - anyOn.at < 60_000) return anyOn.value;
+    const { data, error } = await supabaseAdmin.from('ai_access_settings').select('organization_id')
+        .eq('config->>enabled', 'true').eq('config->channels->>whatsapp', 'true').limit(1);
+    const value = !error && (data || []).length > 0; // a missing table means "off"
+    anyOn = { value, at: Date.now() };
+    return value;
+}
+
 /** Called by the AiSensy webhook. Never throws; { handled: false } = carry on exactly as before. */
-export function claimAiLayerWhatsApp(input: WhatsAppInbound | null, givenSecret: string | null) {
-    // Nothing is loaded or queried unless the secret is configured, so orgs without it pay nothing.
-    if (!process.env.AISENSY_AI_LAYER_SECRET) return Promise.resolve({ handled: false as const, why: 'no_secret' });
-    return claimWhatsApp(liveWhatsAppDeps(), input, givenSecret);
+export async function claimAiLayerWhatsApp(input: WhatsAppInbound | null) {
+    try {
+        if (process.env.AI_LAYER_DISABLED === 'true' || !(await anyOrgHasWhatsApp())) return { handled: false as const, why: 'off' };
+    } catch {
+        return { handled: false as const, why: 'error' };
+    }
+    return claimWhatsApp(liveWhatsAppDeps(), input);
 }

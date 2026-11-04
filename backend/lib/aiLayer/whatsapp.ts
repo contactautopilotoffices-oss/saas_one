@@ -4,7 +4,7 @@
  * Runs in the AiSensy webhook AFTER the Task Manager brain, so task messages keep going where they go today. It takes a
  * message only when ALL of these hold; otherwise it returns { handled: false } and the existing bot answers exactly as
  * before:
- *   1. the platform kill switch is off and the webhook carried the right secret (proves the call came from AiSensy);
+ *   1. the platform kill switch is off (no webhook secret: owner decision 2026-11-04, see settings.ts);
  *   2. it is a plain text message (no photo, voice or file);
  *   3. the phone matches exactly ONE approved user (never a master admin);
  *   4. exactly one org has WhatsApp switched on for this person in AI Access settings (people, roles, buildings, grid);
@@ -12,7 +12,6 @@
  *      progress. A message it doesn't understand goes back to the old bot.
  * Any error inside returns { handled: false }: this channel can never break the existing WhatsApp flows.
  */
-import { timingSafeEqual } from 'node:crypto';
 import type { ActorContext } from './types';
 import type { AiSettings } from './settings';
 import { gate } from './settings';
@@ -35,19 +34,9 @@ export interface WhatsAppDeps {
 
 export type WhatsAppClaim = { handled: false; why: string } | { handled: true; background: () => Promise<void> };
 
-/** The secret AiSensy sends: `?ai_layer_secret=...` on the webhook URL, or the `x-ai-layer-secret` header. */
-export function secretMatches(expected: string | undefined, given: string | null | undefined): boolean {
-    const e = String(expected ?? '').trim();
-    const g = String(given ?? '').trim();
-    if (e.length < 24 || !g) return false;
-    const a = Buffer.from(e); const b = Buffer.from(g);
-    return a.length === b.length && timingSafeEqual(a, b);
-}
-
-export async function claimWhatsApp(deps: WhatsAppDeps, input: WhatsAppInbound | null, givenSecret: string | null): Promise<WhatsAppClaim> {
+export async function claimWhatsApp(deps: WhatsAppDeps, input: WhatsAppInbound | null): Promise<WhatsAppClaim> {
     try {
         if (deps.env.AI_LAYER_DISABLED === 'true') return { handled: false, why: 'kill_switch' };
-        if (!secretMatches(deps.env.AISENSY_AI_LAYER_SECRET, givenSecret)) return { handled: false, why: 'no_secret' };
         if (!input?.phone || !input.text?.trim() || input.mediaUrl) return { handled: false, why: 'not_text' };
 
         const user = await deps.findUser(input.phone);
@@ -59,7 +48,7 @@ export async function claimWhatsApp(deps: WhatsAppDeps, input: WhatsAppInbound |
             const actor = await deps.loadActor(user.id, orgId);
             if (!actor) continue;
             const settings = await deps.loadSettings(orgId);
-            const g = gate(actor, settings, 'whatsapp', deps.env);
+            const g = gate(actor, settings, 'whatsapp');
             if (g.ok) candidates.push({ orgId, actor: g.actor, settings });
         }
         if (candidates.length !== 1) return { handled: false, why: candidates.length ? 'several_orgs' : 'not_enabled' };

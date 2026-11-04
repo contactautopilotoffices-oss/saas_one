@@ -140,10 +140,10 @@ export async function POST(req: NextRequest) {
     if (!input) return NextResponse.json({ ok: true, ignored: true });
 
     // AI Action Layer on WhatsApp (docs/AI_ACTION_LAYER_PLAN.md). Runs AFTER the Task Manager brain, so task messages go
-    // where they always did. It takes a message only when the webhook carried AISENSY_AI_LAYER_SECRET, the sender is one
-    // approved user that an org super admin switched WhatsApp on for, and it understood the message. Anything else (and
-    // any error inside it) comes back handled:false and everything below runs exactly as before.
-    const aiLayer = await claimAiLayerWhatsApp(input, req.nextUrl.searchParams.get('ai_layer_secret') || req.headers.get('x-ai-layer-secret'));
+    // where they always did. It takes a message only when the sender is one approved user that an org super admin
+    // switched WhatsApp on for, and it understood the message. Anything else (and any error inside it) comes back
+    // handled:false and everything below runs exactly as before. No lookups at all while no org has WhatsApp on.
+    const aiLayer = await claimAiLayerWhatsApp(input);
     if (aiLayer.handled) {
         await remember();
         after(guarded(aiLayer.background));
