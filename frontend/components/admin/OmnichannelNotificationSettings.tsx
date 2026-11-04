@@ -337,6 +337,12 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { requester: true }
             },
             {
+                key: 'ticket_reply',
+                name: 'Ticket Reply',
+                description: 'WhatsApp only. Sent to the requester when the assignee replies on a ticket, and to the assignee when the requester replies.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
                 key: 'reminder_ticket_sla',
                 name: 'SLA Breach Warning (Reminder)',
                 description: 'Sent before resolution deadline breaches.',
@@ -670,6 +676,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
+        ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
     },
     checklists: {

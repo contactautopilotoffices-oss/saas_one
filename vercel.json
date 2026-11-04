@@ -160,6 +160,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/task-manager-report",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/bot-autotune",
       "schedule": "45 20 * * *"
     },

@@ -34,6 +34,7 @@ function setup({facilityActive=false,choice=false,testingConfig=null}={}){
         '@/backend/lib/whatsapp/processMessage':{processIncomingMessage:()=>assert.fail('no default ticket')},
         '@/backend/lib/whatsapp/greeting':{isGreetingMessage:()=>false},'@/backend/services/AiSensyService':{AiSensyService:{}},
         '@/whatsapp-test/freeformTest':{handleFreeformTest:async()=>false},
+        '@/backend/lib/whatsapp/ticketReply':{claimTicketReply:async()=>({handled:false})},
         '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/voice/VoiceIntake':{claimVoiceNote:async()=>({kind:'pass'})},'@/task-manager/TaskMessageRouter':router,
         '@/task-manager/TaskIdempotencyService':{TaskIdempotencyService:{isDuplicateWebhook:async()=>false,recordProcessedWebhook(){}}},
         '@/backend/services/LeadOutreachService': { LeadOutreachService: { isLeadPhone: async () => false, handleInboundLeadReply: async () => ({ handled: false }) } },

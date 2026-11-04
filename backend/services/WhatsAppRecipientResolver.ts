@@ -128,6 +128,7 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    ticket_reply: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
     reminder_ticket_sla: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_slot_reminder: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
     checklist_started: { enabled: true, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },

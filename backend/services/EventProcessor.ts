@@ -72,6 +72,8 @@ export const EventProcessor = {
             await this.handleUserApproved(payload);
         } else if (event_type === 'FACILITY_REQUEST_CREATED') {
             await this.handleFacilityRequestCreated(payload);
+        } else if (event_type === 'TICKET_REPLY') {
+            // WhatsApp only: handled by WhatsAppEventProcessor, no email for ticket replies.
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
