@@ -80,6 +80,57 @@ describe('WhatsApp channel: only for configured people, never breaks the existin
         assert.deepEqual(await claimWhatsApp(d, msg('aaj kitne tickets bane?')), { handled: false, why: 'error' });
     });
 
+    it('messages about tasks are passed on to the Task Manager AI (no reply from this layer)', async () => {
+        const llm = new FakeLlm([[/task/i, { entry: 'tasks', fields: {} }]]);
+        const { d, sent } = wa({}, llm);
+        for (const m of ['show my tasks for today', 'assign the vendor follow-up task to Rahul tomorrow', 'how many tickets tasks do I have']) {
+            assert.deepEqual(await claimWhatsApp(d, msg(m)), { handled: false, why: 'unsupported' }, m);
+        }
+        assert.equal(sent.length, 0);
+    });
+
+    it('short replies meant for the Task Manager or the old bot skip this layer without an AI call', async () => {
+        const { d, llm } = wa();
+        for (const m of ['yes', 'haan', '2', 'done 3', 'done 1, 2', 'done all', 'undo', 'tasks']) {
+            assert.deepEqual(await claimWhatsApp(d, msg(m)), { handled: false, why: 'short_reply' }, m);
+        }
+        assert.equal(llm.calls, 0);
+    });
+
+    it('…but a short reply to this layer\'s own question is still answered here', async () => {
+        let stored: unknown = null;
+        const llm = new FakeLlm([[/AC/, { entry: 'ticket.create', fields: { description: 'AC not working', location: 'cabin 304' } }]]);
+        const { d, sent } = wa({ loadState: async () => stored, saveState: async (_o, _u, st) => { stored = st; } }, llm);
+        let r = await claimWhatsApp(d, msg('AC not working in cabin 304'));
+        if (r.handled) await r.background();
+        r = await claimWhatsApp(d, msg('yes'));
+        assert.equal(r.handled, true);
+        if (r.handled) await r.background();
+        assert.match(sent.at(-1)!.text, /Test mode/);
+    });
+
+    it('requests this layer may not do are passed on (the Task Manager decides about its own tasks)', async () => {
+        const { d, llm } = wa();
+        assert.deepEqual(await claimWhatsApp(d, msg('delete task 3')), { handled: false, why: 'unsupported' });
+        assert.equal(llm.calls, 0);
+    });
+
+    it('the AI being down → passed on, so Smart chat and the old bot still answer', async () => {
+        const llm = new FakeLlm([]); llm.fail = true;
+        const { d } = wa({}, llm);
+        assert.deepEqual(await claimWhatsApp(d, msg('aaj kitne tickets bane?')), { handled: false, why: 'unsupported' });
+    });
+
+    it('HR complaints are still caught here; ordinary task words like "appraisal" are not', async () => {
+        const llm = new FakeLlm([[/appraisal/, { entry: 'tasks', fields: {} }]]);
+        const { d, sent } = wa({}, llm);
+        const r = await claimWhatsApp(d, msg('I want to complain about my manager'));
+        assert.equal(r.handled, true);
+        if (r.handled) await r.background();
+        assert.match(sent.at(-1)!.text, /HR Tickets/);
+        assert.deepEqual(await claimWhatsApp(d, msg('assign the appraisal review to Neeti')), { handled: false, why: 'unsupported' });
+    });
+
     it('a ticket draft continues across WhatsApp messages using the saved state', async () => {
         let stored: unknown = null;
         const llm = new FakeLlm([[/AC/, { entry: 'ticket.create', fields: { description: 'AC not working', location: null } }]]);

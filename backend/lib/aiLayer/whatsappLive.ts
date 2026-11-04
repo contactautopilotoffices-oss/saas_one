@@ -7,7 +7,7 @@ import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from './scope';
 import { handleTurn } from './pipeline';
 import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseStateStore, whatsappAiData } from './server';
-import { claimWhatsApp, resolveWhatsAppPerson, type WhatsAppDeps, type WhatsAppInbound } from './whatsapp';
+import { claimWhatsApp, resolveWhatsAppPerson, type WhatsAppDeps, type WhatsAppInbound, type WhatsAppPerson } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
     const [orgs, props] = await Promise.all([
@@ -25,9 +25,26 @@ async function orgsForUser(userId: string): Promise<string[]> {
     return [...ids];
 }
 
+/**
+ * Who a phone belongs to and whether the AI is on for them, cached 60 s per phone. This layer now looks at every WhatsApp
+ * message before the Task Manager AI, so without the cache each message would cost several database reads. A settings
+ * change therefore reaches WhatsApp within a minute.
+ */
+const personCache = new Map<string, { at: number; person: WhatsAppPerson }>();
+function cachedPerson(deps: WhatsAppDeps) {
+    return async (phone: string): Promise<WhatsAppPerson> => {
+        const hit = personCache.get(phone);
+        if (hit && Date.now() - hit.at < 60_000) return hit.person;
+        const person = await resolveWhatsAppPerson(deps, phone);
+        if (personCache.size > 5000) personCache.clear();
+        personCache.set(phone, { at: Date.now(), person });
+        return person;
+    };
+}
+
 export function liveWhatsAppDeps(): WhatsAppDeps {
     const state = supabaseStateStore(supabaseAdmin);
-    return {
+    const deps: WhatsAppDeps = {
         env: process.env,
         findUser: phone => findWhatsAppUser(phone),
         orgsForUser,
@@ -48,6 +65,8 @@ export function liveWhatsAppDeps(): WhatsAppDeps {
             return TaskMessagingService.sendFreeformReply(phone, text);
         },
     };
+    deps.resolvePerson = cachedPerson(deps);
+    return deps;
 }
 
 /**
@@ -71,7 +90,8 @@ async function anyOrgHasWhatsApp(): Promise<boolean> {
 export async function aiLayerWhatsAppUserFor(phone: string): Promise<string | null> {
     try {
         if (process.env.AI_LAYER_DISABLED === 'true' || !(await anyOrgHasWhatsApp())) return null;
-        const person = await resolveWhatsAppPerson(liveWhatsAppDeps(), phone);
+        const deps = liveWhatsAppDeps();
+        const person = await deps.resolvePerson!(phone);
         return person.ok ? person.userId : null;
     } catch {
         return null;

@@ -86,6 +86,11 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     const done = (text: string, extra: Partial<TurnReply> = {}, draft: Draft | null = null): TurnOutput =>
         ({ reply: { text, ...extra }, state: { lang, draft }, outcome: 'handled' });
     const unsupported = (text: string): TurnOutput => ({ reply: { text }, state: { lang, draft: null }, outcome: 'unsupported' });
+    // WhatsApp (owner 2026-11-04): this layer reads the message BEFORE the Task Manager AI. Whatever it can't or shouldn't
+    // answer (tasks, a request it may not do, its own limit, the AI being down) is passed on, so the Task Manager AI and
+    // the old bot answer exactly as before. In-app chat has nobody to pass to, so it answers.
+    const passOn = (text: string, extra: Partial<TurnReply> = {}): TurnOutput =>
+        channel === 'whatsapp' && !state.draft ? unsupported(text) : done(text, extra, state.draft ?? null);
 
     const limits = effectiveLimits(settings);
     // Per-hour limit: the in-memory check is fast but per server instance, so the database count backs it up.
@@ -93,7 +98,7 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     const recentTurns = await deps.audit.countTurnsSince(actor.orgId, actor.userId, hourAgo).catch(() => 0);
     if (!deps.allowMessage(`ai-layer:${actor.orgId}:${actor.userId}`, limits.perUserPerHour) || recentTurns >= limits.perUserPerHour) {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'rate_limited' });
-        return done(t('rate_limited', lang), {}, state.draft ?? null);
+        return passOn(t('rate_limited', lang));
     }
 
     const available = catalogFor(actor, settings);
@@ -117,7 +122,8 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
 
     if (isForbiddenRequest(message)) {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'forbidden_request' });
-        return done(t('forbidden', lang));
+        // On WhatsApp the Task Manager AI decides about its own tasks (e.g. "delete task 3"); this layer still does nothing.
+        return passOn(t('forbidden', lang));
     }
 
     let result;
@@ -125,14 +131,18 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
         result = await interpret(deps.llm, message, available.map(a => a.entry), Object.values(actor.propertyNames), null);
     } catch {
         await safeAudit({ entryId: null, decision: 'error', refusalReason: 'ai_unavailable' });
-        return done(t('ai_down', lang));
+        return passOn(t('ai_down', lang));
     }
     const usage = { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut };
     const v = result.value;
 
     if (v.entry === 'forbidden') {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'forbidden_request', ...usage });
-        return done(t('forbidden', lang));
+        return passOn(t('forbidden', lang));
+    }
+    if (v.entry === 'tasks') {
+        await safeAudit({ entryId: null, decision: 'handed_off', refusalReason: 'to_task_manager', ...usage });
+        return unsupported(t('tasks_elsewhere', lang));
     }
     if (v.entry === 'none') {
         await safeAudit({ entryId: null, decision: 'refused', refusalReason: 'unsupported', topic: 'topic' in v ? v.topic : null, ...usage });
