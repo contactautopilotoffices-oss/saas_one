@@ -17,17 +17,40 @@ export async function POST(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        // Verify caller is an admin for this property
-        const { data: membership } = await supabaseAdmin
-            .from('property_memberships')
-            .select('role')
-            .eq('property_id', propertyId)
-            .eq('user_id', user.id)
-            .eq('is_active', true)
-            .single();
+        // Verify caller is an admin for this property. Org-wide roles
+        // (ops_super_admin, org_super_admin, ...) live on organization_memberships
+        // and have no per-property row, so both tables are checked. The org lookup
+        // is scoped to this property's organization to avoid cross-tenant access.
+        const { data: propertyOrg } = await supabaseAdmin
+            .from('properties')
+            .select('organization_id')
+            .eq('id', propertyId)
+            .maybeSingle();
 
+        const [propMembershipRes, orgMembershipRes] = await Promise.all([
+            supabaseAdmin
+                .from('property_memberships')
+                .select('role')
+                .eq('property_id', propertyId)
+                .eq('user_id', user.id)
+                .eq('is_active', true)
+                .maybeSingle(),
+            propertyOrg?.organization_id
+                ? supabaseAdmin
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('organization_id', propertyOrg.organization_id)
+                    .eq('user_id', user.id)
+                    .eq('is_active', true)
+                    .maybeSingle()
+                : Promise.resolve({ data: null }),
+        ]);
+
+        const propRole = (propMembershipRes.data?.role || '').toLowerCase();
+        const orgRole = (orgMembershipRes.data?.role || '').toLowerCase();
         const adminRoles = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'];
-        if (!membership || !adminRoles.includes(membership.role)) {
+        const orgAdminRoles = ['org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'];
+        if (!adminRoles.includes(propRole) && !orgAdminRoles.includes(orgRole)) {
             return NextResponse.json({ error: 'Forbidden: only admins can rate items' }, { status: 403 });
         }
 
