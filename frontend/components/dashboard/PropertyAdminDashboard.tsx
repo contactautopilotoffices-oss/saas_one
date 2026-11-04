@@ -50,6 +50,8 @@ const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
+// Owner 2026-11-04: the Operations team's own Meeting Assistant (Ops Super Admin only; property admins share this dashboard)
+const MeetingsTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
 const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
@@ -94,7 +96,7 @@ const TAB_PRELOADS = [
 ];
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'petty-cash';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'meeting_assistant' | 'petty-cash';
 
 interface Property {
     id: string;
@@ -378,6 +380,9 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const userOrgRole = (membership?.org_role || '').toLowerCase();
     const isOpsSuperAdmin = userOrgRole === 'ops_super_admin';
     const isElevatedRole = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin'].includes(userOrgRole);
+    // Owner 2026-11-04: the Meeting Assistant stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (openTab === 'meeting_assistant' && isOpsSuperAdmin && !assistantOpened) setAssistantOpened(true);
 
     // Organization properties for ops/super admins
     const [orgProperties, setOrgProperties] = useState<any[]>([]);
@@ -481,7 +486,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks', ...(isOpsSuperAdmin ? ['meeting_assistant'] : [])].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         const filter = searchParams.get('filter');
@@ -490,7 +495,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
         } else {
             setPendingStatusFilter('all');
         }
-    }, [searchParams]);
+    }, [searchParams, isOpsSuperAdmin]);
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string) => {
@@ -953,6 +958,18 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                     Meetings (Ira)
                                 </button>
                             )}
+                            {isOpsSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('meeting_assistant')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'meeting_assistant'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                        }`}
+                                >
+                                    <Mic className={`w-4 h-4 transition-transform ${openTab === 'meeting_assistant' ? '' : 'group-hover:scale-110'}`} />
+                                    Meeting Assistant
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('grievance')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
@@ -1103,7 +1120,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 <AnimatePresence mode="wait">
                     <motion.div
                         key={openTab}
-                        className={['overview', 'checklist'].includes(openTab) ? '' : 'px-0 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8'}
+                        className={['overview', 'checklist', 'meeting_assistant'].includes(openTab) ? '' : 'px-0 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8'}
 
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -1288,6 +1305,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         )}
                     </motion.div>
                 </AnimatePresence>
+                {/* Outside the keyed wrapper above, which remounts its content on every tab change */}
+                {assistantOpened && <div className={openTab === 'meeting_assistant' ? 'px-4 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8' : 'hidden'}><MeetingsTab space="operations" /></div>}
 
                 </>)}
 </main>

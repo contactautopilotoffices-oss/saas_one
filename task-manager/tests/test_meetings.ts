@@ -9,7 +9,7 @@ import {
 import {
     buildExtractionPrompt, buildPeople, extractMeeting, formatClock, parseClock, validateExtraction,
 } from '../meetings/MeetingExtractor';
-import { canSee, isMeetingSpace, spacesForRoles } from '../meetings/visibility';
+import { canSee, isMeetingSpace, spacesForMemberships, spacesForRoles } from '../meetings/visibility';
 import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/meetingNotesMessage';
 import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
@@ -244,10 +244,16 @@ async function main() {
     check('tech → tech only', [...spacesForRoles(['tech'])].join() === 'tech');
     check('all four HR roles → hr', ['hr', 'hr_head', 'hr_manager', 'hr_ops'].every(r => spacesForRoles([r]).has('hr')));
     check('org super admin → admin', [...spacesForRoles(['org_super_admin'])].join() === 'admin');
-    check('org admin, master admin, staff, procurement → nothing', spacesForRoles(['org_admin', 'master_admin', 'staff', 'procurement', null, undefined]).size === 0);
+    check('all three procurement roles → procurement only', ['procurement', 'purchase_manager', 'purchase_executive'].every(r => [...spacesForRoles([r])].join() === 'procurement'));
+    check('design → design only', [...spacesForRoles(['design'])].join() === 'design');
+    check('ops super admin → operations only', [...spacesForRoles(['ops_super_admin'])].join() === 'operations');
+    check('org admin, master admin, staff, property admin, it → nothing', spacesForRoles(['org_admin', 'master_admin', 'staff', 'property_admin', 'it', null, undefined]).size === 0);
     check('role case ignored', spacesForRoles(['HR_HEAD']).has('hr'));
     check('several roles → several spaces', spacesForRoles(['tech', 'hr']).size === 2);
-    check('only tech / hr / admin are spaces', isMeetingSpace('hr') && !isMeetingSpace('ops') && !isMeetingSpace(undefined));
+    check('the six spaces are spaces, nothing else is', ['tech', 'hr', 'admin', 'procurement', 'design', 'operations'].every(isMeetingSpace) && !isMeetingSpace('ops') && !isMeetingSpace(undefined));
+    check('HR and procurement roles count on a property', spacesForMemberships([], ['hr_ops']).has('hr') && spacesForMemberships([], ['purchase_manager']).has('procurement'));
+    check('other roles do not count on a property', spacesForMemberships([], ['tech', 'design', 'ops_super_admin', 'org_super_admin']).size === 0);
+    check('organisation roles still count', [...spacesForMemberships(['design'], ['staff'])].join() === 'design');
 
     // ── LiveVoice ID (2026-11-03) ──────────────────────────────────────────────
     console.log('\nVoice naming: timeline of several recordings');

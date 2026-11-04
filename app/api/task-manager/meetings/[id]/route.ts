@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 /**
- * Owner 2026-10-29: one meeting of the Meeting Assistant. `?space=tech|hr|admin`: the person needs that space's role, and
+ * Owner 2026-10-29: one meeting of the Meeting Assistant. `?space=` (one of MEETING_SPACES): the person needs that space's role, and
  * the meeting must belong to that space. A confidential meeting is only for the person who started it.
  *   GET                       the meeting, its transcript, notes and task list. While it is processing, each GET also
  *                             moves it forward one step (the review screen polls this).

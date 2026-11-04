@@ -6,7 +6,7 @@ import { MeetingService } from '@/task-manager/meetings/MeetingService';
 export const dynamic = 'force-dynamic';
 
 /**
- * Owner 2026-10-29: the Meeting Assistant. `?space=tech|hr|admin` = which dashboard (Tech / HR / Super Admin); each
+ * Owner 2026-10-29: the Meeting Assistant. `?space=` = which dashboard (one of MEETING_SPACES); each
  * has its own meetings and only its own roles get in (requireMeetingSpace).
  *   GET                                   meetings in this space I can see + everyone in the Task Manager (for "who was present")
  *   POST { title, attendeeIds, extraNames, confidential }   start a new meeting in this space → { id }

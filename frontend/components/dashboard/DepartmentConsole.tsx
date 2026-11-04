@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, FolderOpen, LayoutDashboard, LogOut, Menu, Plus, Settings, ShieldCheck,
+    Boxes, Building2, Bug, ChevronDown, ClipboardList, DoorOpen, FolderOpen, LayoutDashboard, LogOut, Menu, Mic, Plus, Settings, ShieldCheck,
     Ticket, UserCircle, X,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -30,6 +30,8 @@ const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoadi
 const BookMeetingRoom = dynamic(() => import('@/app/(dashboard)/[orgId]/book-room/page'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Design shares with the Tech team (the Tech console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
+// Owner 2026-11-04: Design's own Meeting Assistant (IT does not have one)
+const MeetingsTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 // Owner 2026-11-02: IT's Requests tab is the Super Admin console's Requests list (TicketsView, list view only), locked
 // to the tickets assigned to the signed-in user, across all properties; Design can raise a ticket
 const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
@@ -37,7 +39,7 @@ const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/Ti
 
 export type ConsoleDepartment = 'it' | 'design';
 
-type ConsoleTab = 'tasks' | 'assets' | 'requests' | 'meeting_room' | 'grievance' | 'files' | 'settings' | 'profile';
+type ConsoleTab = 'tasks' | 'assets' | 'requests' | 'meeting_room' | 'meeting_assistant' | 'grievance' | 'files' | 'settings' | 'profile';
 
 interface NavItem { id: ConsoleTab | 'feedback'; label: string; icon: React.ComponentType<{ className?: string }> }
 
@@ -61,6 +63,7 @@ const DEPARTMENTS: Record<ConsoleDepartment, { name: string; work: NavItem[]; ca
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'grievance', label: 'Grievances', icon: ShieldCheck },
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
+            { id: 'meeting_assistant', label: 'Meeting Assistant', icon: Mic },
             { id: 'files', label: 'Files', icon: FolderOpen },
         ],
     },
@@ -95,6 +98,9 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
     // Sign-in opens the first tab in the list (owner 2026-10-29): Assets for IT, Meeting Room for Design.
     const activeTab = (tabs.some(t => t.id === tabParam) ? tabParam : dept.work[0].id) as ConsoleTab;
     const selectedPropertyId = searchParams.get('propertyId') || 'all';
+    // Owner 2026-11-04: the Meeting Assistant stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (activeTab === 'meeting_assistant' && !assistantOpened) setAssistantOpened(true);
 
     const [org, setOrg] = useState<Organization | null>(null);
     const [properties, setProperties] = useState<Property[]>([]);
@@ -319,6 +325,7 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                         />
                     )}
                     {activeTab === 'meeting_room' && <BookMeetingRoom />}
+                    {assistantOpened && <div className={activeTab === 'meeting_assistant' ? '' : 'hidden'}><MeetingsTab space="design" /></div>}
                     {activeTab === 'grievance' && org && <HRTicketsContent orgId={org.id} />}
                     {activeTab === 'files' && org && <FilesTab orgId={org.id} team="design" />}
                     {activeTab === 'settings' && <SettingsView />}
