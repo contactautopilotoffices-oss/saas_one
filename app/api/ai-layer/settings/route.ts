@@ -4,6 +4,10 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getOrganizationUsers } from '@/backend/lib/whatsapp/interpreter/organization-users.mjs';
 import { CATALOG, PLATFORM_LIMITS, settingsSchema } from '@/backend/lib/aiLayer';
 import { loadSettings } from '@/backend/lib/aiLayer/server';
+import { loadActor } from '@/backend/lib/aiLayer/scope';
+import { checkLines, loadCheckInputs } from '@/backend/lib/aiLayer/diagnose';
+import { whatsappOrgCountFor } from '@/backend/lib/aiLayer/whatsappLive';
+import { findWhatsAppUser } from '@/backend/lib/whatsapp/assistant/access';
 import { requireOrgSuperAdmin } from '../_lib/auth';
 
 export const runtime = 'nodejs';
@@ -28,6 +32,25 @@ export async function GET(request: NextRequest) {
     const organizationId = request.nextUrl.searchParams.get('organizationId') || '';
     const auth = await requireOrgSuperAdmin(organizationId);
     if (auth.error) return auth.error;
+    // "Check this person": why the WhatsApp AI does or doesn't answer one person of this org. Read-only.
+    if (request.nextUrl.searchParams.get('view') === 'check') {
+        const userId = request.nextUrl.searchParams.get('userId') || '';
+        try {
+            const directory = await orgDirectory(organizationId);
+            if (!directory.users.some(u => u.id === userId)) return NextResponse.json({ error: 'This person is not in this organization' }, { status: 400 });
+            const { settings, tableMissing } = await loadSettings(supabaseAdmin, organizationId);
+            const inputs = await loadCheckInputs(supabaseAdmin, organizationId, userId, {
+                settings, tableMissing,
+                findUser: phone => findWhatsAppUser(phone),
+                loadActor: (u, o) => loadActor(supabaseAdmin, u, o),
+                whatsappOrgCount: whatsappOrgCountFor,
+            });
+            return NextResponse.json({ lines: checkLines(inputs) }, { headers: { 'Cache-Control': 'private, no-store' } });
+        } catch (err) {
+            console.error('[AiLayer] person check failed', err instanceof Error ? err.message : err);
+            return NextResponse.json({ error: "Couldn't run the check" }, { status: 500 });
+        }
+    }
     try {
         const [{ settings, tableMissing }, directory] = await Promise.all([loadSettings(supabaseAdmin, organizationId), orgDirectory(organizationId)]);
         return NextResponse.json({

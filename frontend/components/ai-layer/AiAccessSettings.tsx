@@ -21,6 +21,8 @@ interface Config {
 }
 interface Entry { id: string; kind: 'question' | 'write'; module: ModuleId; defaultMode: 'off' | 'shadow' | 'live'; label: string }
 interface Person { id: string; name: string; email: string }
+interface CheckLine { ok: boolean; label: string; detail: string }
+type CheckState = { loading: true } | { loading: false; lines?: CheckLine[]; error?: string };
 interface ActivityRow { id: string; created_at: string; actor_name: string | null; entry_id: string | null; decision: string; refusal_reason: string | null; topic: string | null; result_ref: string | null }
 
 const MODULES: Array<{ id: ModuleId; label: string }> = [{ id: 'tickets', label: 'Tickets' }, { id: 'electricity_readings', label: 'Meter readings' }];
@@ -50,6 +52,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
     const [busy, setBusy] = useState(false);
     const [search, setSearch] = useState('');
     const [blockSearch, setBlockSearch] = useState('');
+    const [checks, setChecks] = useState<Record<string, CheckState>>({});
 
     useEffect(() => {
         const controller = new AbortController();
@@ -85,7 +88,20 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
         finally { setBusy(false); }
     }
 
-    const picker = (selected: string[], onChange: (ids: string[]) => void, query: string, setQuery: (q: string) => void, label: string) => {
+    /** "Check": why the WhatsApp AI does or doesn't answer this person, from the SAVED settings. */
+    async function runCheck(userId: string) {
+        setChecks(c => ({ ...c, [userId]: { loading: true } }));
+        try {
+            const r = await fetch(`/api/ai-layer/settings?organizationId=${encodeURIComponent(organizationId)}&view=check&userId=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Check failed');
+            setChecks(c => ({ ...c, [userId]: { loading: false, lines: d.lines } }));
+        } catch (err) {
+            setChecks(c => ({ ...c, [userId]: { loading: false, error: err instanceof Error ? err.message : 'Check failed' } }));
+        }
+    }
+
+    const picker = (selected: string[], onChange: (ids: string[]) => void, query: string, setQuery: (q: string) => void, label: string, withCheck = false) => {
         const ql = query.trim().toLowerCase();
         const matches = ql ? people.filter(p => !selected.includes(p.id) && `${p.name} ${p.email}`.toLowerCase().includes(ql)).slice(0, 8) : [];
         return (
@@ -100,10 +116,30 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                     {selected.map(id => (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
                             {byId.get(id)?.name || 'Unavailable account'}
+                            {withCheck && <button type="button" onClick={() => runCheck(id)} className="ml-1 rounded-full bg-white px-2 text-[11px] font-bold text-primary border border-slate-200 hover:bg-slate-50" title="Check whether the WhatsApp AI will answer this person (uses the saved settings)">Check</button>}
                             <button type="button" aria-label="Remove" onClick={() => onChange(selected.filter(x => x !== id))} className="text-slate-400 hover:text-slate-700">×</button>
                         </span>
                     ))}
                 </div>
+                {withCheck && selected.map(id => {
+                    const c = checks[id];
+                    if (!c) return null;
+                    return (
+                        <div key={`check-${id}`} className="mt-3 rounded-xl border border-slate-200 p-3 text-sm">
+                            <p className="font-bold text-slate-900">WhatsApp check: {byId.get(id)?.name || 'this person'} <span className="font-normal text-xs text-slate-500">(saved settings)</span></p>
+                            {c.loading ? <p className="text-slate-500 mt-1">Checking…</p> : c.error ? <p className="text-rose-600 mt-1">{c.error}</p> : (
+                                <ul className="mt-2 space-y-1">
+                                    {c.lines!.map(l => (
+                                        <li key={l.label} className="flex gap-2">
+                                            <span className={l.ok ? 'text-emerald-600' : 'text-rose-600'}>{l.ok ? '✓' : '✗'}</span>
+                                            <span><span className="font-semibold">{l.label}:</span> {l.detail}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         );
     };
@@ -118,6 +154,13 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                 <p className="text-sm text-slate-500">Choose who can use the AI assistant and for what. People never get more than their role already allows in the app.</p>
             </div>
 
+            {!config.enabled && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                    <b>The AI assistant is OFF for this organization</b>, so nobody gets it, whatever else is set below.
+                    Tick <b>&ldquo;AI assistant for this organization&rdquo;</b> and click <b>Save AI settings</b> to turn it on.
+                </div>
+            )}
+
             {tableMissing && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
                     The AI settings tables are not set up yet, so the assistant stays off. Your team needs to run the migration <code>20261104000002_ai_action_layer.sql</code>.
@@ -126,7 +169,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
 
             <section className={card}>
                 <label className="flex items-center justify-between gap-4">
-                    <span><span className={h}>AI assistant for this organization</span><span className={`block ${sub}`}>Off by default. Turning it off stops it for everyone at once.</span></span>
+                    <span><span className={h}>AI assistant for this organization <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-black ${config.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>{config.enabled ? 'ON' : 'OFF'}</span></span><span className={`block ${sub}`}>Off by default. This is the main switch: turning it off stops it for everyone at once.</span></span>
                     <input type="checkbox" className="h-5 w-5" checked={config.enabled} onChange={e => set({ enabled: e.target.checked })} />
                 </label>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -153,7 +196,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                         ))}
                     </div>
                 )}
-                {showPeople && picker(config.access.userIds, ids => set({ access: { ...config.access, userIds: ids } }), search, setSearch, 'allow')}
+                {showPeople && picker(config.access.userIds, ids => set({ access: { ...config.access, userIds: ids } }), search, setSearch, 'allow', true)}
                 <p className={`${h} mt-5`}>Blocked people</p>
                 <p className={sub}>Always refused, whatever else is set.</p>
                 {picker(config.blockedUserIds, ids => set({ blockedUserIds: ids }), blockSearch, setBlockSearch, 'block')}
