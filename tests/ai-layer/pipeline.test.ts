@@ -86,7 +86,7 @@ describe('questions: org super admin and tenants', () => {
         const data = new FakeData(); seedTickets(data);
         const boss = actor({ roles: ['org_super_admin'], orgWide: true, propertyIds: [ANDHERI, PAREL, THANE] });
         const out = await say(deps(data, new FakeLlm([[/./, COUNT_TODAY]]), new FakeAudit()), 'how many tickets today across all buildings', null, boss);
-        assert.match(out.reply.text, /all 3 buildings: 6 tickets/);
+        assert.match(out.reply.text, /all 3 properties: 6 tickets/);
         assert.match(out.reply.text, /• Work Square Andheri: 4/);
         assert.match(out.reply.text, /• VFS Lower Parel: 2/);
     });
@@ -169,7 +169,7 @@ describe('ticket creation: ask until complete, confirm, then run', () => {
         const d = deps(data, llm, audit);
 
         let out = await say(d, 'AC not working, bahut garmi hai', null, two, live);
-        assert.match(out.reply.text, /Kaunsi building\?\n1\) Work Square Andheri\n2\) VFS Lower Parel/);
+        assert.match(out.reply.text, /Kaunsi property\?\n1\) Work Square Andheri\n2\) VFS Lower Parel/);
         out = await say(d, '2', out.state, two, live);
         assert.match(out.reply.text, /Floor, room ya cabin/);
         out = await say(d, '3rd floor cabin 304', out.state, two, live);

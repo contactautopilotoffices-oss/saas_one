@@ -30,19 +30,19 @@ export const TEXT = {
     nothing_enabled: { en: "Nothing is switched on for your role yet. Please ask your admin.", hi: 'आपकी भूमिका के लिए अभी कुछ चालू नहीं है। कृपया अपने एडमिन से पूछें।', hinglish: 'Aapke role ke liye abhi kuch on nahi hai. Admin se poochiye.' },
     forbidden: { en: "I can't do that in chat. Approvals, payments, deletes and role changes happen in the app.", hi: 'यह चैट में नहीं हो सकता। अप्रूवल, पेमेंट, डिलीट और रोल बदलना ऐप में होता है।', hinglish: 'Ye chat mein nahi ho sakta. Approval, payment, delete aur role change app mein hote hain.' },
     out_of_scope: { en: 'You have access to {properties} only.', hi: 'आपके पास केवल {properties} का एक्सेस है।', hinglish: 'Aapke paas sirf {properties} ka access hai.' },
-    ask_property: { en: 'Which building?', hi: 'कौन सी बिल्डिंग?', hinglish: 'Kaunsi building?' },
+    ask_property: { en: 'Which property?', hi: 'कौन सी प्रॉपर्टी?', hinglish: 'Kaunsi property?' },
     ask_description: { en: 'What is the problem? Please describe it in a line.', hi: 'समस्या क्या है? एक लाइन में बताइए।', hinglish: 'Problem kya hai? Ek line mein bataiye.' },
     ask_location: { en: 'Where exactly? Floor, room or cabin. (Say "skip" if not needed.)', hi: 'ठीक कहाँ? मंज़िल, कमरा या केबिन। (ज़रूरत न हो तो "skip" लिखें।)', hinglish: 'Exactly kahan? Floor, room ya cabin. (Zaroorat na ho to "skip" likhiye.)' },
     confirm_ticket: { en: 'Please check before I raise the ticket:\n📍 {property}{location}\n🔧 {description}\nShall I raise it? Reply Yes / Change / Cancel', hi: 'टिकट बनाने से पहले देख लीजिए:\n📍 {property}{location}\n🔧 {description}\nबना दूँ? हाँ / बदलें / रद्द करें', hinglish: 'Ticket banane se pehle check kar lijiye:\n📍 {property}{location}\n🔧 {description}\nBana doon? Yes / Change / Cancel' },
     ticket_created: { en: '✅ Ticket {number} raised at {property}. Status: {status}{assignee}.', hi: '✅ टिकट {number} {property} में बन गया। स्थिति: {status}{assignee}।', hinglish: '✅ Ticket {number} {property} mein ban gaya. Status: {status}{assignee}.' },
     ticket_shadow: { en: '🧪 Test mode: ticket creation by chat is being trialled, so nothing was created. Your admin can see what would have been raised. Please raise it in the app for now.', hi: '🧪 टेस्ट मोड: चैट से टिकट बनाना अभी ट्रायल में है, इसलिए कुछ नहीं बना। अभी ऐप में टिकट बनाइए।', hinglish: '🧪 Test mode: chat se ticket banana abhi trial mein hai, isliye kuch nahi bana. Abhi app mein ticket raise kijiye.' },
-    change_what: { en: 'Sure. Tell me what to change (building, place or problem).', hi: 'ठीक है। बताइए क्या बदलना है (बिल्डिंग, जगह या समस्या)।', hinglish: 'Theek hai. Bataiye kya badalna hai (building, jagah ya problem).' },
+    change_what: { en: 'Sure. Tell me what to change (property, place or problem).', hi: 'ठीक है। बताइए क्या बदलना है (प्रॉपर्टी, जगह या समस्या)।', hinglish: 'Theek hai. Bataiye kya badalna hai (property, jagah ya problem).' },
     cancelled: { en: 'Cancelled. Nothing was created.', hi: 'रद्द कर दिया। कुछ नहीं बना।', hinglish: 'Cancel kar diya. Kuch nahi bana.' },
     handoff: { en: "Let's stop here so we don't go round in circles. Please raise it in the app, or start again with all the details in one message.", hi: 'यहीं रुकते हैं। कृपया ऐप में बनाइए, या सारी जानकारी एक संदेश में फिर से भेजिए।', hinglish: 'Yahin rukte hain. App mein raise kijiye, ya saari details ek message mein phir bhejiye.' },
     already_done: { en: 'That ticket was already raised. Ask me "my open tickets" to see it.', hi: 'वह टिकट पहले ही बन चुका है।', hinglish: 'Woh ticket pehle hi ban chuka hai. "mere open tickets" poochiye.' },
     hr_redirect: { en: "HR matters like grievances aren't handled in this chat, so nothing was raised and nobody was told. Please use HR Tickets in the app, where you can mark it confidential or anonymous.", hi: 'शिकायत जैसे HR मामले इस चैट में नहीं होते, इसलिए कुछ नहीं बना और किसी को नहीं बताया गया। कृपया ऐप में HR Tickets इस्तेमाल करें, वहाँ आप इसे गोपनीय या गुमनाम रख सकते हैं।', hinglish: 'Grievance jaise HR matters is chat mein nahi hote, isliye kuch nahi bana aur kisi ko nahi bataya gaya. App mein HR Tickets use kijiye, wahan aap ise confidential ya anonymous rakh sakte hain.' },
     tasks_elsewhere: { en: 'Tasks are handled by the Task Manager. Send this on WhatsApp, or open Task Manager in the app.', hi: 'टास्क Task Manager में होते हैं। यह WhatsApp पर भेजें या ऐप में Task Manager खोलें।', hinglish: 'Tasks Task Manager mein hote hain. Ye WhatsApp par bhejiye ya app mein Task Manager kholiye.' },
-    pick_number: { en: 'Reply with the number or the building name.', hi: 'नंबर या बिल्डिंग का नाम लिखें।', hinglish: 'Number ya building ka naam likhiye.' },
+    pick_number: { en: 'Reply with the number or the property name.', hi: 'नंबर या प्रॉपर्टी का नाम लिखें।', hinglish: 'Number ya property ka naam likhiye.' },
     failed: { en: "Sorry, that didn't work. Nothing was changed. Please try again or use the app.", hi: 'माफ़ कीजिए, यह नहीं हुआ। कुछ नहीं बदला। फिर कोशिश करें या ऐप इस्तेमाल करें।', hinglish: 'Sorry, ye nahi hua. Kuch nahi badla. Phir try kijiye ya app use kijiye.' },
     ai_down: { en: "I couldn't understand that right now. Please try again in a minute, or use the app.", hi: 'मैं अभी समझ नहीं पाया। एक मिनट बाद फिर कोशिश करें या ऐप इस्तेमाल करें।', hinglish: 'Abhi samajh nahi paaya. Ek minute baad try kijiye ya app use kijiye.' },
     tickets_count: { en: '{period}, {scope}: {total} tickets. {open} open, {closed} closed.{top}', hi: '{period}, {scope}: {total} टिकट। {open} खुले, {closed} बंद।{top}', hinglish: '{period}, {scope}: {total} tickets. {open} open, {closed} closed.{top}' },
@@ -78,10 +78,10 @@ const PERIOD_LABEL: Record<Period, T> = {
 };
 export const periodLabel = (p: Period, lang: Lang) => PERIOD_LABEL[p][lang];
 
-/** "Work Square Andheri" or "all 4 buildings". */
+/** "Work Square Andheri" or "all 4 properties" (owner 2026-11-04: "properties", not "buildings"). */
 export function scopeLabel(names: string[], lang: Lang): string {
     if (names.length === 1) return names[0];
-    return lang === 'en' ? `all ${names.length} buildings` : lang === 'hi' ? `सभी ${names.length} बिल्डिंग` : `sabhi ${names.length} buildings`;
+    return lang === 'en' ? `all ${names.length} properties` : lang === 'hi' ? `सभी ${names.length} प्रॉपर्टी` : `sabhi ${names.length} properties`;
 }
 
 export const YES = /^(y|yes|yeah|yep|ok|okay|confirm|haan|han|ha|haa|ji|ji haan|theek hai|thik hai|kar do|bana do|हाँ|हां|जी|ठीक है)[.! ]*$/i;
