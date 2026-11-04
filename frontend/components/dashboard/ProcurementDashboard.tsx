@@ -37,9 +37,13 @@ import FinanceOverview from '../accounts/FinanceOverview';
 import AccountsDashboard from '../accounts/AccountsDashboard';
 import InvoiceControl from '../invoices/InvoiceControl';
 import BountyInbox from '../aop/BountyInbox';
+import { useAuth } from '@/frontend/context/AuthContext';
+import { spacesForMemberships } from '@/task-manager/meetings/visibility';
 
 // Only drawn on its own (legacy) tab and pulls in the Excel library: load it when that tab opens (performance plan Phase 8).
 const SitePricingAdminTab = dynamic(() => import('../procurement/SitePricingAdminTab'), { loading: TabLoading });
+// Owner 2026-11-04: the Procurement team's own Meeting Assistant (not the Ira meeting room, which has its own page)
+const MeetingsTab = dynamic(() => import('../task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 
 // --- Types ---
 interface MaterialRequest {
@@ -74,7 +78,7 @@ interface MaterialRequest {
     };
 }
 
-type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'invoice-control' | 'bounty' | 'requests' | 'vendor_tickets' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'stock-settings' | 'po-generator' | 'settings' | 'profile' | 'grievance';
+type Tab = 'overview' | 'vendor-discovery' | 'tasks' | 'payment-tracker' | 'invoice-control' | 'bounty' | 'requests' | 'vendor_tickets' | 'meeting-assistant' | 'monthly-requisitions' | 'monthly-feedback' | 'site-pricing' | 'history' | 'manage-items' | 'stock-settings' | 'po-generator' | 'settings' | 'profile' | 'grievance';
 
 // Shared by the Active Orders status pills and their counts so both read a request the same way.
 const matchesStatusTab = (r: { status?: string }, filter: string) => {
@@ -91,9 +95,15 @@ const getInitials = (name?: string | null) => {
 
 export default function ProcurementDashboard() {
     const { dashboardContent, navigateDashboard } = useDashboardContent();
+    const { membership } = useAuth();
     const supabase = createClient();
     const searchParams = useSearchParams();
     const router = useRouter();
+    // Owner 2026-11-04: admins can also open this dashboard, but the Meeting Assistant here is for the same roles the server accepts for the 'procurement' space
+    const canUseMeetingAssistant = useMemo(() => spacesForMemberships(
+        (membership?.all_org_memberships ?? []).map(m => m.role),
+        (membership?.properties ?? []).map(p => p.role),
+    ).has('procurement'), [membership]);
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [user, setUser] = useState<any>(null);
     const [requests, setRequests] = useState<MaterialRequest[]>([]);
@@ -103,6 +113,9 @@ export default function ProcurementDashboard() {
     const [dashboardTab, setActiveTabState] = useState<Tab>('overview');
     // When the dashboard is showing a content page (petty cash), that wins over the tab state.
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
+    // Stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (activeTab === 'meeting-assistant' && canUseMeetingAssistant && !assistantOpened) setAssistantOpened(true);
     /**
      * Every tab change is written to the address bar. "Raise Grievance" puts
      * ?tab=grievance in the URL; when the other tabs only changed state, that
@@ -124,12 +137,13 @@ export default function ProcurementDashboard() {
         const tabParam = searchParams?.get('tab') as string | null;
         const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'invoice-control', 'bounty', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'stock-settings', 'po-generator', 'settings', 'profile', 'grievance'];
         if (SHOW_LEGACY_PER_PROPERTY_CONTROLS) linkableTabs.push('site-pricing');
+        if (canUseMeetingAssistant) linkableTabs.push('meeting-assistant');
         if (tabParam === 'urgency-tracker' || tabParam === 'task-sheet') {
             setActiveTab('payment-tracker');
         } else if (tabParam && linkableTabs.includes(tabParam)) {
             setActiveTab(tabParam as Tab);
         }
-    }, [searchParams]);
+    }, [searchParams, canUseMeetingAssistant]);
     const [sidebarCounts, setSidebarCounts] = useState<{
         vendorTickets: number;
         monthlyRequisitions: number;
@@ -681,6 +695,11 @@ export default function ProcurementDashboard() {
                                         label: 'Meetings (Ira)',
                                         href: `/${user.user_metadata.organization_id}/meetings`,
                                     }] : []),
+                                    ...(canUseMeetingAssistant ? [{
+                                        id: 'meeting-assistant',
+                                        icon: Mic,
+                                        label: 'Meeting Assistant',
+                                    }] : []),
                                     { 
                                         id: 'monthly-requisitions', 
                                         icon: FileSpreadsheet, 
@@ -833,6 +852,7 @@ export default function ProcurementDashboard() {
                                  activeTab === 'payment-tracker' ? 'PO Compilation, Alignments & Status' :
                                  activeTab === 'invoice-control' ? 'Vendor invoices, PO matching & payment plans' :
                                  activeTab === 'bounty' ? 'What this month\'s AOP still needs from you' :
+                                 activeTab === 'meeting-assistant' ? 'Record a meeting, get the notes and tasks' :
                                  activeTab === 'manage-items' ? `Catalog · ${stats.total} Items` :
                                  activeTab === 'stock-settings' ? 'Old stock list or requisition items, per property' :
                                  activeTab === 'po-generator' ? 'AI Purchase Order Processor' :
@@ -1018,10 +1038,11 @@ export default function ProcurementDashboard() {
                         {activeTab === 'profile' && (
                             <ProcurementSettingsTab 
                                 user={user} 
-                                onUserUpdated={(updatedUser) => setUser(updatedUser)} 
+                                onUserUpdated={(updatedUser) => setUser(updatedUser)}
                             />
                         )}
                     </AnimatePresence>
+                    {assistantOpened && <div className={activeTab === 'meeting-assistant' ? '' : 'hidden'}><MeetingsTab space="procurement" /></div>}
                 </div>
 
                 </>)}

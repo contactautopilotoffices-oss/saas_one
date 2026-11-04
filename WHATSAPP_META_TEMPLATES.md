@@ -196,6 +196,33 @@ verify the completion and rate the service.
 
 ---
 
+### Template 3C: `ticket_reply_v1` (Reply on a ticket, sent to the raiser or the assignee)
+- **Template Name:** `ticket_reply_v1`
+- **Category:** `UTILITY`
+- **Language:** `English (en)`
+- **Header:** `Text` &rarr; `New Reply on Your Ticket`
+- **Body:**
+```text
+Hello {{1}},
+
+{{2}} replied on ticket #{{3}}.
+
+📄 Title: {{4}}
+💬 Reply: {{5}}
+
+Swipe right on this message to reply, or open the ticket in FMS.
+```
+- **Footer:** `AutoPilot Property Management`
+- **Button Type:** `None`
+- **Sample Values:**
+  - `{{1}}`: `Lohit Sharma`
+  - `{{2}}`: `Rahul Verma`
+  - `{{3}}`: `TICK-1042`
+  - `{{4}}`: `Company emails creation`
+  - `{{5}}`: `I need the email approval attachment before I can do this.`
+
+---
+
 ### Template 4: `reminder_ticket_sla_v1` (SLA Warning)
 - **Template Name:** `reminder_ticket_sla_v1`
 - **Category:** `UTILITY`

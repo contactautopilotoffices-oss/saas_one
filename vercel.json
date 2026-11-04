@@ -72,6 +72,10 @@
       "schedule": "0 0 1 * *"
     },
     {
+      "path": "/api/cron/voice-id-keepalive",
+      "schedule": "17 */12 * * *"
+    },
+    {
       "path": "/api/cron/meeting-room-reminders",
       "schedule": "* * * * *"
     },
@@ -157,6 +161,10 @@
     },
     {
       "path": "/api/cron/task-manager?action=auto",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/task-manager-report",
       "schedule": "*/15 * * * *"
     },
     {

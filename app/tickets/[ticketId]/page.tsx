@@ -420,7 +420,7 @@ export default function TicketDetailPage() {
       if (isUuid) {
         ticketQuery = ticketQuery.eq("id", targetId);
       } else {
-        ticketQuery = ticketQuery.or(`ticket_number.eq.${targetId},ticket_number.eq.${cleanNum},ticket_number.eq.TKT-${cleanNum}`);
+        ticketQuery = ticketQuery.or(`ticket_number.ilike.${targetId},ticket_number.eq.${targetId},ticket_number.eq.${cleanNum},ticket_number.eq.TKT-${cleanNum}`);
       }
 
       const { data: t, error } = await ticketQuery.maybeSingle();

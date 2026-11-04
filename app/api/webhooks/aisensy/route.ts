@@ -18,6 +18,7 @@ import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 import { claimAiLayerWhatsApp } from '@/backend/lib/aiLayer/whatsappLive';
+import { claimTicketReply } from '@/backend/lib/whatsapp/ticketReply';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -71,6 +72,9 @@ export async function POST(req: NextRequest) {
         console.info('[AiSensyWebhook] Duplicate delivery ignored', JSON.stringify({ type: arrived && messageKind(arrived) }));
         return NextResponse.json({ success: true, ignored: 'duplicate' });
     }
+    // Ticket replies: a swipe-reply to a ticket notification belongs to that ticket, so it is taken before any bot can read
+    // it as a new ticket or a task. Anything that is not a swipe on one of those messages carries on below exactly as before.
+    if ((await claimTicketReply(body)).handled) return NextResponse.json({ success: true, routedTo: 'TICKET_REPLY' });
     // Voice notes (switch VOICE_NOTES_ENABLED, OFF by default → returns at once, nothing loaded). A voice note is turned into
     // tidy text in the background. A YES to "🎙️ I heard …" carries on below as that text, exactly as if it had been typed.
     const voice = await claimVoiceNote(body);

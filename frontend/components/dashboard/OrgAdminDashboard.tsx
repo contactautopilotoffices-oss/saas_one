@@ -1600,7 +1600,7 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
-                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader showReport={isOrgSuperAdmin} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab

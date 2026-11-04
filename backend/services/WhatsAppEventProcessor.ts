@@ -108,6 +108,9 @@ export const WhatsAppEventProcessor = {
             case 'TICKET_RESOLVED':
                 await this.handleTicketCompleted(payload);
                 break;
+            case 'TICKET_REPLY':
+                await this.handleTicketReply(payload);
+                break;
             case 'TICKET_UPDATED':
                 // Only dispatch reassignment if assigned_to actually changed to a new user
                 if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
@@ -399,6 +402,7 @@ export const WhatsAppEventProcessor = {
             ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
+            ticket_reply: { campaign_name: 'ticket_reply_v1', params: ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             ai_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
@@ -493,6 +497,9 @@ export const WhatsAppEventProcessor = {
             'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+
+            'ticket_reply_v1': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
+            'ticket_reply': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
 
             'ticket_assigned_v2': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
@@ -802,6 +809,47 @@ export const WhatsAppEventProcessor = {
             },
             summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) resolved at ${propertyName} by ${completer.name}`,
             contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by }
+        });
+    },
+
+    /**
+     * A reply on a ticket. Who gets it was already decided by the DB trigger on ticket_comments (fn_ticket_comments_outbox),
+     * so the rules live in one place for web, mobile and WhatsApp replies.
+     * entityId is the COMMENT id: with the ticket id a second quick reply would be dropped by the queue's 2-minute dedup.
+     * durableBatch stops a retried outbox event from sending the same comment again, however late the retry runs.
+     */
+    async handleTicketReply(payload: any): Promise<void> {
+        if (!payload.comment_id || !payload.recipient_id) return;
+
+        const { data: sender } = await supabaseAdmin
+            .from('users')
+            .select('full_name')
+            .eq('id', payload.sender_id)
+            .maybeSingle();
+
+        const repliedBy = sender?.full_name || 'Team Member';
+        const ticketNumber = payload.ticket_number || 'N/A';
+        const reply = sanitizeWhatsAppParam(payload.message, 'reply_text');
+
+        await this.dispatch({
+            featureKey: 'ticket_reply',
+            templateEventKey: 'ticket_reply',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.comment_id,
+            durableBatch: true,
+            paramValues: {
+                user_name: 'Team',
+                replied_by: repliedBy,
+                ticket_number: ticketNumber,
+                title: payload.title || 'Support Request',
+                reply_text: reply.length > 300 ? `${reply.slice(0, 297)}...` : reply
+            },
+            summaryMessage: `${repliedBy} replied on ticket #${ticketNumber}`,
+            contextualUserIds: payload.recipient_role === 'requester'
+                ? { requesterId: payload.recipient_id }
+                : { assigneeId: payload.recipient_id },
+            excludeUserIds: [payload.sender_id]
         });
     },
 

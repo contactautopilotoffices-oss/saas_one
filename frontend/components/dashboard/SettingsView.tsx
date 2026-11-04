@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase, Sparkles
+    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase, Mic, Sparkles
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
@@ -20,6 +20,7 @@ import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppService
 import OmnichannelNotificationSettings from '@/frontend/components/admin/OmnichannelNotificationSettings';
 import AssistantSettings from '@/frontend/components/whatsapp/AssistantSettings';
 import AiAccessSettings from '@/frontend/components/ai-layer/AiAccessSettings';
+import VoiceSetup from '@/frontend/components/task-manager/voice/VoiceSetup';
 
 interface RoleInfo {
     role: string;
@@ -73,7 +74,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [cameraPerm, setCameraPerm] = useState<'granted' | 'denied' | 'prompt' | 'unsupported'>('prompt');
     const [revokeHint, setRevokeHint] = useState<'notif' | 'camera' | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'ai_access' | 'appearance'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'ai_access' | 'appearance' | 'voice'>('profile');
 
     useEffect(() => {
         // Notification permission
@@ -471,6 +472,19 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                     }`}
                 >
                     <Video className="w-4 h-4" /> Appearance & Wallpaper
+                </button>
+
+                {/* LiveVoice ID (owner 2026-11-02): anyone can set up their own voice for the Meeting Assistant */}
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('voice')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                        activeTab === 'voice'
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                >
+                    <Mic className="w-4 h-4" /> My voice
                 </button>
             </div>
 
@@ -987,6 +1001,13 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
             {activeTab === 'ai_access' && superAdminOrgId && (
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
                     <AiAccessSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
+            {/* My voice Tab */}
+            {activeTab === 'voice' && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <VoiceSetup />
                 </section>
             )}
 

@@ -14,6 +14,9 @@ import {
     SARVAM_MAX_FILES, baseMime, checkSarvamJob, meetingAudioExtension, startSarvamJob, transcribeWithWhisper,
     type AudioFile, type TranscriptLine,
 } from './MeetingTranscriber';
+import { TaskAccessService } from '../TaskAccessService';
+import { health as voiceHealth, identify as voiceIdentify, voiceIdConfig, VOICEPRINT_DIM } from '../voice/VoiceIdClient';
+import { applyNames, segmentsFor, voiceLabels } from './MeetingSpeakers';
 
 /**
  * Meeting Notes → Tasks (owner 2026-10-29). The Tech dashboard's "Meetings" tab.
@@ -40,8 +43,9 @@ export class MeetingError extends Error {
     }
 }
 
-export type MeetingStatus = 'recording' | 'uploaded' | 'transcribing' | 'extracting' | 'ready' | 'failed' | 'discarded';
-export const PROCESSING: readonly MeetingStatus[] = ['uploaded', 'transcribing', 'extracting'];
+export type MeetingStatus = 'recording' | 'uploaded' | 'transcribing' | 'identifying' | 'extracting' | 'ready' | 'failed' | 'discarded';
+// LiveVoice ID (2026-11-03): 'identifying' = naming who spoke from the voices people set up, while the audio still exists
+export const PROCESSING: readonly MeetingStatus[] = ['uploaded', 'transcribing', 'identifying', 'extracting'];
 
 interface MeetingRow {
     id: string; title: string; meeting_date: string; created_by: string; attendee_ids: string[]; extra_names: string[];
@@ -58,6 +62,8 @@ interface MeetingTaskRow {
     owner_user_id: string | null; owner_user_ids: string[] | null; due_date: string | null; due_time: string | null; quote: string | null;
     quote_at_seconds: number | null; quote_found: boolean | null; source: 'ai' | 'manual'; status: 'draft' | 'sending' | 'sent' | 'deleted';
     task_id: string | null; task_ids: string[] | null; sent_at: string | null; sent_by: string | null; error: string | null;
+    /** LiveVoice ID (absent before migration 20261103000001) */
+    asked_by_user_id?: string | null;
 }
 /** The people a task is for (rows from before several-people support only have `owner_user_id`). */
 const ownersOf = (t: Pick<MeetingTaskRow, 'owner_user_id' | 'owner_user_ids'>) => (t.owner_user_ids?.length ? t.owner_user_ids : t.owner_user_id ? [t.owner_user_id] : []);
@@ -87,6 +93,21 @@ const LEASE_MS = 280_000;
 const MAX_CUT_OFF = 3;
 /** A task left "sending" this long (the request was cut off) goes back to draft so it can be checked and sent. */
 const STUCK_SENDING_MS = 10 * 60 * 1000;
+/** LiveVoice ID: a sleeping voice server takes 1 to 2 minutes to wake. Wait this long for it, then go on without names. */
+const VOICE_WAIT_MS = 6 * 60 * 1000;
+/** Signed links to the audio pieces, for the voice server only. Long enough for a slow download, short enough to be useless later. */
+const VOICE_LINK_SECONDS = 15 * 60;
+
+/** What the review screen shows about voice naming (no scores, no voiceprints). */
+export interface VoiceSummary { state: 'pending' | 'done' | 'skipped'; reason: string | null; matched: number; voices: number }
+
+/** The review screen's view of voice naming. Older meetings (no record) show nothing. */
+function voiceSummary(stt: Record<string, unknown> | null): VoiceSummary | null {
+    const v = (stt ?? {}).speakerId as Record<string, unknown> | undefined;
+    if (!v || typeof v !== 'object') return null;
+    const state = v.state === 'done' || v.state === 'pending' ? v.state : 'skipped';
+    return { state, reason: typeof v.reason === 'string' ? v.reason : null, matched: Number(v.matched ?? 0) || 0, voices: Number(v.voices ?? 0) || 0 };
+}
 
 export class MeetingService {
     // ── people ────────────────────────────────────────────────────────────────
@@ -96,6 +117,19 @@ export class MeetingService {
         const all = await TaskDatabaseService.getAllEmployees();
         return all.filter(e => e.active).map(e => ({ id: e.id, name: e.name, department: e.department_name }))
             .sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /** LiveVoice ID: the people whose voice is set up (ids only, never the voiceprint). Empty before the migration. */
+    static async voiceReadyIds(): Promise<Set<string>> {
+        const { data, error } = await supabaseAdmin.from('voice_profiles').select('user_id').limit(10_000);
+        if (error) return new Set();
+        return new Set((data ?? []).map(r => (r as { user_id: string }).user_id));
+    }
+
+    /** The "who was present" list with a "voice ready" mark per person. */
+    static async peopleWithVoice(): Promise<Array<MeetingPersonOption & { voiceReady: boolean }>> {
+        const [people, ready] = await Promise.all([this.people(), this.voiceReadyIds()]);
+        return people.map(p => ({ ...p, voiceReady: ready.has(p.id) }));
     }
 
     // ── reading ───────────────────────────────────────────────────────────────
@@ -200,12 +234,15 @@ export class MeetingService {
                 transcript: m.transcript ?? [], summary: m.summary, provider: (m.stt?.provider as string | undefined) ?? null,
                 canRetry: m.status === 'failed' && (!!m.transcript?.length || m.stt?.audioDeleted !== true),
                 notesSentAt: m.notes_sent_at ?? null, notesSentCount: m.notes_sent_count ?? null,
+                voice: voiceSummary(m.stt),
             },
             tasks: taskRows.map(t => ({
                 id: t.id, title: t.title, note: t.note, ownerName: t.owner_name,
                 ownerUserIds: ownersOf(t), ownerNames: ownersOf(t).map(o => nameOf.get(o) || 'Former employee'),
                 dueDate: t.due_date, dueTime: t.due_time, quote: t.quote, quoteAtSeconds: t.quote_at_seconds, quoteFound: t.quote_found,
                 source: t.source, status: t.status, sentAt: t.sent_at, sentAs: sentAsOf(t), error: t.error,
+                askedByUserId: t.asked_by_user_id ?? null,
+                askedByName: t.asked_by_user_id ? nameOf.get(t.asked_by_user_id) || 'Former employee' : null,
             })),
             people,
             // For "Send as: me" — how the person pressing Send is shown to the people who get the tasks
@@ -398,14 +435,25 @@ export class MeetingService {
 
     // ── audio ─────────────────────────────────────────────────────────────────
 
-    /** Every continuous recording as one file: its pieces joined in order (pieces of one recording form one valid file). */
-    private static async readAudio(id: string): Promise<AudioFile[]> {
-        const files: AudioFile[] = [];
+    /**
+     * The stored pieces of each continuous recording, in order. Recordings with no pieces are left out, so index i here is
+     * file i for the speech service (and for voice naming).
+     */
+    private static async audioPieces(id: string): Promise<Array<{ seg: string; names: string[] }>> {
+        const out: Array<{ seg: string; names: string[] }> = [];
         for (const seg of await this.segments(id)) {
             const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/${seg}`, { limit: 10_000, sortBy: { column: 'name', order: 'asc' } });
             if (error) throw new Error(`could not list ${seg}`);
             const names = (data ?? []).map(f => f.name).filter(n => /^c\d{5}\.\w+$/.test(n)).sort();
-            if (!names.length) continue;
+            if (names.length) out.push({ seg, names });
+        }
+        return out;
+    }
+
+    /** Every continuous recording as one file: its pieces joined in order (pieces of one recording form one valid file). */
+    private static async readAudio(id: string): Promise<AudioFile[]> {
+        const files: AudioFile[] = [];
+        for (const { seg, names } of await this.audioPieces(id)) {
             const parts: Buffer[] = [];
             for (let i = 0; i < names.length; i += 10) {
                 const batch = await Promise.all(names.slice(i, i + 10).map(async n => {
@@ -488,6 +536,7 @@ export class MeetingService {
             try {
                 if (m.status === 'uploaded') await this.stepStart(m);
                 else if (m.status === 'transcribing') await this.stepCheck(m);
+                else if (m.status === 'identifying') await this.stepIdentify(m);
                 else if (m.status === 'extracting') await this.stepExtract(m);
             } catch (err) {
                 console.error('[MeetingService] processing failed:', id, err instanceof Error ? err.message : err);
@@ -533,7 +582,7 @@ export class MeetingService {
     private static async stepCheck(m: MeetingRow) {
         const stt = m.stt ?? {};
         const check = await checkSarvamJob({ jobId: String(stt.jobId ?? ''), files: Array.isArray(stt.files) ? stt.files.map(String) : [] });
-        if (check.state === 'done') { await this.saveTranscript(m, check.lines, { ...stt, finishedAt: new Date().toISOString() }); return; }
+        if (check.state === 'done') { await this.afterTranscript(m, check.lines, { ...stt, finishedAt: new Date().toISOString(), fileOffsets: check.offsets }); return; }
         const tooSlow = Date.now() - Date.parse(String(stt.startedAt ?? m.updated_at)) > SARVAM_GIVE_UP_MS;
         if (check.state === 'running' && !tooSlow) return;
         const why = check.state === 'failed' ? check.detail : 'took too long';
@@ -560,15 +609,108 @@ export class MeetingService {
         await this.deleteAudio(m.id);
     }
 
+    // ── LiveVoice ID: naming who spoke (plan: docs/LIVEVOICE_ID_PLAN.md) ───────────────────────────────────────
+
+    /**
+     * Voiceprints of the people picked as present, if this meeting should be named at all. Returns why not otherwise.
+     * Reading `voice_id` and `voice_profiles` successfully also proves migration 20261103000001 ran, which is what allows
+     * the 'identifying' status.
+     */
+    private static async voicePlan(m: MeetingRow, lines: TranscriptLine[]): Promise<
+        { ok: true; candidates: Array<{ id: string; voiceprint: number[] }> } | { ok: false; reason: string }> {
+        if (!voiceLabels(lines).length) return { ok: false, reason: 'no_speaker_labels' };
+        if (!voiceIdConfig()) return { ok: false, reason: 'server_not_configured' };
+        const creator = await TaskDatabaseService.getEmployeeById(m.created_by).catch(() => null);
+        const switches = await TaskAccessService.getVoiceIdDepartments();
+        if (switches.columnMissing) return { ok: false, reason: 'not_set_up' };
+        if (!creator?.department_id || !switches.departments.has(creator.department_id)) return { ok: false, reason: 'switched_off' };
+        if (!m.attendee_ids.length) return { ok: false, reason: 'nobody_picked' };
+        const { data, error } = await supabaseAdmin.from('voice_profiles').select('user_id, voiceprint').in('user_id', m.attendee_ids);
+        if (error) return { ok: false, reason: 'not_set_up' };
+        const candidates = ((data ?? []) as Array<{ user_id: string; voiceprint: number[] | null }>)
+            .filter(r => Array.isArray(r.voiceprint) && r.voiceprint.length === VOICEPRINT_DIM)
+            .map(r => ({ id: r.user_id, voiceprint: r.voiceprint!.map(Number) }));
+        if (!candidates.length) return { ok: false, reason: 'nobody_enrolled' };
+        return { ok: true, candidates };
+    }
+
+    /** Sarvam is done: name the voices first (audio kept a little longer), or save straight away as before. */
+    private static async afterTranscript(m: MeetingRow, lines: TranscriptLine[], stt: Record<string, unknown>) {
+        const plan = await this.voicePlan(m, lines).catch(err => ({ ok: false as const, reason: `error: ${err instanceof Error ? err.message : 'unknown'}`.slice(0, 120) }));
+        if (!plan.ok) {
+            await this.saveTranscript(m, lines, { ...stt, speakerId: { state: 'skipped', reason: plan.reason } });
+            return;
+        }
+        const duration = lines.length ? Math.round(Math.max(...lines.map(l => l.end))) : null;
+        await this.update(m.id, {
+            status: 'identifying', transcript: lines, duration_seconds: duration,
+            stt: { ...stt, speakerId: { state: 'pending', since: new Date().toISOString(), candidates: plan.candidates.length } },
+        });
+    }
+
+    /** Leaves 'identifying' for 'extracting' (with or without names) and deletes the audio. */
+    private static async finishIdentify(m: MeetingRow, speakerId: Record<string, unknown>, lines?: TranscriptLine[]) {
+        await this.update(m.id, { status: 'extracting', stt: { ...(m.stt ?? {}), speakerId }, ...(lines ? { transcript: lines } : {}) });
+        await this.deleteAudio(m.id);
+        const matched = Number(speakerId.matched ?? 0);
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_speakers_identified', details: { meetingId: m.id, state: speakerId.state, reason: speakerId.reason ?? null, matched } });
+    }
+
+    /** identifying → ask the voice server who each "Speaker N" is → names on the lines → extracting. Never fails the meeting. */
+    private static async stepIdentify(m: MeetingRow) {
+        const lines = m.transcript ?? [];
+        const prev = ((m.stt ?? {}).speakerId ?? {}) as Record<string, unknown>;
+        const waited = Date.now() - Date.parse(String(prev.since ?? m.updated_at));
+        const skip = (reason: string) => this.finishIdentify(m, { ...prev, state: 'skipped', reason });
+        const waitOrSkip = async (reason: string) => {
+            if (waited < VOICE_WAIT_MS) { await this.update(m.id, { stt: { ...(m.stt ?? {}), speakerId: { ...prev, lastProblem: reason } } }); return; }
+            await skip(reason);
+        };
+
+        const plan = await this.voicePlan(m, lines);
+        if (!plan.ok) { await skip(plan.reason); return; }
+
+        // A sleeping server is woken by this call; the next polls wait for it
+        const server = await voiceHealth();
+        if (server.state === 'not_configured') { await skip('server_not_configured'); return; }
+        if (server.state !== 'online') { await waitOrSkip(`server_${server.state}`); return; }
+
+        const offsets = Array.isArray((m.stt ?? {}).fileOffsets) ? ((m.stt ?? {}).fileOffsets as unknown[]).map(Number) : [0];
+        const pieces = await this.audioPieces(m.id);
+        if (!pieces.length) { await skip('audio_gone'); return; }
+        if (pieces.length !== offsets.length) { await skip('recordings_mismatch'); return; }
+        const files: string[][] = [];
+        for (const { seg, names } of pieces) {
+            const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).createSignedUrls(names.map(n => `${m.id}/${seg}/${n}`), VOICE_LINK_SECONDS);
+            if (error || !data || data.some(d => !d.signedUrl)) { await skip('links_failed'); return; }
+            files.push(data.map(d => d.signedUrl as string));
+        }
+
+        const result = await voiceIdentify({ files, segments: segmentsFor(lines, offsets), candidates: plan.candidates });
+        if (!result.ok) {
+            console.warn(`[MeetingService] voice naming: ${result.reason}${result.detail ? ` (${result.detail})` : ''}`);
+            if (result.retryable) await waitOrSkip(result.reason); else await skip(result.reason);
+            return;
+        }
+        const nameOf = new Map((await this.people()).map(p => [p.id, p.name]));
+        const named = applyNames(lines, result.speakers, nameOf);
+        await this.finishIdentify(m, {
+            state: 'done', since: prev.since ?? null, at: new Date().toISOString(), matched: named.matched, voices: voiceLabels(lines).length,
+            model: result.model, threshold: result.threshold, margin: result.margin, timingMs: result.timingMs, mapping: named.mapping,
+        }, named.lines);
+    }
+
     /** extracting → one AI call → summary + draft tasks → ready. */
     private static async stepExtract(m: MeetingRow) {
         const lines = m.transcript ?? [];
         if (!lines.length) { await this.update(m.id, { status: 'failed', error: 'The transcript is empty.' }); return; }
         const everyone = await this.people();
         const people = buildPeople({ everyone, attendeeIds: m.attendee_ids, extraNames: m.extra_names });
+        // LiveVoice ID: names on the lines (which also proves migration 20261103000001 ran, so asked_by_user_id exists)
+        const namedSpeakers = lines.some(l => !!l.speakerUserId);
         let result;
         try {
-            result = await extractMeeting({ title: m.title, meetingDate: m.meeting_date, people, lines });
+            result = await extractMeeting({ title: m.title, meetingDate: m.meeting_date, people, lines, namedSpeakers });
         } catch (err) {
             console.error('[MeetingService] summary failed:', err instanceof Error ? err.message : err);
             await this.update(m.id, { status: 'failed', error: 'The AI could not write the notes. Press "Try again".' });
@@ -581,6 +723,7 @@ export class MeetingService {
                 meeting_id: m.id, position: i, title: t.title, note: t.note, owner_name: t.ownerName, owner_user_id: t.ownerUserId, owner_user_ids: t.ownerUserId ? [t.ownerUserId] : [],
                 due_date: t.dueDate, due_time: t.dueTime, quote: t.quote, quote_at_seconds: t.quoteAtSeconds, quote_found: t.quoteFound,
                 source: 'ai', original: t, status: 'draft',
+                ...(namedSpeakers ? { asked_by_user_id: t.askedByUserId } : {}),
             })));
             if (error) throw new Error(`could not save the tasks: ${error.message}`);
         }

@@ -92,7 +92,8 @@ export async function POST(request: NextRequest) {
                 ticket_id,
                 user_id: user.id,
                 comment: `Material requested: ${items.length} items (Total: ₹${total_amount.toLocaleString()}). Sent to procurement for quotation.`,
-                is_internal: false
+                is_internal: false,
+                metadata: { system_update: true } // automatic log line, not a person's reply: no WhatsApp
             })
             .then(({ error }) => {
                 if (error) console.error('[Procurement API] Comment failed:', error.message);

@@ -29,7 +29,13 @@ export const WHISPER_MAX_BYTES = 25 * 1024 * 1024;
 const WHISPER_TIMEOUT_MS = 150_000;
 const SARVAM_TIMEOUT_MS = 60_000;
 
-export interface TranscriptLine { speaker: string | null; start: number; end: number; text: string }
+export interface TranscriptLine {
+    speaker: string | null; start: number; end: number; text: string;
+    /** LiveVoice ID (2026-11-03): the person whose voice this is, when it was recognised. `speaker` is then their name. */
+    speakerUserId?: string | null;
+    /** The speech service's own label ("Speaker 2"), kept when `speaker` was replaced by a name. */
+    voiceLabel?: string | null;
+}
 /** One continuous recording. A meeting has more than one only if the recording was restarted (or a file was uploaded). */
 export interface AudioFile { name: string; mimeType: string; bytes: Buffer }
 
@@ -54,14 +60,21 @@ const clean = (s: unknown) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 /** Joins several recordings into one timeline: each file starts where the previous one ended. */
 export function joinFiles(perFile: TranscriptLine[][]): TranscriptLine[] {
+    return joinFilesWithOffsets(perFile).lines;
+}
+
+/** Same, plus where each recording starts on the joined timeline (voice naming needs each recording's own time). */
+export function joinFilesWithOffsets(perFile: TranscriptLine[][]): { lines: TranscriptLine[]; offsets: number[] } {
     const out: TranscriptLine[] = [];
+    const offsets: number[] = [];
     let offset = 0;
     for (const lines of perFile) {
+        offsets.push(offset);
         for (const l of lines) out.push({ ...l, start: l.start + offset, end: l.end + offset });
         const last = lines.length ? Math.max(...lines.map(l => l.end)) : 0;
         offset += last;
     }
-    return out;
+    return { lines: out, offsets };
 }
 
 // ── Sarvam (primary, asynchronous) ────────────────────────────────────────────
@@ -132,7 +145,7 @@ export async function startSarvamJob(input: SarvamStartInput, deps: SttDeps = {}
 
 export type SarvamCheck =
     | { state: 'running' }
-    | { state: 'done'; lines: TranscriptLine[] }
+    | { state: 'done'; lines: TranscriptLine[]; offsets: number[] }
     | { state: 'failed'; detail: string };
 
 /** Sarvam's output file: speaker-labelled entries when diarization worked, else timed chunks, else one block of text. */
@@ -202,8 +215,8 @@ export async function checkSarvamJob(input: { jobId: string; files: string[] }, 
             if (!file.ok) return { state: 'failed', detail: `download ${out}: HTTP ${file.status}` };
             perFile.push(parseSarvamOutput(await file.json().catch(() => null)));
         }
-        const lines = joinFiles(perFile);
-        return lines.length ? { state: 'done', lines } : { state: 'failed', detail: 'no speech in the result' };
+        const { lines, offsets } = joinFilesWithOffsets(perFile);
+        return lines.length ? { state: 'done', lines, offsets } : { state: 'failed', detail: 'no speech in the result' };
     } catch {
         // A network blip is not a failed job: try again on the next poll
         return { state: 'running' };
