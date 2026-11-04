@@ -59,7 +59,7 @@ function database(records, failId = '') {
     } };
 }
 
-function loadRoute(path, records, actor, sent = [], failId = '') {
+function loadRoute(path, records, actor, sent = [], failId = '', pushSent = []) {
     const exports = {};
     const admin = database(records, failId);
     const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8');
@@ -76,6 +76,7 @@ function loadRoute(path, records, actor, sent = [], failId = '') {
             if (name.endsWith('WhatsAppEventProcessor')) return { WhatsAppEventProcessor: { dispatch: async message => { if (failId === 'dispatch') throw new Error('Queue unavailable'); sent.push(message); } } };
             if (name.endsWith('EmailRecipientResolver')) return { EmailRecipientResolver: { resolveRecipients: async () => ({ enabled: false, emails: [] }) } };
             if (name.endsWith('EmailService')) return { EmailService: { sendGenericNotificationEmail: async () => {} } };
+            if (name.endsWith('NotificationService')) return { NotificationService: { sendToMany: async (ids, payload) => { pushSent.push({ ids, payload }); } } };
             throw new Error('Unexpected import ' + name);
         }
     });
@@ -89,8 +90,8 @@ function upload(ids = [noida, plaza], organization = org) {
 }
 
 test('bulk upload keeps each site estimate and sends exactly one summary for the selected records', async () => {
-    const records = fixture(), sent = [];
-    const response = await loadRoute('app/api/procurement/requisitions/bulk-approval/route.ts', records, buyer, sent).POST(upload());
+    const records = fixture(), sent = [], pushSent = [];
+    const response = await loadRoute('app/api/procurement/requisitions/bulk-approval/route.ts', records, buyer, sent, '', pushSent).POST(upload());
     assert.equal(response.status, 200);
     const result = await response.json();
     assert.equal(result.updated_count, 2);
@@ -106,6 +107,10 @@ test('bulk upload keeps each site estimate and sends exactly one summary for the
     assert.match(sent[0].paramValues.property, /Noida.*16,318.*Plaza.*73,492/);
     assert.equal(approval.usesBulkApprovalSummary(records.property_monthly_requisitions[0]), true);
     assert.deepEqual(JSON.parse(records.property_monthly_requisitions[0].notes).items, [{ requested_qty: 2, unit_price: 8159 }]);
+    assert.equal(pushSent.length, 1);
+    assert.equal(pushSent[0].ids[0], reviewer);
+    assert.equal(pushSent[0].payload.type, 'REQUISITION_APPROVAL_REQUESTED');
+    assert.match(pushSent[0].payload.message, /2 monthly requisitions/);
 });
 
 test('failed writes are reported and excluded from the one summary', async () => {

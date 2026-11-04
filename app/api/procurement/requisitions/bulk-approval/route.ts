@@ -4,6 +4,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { NotificationService } from '@/backend/services/NotificationService';
 import { requisitionNotes, prepareBulkApproval, approvalBatchSummary, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -116,6 +117,20 @@ export async function POST(request: NextRequest) {
         const summary = approvalBatchSummary(updatedRecords);
         const sites = summary.entries.join('; ');
         const notificationResults = await Promise.allSettled([
+            (async () => {
+                try {
+                    await NotificationService.sendToMany([targetApproverId], {
+                        propertyId: updatedRecords[0]?.property_id,
+                        organizationId,
+                        type: 'REQUISITION_APPROVAL_REQUESTED',
+                        title: 'Monthly Requisitions Awaiting Approval 📋',
+                        message: `${updatedRecords.length} monthly requisitions (₹${summary.total.toLocaleString('en-IN')}) assigned to you for individual review & approval.`,
+                        deepLink: '/procurement?tab=requisitions'
+                    });
+                } catch (pushError) {
+                    console.error('[Bulk Approval Push Notification]', pushError);
+                }
+            })(),
             (async () => {
                 if (!approver.email) return;
                 const resolution = await EmailRecipientResolver.resolveRecipients({
