@@ -177,7 +177,7 @@ export const consumption: QuestionEntry<z.infer<typeof consumptionFields>> = {
 
 export const ticketCreate: WriteEntry = {
     id: 'ticket.create', kind: 'write', module: 'tickets',
-    description: 'Raise a new maintenance / facility ticket (AC not working, leak, light fused, cleaning needed). Use when the person reports a problem or asks to raise a ticket. Do NOT use to check, list, close, assign or delete tickets.',
+    description: 'Raise a new maintenance / facility ticket (AC not working, leak, light fused, cleaning needed). Use when the person reports a problem or asks to raise a ticket. Do NOT use to check, list, close, assign or delete tickets. Do NOT use for HR matters (grievances, complaints about a person, salary, leave).',
     fieldsHint: '{"description": the problem in the person\'s own words, or null, "location": floor/room/cabin if mentioned, or null, "property_name": string|null, "urgent": true if they said urgent/emergency, else false}',
     abilities: { en: 'raise a ticket', hi: 'टिकट बनाना', hinglish: 'ticket raise karna' },
     defaultMode: 'shadow', // writes start in shadow until an org super admin switches them live (plan decision D7)

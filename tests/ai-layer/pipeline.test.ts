@@ -290,6 +290,51 @@ describe('reviewer fixes', () => {
     });
 });
 
+describe('HR matters never become a facility ticket', () => {
+    for (const msg of ['raise hr grievance ticket', 'I want to complain about my manager', 'mujhe harassment ki shikayat karni hai', 'मेरी वेतन की शिकायत है']) {
+        it(`"${msg}" is redirected to HR Tickets without calling the AI, and the log can't name the person`, async () => {
+            const llm = new FakeLlm([[/./, { entry: 'ticket.create', fields: { description: msg } }]]);
+            const data = new FakeData(); const audit = new FakeAudit();
+            const out = await say(deps(data, llm, audit), msg, null, actor(), settings({ entryModes: { 'ticket.create': 'live' } }));
+            assert.match(out.reply.text, /HR Tickets/);
+            assert.equal(llm.calls, 0);
+            assert.equal(data.created.length, 0);
+            assert.equal(out.state.draft, null);
+            const row = audit.rows.at(-1)!;
+            assert.equal(row.visibility, 'hr');
+            assert.equal(row.actor_user_id, null);
+        });
+    }
+
+    it('an HR answer typed in the middle of a ticket draft drops the draft', async () => {
+        const data = new FakeData();
+        const d = deps(data, new FakeLlm([[/ticket/, { entry: 'ticket.create', fields: { description: null } }]]), new FakeAudit());
+        let out = await say(d, 'raise a ticket');
+        assert.match(out.reply.text, /What is the problem/);
+        out = await say(d, 'my supervisor is harassing me', out.state);
+        assert.match(out.reply.text, /HR Tickets/);
+        assert.equal(out.state.draft, null);
+        assert.equal(data.created.length, 0);
+    });
+
+    it('normal facility problems still go through', async () => {
+        const d = deps(new FakeData(), new FakeLlm([[/AC/, { entry: 'ticket.create', fields: { description: 'AC not working', location: 'cabin 304' } }]]), new FakeAudit());
+        const out = await say(d, 'AC not working in cabin 304');
+        assert.ok(out.reply.awaitingConfirm);
+    });
+
+    it('"24 hr" in a facility ticket is not mistaken for HR', async () => {
+        const d = deps(new FakeData(), new FakeLlm([[/AC/, { entry: 'ticket.create', fields: { description: 'AC not working for 24 hr', location: 'cabin 304' } }]]), new FakeAudit());
+        const out = await say(d, 'AC not working for 24 hr in cabin 304');
+        assert.ok(out.reply.awaitingConfirm);
+    });
+
+    it('"raise HR ticket" is still caught', async () => {
+        const out = await say(deps(new FakeData(), new FakeLlm([]), new FakeAudit()), 'please raise HR ticket for me');
+        assert.match(out.reply.text, /HR Tickets/);
+    });
+});
+
 describe('audit: HR anonymity (gap S22)', () => {
     it('sensitive entries never store who it was, the fields or the result', () => {
         const row = buildAuditRow({ orgId: ORG, userId: USER, channel: 'app_chat', lang: 'en', entryId: 'hr.ticket.create', decision: 'acted', fields: { category: 'harassment' }, resultRef: 'HR-12' }, 'salt-1');

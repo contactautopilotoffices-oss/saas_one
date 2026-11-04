@@ -14,7 +14,8 @@ import { createHmac, randomUUID } from 'node:crypto';
 import type { Channel, Lang } from './types';
 
 /** Entries whose audit rows must not identify the person. HR entries join this list when they are added. */
-export const SENSITIVE_ENTRIES = new Set<string>(['hr.ticket.create', 'hr.ticket.list']);
+// 'hr.redirect' = someone tried to raise an HR matter in chat. Even that attempt must not be traceable to them.
+export const SENSITIVE_ENTRIES = new Set<string>(['hr.redirect', 'hr.ticket.create', 'hr.ticket.list']);
 
 /** accepted = the person said Yes and the write started (written BEFORE the write); acted = it finished, with result_ref. */
 export type Decision = 'answered' | 'asked' | 'confirm_shown' | 'accepted' | 'acted' | 'shadow' | 'cancelled' | 'refused' | 'handed_off' | 'error';

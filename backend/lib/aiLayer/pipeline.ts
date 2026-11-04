@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { ActorContext, AiData, Channel, Lang, TurnReply } from './types';
 import { CATALOG, catalogFor, matchProperty, ticketCreate, type CatalogEntry, type QuestionEntry } from './catalog';
-import { interpret, isForbiddenRequest, type InterpretLlm } from './interpret';
+import { interpret, isForbiddenRequest, isHrMatter, type InterpretLlm } from './interpret';
 import { CHANGE, NO, SKIP, YES, detectLang, t } from './language';
 import { buildAuditRow, type AuditInput, type AuditStore } from './audit';
 import { effectiveLimits, type AiSettings } from './settings';
@@ -98,6 +98,12 @@ export async function handleTurn(deps: PipelineDeps, input: TurnInput): Promise<
     }
     const abilities = available.map(a => a.entry.abilities[lang]).join(', ');
     const writeMode = available.find(a => a.entry.id === ticketCreate.id)?.mode ?? null;
+
+    // HR matters never go to the AI or into a facility ticket, even in the middle of a draft (the draft is dropped).
+    if (isHrMatter(message)) {
+        await safeAudit({ entryId: 'hr.redirect', decision: 'refused', refusalReason: 'hr_matter' });
+        return done(t('hr_redirect', lang));
+    }
 
     // A draft in progress, but only while ticket creation is still allowed for this person.
     if (state.draft && writeMode) {
