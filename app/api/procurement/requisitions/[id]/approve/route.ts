@@ -5,6 +5,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { NotificationService } from '@/backend/services/NotificationService';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -190,6 +191,17 @@ export async function PATCH(
                     },
                     summaryMessage: `Requisition for ${propertyName} ${isApproval ? 'Approved' : 'Rejected'} by ${approver_name || 'Approver'}`
                 });
+
+                if (existing.uploaded_by) {
+                    await NotificationService.sendToMany([existing.uploaded_by], {
+                        propertyId: existing.property_id,
+                        organizationId: existing.organization_id,
+                        type: 'REQUISITION_STATUS_UPDATED',
+                        title: `Requisition ${isApproval ? 'Approved ✅' : 'Rejected ❌'}`,
+                        message: `Monthly requisition for ${propertyName} (${monthName} ${existing.requisition_year}) has been ${newStatus.toUpperCase()} by ${approver_name || 'Approver'}.`,
+                        deepLink: '/procurement?tab=requisitions'
+                    });
+                }
             } catch (notifErr) {
                 console.error('[Approval Notification Dispatch Error]:', notifErr);
             }
