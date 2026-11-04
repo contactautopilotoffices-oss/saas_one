@@ -3,6 +3,8 @@
 import React from 'react';
 import ScrollVideoLanding from '@/frontend/components/landing/ScrollVideoLanding';
 import Link from 'next/link';
+import Image from 'next/image';
+import { Route, ListChecks, MessageCircle } from 'lucide-react';
 
 export default function LandingPage() {
   return (
@@ -11,109 +13,95 @@ export default function LandingPage() {
       <ScrollVideoLanding />
 
       {/* CTA Section */}
-      <div className="min-h-screen bg-gradient-to-b from-black via-slate-900 to-black flex flex-col items-center justify-center px-6">
-        <div className="max-w-3xl mx-auto text-center space-y-8">
+      <div className="min-h-screen bg-gradient-to-b from-black to-slate-950 flex flex-col items-center justify-center px-6 pt-16 md:pt-32">
+        <div className="max-w-3xl mx-auto text-center">
           {/* Logo */}
-          <div className="flex items-center justify-center gap-3">
-            <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
-              <div className="w-8 h-8 border-2 border-white rounded-sm rotate-45" />
-            </div>
+          <div className="flex items-center justify-center mb-10">
+            <Image src="/autopilot-logo-white.svg" alt="Autopilot" width={32} height={40} unoptimized className="h-10 w-auto" />
           </div>
 
           {/* Heading */}
-          <h1 className="text-4xl md:text-6xl font-black text-white leading-tight">
-            The Operating System for
-            <span className="block bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              Modern Buildings
+          <h1 className="font-display text-4xl md:text-6xl font-semibold text-white leading-[1.08] tracking-tight">
+            The operating system for
+            <span className="block text-primary-light">
+              modern buildings
             </span>
           </h1>
 
           {/* Description */}
-          <p className="text-lg md:text-xl text-gray-400 max-w-2xl mx-auto">
+          <p className="mt-6 text-lg md:text-xl leading-8 text-slate-400 max-w-xl mx-auto">
             Facilities that run without constant follow-ups. Fewer complaints.
             Faster fixes. Clear accountability.
           </p>
 
           {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link
               href="/login"
-              className="w-full sm:w-auto px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/30 hover:scale-105"
+              className="w-full sm:w-auto inline-flex items-center justify-center h-12 px-6 bg-secondary hover:bg-secondary-light text-slate-950 text-[15px] font-medium rounded-[10px] transition-colors duration-150 active:scale-[0.98]"
             >
-              Start Free Trial
+              Get started
             </Link>
             <Link
               href="/demo"
-              className="w-full sm:w-auto px-8 py-4 border-2 border-gray-600 hover:border-gray-400 text-white font-bold rounded-xl transition-all hover:bg-white/5"
+              className="w-full sm:w-auto inline-flex items-center justify-center h-12 px-6 border border-white/15 hover:border-white/30 hover:bg-white/[0.04] text-white text-[15px] font-medium rounded-[10px] transition-colors duration-150"
             >
-              Watch Demo
+              Watch demo
             </Link>
-          </div>
-
-          {/* Trust Badges */}
-          <div className="pt-12 space-y-4">
-            <p className="text-sm text-gray-500 uppercase tracking-wider">Trusted by 500+ facilities</p>
-            <div className="flex items-center justify-center gap-8 opacity-50">
-              <div className="text-2xl font-black text-white">TechCorp</div>
-              <div className="text-2xl font-black text-white">InnovateX</div>
-              <div className="text-2xl font-black text-white">BuildRight</div>
-            </div>
           </div>
         </div>
 
         {/* Features Grid */}
-        <div className="mt-24 grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+        <div className="mt-32 grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-5xl mx-auto">
           {[
             {
-              title: 'AI-Powered',
-              description: 'Smart ticket routing and automatic assignment',
-              icon: '🤖'
+              title: 'Ticket routing',
+              description: 'Tickets are routed and assigned automatically',
+              icon: Route
             },
             {
-              title: 'Real-time Tracking',
+              title: 'Request tracking',
               description: 'Monitor all requests from creation to resolution',
-              icon: '⚡'
+              icon: ListChecks
             },
             {
-              title: 'WhatsApp Native',
-              description: 'Users report issues via WhatsApp instantly',
-              icon: '💬'
+              title: 'WhatsApp reporting',
+              description: 'Users report issues over WhatsApp',
+              icon: MessageCircle
             }
           ].map((feature, index) => (
             <div
               key={index}
-              className="p-6 bg-white/5 backdrop-blur-sm rounded-2xl border border-white/10 hover:border-white/20 transition-all"
+              className="p-6 bg-white/[0.03] rounded-2xl border border-white/[0.08]"
             >
-              <div className="text-4xl mb-4">{feature.icon}</div>
-              <h3 className="text-xl font-bold text-white mb-2">{feature.title}</h3>
-              <p className="text-gray-400">{feature.description}</p>
+              <feature.icon className="w-[18px] h-[18px] text-slate-400 mb-4" strokeWidth={1.5} />
+              <h3 className="text-base font-medium text-white mb-2">{feature.title}</h3>
+              <p className="text-sm leading-6 text-slate-400">{feature.description}</p>
             </div>
           ))}
         </div>
 
         {/* Final CTA */}
-        <div className="mt-24 text-center">
-          <h2 className="text-2xl md:text-3xl font-bold text-white mb-6">
-            Ready to transform your facility operations?
+        <div className="mt-32 text-center">
+          <h2 className="font-display text-2xl md:text-3xl font-semibold text-white tracking-tight mb-8">
+            Run your facilities without constant follow-ups
           </h2>
           <Link
             href="/login"
-            className="inline-block px-12 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-bold rounded-xl transition-all shadow-lg shadow-purple-600/30 hover:scale-105"
+            className="inline-flex items-center justify-center h-12 px-8 bg-secondary hover:bg-secondary-light text-slate-950 text-[15px] font-medium rounded-[10px] transition-colors duration-150 active:scale-[0.98]"
           >
-            Get Started Now
+            Get started
           </Link>
         </div>
 
         {/* Footer */}
-        <footer className="mt-24 py-8 border-t border-white/10 w-full max-w-5xl">
+        <footer className="mt-32 py-8 border-t border-white/[0.08] w-full max-w-5xl">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <div className="w-4 h-4 border border-white rounded-sm rotate-45" />
-              </div>
-              <span className="font-bold text-white">Autopilot</span>
+              <Image src="/autopilot-logo-white.svg" alt="" width={16} height={20} unoptimized className="h-5 w-auto" />
+              <span className="font-semibold text-white">Autopilot</span>
             </div>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-slate-500">
               © 2024 Autopilot. All rights reserved.
             </p>
           </div>

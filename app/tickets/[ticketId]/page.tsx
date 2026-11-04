@@ -33,7 +33,8 @@ import {
   MoreHorizontal,
   Share2,
   AlertTriangle,
-  Sparkles,
+  Bot,
+  CheckCheck,
   Brain,
   Pencil,
   X,
@@ -237,14 +238,14 @@ export default function TicketDetailPage() {
         setVendorNoteInput('');
         setSelectedProcurementUser('');
         fetchTicketDetails(userId || '');
-        setNotification({ message: 'Tagged Procurement for vendor successfully!', type: 'success' });
+        setNotification({ message: 'Procurement tagged for a vendor', type: 'success' });
       } else {
         const data = await res.json();
         setNotification({ message: data.error || 'Failed to tag procurement for vendor', type: 'error' });
       }
     } catch (err) {
       console.error('Error tagging vendor procurement:', err);
-      setNotification({ message: 'A network error occurred.', type: 'error' });
+      setNotification({ message: 'A network error occurred', type: 'error' });
     } finally {
       setIsSubmittingVendorTag(false);
     }
@@ -261,14 +262,14 @@ export default function TicketDetailPage() {
         setShowTagVendorModal(false);
         setVendorNoteInput('');
         fetchTicketDetails(userId || '');
-        setNotification({ message: 'Vendor procurement request removed.', type: 'success' });
+        setNotification({ message: 'Vendor procurement request removed', type: 'success' });
       } else {
         const data = await res.json();
         setNotification({ message: data.error || 'Failed to remove vendor request', type: 'error' });
       }
     } catch (err) {
       console.error('Error removing vendor procurement:', err);
-      setNotification({ message: 'A network error occurred.', type: 'error' });
+      setNotification({ message: 'A network error occurred', type: 'error' });
     } finally {
       setIsSubmittingVendorTag(false);
     }
@@ -702,7 +703,7 @@ export default function TicketDetailPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("AI Classification re-evaluated and smart assigned successfully!", "success");
+        showToast("AI classification re-run and ticket reassigned", "success");
         await fetchTicketDetails(userId, true);
         await fetchActivities();
       } else {
@@ -733,7 +734,7 @@ export default function TicketDetailPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast("Classification updated successfully!", "success");
+        showToast("Classification updated", "success");
         setShowOverrideModal(false);
         setOverrideReason("");
         await fetchTicketDetails(userId, true);
@@ -1123,7 +1124,7 @@ export default function TicketDetailPage() {
       if (approved) playTickleSound();
       showToast(
         approved
-          ? "Request confirmed as resolved!"
+          ? "Request confirmed as resolved"
           : "Request reopened for rework",
         approved ? "success" : "success",
       );
@@ -1137,7 +1138,7 @@ export default function TicketDetailPage() {
 
     // ✅ Check 1: Ticket is assignable (WAITLIST/OPEN)
     if (ticket.status !== "waitlist" && ticket.status !== "open") {
-      showToast("This request is not available for self-assignment.", "error");
+      showToast("This request is not available for self-assignment", "error");
       return;
     }
 
@@ -1155,7 +1156,7 @@ export default function TicketDetailPage() {
 
       if (sgData?.is_manual_assign) {
         showToast(
-          "This request requires manual / vendor coordination.",
+          "This request needs manual or vendor coordination",
           "error",
         );
         return;
@@ -1208,10 +1209,10 @@ export default function TicketDetailPage() {
         // "User must have at least one row in resolver_stats where..."
 
         // If we didn't find it above, we fail.
-        showToast("You are not assigned to this skill category.", "error");
+        showToast("You are not assigned to this skill category", "error");
         return;
       }
-      showToast("You are not assigned to this skill category.", "error");
+      showToast("You are not assigned to this skill category", "error");
       return;
     }
 
@@ -1227,7 +1228,7 @@ export default function TicketDetailPage() {
         throw new Error(data.error || "Failed to claim request");
       }
 
-      showToast("Request Claimed", "success");
+      showToast("Request claimed", "success");
       fetchTicketDetails(userId, true);
     } catch (err: any) {
       console.error(err);
@@ -1253,7 +1254,7 @@ export default function TicketDetailPage() {
         throw new Error(data.error || "Failed to reassign");
       }
 
-      showToast("Ticket Reassigned", "success");
+      showToast("Ticket reassigned", "success");
       setShowAssignModal(false);
       fetchTicketDetails(userId, true);
     } catch (err: any) {
@@ -1332,7 +1333,7 @@ export default function TicketDetailPage() {
         throw new Error(data.error || "Failed to update request");
       }
 
-      showToast("Request Updated", "success");
+      showToast("Request updated", "success");
       setIsEditing(false);
       fetchTicketDetails(userId, true);
     } catch (err: any) {
@@ -1593,7 +1594,7 @@ export default function TicketDetailPage() {
         throw new Error(data.error || "Failed to delete request");
       }
 
-      showToast("Request Deleted Successfully", "success");
+      showToast("Request deleted", "success");
       setTimeout(() => {
         const effectiveOrgId = ticketOrgId || (ticket?.property as any)?.organization_id;
         // Only use `from` if it's an absolute path (starts with /), not a tab name like "requests"
@@ -1664,7 +1665,7 @@ export default function TicketDetailPage() {
           <AlertCircle className="w-7 h-7 text-red-500" />
         </div>
         <div>
-          <p className="font-bold text-slate-800 mb-1">Failed to load ticket</p>
+          <p className="font-semibold text-slate-800 mb-1">Failed to load ticket</p>
           <p className="text-xs text-slate-400 font-mono break-all max-w-sm">
             {fetchError}
           </p>
@@ -1675,7 +1676,7 @@ export default function TicketDetailPage() {
             setLoading(true);
             fetchTicketDetails();
           }}
-          className="px-5 py-2.5 bg-slate-900 text-white text-sm font-bold rounded-xl hover:bg-slate-700 transition-colors"
+          className="px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-[10px] hover:bg-slate-700 transition-colors"
         >
           Retry
         </button>
@@ -1684,7 +1685,7 @@ export default function TicketDetailPage() {
 
   if (!ticket)
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 font-bold">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 font-semibold">
         Ticket not found
       </div>
     );
@@ -1725,7 +1726,7 @@ export default function TicketDetailPage() {
 
       {/* Header */}
       <div
-        className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-200"} border-b sticky top-0 z-30 shadow-xl backdrop-blur-md bg-opacity-80`}
+        className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-200"} border-b sticky top-0 z-30 backdrop-blur-md bg-opacity-80`}
       >
         <div className="max-w-5xl mx-auto px-4 lg:px-8 py-4">
           <div className="flex flex-col gap-4">
@@ -1733,7 +1734,7 @@ export default function TicketDetailPage() {
             <div className="flex items-center justify-between gap-4">
               <button
                 onClick={handleBack}
-                className={`p-2 -ml-2 ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-900"} rounded-lg transition-all flex-shrink-0`}
+                className={`p-2 -ml-2 ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-900"} rounded-[10px] transition-colors flex-shrink-0`}
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -1741,8 +1742,8 @@ export default function TicketDetailPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowMobileChat(true)}
-                  className={`lg:hidden p-2 rounded-lg transition-all ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-primary" : "hover:bg-primary/10 text-primary-light hover:text-primary"} relative`}
-                  title="Open Chat"
+                  className={`lg:hidden p-2 rounded-[10px] transition-colors ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-primary" : "hover:bg-primary/10 text-primary-light hover:text-primary"} relative`}
+                  title="Open chat"
                 >
                   <MessageSquare className="w-4 h-4" />
                   {comments.length > 0 && (
@@ -1756,34 +1757,34 @@ export default function TicketDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               {(ticket as any).property?.name && (
                 <span
-                  className={`inline-flex items-center text-[10px] font-bold ${isDark ? "text-primary bg-primary/10 border-primary/20" : "text-primary bg-primary/10 border-primary-light/20"} px-3 py-0 rounded border uppercase tracking-widest leading-none h-6`}
+                  className={`inline-flex items-center text-[11px] font-medium ${isDark ? "text-primary-light bg-primary/10 border-primary/20" : "text-primary-dark bg-primary/10 border-primary-light/20"} px-3 py-0 rounded-[8px] border leading-none h-6`}
                 >
                   {(ticket as any).property.name}
                 </span>
               )}
               <span
-                className={`inline-flex items-center font-mono text-[10px] font-bold ${isDark ? "text-slate-500 bg-[#21262d] border-[#30363d]" : "text-slate-500 bg-slate-100 border-slate-200"} px-3 py-0 rounded border leading-none h-6`}
+                className={`inline-flex items-center font-mono tabular-nums text-[11px] font-medium ${isDark ? "text-slate-400 bg-[#21262d] border-[#30363d]" : "text-slate-500 bg-slate-100 border-slate-200"} px-3 py-0 rounded-[8px] border leading-none h-6`}
               >
                 {ticket.ticket_number}
               </span>
               {(ticket as any).category &&
                 typeof (ticket as any).category === "string" ? (
                 <span
-                  className={`inline-flex items-center px-3 py-0 ${isDark ? "bg-info/10 border-info/20 text-info" : "bg-info/10 border-info/20 text-info"} border rounded text-[10px] font-bold uppercase tracking-widest leading-none h-6`}
+                  className={`inline-flex items-center px-3 py-0 ${isDark ? "bg-info/10 border-info/20 text-info" : "bg-info/10 border-info/20 text-info"} border rounded-[8px] text-[11px] font-medium capitalize leading-none h-6`}
                 >
                   {((ticket as any).category as string).replace(/_/g, " ")}
                 </span>
               ) : (
                 ticket.category?.name && (
                   <span
-                    className={`inline-flex items-center px-3 py-0 ${isDark ? "bg-info/10 border-info/20 text-info" : "bg-info/10 border-info/20 text-info"} border rounded text-[10px] font-bold uppercase tracking-widest leading-none h-6`}
+                    className={`inline-flex items-center px-3 py-0 ${isDark ? "bg-info/10 border-info/20 text-info" : "bg-info/10 border-info/20 text-info"} border rounded-[8px] text-[11px] font-medium leading-none h-6`}
                   >
                     {ticket.category.name}
                   </span>
                 )
               )}
               <span
-                className={`inline-flex items-center px-3 py-0 rounded border text-[10px] font-bold uppercase tracking-widest leading-none h-6 ${ticket.priority === "urgent"
+                className={`inline-flex items-center px-3 py-0 rounded-[8px] border text-[11px] font-medium capitalize leading-none h-6 ${ticket.priority === "urgent"
                     ? isDark
                       ? "bg-error/10 border-error/20 text-error"
                       : "bg-error/5 border-error/20 text-error"
@@ -1801,10 +1802,10 @@ export default function TicketDetailPage() {
 
               {(ticket as any).classification_source === "llm" && (
                 <span
-                  className={`inline-flex items-center gap-1.5 px-3 py-0 ${isDark ? "bg-primary/20 border-primary/30 text-primary-light" : "bg-primary/10 border-primary/20 text-primary"} border rounded text-[10px] font-bold uppercase tracking-widest leading-none h-6 animate-pulse`}
+                  className={`inline-flex items-center gap-1.5 px-3 py-0 ${isDark ? "bg-primary/20 border-primary/30 text-primary-light" : "bg-primary/10 border-primary/20 text-primary"} border rounded-[8px] text-[11px] font-medium leading-none h-6`}
                 >
-                  <Sparkles className="w-3 h-3" />
-                  AI-Assisted
+                  <Bot className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  AI-assisted
                 </span>
               )}
 
@@ -1812,10 +1813,10 @@ export default function TicketDetailPage() {
                 <div
                   role="button"
                   onClick={() => document.getElementById('section-materials')?.scrollIntoView({ behavior: 'smooth' })}
-                  className={`inline-flex items-center gap-1.5 px-3 py-0 ${isDark ? "bg-amber-500/20 border-amber-500/30 text-amber-400" : "bg-amber-50 border-amber-200 text-amber-600"} border rounded text-[10px] font-bold uppercase tracking-widest hover:scale-105 transition-all h-6 leading-none cursor-pointer shadow-none`}
+                  className={`inline-flex items-center gap-1.5 px-3 py-0 ${isDark ? "bg-secondary/15 border-secondary/30 text-secondary-light hover:bg-secondary/25" : "bg-secondary/10 border-secondary/20 text-secondary-dark hover:bg-secondary/15"} border rounded-[8px] text-[11px] font-medium transition-colors duration-150 h-6 leading-none cursor-pointer`}
                 >
-                  <ShoppingBag className="w-3 h-3" />
-                  {materialRequests.length} Material Request{materialRequests.length > 1 ? 's' : ''}
+                  <ShoppingBag className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  <span className="tabular-nums">{materialRequests.length}</span> material request{materialRequests.length > 1 ? 's' : ''}
                 </div>
               )}
             </div>
@@ -1824,11 +1825,11 @@ export default function TicketDetailPage() {
             <div className="space-y-5">
               {(ticket as any).risk_flag && (
                 <div
-                  className={`flex items-center gap-2 px-3 py-2 ${isDark ? "bg-error/20 border-error/30 text-error" : "bg-error/5 border-error/20 text-error"} border rounded-xl text-xs font-bold`}
+                  className={`flex items-center gap-2 px-3 py-2 ${isDark ? "bg-error/20 border-error/30 text-error" : "bg-error/5 border-error/20 text-error"} border rounded-[10px] text-xs font-medium`}
                 >
-                  <AlertTriangle className="w-4 h-4" />
-                  <span className="uppercase tracking-wide">
-                    Critical Risk: {(ticket as any).risk_flag}
+                  <AlertTriangle className="w-4 h-4" strokeWidth={1.5} />
+                  <span>
+                    Critical risk: {(ticket as any).risk_flag}
                   </span>
                 </div>
               )}
@@ -1836,7 +1837,7 @@ export default function TicketDetailPage() {
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <h1
-                    className={`text-xl sm:text-2xl font-black ${isDark ? "text-white" : "text-slate-900"} leading-tight`}
+                    className={`text-xl sm:text-2xl font-semibold ${isDark ? "text-white" : "text-slate-900"} leading-tight`}
                   >
                     {ticket.title}
                   </h1>
@@ -1844,8 +1845,8 @@ export default function TicketDetailPage() {
                 <div className="flex items-center gap-1.5 flex-shrink-0">
                   <button
                     onClick={() => setShareOpen(true)}
-                    className={`p-2 rounded-lg transition-all ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-blue-400" : "hover:bg-blue-50 text-slate-400 hover:text-blue-600"}`}
-                    title="Share Ticket"
+                    className={`p-2 rounded-[10px] transition-colors duration-150 ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700"}`}
+                    title="Share ticket"
                   >
                     <Share2 className="w-4 h-4" />
                   </button>
@@ -1856,7 +1857,7 @@ export default function TicketDetailPage() {
                         setEditDescription(ticket.description);
                         setIsEditing(true);
                       }}
-                      className={`p-2 rounded-lg transition-all ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-600"}`}
+                      className={`p-2 rounded-[10px] transition-colors ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-600"}`}
                     >
                       <Pencil className="w-4 h-4" />
                     </button>
@@ -1865,7 +1866,7 @@ export default function TicketDetailPage() {
                     <button
                       onClick={handleDelete}
                       disabled={isDeleting}
-                      className={`p-2 rounded-lg transition-all ${isDark ? "hover:bg-[#21262d] text-rose-500/50 hover:text-rose-500" : "hover:bg-rose-50 text-rose-400 hover:text-rose-600"}`}
+                      className={`p-2 rounded-[10px] transition-colors ${isDark ? "hover:bg-[#21262d] text-rose-500/50 hover:text-rose-500" : "hover:bg-rose-50 text-rose-400 hover:text-rose-600"}`}
                     >
                       {isDeleting ? (
                         <RefreshCw className="w-4 h-4 animate-spin" />
@@ -1880,30 +1881,30 @@ export default function TicketDetailPage() {
               {/* Sleek AI Classification Details in Header */}
               <div
                 className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
-                    ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
-                    : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
+                    ? "bg-primary/10 border-primary/20 text-slate-300"
+                    : "bg-primary/5 border-primary/15 text-slate-700"
                   }`}
               >
-                <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                <Brain className={`w-4 h-4 shrink-0 mt-0.5 ${isDark ? "text-primary-light" : "text-primary-dark"}`} strokeWidth={1.5} />
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
-                      AI Classification:
+                    <span className={`font-medium text-xs ${isDark ? "text-primary-light" : "text-primary-dark"}`}>
+                      AI classification:
                     </span>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">
-                      {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
+                    <span className={`font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>
+                      {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General issue"}
                     </span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      ({ticket.skill_group?.name || "Technical"} Skill Group)
+                      ({ticket.skill_group?.name || "Technical"} skill group)
                     </span>
                     {ticket.confidence_score && (
-                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                        {ticket.confidence_score}% Confidence
+                      <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium tabular-nums bg-primary/10 border border-primary/20 ${isDark ? "text-primary-light" : "text-primary-dark"}`}>
+                        {ticket.confidence_score}% confidence
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
-                    <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
+                    <span className={`font-medium ${isDark ? "text-slate-200" : "text-slate-700"}`}>Why this category: </span>
                     {(() => {
                       if ((ticket as any).llm_reasoning) {
                         return (ticket as any).llm_reasoning;
@@ -1940,14 +1941,14 @@ export default function TicketDetailPage() {
           </div>
           <div className="text-right mt-2 sm:mt-0">
             <div
-              className={`text-[10px] font-black uppercase tracking-widest mb-1.5 px-4 py-1.5 rounded-full border inline-block ${ticket.status === "closed" || ticket.status === "resolved"
+              className={`text-xs font-medium first-letter:uppercase mb-1.5 px-3 py-1 rounded-full border inline-block ${ticket.status === "closed" || ticket.status === "resolved"
                   ? isDark
                     ? "bg-success/10 border-success/20 text-success"
                     : "bg-success/5 border-success/20 text-success"
                   : ticket.status === "pending_validation"
                     ? isDark
-                      ? "bg-violet-900/30 border-violet-700/40 text-violet-300"
-                      : "bg-violet-50 border-violet-200 text-violet-700"
+                      ? "bg-secondary/15 border-secondary/30 text-secondary-light"
+                      : "bg-secondary/10 border-secondary/20 text-secondary-dark"
                     : ticket.status === "in_progress"
                       ? isDark
                         ? "bg-info/10 border-info/20 text-info"
@@ -1962,23 +1963,23 @@ export default function TicketDetailPage() {
                 }`}
             >
               {ticket.status === "closed" || ticket.status === "resolved"
-                ? "DONE"
+                ? "Done"
                 : ticket.status === "pending_validation"
-                  ? "WAITING FOR CHECK"
+                  ? "Waiting for check"
                   : ticket.status.replace("_", " ")}
             </div>
             {ticket.sla_deadline && ticket.status !== "closed" && (
               <div className="flex items-center justify-end mt-1">
                 {ticket.sla_breached ? (
                   <div className="flex flex-col items-end gap-0.5">
-                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 border border-rose-600 rounded-lg animate-pulse">
-                      <AlertTriangle className="w-3 h-3 text-white" />
-                      <span className="text-[10px] font-black text-white uppercase tracking-widest">
-                        Service Level Agreement Breached
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 border border-rose-600 rounded-[8px]">
+                      <AlertTriangle className="w-3.5 h-3.5 text-white" strokeWidth={1.5} />
+                      <span className="text-xs font-medium text-white">
+                        SLA breached
                       </span>
                     </div>
                     <span
-                      className={`text-[10px] font-bold ${isDark ? "text-rose-400" : "text-rose-500"}`}
+                      className={`text-[11px] font-medium font-mono tabular-nums ${isDark ? "text-rose-400" : "text-rose-500"}`}
                     >
                       {(() => {
                         const breachTime = parseDate(
@@ -1995,9 +1996,9 @@ export default function TicketDetailPage() {
                   </div>
                 ) : (
                   <div
-                    className={`flex items-center gap-1 text-xs font-bold ${isDark ? "text-slate-500" : "text-slate-400"}`}
+                    className={`flex items-center gap-1 text-xs font-medium tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"}`}
                   >
-                    <Clock className="w-3 h-3" />
+                    <Clock className="w-3.5 h-3.5" strokeWidth={1.5} />
                     {`Due ${parseDate(ticket.sla_deadline)?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
                   </div>
                 )}
@@ -2016,9 +2017,9 @@ export default function TicketDetailPage() {
               !ticket.assigned_to && (
                 <button
                   onClick={() => handleClaim()}
-                  className="flex items-center justify-center gap-2 px-3 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 col-span-2 sm:col-span-1"
+                  className="flex items-center justify-center gap-2 px-3 py-3 bg-primary text-white rounded-[10px] text-xs font-semibold hover:bg-primary-dark transition-colors duration-150 col-span-2 sm:col-span-1"
                 >
-                  <User className="w-4 h-4" /> Claim Request
+                  <User className="w-4 h-4" strokeWidth={1.5} /> Claim request
                 </button>
               )}
             {/* Start Work button: Show if assigned to me and awaiting start */}
@@ -2026,27 +2027,27 @@ export default function TicketDetailPage() {
               ["assigned", "open", "waitlist"].includes(ticket.status) && (
                 <button
                   onClick={() => handleStatusChange("in_progress")}
-                  className="flex items-center justify-center gap-2 px-3 py-3 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all border border-slate-200 col-span-2 sm:col-span-1"
+                  className="flex items-center justify-center gap-2 px-3 py-3 bg-white text-slate-900 rounded-[10px] text-xs font-semibold hover:bg-slate-100 transition-colors duration-150 border border-slate-200 col-span-2 sm:col-span-1"
                 >
-                  <PlayCircle className="w-4 h-4" /> Start Work
+                  <PlayCircle className="w-4 h-4" strokeWidth={1.5} /> Start work
                 </button>
               )}
             {/* New Reassign button for MST - and Staff/Resolvers too if needed, but user specifically asked for MST */}
             {(userRole === "mst" || userRole === "staff") && (
               <button
                 onClick={openReassignModal}
-                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
               >
-                <User className="w-4 h-4" /> Reassign
+                <User className="w-4 h-4" strokeWidth={1.5} /> Reassign
               </button>
             )}
             {/* Complete Task button: ONLY show if work is IN PROGRESS */}
             {isAssignedToMe && ticket.status === "in_progress" && (
               <button
                 onClick={handleComplete}
-                className="flex items-center justify-center gap-2 px-3 py-3 bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-primary-dark transition-all shadow-lg col-span-2 sm:col-span-1"
+                className="flex items-center justify-center gap-2 px-3 py-3 bg-primary text-white rounded-[10px] text-xs font-semibold hover:bg-primary-dark transition-colors duration-150 col-span-2 sm:col-span-1"
               >
-                <CheckCircle2 className="w-4 h-4" /> Complete Task
+                <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} /> Complete task
               </button>
             )}
 
@@ -2054,9 +2055,9 @@ export default function TicketDetailPage() {
             {isAssignedToMe && ticket.status === "in_progress" && (
               <button
                 onClick={() => setShowLogAssetWork(true)}
-                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all col-span-2 sm:col-span-1`}
+                className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-100 text-slate-600 hover:bg-slate-200"} border rounded-[10px] text-xs font-semibold transition-colors duration-150 col-span-2 sm:col-span-1`}
               >
-                <QrCode className="w-4 h-4" /> Log Asset Work
+                <QrCode className="w-4 h-4" strokeWidth={1.5} /> Log asset work
               </button>
             )}
 
@@ -2065,25 +2066,25 @@ export default function TicketDetailPage() {
               ticket.status === "pending_validation" && (
                 <>
                   <div
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold ${isDark ? "bg-violet-900/30 text-violet-300 border border-violet-700/40" : "bg-violet-50 text-violet-700 border border-violet-200"}`}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium ${isDark ? "bg-secondary/15 text-secondary-light border border-secondary/30" : "bg-secondary/10 text-secondary-dark border border-secondary/20"}`}
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} />
                     Awaiting your approval
                   </div>
                   <button
                     onClick={() => handleValidate(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-500/20"
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-[10px] text-xs font-semibold transition-colors duration-150"
                   >
-                    <CheckCircle2 className="w-4 h-4" /> Looks Good
+                    <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} /> Looks good
                   </button>
                   <button
                     onClick={() => {
                       setRejectNote("");
                       setShowRejectModal(true);
                     }}
-                    className={`flex items-center gap-2 px-4 py-2 ${isDark ? "bg-[#21262d] border-[#30363d] text-rose-400 hover:bg-rose-900/20" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100"} border rounded-xl text-xs font-black uppercase tracking-widest transition-all`}
+                    className={`flex items-center gap-2 px-4 py-2 ${isDark ? "bg-[#21262d] border-[#30363d] text-rose-400 hover:bg-rose-900/20" : "bg-red-50 border-red-200 text-red-600 hover:bg-red-100"} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
                   >
-                    <XCircle className="w-4 h-4" /> Not Resolved
+                    <XCircle className="w-4 h-4" strokeWidth={1.5} /> Not resolved
                   </button>
                 </>
               )}
@@ -2093,25 +2094,25 @@ export default function TicketDetailPage() {
               <>
                 <button
                   onClick={openReassignModal}
-                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
                 >
-                  <User className="w-4 h-4" /> Reassign
+                  <User className="w-4 h-4" strokeWidth={1.5} /> Reassign
                 </button>
                 {ticket.status !== "closed" && (
                   <button
                     onClick={() => handleStatusChange("closed")}
-                    className="flex items-center justify-center gap-2 px-3 py-3 bg-error/10 border border-error/20 text-error rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-error/20 transition-all"
+                    className="flex items-center justify-center gap-2 px-3 py-3 bg-error/10 border border-error/20 text-error rounded-[10px] text-xs font-semibold hover:bg-error/20 transition-colors duration-150"
                   >
-                    <XCircle className="w-4 h-4" /> Force Close
+                    <XCircle className="w-4 h-4" strokeWidth={1.5} /> Force close
                   </button>
                 )}
                 <button
                   onClick={() =>
                     router.push(`/property/${ticket.property_id}/flow-map`)
                   }
-                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-primary/10 border-primary/20 text-primary hover:bg-primary/20" : "bg-primary/5 border-primary/20 text-primary hover:bg-primary/10"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-primary/10 border-primary/20 text-primary-light hover:bg-primary/20" : "bg-primary/5 border-primary/20 text-primary-dark hover:bg-primary/10"} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
                 >
-                  <Activity className="w-4 h-4" /> Flow Map
+                  <Activity className="w-4 h-4" strokeWidth={1.5} /> Flow map
                 </button>
               </>
             )}
@@ -2121,9 +2122,9 @@ export default function TicketDetailPage() {
               <>
                 <button
                   onClick={() => setShowMaterialModal(true)}
-                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500 hover:bg-emerald-500/20" : "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100"} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
                 >
-                  <PackagePlus className="w-4 h-4" /> Material Request
+                  <PackagePlus className="w-4 h-4" strokeWidth={1.5} /> Material request
                 </button>
 
                 <button
@@ -2131,10 +2132,10 @@ export default function TicketDetailPage() {
                     setVendorNoteInput((ticket as any)?.vendor_procurement_note || "");
                     setShowTagVendorModal(true);
                   }}
-                  className={`flex items-center justify-center gap-2 px-3 py-3 ${(ticket as any)?.needs_vendor_procurement ? (isDark ? "bg-amber-500/20 border-amber-500/30 text-amber-400" : "bg-amber-100 border-amber-300 text-amber-800") : (isDark ? "bg-amber-500/10 border-amber-500/20 text-amber-400 hover:bg-amber-500/20" : "bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100")} border rounded-xl text-[10px] font-black uppercase tracking-widest transition-all`}
+                  className={`flex items-center justify-center gap-2 px-3 py-3 ${(ticket as any)?.needs_vendor_procurement ? (isDark ? "bg-secondary/15 border-secondary/30 text-secondary-light hover:bg-secondary/25" : "bg-secondary/10 border-secondary/25 text-secondary-dark hover:bg-secondary/15") : (isDark ? "bg-[#21262d] border-[#30363d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200")} border rounded-[10px] text-xs font-semibold transition-colors duration-150`}
                 >
-                  <ShoppingBag className="w-4 h-4" />
-                  {(ticket as any)?.needs_vendor_procurement ? "Edit Vendor Request" : "Tag Procurement (Vendor Needed)"}
+                  <ShoppingBag className="w-4 h-4" strokeWidth={1.5} />
+                  {(ticket as any)?.needs_vendor_procurement ? "Edit vendor request" : "Tag procurement (vendor needed)"}
                 </button>
               </>
             )}
@@ -2148,9 +2149,9 @@ export default function TicketDetailPage() {
                   .getElementById("section-details")
                   ?.scrollIntoView({ behavior: "smooth", block: "center" })
               }
-              className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500 hover:text-primary" : "text-slate-400 hover:text-primary"} transition-colors whitespace-nowrap`}
+              className={`flex items-center gap-2 text-xs font-medium ${isDark ? "text-slate-400 hover:text-primary-light" : "text-slate-500 hover:text-primary-dark"} transition-colors duration-150 whitespace-nowrap`}
             >
-              <Paperclip className="w-3.5 h-3.5" /> Details
+              <Paperclip className="w-4 h-4" strokeWidth={1.5} /> Details
             </button>
             <button
               onClick={() =>
@@ -2158,9 +2159,9 @@ export default function TicketDetailPage() {
                   .getElementById("section-photos")
                   ?.scrollIntoView({ behavior: "smooth", block: "center" })
               }
-              className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500 hover:text-primary" : "text-slate-400 hover:text-primary"} transition-colors whitespace-nowrap`}
+              className={`flex items-center gap-2 text-xs font-medium ${isDark ? "text-slate-400 hover:text-primary-light" : "text-slate-500 hover:text-primary-dark"} transition-colors duration-150 whitespace-nowrap`}
             >
-              <Camera className="w-3.5 h-3.5" /> Photos
+              <Camera className="w-4 h-4" strokeWidth={1.5} /> Photos
             </button>
             {materialRequests.length > 0 && (
               <button
@@ -2169,9 +2170,9 @@ export default function TicketDetailPage() {
                     .getElementById("section-materials")
                     ?.scrollIntoView({ behavior: "smooth", block: "center" })
                 }
-                className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500 hover:text-primary" : "text-slate-400 hover:text-primary"} transition-colors whitespace-nowrap`}
+                className={`flex items-center gap-2 text-xs font-medium ${isDark ? "text-slate-400 hover:text-primary-light" : "text-slate-500 hover:text-primary-dark"} transition-colors duration-150 whitespace-nowrap`}
               >
-                <ShoppingBag className="w-3.5 h-3.5" /> Materials
+                <ShoppingBag className="w-4 h-4" strokeWidth={1.5} /> Materials
               </button>
             )}
             <button
@@ -2180,9 +2181,9 @@ export default function TicketDetailPage() {
                   .getElementById("section-timeline")
                   ?.scrollIntoView({ behavior: "smooth", block: "center" })
               }
-              className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500 hover:text-primary" : "text-slate-400 hover:text-primary"} transition-colors whitespace-nowrap`}
+              className={`flex items-center gap-2 text-xs font-medium ${isDark ? "text-slate-400 hover:text-primary-light" : "text-slate-500 hover:text-primary-dark"} transition-colors duration-150 whitespace-nowrap`}
             >
-              <History className="w-3.5 h-3.5" /> Timeline
+              <History className="w-4 h-4" strokeWidth={1.5} /> Timeline
             </button>
           </div>
         </div>
@@ -2195,7 +2196,7 @@ export default function TicketDetailPage() {
             {/* Vendor Procurement Status Banner */}
             {Boolean((ticket as any)?.needs_vendor_procurement) && (
               <div
-                className={`p-6 rounded-3xl border shadow-sm transition-all ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                className={`p-6 rounded-2xl border ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                     ? isDark
                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
                       : "bg-emerald-50 border-emerald-200 text-emerald-900"
@@ -2207,19 +2208,19 @@ export default function TicketDetailPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3">
                     <div
-                      className={`p-2.5 rounded-2xl ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                          ? "bg-emerald-500 text-white"
-                          : "bg-amber-500 text-white"
-                        } shadow-md`}
+                      className={`p-2.5 rounded-md ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? "bg-emerald-500/15 text-emerald-600"
+                          : "bg-amber-500/15 text-amber-600"
+                        }`}
                     >
-                      <ShoppingBag className="w-5 h-5" />
+                      <ShoppingBag className="w-[18px] h-[18px]" strokeWidth={1.5} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h4 className="font-extrabold text-sm uppercase tracking-wider">
+                        <h4 className="font-semibold text-sm">
                           {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                            ? "✓ Vendor Arranged by Procurement"
-                            : "⏳ Vendor Arrangement Requested"}
+                            ? "Vendor arranged by procurement"
+                            : "Vendor arrangement requested"}
                         </h4>
                       </div>
                       <p className="text-xs mt-1.5 opacity-90 leading-relaxed font-medium">
@@ -2229,11 +2230,11 @@ export default function TicketDetailPage() {
                       </p>
                     </div>
                   </div>
-                  <span className={`px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                  <span className={`px-2.5 py-1 text-[11px] font-medium rounded-[8px] border ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
                       ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-600 dark:text-emerald-300"
                       : "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300"
                     }`}>
-                    {(ticket as any)?.vendor_procurement_status === "vendor_arranged" ? "Arranged" : "Pending Vendor"}
+                    {(ticket as any)?.vendor_procurement_status === "vendor_arranged" ? "Arranged" : "Pending vendor"}
                   </span>
                 </div>
               </div>
@@ -2242,18 +2243,18 @@ export default function TicketDetailPage() {
             {/* Request Description */}
             <div
               id="section-details"
-              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm`}
+              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-2xl border shadow-sm`}
             >
               <h3
-                className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-4 flex items-center gap-2`}
+                className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-4 flex items-center gap-2`}
               >
-                <Paperclip className="w-4 h-4 text-primary" />
+                <Paperclip className="w-4 h-4 text-slate-400" strokeWidth={1.5} />
                 Description
               </h3>
               <p
                 className={`${isDark ? "text-slate-300" : "text-slate-600"} text-sm leading-relaxed whitespace-pre-wrap`}
               >
-                {ticket.description || "No description provided."}
+                {ticket.description || "No description provided"}
               </p>
             </div>
 
@@ -2267,33 +2268,32 @@ export default function TicketDetailPage() {
               <div
                 className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-5 rounded-2xl border shadow-sm relative overflow-hidden group`}
               >
-                <div className="absolute top-0 right-0 w-24 h-24 bg-info/5 rounded-full -mr-12 -mt-12 group-hover:bg-info/10 transition-all" />
-                <h3
-                  className={`text-[10px] font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest mb-4 flex items-center gap-2 relative z-10`}
+                                <h3
+                  className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} mb-4 flex items-center gap-2 relative z-10`}
                 >
-                  <User className="w-3 h-3" /> Who Raised
+                  <User className="w-4 h-4" strokeWidth={1.5} /> Who raised
                 </h3>
                 <div className="flex items-center gap-3 relative z-10">
-                  <div className="w-10 h-10 bg-info rounded-xl flex items-center justify-center text-white font-bold shadow-lg">
+                  <div className={`w-10 h-10 rounded-md flex items-center justify-center font-semibold ${isDark ? "bg-[#21262d] text-slate-300" : "bg-slate-100 text-slate-600"}`}>
                     {ticket.creator?.full_name?.[0] || "U"}
                   </div>
                   <div>
                     <p
-                      className={`font-bold ${isDark ? "text-white" : "text-slate-900"} text-sm leading-tight`}
+                      className={`font-semibold ${isDark ? "text-white" : "text-slate-900"} text-sm leading-tight`}
                     >
-                      {ticket.creator?.full_name || "Unknown User"}
+                      {ticket.creator?.full_name || "Unknown user"}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span
-                        className={`px-3 py-1 ${isDark ? "bg-info/10 text-info" : "bg-info/5 text-info"} text-[9px] font-black uppercase tracking-wider rounded`}
+                        className={`px-1.5 py-0.5 ${isDark ? "bg-[#21262d] text-slate-400" : "bg-slate-100 text-slate-500"} text-[11px] font-medium rounded`}
                       >
                         {creatorRole}
                       </span>
                       <span
-                        className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-400"} font-medium whitespace-nowrap`}
+                        className={`text-[11px] ${isDark ? "text-slate-500" : "text-slate-400"} font-medium whitespace-nowrap`}
                       >
                         Raised{" "}
-                        {parseDate(ticket.created_at)?.toLocaleDateString()}
+                        <span className="font-mono tabular-nums">{parseDate(ticket.created_at)?.toLocaleDateString()}</span>
                       </span>
                     </div>
                   </div>
@@ -2304,15 +2304,15 @@ export default function TicketDetailPage() {
                   <div className="flex items-center gap-4">
                     <div className="flex flex-col">
                       <span
-                        className={`text-[9px] font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest`}
+                        className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}
                       >
                         Floor
                       </span>
                       <span
-                        className={`text-sm font-bold ${isDark ? "text-slate-300" : "text-slate-600"}`}
+                        className={`text-sm font-semibold ${isDark ? "text-slate-300" : "text-slate-600"}`}
                       >
                         {ticket.floor_number === 0
-                          ? "Ground Floor"
+                          ? "Ground floor"
                           : ticket.floor_number === -1
                             ? "Basement"
                             : ticket.floor_number
@@ -2325,14 +2325,14 @@ export default function TicketDetailPage() {
                     />
                     <div className="flex flex-col">
                       <span
-                        className={`text-[9px] font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest`}
+                        className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}
                       >
                         Location
                       </span>
                       <span
-                        className={`text-sm font-bold ${isDark ? "text-slate-300" : "text-slate-600"}`}
+                        className={`text-sm font-semibold ${isDark ? "text-slate-300" : "text-slate-600"}`}
                       >
-                        {ticket.location || "General Area"}
+                        {ticket.location || "General area"}
                       </span>
                     </div>
                   </div>
@@ -2343,44 +2343,43 @@ export default function TicketDetailPage() {
               <div
                 className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-5 rounded-2xl border shadow-sm relative overflow-hidden group`}
               >
-                <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -mr-12 -mt-12 group-hover:bg-primary/10 transition-all" />
-                <h3
-                  className={`text-[10px] font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest mb-4 flex items-center gap-2 relative z-10`}
+                                <h3
+                  className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} mb-4 flex items-center gap-2 relative z-10`}
                 >
-                  <ShieldAlert className="w-3 h-3" /> Who Is Servicing
+                  <ShieldAlert className="w-4 h-4" strokeWidth={1.5} /> Who is servicing
                 </h3>
                 {ticket.assignee ? (
                   <div className="flex items-center gap-3 relative z-10">
-                    <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white font-bold shadow-lg">
+                    <div className={`w-10 h-10 rounded-md flex items-center justify-center font-semibold ${isDark ? "bg-primary/15 text-primary-light" : "bg-primary/10 text-primary-dark"}`}>
                       {ticket.assignee.full_name[0]}
                     </div>
                     <div>
                       <p
-                        className={`font-bold ${isDark ? "text-white" : "text-slate-900"} text-sm leading-tight`}
+                        className={`font-semibold ${isDark ? "text-white" : "text-slate-900"} text-sm leading-tight`}
                       >
                         {ticket.assignee.full_name}
                       </p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span
-                          className={`px-1.5 py-0.5 ${isDark ? "bg-primary/10 text-primary-light" : "bg-primary/5 text-primary"} text-[9px] font-black uppercase tracking-wider rounded`}
+                          className={`px-1.5 py-0.5 ${isDark ? "bg-primary/10 text-primary-light" : "bg-primary/5 text-primary-dark"} text-[11px] font-medium rounded`}
                         >
                           {assigneeRole}
                         </span>
                         <span
-                          className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-400"} font-medium uppercase tracking-tighter`}
+                          className={`text-[11px] ${isDark ? "text-slate-500" : "text-slate-400"} font-medium whitespace-nowrap`}
                         >
                           Assigned{" "}
-                          {ticket.assigned_at ? parseDate(ticket.assigned_at)?.toLocaleDateString() : "Pending"}
+                          <span className="font-mono tabular-nums">{ticket.assigned_at ? parseDate(ticket.assigned_at)?.toLocaleDateString() : "Pending"}</span>
                         </span>
                       </div>
                     </div>
                   </div>
                 ) : (
                   <div
-                    className={`flex items-center justify-center h-16 ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-200"} rounded-xl border border-dashed relative z-10`}
+                    className={`flex items-center justify-center h-16 ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-200"} rounded-[10px] border border-dashed relative z-10`}
                   >
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest italic">
-                      Awaiting Assignment
+                    <p className="text-xs font-medium text-slate-500">
+                      Awaiting assignment
                     </p>
                   </div>
                 )}
@@ -2390,12 +2389,12 @@ export default function TicketDetailPage() {
                   >
                     <div className="flex items-center justify-between">
                       <span
-                        className={`text-[9px] font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest`}
+                        className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}
                       >
                         Resolver ID
                       </span>
                       <span
-                        className={`text-[10px] font-bold ${isDark ? "text-primary bg-primary/10 border-primary/20" : "text-primary bg-primary/10 border-primary-light"}`}
+                        className={`text-[11px] font-mono font-medium ${isDark ? "text-primary-light" : "text-primary-dark"}`}
                       >
                         RSLV-{ticket.assigned_to?.slice(0, 4).toUpperCase()}
                       </span>
@@ -2409,30 +2408,30 @@ export default function TicketDetailPage() {
             {/* 2. Before / After Photos */}
             <div
               id="section-photos"
-              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm`}
+              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-2xl border shadow-sm`}
             >
               <h3
-                className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-6 flex items-center gap-2`}
+                className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-6 flex items-center gap-2`}
               >
-                <Camera className="w-4 h-4 text-primary" />
-                Site Documentation
+                <Camera className="w-4 h-4 text-slate-400" strokeWidth={1.5} />
+                Site documentation
               </h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 sm:gap-4">
                 {/* Before Photo */}
                 <div className="space-y-3">
                   <div
-                    className={`text-[10px] sm:text-xs font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest flex items-center justify-between gap-4 flex-wrap`}
+                    className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} flex items-center justify-between gap-4 flex-wrap`}
                   >
-                    <span className="whitespace-nowrap">Before Work</span>
+                    <span className="whitespace-nowrap">Before work</span>
                     {(ticket.photo_before_url || ticket.video_before_url) && canManagePhotos && (
-                      <span className="text-[9px] sm:text-[10px] text-primary/60 italic font-medium whitespace-nowrap">
+                      <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">
                         Click to change
                       </span>
                     )}
                   </div>
                   {ticket.photo_before_url || ticket.video_before_url ? (
                     <div
-                      className={`relative aspect-video rounded-xl overflow-hidden ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-100"} border group`}
+                      className={`relative aspect-video rounded-md overflow-hidden ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-100"} border group`}
                     >
                       {ticket.video_before_url ? (
                         <>
@@ -2441,18 +2440,18 @@ export default function TicketDetailPage() {
                             className="absolute inset-0 bg-black flex items-center justify-center cursor-pointer"
                             onClick={() => {
                               setPreviewVideoUrl(ticket.video_before_url!);
-                              setPreviewVideoTitle("Before Work — Video");
+                              setPreviewVideoTitle("Before work video");
                             }}
                           >
                             <div className="flex flex-col items-center gap-2">
                               <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center hover:bg-white/30 transition-colors">
                                 <PlayCircle className="w-8 h-8 text-white" />
                               </div>
-                              <span className="text-white/60 text-[9px] font-bold uppercase tracking-widest">
+                              <span className="text-white/60 text-xs font-medium">
                                 Tap to play
                               </span>
                             </div>
-                            <span className="absolute top-2 left-3 text-white/50 text-[9px] font-bold uppercase tracking-widest bg-black/50 px-2 py-0.5 rounded">
+                            <span className="absolute top-2 left-3 text-white/70 text-[11px] font-medium bg-black/50 px-2 py-0.5 rounded">
                               Video
                             </span>
                           </div>
@@ -2461,7 +2460,7 @@ export default function TicketDetailPage() {
                             <div className="absolute bottom-3 left-0 right-0 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
                               <div className="flex items-center gap-3">
                                 <label
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-xl cursor-pointer hover:bg-primary text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   <Paperclip className="w-4 h-4" />
@@ -2479,7 +2478,7 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     openCamera("before");
                                   }}
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-xl hover:bg-primary text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-md hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Camera className="w-4 h-4" />
                                 </button>
@@ -2488,8 +2487,8 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     handleDeletePhoto("before");
                                   }}
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-xl hover:bg-rose-600 text-white transition-all shadow-lg`}
-                                  title="Delete Video"
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-md hover:bg-rose-600 text-white transition-colors shadow-sm`}
+                                  title="Delete video"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -2527,14 +2526,14 @@ export default function TicketDetailPage() {
                                 ticket.photo_before_url &&
                                 setLightboxUrl(ticket.photo_before_url)
                               }
-                              className={`text-white text-[10px] font-black uppercase tracking-widest px-6 py-3 ${isDark ? "bg-[#161b22]" : "bg-white/10 backdrop-blur-md"} rounded-2xl hover:bg-primary transition-colors shadow-lg`}
+                              className={`text-white text-xs font-semibold px-6 py-3 ${isDark ? "bg-[#161b22]" : "bg-white/10 backdrop-blur-md"} rounded-[10px] hover:bg-primary transition-colors shadow-sm`}
                             >
-                              View Full
+                              View full
                             </button>
                             {canManagePhotos && (
                               <div className="flex items-center gap-4">
                                 <label
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-primary text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Paperclip className="w-5 h-5" />
                                   <input
@@ -2548,7 +2547,7 @@ export default function TicketDetailPage() {
                                 </label>
                                 <button
                                   onClick={() => openCamera("before")}
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-primary text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Camera className="w-5 h-5" />
                                 </button>
@@ -2557,8 +2556,8 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     handleDeletePhoto("before");
                                   }}
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-rose-600 text-white transition-all shadow-lg`}
-                                  title="Delete Photo"
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-rose-600 text-white transition-colors shadow-sm`}
+                                  title="Delete photo"
                                 >
                                   <Trash2 className="w-5 h-5" />
                                 </button>
@@ -2583,7 +2582,7 @@ export default function TicketDetailPage() {
                         if (!ts) return null;
                         return (
                           <div
-                            className="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[9px] text-white font-bold font-mono border border-white/30 backdrop-blur-sm pointer-events-none z-20 shadow-lg"
+                            className="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[11px] text-white font-medium font-mono tabular-nums border border-white/30 backdrop-blur-sm pointer-events-none z-20"
                             key="ts-before"
                           >
                             {new Date(ts)
@@ -2603,12 +2602,12 @@ export default function TicketDetailPage() {
                     </div>
                   ) : (
                     <div
-                      className={`flex flex-col items-center justify-center aspect-video rounded-xl border-2 border-dashed ${isDark ? "border-[#30363d] bg-[#0d1117]" : "border-slate-200 bg-slate-50"} transition-all gap-2 p-4`}
+                      className={`flex flex-col items-center justify-center aspect-video rounded-md border-2 border-dashed ${isDark ? "border-[#30363d] bg-[#0d1117]" : "border-slate-200 bg-slate-50"} transition-colors gap-2 p-4`}
                     >
                       <span
-                        className={`text-[10px] font-black ${isDark ? "text-slate-600" : "text-slate-400"} uppercase tracking-widest mb-2`}
+                        className={`text-xs font-medium ${isDark ? "text-slate-600" : "text-slate-400"} mb-2`}
                       >
-                        Add Attachment
+                        Add attachment
                       </span>
                       <div className="flex items-center gap-3">
                         <div className="flex items-center justify-center gap-6">
@@ -2616,14 +2615,14 @@ export default function TicketDetailPage() {
                             className={`cursor-pointer flex flex-col items-center gap-2 group`}
                           >
                             <div
-                              className={`w-14 h-14 flex items-center justify-center rounded-2xl ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-all group-hover:scale-105`}
+                              className={`w-14 h-14 flex items-center justify-center rounded-md ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-colors`}
                             >
                               <Paperclip
-                                className={`w-6 h-6 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary transition-colors`}
+                                className={`w-5 h-5 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                               />
                             </div>
                             <span
-                              className={`text-[9px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary transition-colors`}
+                              className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                             >
                               Gallery
                             </span>
@@ -2641,14 +2640,14 @@ export default function TicketDetailPage() {
                             className={`cursor-pointer flex flex-col items-center gap-2 group`}
                           >
                             <div
-                              className={`w-14 h-14 flex items-center justify-center rounded-2xl ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-all group-hover:scale-105`}
+                              className={`w-14 h-14 flex items-center justify-center rounded-md ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-colors`}
                             >
                               <Camera
-                                className={`w-6 h-6 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary transition-colors`}
+                                className={`w-5 h-5 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                               />
                             </div>
                             <span
-                              className={`text-[9px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary transition-colors`}
+                              className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                             >
                               Camera
                             </span>
@@ -2662,18 +2661,18 @@ export default function TicketDetailPage() {
                 {/* After Photo */}
                 <div className="space-y-3">
                   <div
-                    className={`text-[10px] sm:text-xs font-black ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-widest flex items-center justify-between gap-4 flex-wrap`}
+                    className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} flex items-center justify-between gap-4 flex-wrap`}
                   >
-                    <span className="whitespace-nowrap">After Work</span>
+                    <span className="whitespace-nowrap">After work</span>
                     {(ticket.photo_after_url || ticket.video_after_url) && canManagePhotos && (
-                      <span className="text-[9px] sm:text-[10px] text-emerald-500/60 italic font-medium whitespace-nowrap">
+                      <span className="text-[11px] text-slate-400 font-medium whitespace-nowrap">
                         Click to change
                       </span>
                     )}
                   </div>
                   {ticket.photo_after_url || ticket.video_after_url ? (
                     <div
-                      className={`relative aspect-video rounded-xl overflow-hidden ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-100"} border group`}
+                      className={`relative aspect-video rounded-md overflow-hidden ${isDark ? "bg-[#0d1117] border-[#30363d]" : "bg-slate-50 border-slate-100"} border group`}
                     >
                       {ticket.video_after_url ? (
                         <>
@@ -2682,18 +2681,18 @@ export default function TicketDetailPage() {
                             className="absolute inset-0 bg-black flex items-center justify-center cursor-pointer"
                             onClick={() => {
                               setPreviewVideoUrl(ticket.video_after_url!);
-                              setPreviewVideoTitle("After Work — Video");
+                              setPreviewVideoTitle("After work video");
                             }}
                           >
                             <div className="flex flex-col items-center gap-2">
                               <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center hover:bg-white/30 transition-colors">
                                 <PlayCircle className="w-8 h-8 text-white" />
                               </div>
-                              <span className="text-white/60 text-[9px] font-bold uppercase tracking-widest">
+                              <span className="text-white/60 text-xs font-medium">
                                 Tap to play
                               </span>
                             </div>
-                            <span className="absolute top-2 left-3 text-white/50 text-[9px] font-bold uppercase tracking-widest bg-black/50 px-2 py-0.5 rounded">
+                            <span className="absolute top-2 left-3 text-white/70 text-[11px] font-medium bg-black/50 px-2 py-0.5 rounded">
                               Video
                             </span>
                           </div>
@@ -2702,7 +2701,7 @@ export default function TicketDetailPage() {
                             <div className="absolute bottom-3 left-0 right-0 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10">
                               <div className="flex items-center gap-3">
                                 <label
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-xl cursor-pointer hover:bg-emerald-500 text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   <Paperclip className="w-4 h-4" />
@@ -2720,7 +2719,7 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     openCamera("after");
                                   }}
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-xl hover:bg-emerald-500 text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-[#21262d]" : "bg-black/60 backdrop-blur-md"} rounded-md hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Camera className="w-4 h-4" />
                                 </button>
@@ -2729,8 +2728,8 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     handleDeletePhoto("after");
                                   }}
-                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-xl hover:bg-rose-600 text-white transition-all shadow-lg`}
-                                  title="Delete Video"
+                                  className={`flex items-center justify-center w-12 h-12 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-md hover:bg-rose-600 text-white transition-colors shadow-sm`}
+                                  title="Delete video"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -2768,14 +2767,14 @@ export default function TicketDetailPage() {
                                 ticket.photo_after_url &&
                                 setLightboxUrl(ticket.photo_after_url)
                               }
-                              className={`text-white text-[10px] font-black uppercase tracking-widest px-6 py-3 ${isDark ? "bg-[#161b22]" : "bg-white/10 backdrop-blur-md"} rounded-2xl hover:bg-emerald-500 transition-colors shadow-lg`}
+                              className={`text-white text-xs font-semibold px-6 py-3 ${isDark ? "bg-[#161b22]" : "bg-white/10 backdrop-blur-md"} rounded-[10px] hover:bg-primary transition-colors shadow-sm`}
                             >
-                              View Full
+                              View full
                             </button>
                             {canManagePhotos && (
                               <div className="flex items-center gap-4">
                                 <label
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-emerald-500 text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Paperclip className="w-5 h-5" />
                                   <input
@@ -2789,7 +2788,7 @@ export default function TicketDetailPage() {
                                 </label>
                                 <button
                                   onClick={() => openCamera("after")}
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-emerald-500 text-white transition-all shadow-lg`}
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-[#21262d]" : "bg-white/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-primary text-white transition-colors shadow-sm`}
                                 >
                                   <Camera className="w-5 h-5" />
                                 </button>
@@ -2798,8 +2797,8 @@ export default function TicketDetailPage() {
                                     e.stopPropagation();
                                     handleDeletePhoto("after");
                                   }}
-                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-2xl cursor-pointer hover:bg-rose-600 text-white transition-all shadow-lg`}
-                                  title="Delete Photo"
+                                  className={`flex items-center justify-center w-14 h-14 ${isDark ? "bg-rose-500/20" : "bg-rose-500/20 backdrop-blur-md"} rounded-md cursor-pointer hover:bg-rose-600 text-white transition-colors shadow-sm`}
+                                  title="Delete photo"
                                 >
                                   <Trash2 className="w-5 h-5" />
                                 </button>
@@ -2824,7 +2823,7 @@ export default function TicketDetailPage() {
                         if (!ts) return null;
                         return (
                           <div
-                            className="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[9px] text-white font-bold font-mono border border-white/30 backdrop-blur-sm pointer-events-none z-20 shadow-lg"
+                            className="absolute bottom-2 left-2 px-1.5 py-0.5 bg-black/80 rounded text-[11px] text-white font-medium font-mono tabular-nums border border-white/30 backdrop-blur-sm pointer-events-none z-20"
                             key="ts-after"
                           >
                             {new Date(ts)
@@ -2844,12 +2843,12 @@ export default function TicketDetailPage() {
                     </div>
                   ) : (
                     <div
-                      className={`flex flex-col items-center justify-center aspect-video rounded-xl border-2 border-dashed ${isDark ? "border-[#30363d] bg-[#0d1117]" : "border-slate-200 bg-slate-50"} transition-all gap-2 p-4`}
+                      className={`flex flex-col items-center justify-center aspect-video rounded-md border-2 border-dashed ${isDark ? "border-[#30363d] bg-[#0d1117]" : "border-slate-200 bg-slate-50"} transition-colors gap-2 p-4`}
                     >
                       <span
-                        className={`text-[10px] font-black ${isDark ? "text-slate-600" : "text-slate-400"} uppercase tracking-widest mb-2`}
+                        className={`text-xs font-medium ${isDark ? "text-slate-600" : "text-slate-400"} mb-2`}
                       >
-                        Add Attachment
+                        Add attachment
                       </span>
                       <div className="flex items-center gap-3">
                         <div className="flex items-center justify-center gap-6">
@@ -2857,14 +2856,14 @@ export default function TicketDetailPage() {
                             className={`cursor-pointer flex flex-col items-center gap-2 group`}
                           >
                             <div
-                              className={`w-14 h-14 flex items-center justify-center rounded-2xl ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-all group-hover:scale-105`}
+                              className={`w-14 h-14 flex items-center justify-center rounded-md ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-colors`}
                             >
                               <Paperclip
-                                className={`w-6 h-6 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-emerald-500 transition-colors`}
+                                className={`w-5 h-5 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                               />
                             </div>
                             <span
-                              className={`text-[9px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-emerald-500 transition-colors`}
+                              className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                             >
                               Gallery
                             </span>
@@ -2882,14 +2881,14 @@ export default function TicketDetailPage() {
                             className={`cursor-pointer flex flex-col items-center gap-2 group`}
                           >
                             <div
-                              className={`w-14 h-14 flex items-center justify-center rounded-2xl ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-all group-hover:scale-105`}
+                              className={`w-14 h-14 flex items-center justify-center rounded-md ${isDark ? "bg-[#161b22] group-hover:bg-[#21262d] border-[#30363d]" : "bg-white group-hover:bg-slate-50 border-slate-200"} border-2 shadow-sm transition-colors`}
                             >
                               <Camera
-                                className={`w-6 h-6 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-emerald-500 transition-colors`}
+                                className={`w-5 h-5 ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                               />
                             </div>
                             <span
-                              className={`text-[9px] font-bold uppercase tracking-wider ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-emerald-500 transition-colors`}
+                              className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} group-hover:text-primary-dark transition-colors`}
                             >
                               Camera
                             </span>
@@ -2908,23 +2907,21 @@ export default function TicketDetailPage() {
             {/* Escalation Timeline */}
             {escalationLogs.length > 0 && (
               <div
-                className={`${isDark ? "bg-[#161b22] border-red-500/30" : "bg-white border-red-200"} border rounded-3xl p-6 relative overflow-hidden shadow-sm`}
+                className={`${isDark ? "bg-[#161b22] border-red-500/30" : "bg-white border-red-200"} border rounded-2xl p-6 relative overflow-hidden shadow-sm`}
               >
-                <div className="absolute top-0 right-0 w-64 h-64 bg-red-500/5 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
-
                 {/* Header */}
                 <div className="flex items-center justify-between gap-3 mb-6 relative z-10 flex-wrap">
                   <div className="flex items-center gap-3">
                     <div
                       className={`w-10 h-10 rounded-full ${isDark ? "bg-red-500/10 border-red-500/20" : "bg-red-50 border-red-100"} flex items-center justify-center flex-shrink-0 border`}
                     >
-                      <AlertTriangle className="w-5 h-5 text-red-500" />
+                      <AlertTriangle className="w-[18px] h-[18px] text-red-500" strokeWidth={1.5} />
                     </div>
                     <div>
                       <h2
                         className={`text-lg font-semibold ${isDark ? "text-red-400" : "text-red-700"}`}
                       >
-                        Urgency Timeline
+                        Urgency timeline
                       </h2>
                       <p
                         className={`text-xs ${isDark ? "text-gray-400" : "text-gray-500"}`}
@@ -2938,17 +2935,17 @@ export default function TicketDetailPage() {
                     {ticket?.current_escalation_level != null &&
                       ticket.current_escalation_level > 0 && (
                         <div
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${isDark ? "bg-red-500/15 text-red-300 border border-red-500/20" : "bg-red-50 text-red-700 border border-red-200"}`}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${isDark ? "bg-red-500/15 text-red-300 border border-red-500/20" : "bg-red-50 text-red-700 border border-red-200"}`}
                         >
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                          Level {ticket.current_escalation_level} Active
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          Level {ticket.current_escalation_level} active
                         </div>
                       )}
                     {ticket?.escalation_paused && (
                       <div
-                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold ${isDark ? "bg-yellow-500/15 text-yellow-300 border border-yellow-500/20" : "bg-yellow-50 text-yellow-700 border border-yellow-200"}`}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${isDark ? "bg-amber-500/15 text-amber-300 border border-amber-500/20" : "bg-amber-50 text-amber-700 border border-amber-200"}`}
                       >
-                        <PauseCircle className="w-3.5 h-3.5" />
+                        <PauseCircle className="w-4 h-4" strokeWidth={1.5} />
                         Paused
                       </div>
                     )}
@@ -2980,7 +2977,7 @@ export default function TicketDetailPage() {
                         : "?";
                       const reasonLabel =
                         log.reason === "timeout"
-                          ? "SLA Timeout"
+                          ? "SLA timeout"
                           : log.reason === "manual"
                             ? "Manual"
                             : log.reason || "Timeout";
@@ -2990,30 +2987,30 @@ export default function TicketDetailPage() {
                             className={`w-[18px] h-[18px] rounded-full bg-red-500 border-2 ${isDark ? "border-[#161b22]" : "border-white"} flex-shrink-0 mt-1 z-10`}
                           />
                           <div
-                            className={`flex-1 ${isDark ? "bg-red-500/5 border-red-500/10" : "bg-red-50 border-red-100"} border rounded-xl p-4`}
+                            className={`flex-1 ${isDark ? "bg-red-500/5 border-red-500/10" : "bg-red-50 border-red-100"} border rounded-[10px] p-4`}
                           >
                             {/* Level badges + reason + timestamp */}
                             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span
-                                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${isDark ? "bg-gray-800 text-gray-400 border border-gray-700" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
+                                  className={`text-xs font-medium font-mono px-2 py-0.5 rounded-[8px] ${isDark ? "bg-gray-800 text-gray-400 border border-gray-700" : "bg-gray-100 text-gray-500 border border-gray-200"}`}
                                 >
                                   L{log.from_level}
                                 </span>
                                 <ChevronRight className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                                 <span
-                                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${isDark ? "bg-red-500/20 text-red-300 border border-red-500/30" : "bg-red-100 text-red-700 border border-red-200"}`}
+                                  className={`text-xs font-medium font-mono px-2 py-0.5 rounded-[8px] ${isDark ? "bg-red-500/20 text-red-300 border border-red-500/30" : "bg-red-100 text-red-700 border border-red-200"}`}
                                 >
                                   L{log.to_level ?? "Final"}
                                 </span>
                                 <span
-                                  className={`text-xs px-2 py-0.5 rounded-full ${isDark ? "bg-orange-500/10 text-orange-400" : "bg-orange-50 text-orange-600"}`}
+                                  className={`text-xs px-2 py-0.5 rounded-[8px] ${isDark ? "bg-gray-800 text-gray-400" : "bg-gray-100 text-gray-600"}`}
                                 >
                                   {reasonLabel}
                                 </span>
                               </div>
                               <span
-                                className={`text-xs ${isDark ? "text-gray-500" : "text-gray-400"}`}
+                                className={`text-xs font-mono tabular-nums ${isDark ? "text-gray-500" : "text-gray-400"}`}
                               >
                                 {parseDate(log.escalated_at)?.toLocaleString([], {
                                   month: "short",
@@ -3037,7 +3034,7 @@ export default function TicketDetailPage() {
                                     />
                                   ) : (
                                     <div
-                                      className={`w-full h-full flex items-center justify-center text-[10px] font-bold ${isDark ? "bg-gray-700 text-gray-300" : "bg-gray-200 text-gray-600"}`}
+                                      className={`w-full h-full flex items-center justify-center text-[11px] font-semibold ${isDark ? "bg-gray-700 text-gray-300" : "bg-gray-200 text-gray-600"}`}
                                     >
                                       {fromInitials}
                                     </div>
@@ -3045,7 +3042,7 @@ export default function TicketDetailPage() {
                                 </div>
                                 <div>
                                   <p
-                                    className={`text-[10px] uppercase tracking-wider ${isDark ? "text-gray-500" : "text-gray-400"}`}
+                                    className={`text-xs ${isDark ? "text-gray-500" : "text-gray-400"}`}
                                   >
                                     From
                                   </p>
@@ -3070,7 +3067,7 @@ export default function TicketDetailPage() {
                                     />
                                   ) : (
                                     <div
-                                      className={`w-full h-full flex items-center justify-center text-[10px] font-bold ${isDark ? "bg-red-500/20 text-red-300" : "bg-red-100 text-red-700"}`}
+                                      className={`w-full h-full flex items-center justify-center text-[11px] font-semibold ${isDark ? "bg-red-500/20 text-red-300" : "bg-red-100 text-red-700"}`}
                                     >
                                       {toInitials}
                                     </div>
@@ -3078,15 +3075,15 @@ export default function TicketDetailPage() {
                                 </div>
                                 <div>
                                   <p
-                                    className={`text-[10px] uppercase tracking-wider ${isDark ? "text-gray-500" : "text-gray-400"}`}
+                                    className={`text-xs ${isDark ? "text-gray-500" : "text-gray-400"}`}
                                   >
                                     To
                                   </p>
                                   <p
-                                    className={`text-xs font-bold ${isDark ? "text-white" : "text-gray-900"}`}
+                                    className={`text-xs font-semibold ${isDark ? "text-white" : "text-gray-900"}`}
                                   >
                                     {log.to_employee?.full_name ||
-                                      "No Assignee"}
+                                      "No assignee"}
                                   </p>
                                 </div>
                               </div>
@@ -3104,14 +3101,13 @@ export default function TicketDetailPage() {
             {materialRequests.length > 0 && (
               <div
                 id="section-materials"
-                className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm relative overflow-hidden`}
+                className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-2xl border shadow-sm relative overflow-hidden`}
               >
-                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/5 rounded-full -mr-16 -mt-16 pointer-events-none" />
                 <h3
-                  className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-8 flex items-center gap-2`}
+                  className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-8 flex items-center gap-2`}
                 >
-                  <ShoppingBag className="w-4 h-4 text-primary" />
-                  Material Timeline
+                  <ShoppingBag className="w-4 h-4 text-slate-400" strokeWidth={1.5} />
+                  Material timeline
                 </h3>
                 <div className="space-y-10">
                   {materialRequests.map((req) => (
@@ -3120,17 +3116,17 @@ export default function TicketDetailPage() {
                       <div className="absolute left-[15px] top-8 bottom-[-40px] w-0.5 bg-slate-100 dark:bg-[#30363d] last:hidden" />
 
                       <div
-                        className={`absolute left-0 top-0 w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-lg z-10 transition-transform hover:scale-110 ${req.status === "pending_quotation" || req.status === "pending_approval"
-                            ? "bg-amber-500"
+                        className={`absolute left-0 top-0 w-8 h-8 rounded-md flex items-center justify-center z-10 ${req.status === "pending_quotation" || req.status === "pending_approval"
+                            ? "bg-amber-500/15 text-amber-600"
                             : req.status === "quoted" || req.status === "approved"
-                              ? "bg-blue-500"
+                              ? "bg-blue-500/15 text-blue-600"
                               : req.status === "ordered"
-                                ? "bg-indigo-500"
+                                ? "bg-secondary/15 text-secondary-dark"
                                 : req.status === "delivered"
-                                  ? "bg-emerald-500"
+                                  ? "bg-emerald-500/15 text-emerald-600"
                                   : req.status === "rejected"
-                                    ? "bg-rose-500"
-                                    : "bg-slate-500"
+                                    ? "bg-rose-500/15 text-rose-600"
+                                    : "bg-slate-500/15 text-slate-500"
                           }`}
                       >
                         {req.status === "delivered" ? (
@@ -3147,19 +3143,19 @@ export default function TicketDetailPage() {
                           <div>
                             <div className="flex items-center gap-3">
                               <p
-                                className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} tracking-tight`}
+                                className={`text-sm font-semibold font-mono ${isDark ? "text-white" : "text-slate-900"}`}
                               >
                                 Order #{req.id.slice(0, 8).toUpperCase()}
                               </p>
                               {req.procurement_viewed_at && !isNaN(new Date(req.procurement_viewed_at).getTime()) && (
-                                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
-                                  <Eye className="w-3 h-3 text-emerald-500" />
-                                  <span>Seen by Procurement: {new Date(req.procurement_viewed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                <div className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-0.5 rounded-full border ${isDark ? "text-slate-400 bg-[#21262d] border-[#30363d]" : "text-slate-500 bg-slate-50 border-slate-200"}`}>
+                                  <Eye className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                  <span>Seen by procurement <span className="font-mono tabular-nums">{new Date(req.procurement_viewed_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></span>
                                 </div>
                               )}
                             </div>
                             <p
-                              className={`text-[10px] ${isDark ? "text-slate-500" : "text-slate-400"} font-bold uppercase tracking-widest mt-1`}
+                              className={`text-xs ${isDark ? "text-slate-500" : "text-slate-400"} font-medium mt-1`}
                             >
                               Requested by {req.requester?.full_name}
                               {req.service_description && ` • ${req.service_description.slice(0, 40)}${req.service_description.length > 40 ? '...' : ''}`}
@@ -3176,17 +3172,17 @@ export default function TicketDetailPage() {
                               {req.status === "rejected" && req.rejecter?.full_name && ` • Rejected by ${req.rejecter.full_name}`}
                               {req.status === "ordered" && req.assignee?.full_name && ` • Ordered by ${req.assignee.full_name}`}
                               {req.status === "delivered" && req.assignee?.full_name && ` • Delivered by ${req.assignee.full_name}`}
-                              {` • `}{(userRole === 'admin' || userRole === 'procurement') && req.total_amount != null ? `₹${Number(req.total_amount).toLocaleString()}` : ''}
+                              {` • `}{(userRole === 'admin' || userRole === 'procurement') && req.total_amount != null ? `₹${Number(req.total_amount).toLocaleString('en-IN')}` : ''}
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
                             <span
-                              className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border ${req.status === "pending_quotation" || req.status === "pending_approval"
+                              className={`text-[11px] font-medium capitalize px-2.5 py-1 rounded-[8px] border ${req.status === "pending_quotation" || req.status === "pending_approval"
                                   ? "bg-amber-500/10 border-amber-500/20 text-amber-500"
                                   : req.status === "quoted" || req.status === "approved"
                                     ? "bg-blue-500/10 border-blue-500/20 text-blue-500"
                                     : req.status === "ordered"
-                                      ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-500"
+                                      ? "bg-secondary/10 border-secondary/20 text-secondary-dark"
                                       : req.status === "delivered"
                                         ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-500"
                                         : req.status === "rejected"
@@ -3194,7 +3190,7 @@ export default function TicketDetailPage() {
                                           : "bg-slate-500/10 border-slate-500/20 text-slate-500"
                                 }`}
                             >
-                              {req.status === 'pending_quotation' ? 'Pending Quotation' : req.status.replace("_", " ")}
+                              {req.status === 'pending_quotation' ? 'Pending quotation' : req.status.replace("_", " ")}
                             </span>
 
                             {/* Delete Option (if pending quotation/approval or rejected) */}
@@ -3204,8 +3200,8 @@ export default function TicketDetailPage() {
                                   e.stopPropagation();
                                   handleDeleteMaterialRequest(req.id, req.requested_by);
                                 }}
-                                className={`p-1.5 rounded-lg transition-all ${isDark ? "hover:bg-rose-500/10 text-slate-500 hover:text-rose-500" : "hover:bg-rose-50 text-slate-400 hover:text-rose-500"}`}
-                                title="Delete Request"
+                                className={`p-1.5 rounded-[10px] transition-colors ${isDark ? "hover:bg-rose-500/10 text-slate-500 hover:text-rose-500" : "hover:bg-rose-50 text-slate-400 hover:text-rose-500"}`}
+                                title="Delete request"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -3260,16 +3256,16 @@ export default function TicketDetailPage() {
                                 className="flex-1 flex flex-col gap-1.5"
                               >
                                 <div
-                                  className={`h-1.5 rounded-full transition-all duration-500 ${isActive
-                                      ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]"
+                                  className={`h-1.5 rounded-full transition-colors ${isActive
+                                      ? "bg-emerald-500"
                                       : isDark
                                         ? "bg-[#21262d]"
                                         : "bg-slate-100"
-                                    } ${isCurrent ? "animate-pulse" : ""}`}
+                                    } ${isCurrent ? "ring-2 ring-emerald-500/20" : ""}`}
                                 />
                                 <span
-                                  className={`text-[8px] font-black uppercase tracking-tighter text-center transition-colors ${isActive
-                                      ? "text-emerald-500"
+                                  className={`text-[11px] font-medium text-center transition-colors ${isActive
+                                      ? isDark ? "text-emerald-400" : "text-emerald-600"
                                       : isDark
                                         ? "text-slate-600"
                                         : "text-slate-300"
@@ -3278,7 +3274,7 @@ export default function TicketDetailPage() {
                                   {labelMap[s] || s.split("_")[0]}
                                 </span>
                                 {stepTime && isActive && !isNaN(new Date(stepTime).getTime()) && (
-                                  <span className={`text-[7px] text-center uppercase font-medium ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                                  <span className={`text-[11px] text-center font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"}`}>
                                     {new Date(stepTime).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 )}
@@ -3289,11 +3285,11 @@ export default function TicketDetailPage() {
 
                         {/* Vendor Info */}
                         {(req.vendor_name || req.vendor_contact) && (
-                          <div className={`p-3 rounded-xl border ${isDark ? 'bg-[#21262d] border-[#30363d]' : 'bg-slate-50 border-slate-100'} mt-2`}>
-                            <p className={`text-[9px] font-black uppercase tracking-widest mb-1.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Vendor Details</p>
-                            {req.vendor_name && <p className={`text-xs font-bold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{req.vendor_name}</p>}
-                            {req.vendor_contact && <p className={`text-[10px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{req.vendor_contact}</p>}
-                            {req.vendor_email && <p className={`text-[10px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{req.vendor_email}</p>}
+                          <div className={`p-3 rounded-[10px] border ${isDark ? 'bg-[#21262d] border-[#30363d]' : 'bg-slate-50 border-slate-100'} mt-2`}>
+                            <p className={`text-xs font-medium mb-1.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Vendor details</p>
+                            {req.vendor_name && <p className={`text-xs font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>{req.vendor_name}</p>}
+                            {req.vendor_contact && <p className={`text-[11px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{req.vendor_contact}</p>}
+                            {req.vendor_email && <p className={`text-[11px] font-medium ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{req.vendor_email}</p>}
                           </div>
                         )}
                       </div>
@@ -3307,17 +3303,17 @@ export default function TicketDetailPage() {
                             else newSet.add(req.id);
                             setExpandedMaterials(newSet);
                           }}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${expandedMaterials.has(req.id)
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-[10px] text-[11px] font-semibold transition-colors ${expandedMaterials.has(req.id)
                               ? "bg-slate-900 text-white"
                               : isDark
                                 ? "bg-[#21262d] text-slate-400 hover:text-white"
                                 : "bg-slate-50 text-slate-500 hover:bg-slate-100"
                             }`}
                         >
-                          <Package className="w-3.5 h-3.5" />
+                          <Package className="w-4 h-4" strokeWidth={1.5} />
                           {expandedMaterials.has(req.id)
-                            ? "Hide Items"
-                            : `View ${req.items?.length || 0} Items`}
+                            ? "Hide items"
+                            : `View ${req.items?.length || 0} items`}
                           <ChevronDown
                             className={`w-3.5 h-3.5 transition-transform duration-300 ${expandedMaterials.has(req.id) ? "rotate-180" : ""}`}
                           />
@@ -3331,7 +3327,7 @@ export default function TicketDetailPage() {
                                 className="flex items-center justify-between gap-4 group"
                               >
                                 <div className="flex items-center gap-3">
-                                  <div className="w-8 h-8 rounded-lg bg-slate-50 dark:bg-[#21262d] flex items-center justify-center border border-slate-100 dark:border-[#30363d] overflow-hidden">
+                                  <div className="w-8 h-8 rounded-md bg-slate-50 dark:bg-[#21262d] flex items-center justify-center border border-slate-100 dark:border-[#30363d] overflow-hidden">
                                     <img
                                       src={
                                         item.photo_url ||
@@ -3347,12 +3343,12 @@ export default function TicketDetailPage() {
                                   </div>
                                   <div className="min-w-0">
                                     <p
-                                      className={`text-[11px] font-bold ${isDark ? "text-slate-200" : "text-slate-700"} truncate`}
+                                      className={`text-[11px] font-semibold ${isDark ? "text-slate-200" : "text-slate-700"} truncate`}
                                     >
                                       {item.name}
                                     </p>
                                     <p
-                                      className={`text-[9px] font-medium ${isDark ? "text-slate-500" : "text-slate-400"} uppercase tracking-tight`}
+                                      className={`text-[11px] font-medium tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"}`}
                                     >
                                       Qty: {item.quantity}{" "}
                                       {item.unit || "units"}
@@ -3360,8 +3356,8 @@ export default function TicketDetailPage() {
                                   </div>
                                 </div>
                                 <div className="text-right">
-                                  <p className={`text-[10px] font-black ${(userRole === 'admin' || userRole === 'procurement') && isDark ? "text-emerald-400" : (userRole === 'admin' || userRole === 'procurement') ? "text-emerald-600" : ""}`}>
-                                    {(userRole === 'admin' || userRole === 'procurement') && item.total_price != null ? `₹${Number(item.total_price).toLocaleString()}` : ''}
+                                  <p className={`text-[11px] font-semibold tabular-nums ${(userRole === 'admin' || userRole === 'procurement') && isDark ? "text-slate-200" : (userRole === 'admin' || userRole === 'procurement') ? "text-slate-700" : ""}`}>
+                                    {(userRole === 'admin' || userRole === 'procurement') && item.total_price != null ? `₹${Number(item.total_price).toLocaleString('en-IN')}` : ''}
                                   </p>
                                 </div>
                               </div>
@@ -3376,18 +3372,18 @@ export default function TicketDetailPage() {
                       ) && (
                           <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-3">
                             <div>
-                              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">
-                                Upload Received Item Photos
+                              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                Upload received item photos
                               </label>
                               <input
                                 type="file"
                                 multiple
                                 accept="image/*"
                                 onChange={(e) => setTicketDeliveryFiles(prev => ({ ...prev, [req.id]: e.target.files }))}
-                                className="w-full text-xs text-slate-600 dark:text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                                className="w-full text-xs text-slate-600 dark:text-slate-300 file:mr-3 file:py-1 file:px-2.5 file:rounded-[8px] file:border-0 file:text-[11px] file:font-medium file:bg-slate-900 file:text-white hover:file:bg-slate-700 cursor-pointer"
                               />
                               {ticketDeliveryFiles[req.id] && (ticketDeliveryFiles[req.id]?.length || 0) > 0 && (
-                                <p className="text-[10px] text-emerald-600 font-semibold mt-1">
+                                <p className="text-[11px] text-emerald-600 font-semibold mt-1">
                                   {ticketDeliveryFiles[req.id]?.length} photo(s) selected
                                 </p>
                               )}
@@ -3395,25 +3391,25 @@ export default function TicketDetailPage() {
                             <button
                               onClick={() => handleTicketMarkDelivered(req.id)}
                               disabled={uploadingDeliveryReqId === req.id}
-                              className="w-full bg-[#238636] hover:bg-[#2ea043] text-white font-semibold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors shadow-md disabled:opacity-50"
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2 px-4 rounded-[10px] flex items-center justify-center gap-2 transition-colors duration-150 disabled:opacity-50"
                             >
                               {uploadingDeliveryReqId === req.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                              MARK AS DELIVERED / RECEIVED
+                              Mark as delivered / received
                             </button>
                           </div>
                         )}
 
                       {req.delivery_photos && req.delivery_photos.length > 0 && (
                         <div className="mt-4 pt-4 border-t border-slate-100 dark:border-[#30363d] space-y-2">
-                          <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                            <Eye className="w-3.5 h-3.5" /> Received Item Photos ({req.delivery_photos.length})
+                          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                            <Eye className="w-4 h-4" strokeWidth={1.5} /> Received item photos (<span className="tabular-nums">{req.delivery_photos.length}</span>)
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {req.delivery_photos.map((url: string, idx: number) => {
                               const safeUrl = maskStorageUrl(url) || url;
                               return (
-                                <a key={idx} href={safeUrl} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
-                                  <img src={safeUrl} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                                <a key={idx} href={safeUrl} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-[8px] border border-slate-200 dark:border-[#30363d]">
+                                  <img src={safeUrl} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover" />
                                 </a>
                               );
                             })}
@@ -3437,13 +3433,13 @@ export default function TicketDetailPage() {
             {linkedAssets.length > 0 && (
               <div
                 id="section-assets"
-                className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm`}
+                className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-2xl border shadow-sm`}
               >
                 <h3
-                  className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-5 flex items-center gap-2`}
+                  className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-5 flex items-center gap-2`}
                 >
-                  <Wrench className="w-4 h-4 text-primary" />
-                  Asset{linkedAssets.length > 1 ? "s" : ""} Worked On
+                  <Wrench className="w-4 h-4 text-slate-400" strokeWidth={1.5} />
+                  Asset{linkedAssets.length > 1 ? "s" : ""} worked on
                 </h3>
                 <div className="space-y-3">
                   {linkedAssets.map((ev) => (
@@ -3452,20 +3448,20 @@ export default function TicketDetailPage() {
                       href={`/a/${ev.asset.qr_token}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`flex items-start gap-3 p-4 rounded-2xl border transition-colors ${isDark ? "bg-[#0f1419] border-[#21262d] hover:border-primary/40" : "bg-slate-50 border-slate-100 hover:border-primary/40"}`}
+                      className={`flex items-start gap-3 p-4 rounded-[10px] border transition-colors duration-150 ${isDark ? "bg-[#0f1419] border-[#21262d] hover:border-primary/40" : "bg-slate-50 border-slate-100 hover:border-primary/40"}`}
                     >
                       <div
-                        className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-[10px] font-black text-white"
+                        className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0 text-[11px] font-semibold text-white"
                         style={{ backgroundColor: ev.asset.category?.color || "#708F96" }}
                       >
                         {ev.asset.asset_code.slice(0, 2)}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                          <span className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                             {ev.asset.name}
                           </span>
-                          <span className={`text-[10px] font-mono ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+                          <span className={`text-[11px] font-mono ${isDark ? "text-slate-500" : "text-slate-400"}`}>
                             {ev.asset.asset_code}
                           </span>
                         </div>
@@ -3474,12 +3470,12 @@ export default function TicketDetailPage() {
                             {[ev.asset.floor, ev.asset.location].filter(Boolean).join(" · ")}
                           </p>
                         )}
-                        <p className={`text-[12px] italic mt-1.5 ${isDark ? "text-slate-300" : "text-slate-600"}`}>
+                        <p className={`text-[12px] mt-1.5 ${isDark ? "text-slate-300" : "text-slate-600"}`}>
                           "{ev.description}"
                         </p>
-                        <p className={`text-[10px] mt-1.5 ${isDark ? "text-slate-600" : "text-slate-400"}`}>
+                        <p className={`text-[11px] mt-1.5 ${isDark ? "text-slate-500" : "text-slate-400"}`}>
                           {ev.created_by_user?.full_name || "MST"} ·{" "}
-                          {new Date(ev.occurred_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          <span className="font-mono tabular-nums">{new Date(ev.occurred_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
                         </p>
                       </div>
                     </a>
@@ -3491,31 +3487,31 @@ export default function TicketDetailPage() {
             {/* 3. Activity Timeline (Progress) */}
             <div
               id="section-timeline"
-              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-3xl border shadow-sm`}
+              className={`${isDark ? "bg-[#161b22] border-[#21262d]" : "bg-white border-slate-100"} p-6 rounded-2xl border shadow-sm`}
             >
               <h3
-                className={`text-sm font-black ${isDark ? "text-white" : "text-slate-900"} mb-8 flex items-center gap-2`}
+                className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-8 flex items-center gap-2`}
               >
-                <History className="w-4 h-4 text-primary" />
-                Sequence of Events
+                <History className="w-4 h-4 text-slate-400" strokeWidth={1.5} />
+                Sequence of events
               </h3>
-              <div className="space-y-8 relative before:absolute before:inset-0 before:ml-4 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-primary before:via-slate-500/20 before:to-transparent">
+              <div className="space-y-8 relative before:absolute before:inset-0 before:ml-4 before:h-full before:w-0.5 before:bg-slate-500/20">
                 {/* 1. Ticket Created */}
                 <div className="relative pl-12">
                   <div
-                    className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full bg-success flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-success/20 shadow-lg`}
+                    className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full bg-success flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"}`}
                   >
                     <CheckCircle2 className="w-4 h-4" />
                   </div>
                   <p
-                    className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                    className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                   >
                     {parseDate(ticket.created_at)?.toLocaleString()}
                   </p>
                   <p
-                    className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                    className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                   >
-                    Ticket Created
+                    Ticket created
                   </p>
                   <p
                     className={`text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}
@@ -3543,38 +3539,38 @@ export default function TicketDetailPage() {
                     return (
                       <div key={act.id} className="relative pl-12">
                         <div
-                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full ${isProcurement ? "bg-amber-500" : "bg-primary"} flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg`}
+                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full ${isProcurement ? "bg-amber-500" : "bg-primary"} flex items-center justify-center text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"}`}
                         >
                           {isProcurement ? <ShoppingBag className="w-4 h-4" /> : <User className="w-4 h-4" />}
                         </div>
                         <p
-                          className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                          className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                         >
                           {parseDate(act.created_at)?.toLocaleString()}
                         </p>
                         <p
-                          className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                          className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                         >
                           {isProcurement
                             ? (act.action === "procurement_requested"
-                              ? "Material Requested"
+                              ? "Material requested"
                               : act.action === "vendor_procurement_tagged"
-                                ? "Vendor Tagged"
+                                ? "Vendor tagged"
                                 : act.action === "vendor_procurement_updated"
-                                  ? "Vendor Request Updated"
+                                  ? "Vendor request updated"
                                   : act.action === "vendor_procurement_removed"
-                                    ? "Vendor Request Removed"
+                                    ? "Vendor request removed"
                                     : act.action === "vendor_procurement_arranged" || act.action === "vendor_procurement_arranged_updated"
-                                      ? "Vendor Arranged"
-                                      : "Procurement Update")
-                            : "Assignment Update"}
+                                      ? "Vendor arranged"
+                                      : "Procurement update")
+                            : "Assignment update"}
                         </p>
                         <p
                           className={`text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}
                         >
                           {isProcurement ? (
                             <>
-                              <span className="font-bold">{act.user?.full_name || "System"}</span>{" "}
+                              <span className="font-semibold">{act.user?.full_name || "System"}</span>{" "}
                               {act.action === "vendor_procurement_tagged"
                                 ? "tagged Procurement for vendor arrangement"
                                 : act.action === "vendor_procurement_updated"
@@ -3587,19 +3583,19 @@ export default function TicketDetailPage() {
                                         ? "created a material request"
                                         : act.action.replace("procurement_", "").replace(/_/g, " ") + " the request"}
                               {act.notes && (
-                                <span className="ml-1 text-amber-500 font-bold">: "{act.notes}"</span>
+                                <span className={`ml-1 ${isDark ? "text-slate-300" : "text-slate-600"}`}>: "{act.notes}"</span>
                               )}
                               {act.new_value && !act.new_value.startsWith("http") && (
-                                <span className="ml-1 text-emerald-500 font-bold">: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</span>
+                                <span className={`ml-1 font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</span>
                               )}
                             </>
                           ) : (
                             <>
                               Assigned to{" "}
-                              <span className="text-success font-bold">
+                              <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                 {userNameMap[act.new_value!] || act.new_value}
                               </span>{" "}
-                              by <span className="font-bold">{act.user?.full_name || "System"}</span>
+                              by <span className="font-semibold">{act.user?.full_name || "System"}</span>
                             </>
                           )}
                         </p>
@@ -3612,30 +3608,30 @@ export default function TicketDetailPage() {
                   <div className="relative pl-12">
                     <div
                       className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"
-                        } shadow-lg ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                          ? "bg-emerald-500 text-white shadow-emerald-500/20"
-                          : "bg-amber-500 text-white shadow-amber-500/20 animate-pulse"
+                        } ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? "bg-emerald-500 text-white"
+                          : "bg-amber-500 text-white"
                         }`}
                     >
                       <ShoppingBag className="w-4 h-4" />
                     </div>
                     <p
-                      className={`text-[10px] font-black uppercase tracking-widest ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                          ? "text-emerald-500"
-                          : "text-amber-500"
+                      className={`text-xs font-mono tabular-nums ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
+                          ? isDark ? "text-emerald-400" : "text-emerald-600"
+                          : isDark ? "text-amber-400" : "text-amber-600"
                         } mb-1`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                        ? parseDate((ticket as any)?.vendor_arranged_at)?.toLocaleString() || "VENDOR ARRANGED"
-                        : parseDate((ticket as any)?.vendor_tagged_at)?.toLocaleString() || "VENDOR REQUESTED"}
+                        ? parseDate((ticket as any)?.vendor_arranged_at)?.toLocaleString() || "Vendor arranged"
+                        : parseDate((ticket as any)?.vendor_tagged_at)?.toLocaleString() || "Vendor requested"}
                     </p>
                     <p
-                      className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"
+                      className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"
                         }`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                        ? "Vendor Arranged by Procurement"
-                        : "Vendor Arrangement Requested"}
+                        ? "Vendor arranged by procurement"
+                        : "Vendor arrangement requested"}
                     </p>
                     <p
                       className={`text-xs ${(ticket as any)?.vendor_procurement_status === "vendor_arranged"
@@ -3644,8 +3640,8 @@ export default function TicketDetailPage() {
                         } font-medium mt-0.5`}
                     >
                       {(ticket as any)?.vendor_procurement_status === "vendor_arranged"
-                        ? (ticket as any)?.vendor_arranged_details || "External vendor assigned to visit site."
-                        : (ticket as any)?.vendor_procurement_note || "Procurement team notified to arrange vendor."}
+                        ? (ticket as any)?.vendor_arranged_details || "External vendor assigned to visit site"
+                        : (ticket as any)?.vendor_procurement_note || "Procurement team notified to arrange vendor"}
                     </p>
                   </div>
                 )}
@@ -3653,7 +3649,7 @@ export default function TicketDetailPage() {
                 {/* 3. Work Started */}
                 <div className="relative pl-12">
                   <div
-                    className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${ticket.work_started_at ? "bg-success text-white shadow-success/20" : isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
+                    className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${ticket.work_started_at ? "bg-success text-white" : isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
                   >
                     {ticket.work_started_at ? (
                       <CheckCircle2 className="w-4 h-4" />
@@ -3662,16 +3658,16 @@ export default function TicketDetailPage() {
                     )}
                   </div>
                   <p
-                    className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                    className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                   >
                     {ticket.work_started_at
                       ? parseDate(ticket.work_started_at)?.toLocaleString()
-                      : "AWAITING START"}
+                      : "Awaiting start"}
                   </p>
                   <p
-                    className={`text-sm font-bold ${ticket.work_started_at ? (isDark ? "text-white" : "text-slate-900") : isDark ? "text-slate-700" : "text-slate-300"}`}
+                    className={`text-sm font-semibold ${ticket.work_started_at ? (isDark ? "text-white" : "text-slate-900") : isDark ? "text-slate-700" : "text-slate-300"}`}
                   >
-                    In Progress
+                    In progress
                   </p>
                   {ticket.work_started_at && (
                     <p
@@ -3693,7 +3689,7 @@ export default function TicketDetailPage() {
                     return (
                       <>
                         <div
-                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isEffectivelyResolved ? "bg-success text-white shadow-success/20" : isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
+                          className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isEffectivelyResolved ? "bg-success text-white" : isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
                         >
                           {isEffectivelyResolved ? (
                             <CheckCircle2 className="w-4 h-4" />
@@ -3702,16 +3698,16 @@ export default function TicketDetailPage() {
                           )}
                         </div>
                         <p
-                          className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                          className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                         >
                           {isEffectivelyResolved
                             ? parseDate(ticket.resolved_at)?.toLocaleString()
-                            : "PENDING"}
+                            : "Pending"}
                         </p>
                         <p
-                          className={`text-sm font-bold ${isEffectivelyResolved ? (isDark ? "text-white" : "text-slate-900") : isDark ? "text-slate-700" : "text-slate-300"}`}
+                          className={`text-sm font-semibold ${isEffectivelyResolved ? (isDark ? "text-white" : "text-slate-900") : isDark ? "text-slate-700" : "text-slate-300"}`}
                         >
-                          Work Completed
+                          Work completed
                         </p>
                         {isEffectivelyResolved && (
                           <p
@@ -3754,36 +3750,36 @@ export default function TicketDetailPage() {
                         <>
                           <div className="relative pl-12">
                             <div
-                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
+                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
                             >
                               <CheckCircle2 className="w-4 h-4" />
                             </div>
                             <p
-                              className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                              className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                             >
-                              PENDING
+                              Pending
                             </p>
                             <p
-                              className={`text-sm font-bold ${isDark ? "text-slate-700" : "text-slate-300"}`}
+                              className={`text-sm font-semibold ${isDark ? "text-slate-700" : "text-slate-300"}`}
                             >
-                              Sent for Approval
+                              Sent for approval
                             </p>
                           </div>
                           <div className="relative pl-12">
                             <div
-                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
+                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
                             >
                               <AlertCircle className="w-4 h-4" />
                             </div>
                             <p
-                              className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                              className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                             >
-                              AWAITING
+                              Awaiting
                             </p>
                             <p
-                              className={`text-sm font-bold ${isDark ? "text-slate-700" : "text-slate-300"}`}
+                              className={`text-sm font-semibold ${isDark ? "text-slate-700" : "text-slate-300"}`}
                             >
-                              Client Check
+                              Client check
                             </p>
                           </div>
                         </>
@@ -3797,25 +3793,25 @@ export default function TicketDetailPage() {
                         return (
                           <div key={act.id} className="relative pl-12">
                             <div
-                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isThisCurrentlyPending ? "bg-violet-500 text-white shadow-violet-500/20 animate-pulse" : "bg-success text-white shadow-success/20"}`}
+                              className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isThisCurrentlyPending ? "bg-secondary text-white" : "bg-success text-white"}`}
                             >
                               <CheckCircle2 className="w-4 h-4" />
                             </div>
                             <p
-                              className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                              className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                             >
                               {isThisCurrentlyPending
-                                ? "AWAITING CLIENT"
+                                ? "Awaiting client"
                                 : parseDate(act.created_at)?.toLocaleString()}
                             </p>
                             <p
-                              className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                              className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                             >
-                              Sent for Approval
+                              Sent for approval
                             </p>
                             {isThisCurrentlyPending ? (
                               <p
-                                className={`text-xs ${isDark ? "text-violet-400" : "text-violet-600"} font-semibold`}
+                                className={`text-xs ${isDark ? "text-secondary-light" : "text-secondary-dark"} font-medium`}
                               >
                                 Waiting for client to confirm resolution
                               </p>
@@ -3838,7 +3834,7 @@ export default function TicketDetailPage() {
                       return (
                         <div key={act.id} className="relative pl-12">
                           <div
-                            className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isApproved ? "bg-success text-white shadow-success/20" : "bg-rose-500 text-white shadow-rose-500/20"}`}
+                            className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isApproved ? "bg-success text-white" : "bg-rose-500 text-white"}`}
                           >
                             {isApproved ? (
                               <CheckCircle2 className="w-4 h-4" />
@@ -3847,20 +3843,20 @@ export default function TicketDetailPage() {
                             )}
                           </div>
                           <p
-                            className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                            className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                           >
                             {parseDate(act.created_at)?.toLocaleString()}
                           </p>
                           <p
-                            className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                            className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                           >
                             {isApproved
-                              ? "Client Approved ✓"
-                              : "Client Rejected — Reopened"}
+                              ? "Client approved"
+                              : "Client rejected, reopened"}
                           </p>
                           {note && (
                             <p
-                              className={`text-xs mt-0.5 ${isDark ? "text-rose-400" : "text-rose-600"} font-medium italic`}
+                              className={`text-xs mt-0.5 ${isDark ? "text-rose-400" : "text-rose-600"} font-medium`}
                             >
                               "{note}"
                             </p>
@@ -3889,19 +3885,19 @@ export default function TicketDetailPage() {
                       nodes.push(
                         <div key="val-placeholder" className="relative pl-12">
                           <div
-                            className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-lg ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
+                            className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} ${isDark ? "bg-[#21262d] text-slate-600" : "bg-slate-100 text-slate-400"}`}
                           >
                             <AlertCircle className="w-4 h-4" />
                           </div>
                           <p
-                            className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                            className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                           >
-                            AWAITING
+                            Awaiting
                           </p>
                           <p
-                            className={`text-sm font-bold ${isDark ? "text-slate-700" : "text-slate-300"}`}
+                            className={`text-sm font-semibold ${isDark ? "text-slate-700" : "text-slate-300"}`}
                           >
-                            Client Check
+                            Client check
                           </p>
                           <p
                             className={`text-xs ${isDark ? "text-slate-600" : "text-slate-300"}`}
@@ -3919,12 +3915,12 @@ export default function TicketDetailPage() {
                 {activities.some((a) => a.action === "force_closed") && (
                   <div className="relative pl-12">
                     <div
-                      className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center bg-rose-500 text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"} shadow-rose-500/20 shadow-lg`}
+                      className={`absolute left-0 top-0 mt-0.5 z-10 w-8 h-8 rounded-full flex items-center justify-center bg-rose-500 text-white ring-4 ${isDark ? "ring-[#161b22]" : "ring-white"}`}
                     >
                       <XCircle className="w-4 h-4" />
                     </div>
                     <p
-                      className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
+                      className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} mb-1`}
                     >
                       {parseDate(
                         activities.find((a) => a.action === "force_closed")
@@ -3932,9 +3928,9 @@ export default function TicketDetailPage() {
                       )?.toLocaleString()}
                     </p>
                     <p
-                      className={`text-sm font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                      className={`text-sm font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                     >
-                      Ticket Force Closed
+                      Ticket force closed
                     </p>
                     <p
                       className={`text-xs ${isDark ? "text-rose-400" : "text-rose-600"} font-medium`}
@@ -3951,9 +3947,9 @@ export default function TicketDetailPage() {
                 className={`mt-8 pt-6 border-t ${isDark ? "border-[#21262d]" : "border-slate-50"}`}
               >
                 <h4
-                  className={`text-[10px] font-black ${isDark ? "text-slate-600" : "text-slate-400"} uppercase tracking-widest mb-4 italic`}
+                  className={`text-xs font-medium ${isDark ? "text-slate-600" : "text-slate-400"} mb-4`}
                 >
-                  Internal Trace Log
+                  Internal trace log
                 </h4>
                 <div className="space-y-4">
                   {activities.map((act) => {
@@ -3963,20 +3959,20 @@ export default function TicketDetailPage() {
                         <div key={act.id} className="flex justify-between items-start gap-4 opacity-75">
                           <div className={`text-xs ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                             <p className={`text-[11px] ${isDark ? "text-slate-400" : "text-slate-600"} leading-relaxed`}>
-                              <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                              <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                 {act.user?.full_name || "System"}
                               </span>{" "}
                               logged work on{" "}
-                              <span className="font-bold text-primary">{act.old_value}</span>
+                              <span className={`font-semibold ${isDark ? "text-primary-light" : "text-primary-dark"}`}>{act.old_value}</span>
                               {act.new_value && (
-                                <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
                                   — "{act.new_value}"
                                 </span>
                               )}
                             </p>
                           </div>
                           <span
-                            className={`text-[9px] ${isDark ? "text-slate-600" : "text-slate-400"} font-bold uppercase whitespace-nowrap`}
+                            className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} whitespace-nowrap`}
                           >
                             {parseDate(act.created_at)?.toLocaleTimeString([], {
                               hour: "2-digit",
@@ -3999,20 +3995,20 @@ export default function TicketDetailPage() {
                           >
                             {isAssignment ? (
                               <>
-                                <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                   {act.user?.full_name || "System"}
                                 </span>{" "}
                                 assigned this to{" "}
-                                <span className="text-success font-bold">
+                                <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                   {userNameMap[act.new_value!] || act.new_value}
                                 </span>
                               </>
                             ) : (act.action.startsWith("procurement_") || act.action.startsWith("vendor_procurement_")) ? (
                               <>
-                                <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                   {act.user?.full_name || "System"}:
                                 </span>{" "}
-                                <span className="text-amber-500 font-bold">
+                                <span className={`font-medium ${isDark ? "text-slate-300" : "text-slate-700"}`}>
                                   {act.action === "vendor_procurement_tagged"
                                     ? "tagged Procurement for vendor arrangement"
                                     : act.action === "vendor_procurement_updated"
@@ -4026,7 +4022,7 @@ export default function TicketDetailPage() {
                                             : act.action.replace("procurement_", "").replace(/_/g, " ")}
                                 </span>
                                 {act.notes && (
-                                  <span className={`ml-1 italic ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                                  <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
                                     — "{act.notes}"
                                   </span>
                                 )}
@@ -4037,10 +4033,10 @@ export default function TicketDetailPage() {
                                         href={maskStorageUrl(act.new_value) || act.new_value}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded-md hover:bg-blue-500/20 transition-colors font-bold"
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-[8px] transition-colors duration-150 font-medium ${isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
                                       >
-                                        <Eye className="w-3 h-3" />
-                                        View Attachment
+                                        <Eye className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                        View attachment
                                       </a>
                                     ) : (
                                       <>: {act.new_value.replace(/\.?\s*Quoted Price:\s*[\d.]+/gi, '').replace(/\.?\s*Vendor:\s*N\/A/gi, '')}</>
@@ -4050,16 +4046,16 @@ export default function TicketDetailPage() {
                               </>
                             ) : (
                               <>
-                                <span className={`font-bold ${isDark ? "text-white" : "text-slate-900"}`}>
+                                <span className={`font-semibold ${isDark ? "text-white" : "text-slate-900"}`}>
                                   {act.user?.full_name || "System"}:
                                 </span>{" "}
                                 <span
-                                  className={`${act.action === "force_closed" ? "text-rose-500 font-black uppercase tracking-tighter" : ""}`}
+                                  className={`${act.action === "force_closed" ? "text-rose-500 font-medium" : ""}`}
                                 >
                                   {act.action.replace(/_/g, " ")}
                                 </span>
                                 {act.new_value && (
-                                  <span className="text-success font-bold ml-1">
+                                  <span className={`font-semibold ml-1 ${isDark ? "text-white" : "text-slate-900"}`}>
                                     → {userNameMap[act.new_value] || act.new_value}
                                   </span>
                                 )}
@@ -4068,7 +4064,7 @@ export default function TicketDetailPage() {
                           </p>
                         </div>
                         <span
-                          className={`text-[9px] ${isDark ? "text-slate-600" : "text-slate-400"} font-bold uppercase whitespace-nowrap`}
+                          className={`text-xs font-mono tabular-nums ${isDark ? "text-slate-500" : "text-slate-400"} whitespace-nowrap`}
                         >
                           {parseDate(act.created_at)?.toLocaleTimeString([], {
                             hour: "2-digit",
@@ -4086,7 +4082,7 @@ export default function TicketDetailPage() {
           {/* RIGHT COLUMN: Comments & Chat */}
           <div className="lg:col-span-1 space-y-6">
             <div
-              className={`${isDark ? "bg-[#0b141a] border-[#202c33]" : "bg-[#efe7de] border-slate-200"} border rounded-3xl shadow-xl flex flex-col h-[600px] sticky top-24 overflow-hidden`}
+              className={`${isDark ? "bg-[#0b141a] border-[#202c33]" : "bg-[#efe7de] border-slate-200"} border rounded-2xl shadow-sm flex flex-col h-[600px] sticky top-24 overflow-hidden`}
               style={isDark ? { backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'overlay', backgroundColor: '#0b141a' } : { backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'overlay', backgroundColor: '#efe7de' }}
             >
               <div
@@ -4094,12 +4090,12 @@ export default function TicketDetailPage() {
               >
                 <div>
                   <h3
-                    className={`text-sm font-bold ${isDark ? "text-slate-100" : "text-slate-900"}`}
+                    className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-slate-900"}`}
                   >
-                    Ticket Thread
+                    Ticket thread
                   </h3>
                   <p
-                    className={`text-[10px] ${isDark ? "text-slate-400" : "text-slate-500"}`}
+                    className={`text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}
                   >
                     online
                   </p>
@@ -4112,7 +4108,7 @@ export default function TicketDetailPage() {
               <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                 {comments.length === 0 && (
                   <div className="text-center py-10 opacity-50">
-                    <div className={`inline-block px-4 py-1 rounded-lg ${isDark ? "bg-[#182229] text-amber-200/50" : "bg-white text-slate-500"} text-[10px] font-bold uppercase tracking-wider`}>
+                    <div className={`inline-block px-4 py-1 rounded-[8px] ${isDark ? "bg-[#182229] text-slate-400" : "bg-white text-slate-500"} text-[11px] font-medium`}>
                       No messages yet
                     </div>
                   </div>
@@ -4153,7 +4149,7 @@ export default function TicketDetailPage() {
                   if (isSystemMessage) {
                     return (
                       <div key={comment.id} className="w-full flex justify-center py-1">
-                        <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
+                        <div className={`px-3 py-1 rounded-[8px] text-center shadow-sm text-[11px] font-medium ${isDark ? "bg-[#182229] text-slate-400 border border-white/5" : "bg-white text-slate-500 border border-slate-200"
                           }`}>
                           {comment.comment}
                         </div>
@@ -4175,7 +4171,7 @@ export default function TicketDetailPage() {
                           }`}
                       >
                         {/* Sender name for group-like chat */}
-                        <span className={`text-[11px] font-bold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
+                        <span className={`text-[11px] font-semibold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
                           {isMe ? "You" : formatName(comment.user?.full_name || "Unknown")}
                         </span>
 
@@ -4183,12 +4179,12 @@ export default function TicketDetailPage() {
                           <p className={`text-[14px] font-medium grow leading-relaxed ${isMe ? "text-slate-900 dark:text-white" : isDark ? "text-slate-100" : "text-slate-900"}`}>
                             {comment.comment}
                           </p>
-                          <div className={`text-[9px] font-medium ml-auto flex items-center gap-1 shrink-0 ${isMe ? "text-slate-700 dark:text-slate-300" : "text-slate-500"}`}>
+                          <div className={`text-[11px] font-mono tabular-nums ml-auto flex items-center gap-1 shrink-0 ${isMe ? "text-slate-700 dark:text-slate-300" : "text-slate-500"}`}>
                             {parseDate(comment.created_at)?.toLocaleTimeString([], {
                               hour: "2-digit",
                               minute: "2-digit",
                             })}
-                            {isMe && <span className="text-blue-400">✓✓</span>}
+                            {isMe && <CheckCheck className="w-3.5 h-3.5 text-slate-400" strokeWidth={1.5} />}
                           </div>
                         </div>
 
@@ -4206,10 +4202,10 @@ export default function TicketDetailPage() {
                 className={`p-2 flex flex-col gap-2 ${isDark ? "bg-[#202c33]" : "bg-[#f0f2f5]"}`}
               >
                 {mentionSearch !== null && procurementUsers.length > 0 && (
-                  <div className="absolute bottom-full left-4 mb-2 w-72 bg-white dark:bg-[#161b22] border dark:border-[#30363d] rounded-2xl shadow-2xl overflow-hidden z-50">
-                    <div className="bg-emerald-500/10 px-4 py-2 border-b dark:border-[#30363d]">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
-                        Tag Procurement Team
+                  <div className="absolute bottom-full left-4 mb-2 w-72 bg-white dark:bg-[#161b22] border dark:border-[#30363d] rounded-2xl shadow-lg overflow-hidden z-50">
+                    <div className="bg-slate-50 dark:bg-[#21262d] px-4 py-2 border-b dark:border-[#30363d]">
+                      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        Tag procurement team
                       </p>
                     </div>
                     <div className="max-h-48 overflow-y-auto">
@@ -4239,14 +4235,14 @@ export default function TicketDetailPage() {
                             }}
                             className="p-3 hover:bg-slate-50 dark:hover:bg-[#21262d] cursor-pointer border-b dark:border-[#30363d] last:border-0 flex items-center gap-3 transition-colors"
                           >
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-black text-xs uppercase">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-[#21262d] text-slate-600 dark:text-slate-300 flex items-center justify-center font-semibold text-xs">
                               {u.full_name?.charAt(0) || u.email?.charAt(0)}
                             </div>
                             <div>
-                              <div className="text-sm font-bold dark:text-white text-slate-900">
-                                {u.full_name || "Procurement User"}
+                              <div className="text-sm font-semibold dark:text-white text-slate-900">
+                                {u.full_name || "Procurement user"}
                               </div>
-                              <div className="text-[10px] text-slate-500 font-medium">
+                              <div className="text-[11px] text-slate-500 font-medium">
                                 {u.email}
                               </div>
                             </div>
@@ -4258,7 +4254,7 @@ export default function TicketDetailPage() {
                           u.full_name?.toLowerCase().includes(mentionSearch) ||
                           u.email?.toLowerCase().includes(mentionSearch),
                       ).length === 0 && (
-                          <div className="p-4 text-center text-xs text-slate-500 italic">
+                          <div className="p-4 text-center text-xs text-slate-500">
                             No procurement users match search
                           </div>
                         )}
@@ -4270,8 +4266,8 @@ export default function TicketDetailPage() {
                   <div className={`flex-1 min-w-0 flex items-center gap-2 px-3 py-1 ${isDark ? "bg-[#2a3942]" : "bg-white"} rounded-[24px] shadow-sm min-h-[48px]`}>
                     <button
                       onClick={() => setShowMaterialModal(true)}
-                      className={`p-1.5 transition-all flex-none ${isDark ? "text-slate-400 hover:text-slate-200" : "text-slate-500 hover:text-slate-700"}`}
-                      title="Request Materials"
+                      className={`p-1.5 transition-colors flex-none ${isDark ? "text-slate-400 hover:text-slate-200" : "text-slate-500 hover:text-slate-700"}`}
+                      title="Request materials"
                     >
                       <Paperclip className="w-5 h-5" />
                     </button>
@@ -4288,7 +4284,7 @@ export default function TicketDetailPage() {
                   <button
                     onClick={handlePostComment}
                     disabled={!commentText.trim()}
-                    className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-lg transition-all ${commentText.trim()
+                    className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-sm transition-colors duration-150 ${commentText.trim()
                         ? "bg-primary text-white"
                         : "bg-primary opacity-50 text-white cursor-not-allowed"
                       }`}
@@ -4331,9 +4327,9 @@ export default function TicketDetailPage() {
               >
                 <div className={`flex justify-between items-center pb-4 border-b ${isDark ? "border-[#30363d]" : "border-slate-200"} mb-4`}>
                   <div>
-                    <h3 className={`text-lg font-bold flex items-center gap-2 ${isDark ? "text-white" : "text-slate-900"}`}>
-                      <ShoppingBag className="w-5 h-5 text-amber-500" />
-                      Tag Procurement for Vendor
+                    <h3 className={`text-lg font-semibold flex items-center gap-2 ${isDark ? "text-white" : "text-slate-900"}`}>
+                      <ShoppingBag className="w-[18px] h-[18px] text-slate-400" strokeWidth={1.5} />
+                      Tag procurement for vendor
                     </h3>
                     <p className={`text-xs ${isDark ? "text-gray-400" : "text-slate-500"} mt-1`}>
                       Notify Procurement team to arrange an external service/vendor for this ticket
@@ -4341,7 +4337,7 @@ export default function TicketDetailPage() {
                   </div>
                   <button
                     onClick={() => setShowTagVendorModal(false)}
-                    className={`p-1 rounded-lg ${isDark ? "text-gray-400 hover:text-white hover:bg-white/10" : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"}`}
+                    className={`p-1 rounded-[10px] ${isDark ? "text-gray-400 hover:text-white hover:bg-white/10" : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"}`}
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -4349,15 +4345,15 @@ export default function TicketDetailPage() {
 
                 <div className="space-y-4 mb-6">
                   <div>
-                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
-                      Assign Procurement Specialist (Optional)
+                    <label className={`block text-xs font-semibold mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
+                      Assign procurement specialist (optional)
                     </label>
                     <select
                       value={selectedProcurementUser}
                       onChange={(e) => setSelectedProcurementUser(e.target.value)}
-                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} border rounded-xl p-3 text-sm focus:outline-none focus:border-amber-500`}
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} border rounded-[10px] p-3 text-sm focus:outline-none focus:border-primary`}
                     >
-                      <option value="">All Procurement Users (General Broadcast)</option>
+                      <option value="">All procurement users (general broadcast)</option>
                       {procurementUsers.map((u: any) => (
                         <option key={u.id} value={u.id}>
                           {u.full_name || u.email} ({u.email})
@@ -4367,20 +4363,20 @@ export default function TicketDetailPage() {
                   </div>
 
                   <div>
-                    <label className={`block text-xs font-semibold uppercase tracking-wider mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
-                      Vendor Requirements & Notes <span className="text-red-500">*</span>
+                    <label className={`block text-xs font-semibold mb-2 ${isDark ? "text-gray-300" : "text-slate-600"}`}>
+                      Vendor requirements and notes <span className="text-red-500">*</span>
                     </label>
                     <textarea
                       value={vendorNoteInput}
                       onChange={(e) => setVendorNoteInput(e.target.value)}
-                      placeholder="Explain what work/service needs a vendor (e.g., HVAC compressor repair, specialized glass work)..."
+                      placeholder="What work or service needs a vendor, e.g. HVAC compressor repair, specialised glass work"
                       rows={4}
-                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500" : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"} border rounded-xl p-3 text-sm focus:outline-none focus:border-amber-500`}
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white placeholder-gray-500" : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"} border rounded-[10px] p-3 text-sm focus:outline-none focus:border-primary`}
                     />
                   </div>
 
-                  <div className={`${isDark ? "bg-amber-500/10 border-amber-500/20 text-amber-300" : "bg-amber-50 border-amber-200 text-amber-800"} border rounded-xl p-3 text-xs`}>
-                    💡 Tagging Procurement will alert the Procurement team via email and surface this ticket in their Procurement Dashboard until a vendor is arranged.
+                  <div className={`${isDark ? "bg-[#0d1117] border-[#30363d] text-slate-400" : "bg-slate-50 border-slate-200 text-slate-600"} border rounded-[10px] p-3 text-xs leading-relaxed`}>
+                    Tagging Procurement emails the Procurement team and keeps this ticket on their Procurement dashboard until a vendor is arranged
                   </div>
                 </div>
 
@@ -4389,9 +4385,9 @@ export default function TicketDetailPage() {
                     <button
                       onClick={handleRemoveVendorProcurement}
                       disabled={isSubmittingVendorTag}
-                      className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-xl text-sm font-semibold transition-colors disabled:opacity-50"
+                      className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 rounded-[10px] text-sm font-semibold transition-colors duration-150 disabled:opacity-50"
                     >
-                      Remove Request
+                      Remove request
                     </button>
                   ) : (
                     <div />
@@ -4399,17 +4395,17 @@ export default function TicketDetailPage() {
                   <div className="flex gap-3">
                     <button
                       onClick={() => setShowTagVendorModal(false)}
-                      className={`px-4 py-2.5 ${isDark ? "bg-slate-800 hover:bg-slate-700 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"} rounded-xl text-sm font-semibold transition-colors`}
+                      className={`px-4 py-2.5 ${isDark ? "bg-slate-800 hover:bg-slate-700 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"} rounded-[10px] text-sm font-semibold transition-colors duration-150`}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleTagVendorProcurement}
                       disabled={isSubmittingVendorTag || !vendorNoteInput.trim()}
-                      className="px-5 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-sm font-semibold transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
+                      className="px-5 py-2.5 bg-primary hover:bg-primary-dark text-white rounded-[10px] text-sm font-semibold transition-colors duration-150 disabled:opacity-50 flex items-center gap-2"
                     >
                       {isSubmittingVendorTag && <Loader2 className="w-4 h-4 animate-spin" />}
-                      {(ticket as any)?.needs_vendor_procurement ? "Update Request" : "Tag Procurement"}
+                      {(ticket as any)?.needs_vendor_procurement ? "Update request" : "Tag procurement"}
                     </button>
                   </div>
                 </div>
@@ -4430,28 +4426,28 @@ export default function TicketDetailPage() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-[2.5rem] w-full max-w-md p-8 relative z-10 shadow-2xl`}
+                className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-2xl w-full max-w-md p-8 relative z-10 shadow-2xl`}
               >
                 <h2
-                  className={`text-xl font-black ${isDark ? "text-white" : "text-slate-900"} mb-1`}
+                  className={`text-xl font-semibold ${isDark ? "text-white" : "text-slate-900"} mb-1`}
                 >
-                  Reassign Ticket
+                  Reassign ticket
                 </h2>
                 <p
                   className={`${isDark ? "text-slate-400" : "text-slate-500"} text-xs mb-4`}
                 >
-                  Select an available technician or staff member to reassign this ticket.
+                  Select an available technician or staff member to reassign this ticket
                 </p>
 
                 {/* Search Technician Input */}
                 <div className="relative mb-3">
-                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" strokeWidth={1.5} />
                   <input
                     type="text"
                     value={resolverSearch}
                     onChange={(e) => setResolverSearch(e.target.value)}
-                    placeholder="Search technician by name or role..."
-                    className={`w-full pl-10 pr-9 py-2.5 rounded-xl border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all ${isDark
+                    placeholder="Search by name or role"
+                    className={`w-full pl-10 pr-9 py-2.5 rounded-[10px] border text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors duration-150 ${isDark
                         ? "bg-[#0d1117] border-[#30363d] text-white placeholder-slate-500"
                         : "bg-slate-50 border-slate-200 text-slate-900 placeholder-slate-400"
                       }`}
@@ -4459,7 +4455,7 @@ export default function TicketDetailPage() {
                   {resolverSearch && (
                     <button
                       onClick={() => setResolverSearch("")}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 p-0.5"
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 p-0.5 transition-colors duration-150 ${isDark ? "hover:text-slate-200" : "hover:text-slate-700"}`}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -4479,17 +4475,17 @@ export default function TicketDetailPage() {
                       <div
                         key={r.user_id}
                         onClick={() => setSelectedResolver(r.user_id)}
-                        className={`p-3 rounded-2xl border-2 transition-all cursor-pointer ${selectedResolver === r.user_id
-                            ? "bg-primary/10 border-primary text-white"
+                        className={`p-3 rounded-[10px] border transition-colors duration-150 cursor-pointer ${selectedResolver === r.user_id
+                            ? isDark ? "bg-primary/10 border-primary text-white" : "bg-primary/10 border-primary text-slate-900"
                             : isDark
                               ? "bg-[#0d1117] border-[#30363d] text-slate-300 hover:border-slate-600"
-                              : "bg-white border-slate-200 text-slate-700 hover:border-slate-300 shadow-sm"
+                              : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"
                           }`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3 min-w-0">
                             <div
-                              className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${selectedResolver === r.user_id
+                              className={`w-9 h-9 rounded-md flex items-center justify-center font-semibold text-xs shrink-0 ${selectedResolver === r.user_id
                                   ? "bg-primary text-white"
                                   : isDark
                                     ? "bg-[#21262d] text-slate-300"
@@ -4499,16 +4495,16 @@ export default function TicketDetailPage() {
                               {r.user?.full_name?.[0]?.toUpperCase() || "T"}
                             </div>
                             <div className="min-w-0">
-                              <p className="font-bold text-xs truncate">
-                                {r.user?.full_name || "Unknown Technician"}
+                              <p className="font-semibold text-xs truncate">
+                                {r.user?.full_name || "Unknown technician"}
                               </p>
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                {r.role === "mst" ? "MST Technician" : r.role?.replace(/_/g, " ") || "Staff"}
+                              <span className="text-[11px] font-medium text-slate-400 capitalize">
+                                {r.role === "mst" ? "MST technician" : r.role?.replace(/_/g, " ") || "Staff"}
                               </span>
                             </div>
                           </div>
                           {selectedResolver === r.user_id && (
-                            <CheckCircle2 className="w-5 h-5 text-primary shrink-0 ml-2" />
+                            <CheckCircle2 className={`w-[18px] h-[18px] shrink-0 ml-2 ${isDark ? "text-primary-light" : "text-primary-dark"}`} strokeWidth={1.5} />
                           )}
                         </div>
                       </div>
@@ -4520,11 +4516,11 @@ export default function TicketDetailPage() {
                     return !query || name.includes(query) || role.includes(query);
                   }).length === 0 && (
                       <div
-                        className={`text-center py-8 text-xs ${isDark ? "text-slate-500" : "text-slate-400"} italic`}
+                        className={`text-center py-8 text-xs ${isDark ? "text-slate-500" : "text-slate-400"}`}
                       >
                         {resolverSearch
                           ? `No technicians matching "${resolverSearch}"`
-                          : "No technicians detected for this property."}
+                          : "No technicians found for this property"}
                       </div>
                     )}
                 </div>
@@ -4535,14 +4531,14 @@ export default function TicketDetailPage() {
                       setShowAssignModal(false);
                       setResolverSearch("");
                     }}
-                    className={`flex-1 py-3.5 ${isDark ? "bg-[#21262d] text-slate-400" : "bg-slate-100 text-slate-500"} rounded-xl font-black text-xs uppercase tracking-widest hover:text-white transition-all`}
+                    className={`flex-1 py-3 ${isDark ? "bg-[#21262d] text-slate-400 hover:text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"} rounded-[10px] font-semibold text-sm transition-colors duration-150`}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleReassign}
                     disabled={!selectedResolver}
-                    className={`flex-1 py-3.5 ${isDark ? "bg-white text-black hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark shadow-primary/20"} rounded-xl font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-lg`}
+                    className={`flex-1 py-3 ${isDark ? "bg-white text-slate-900 hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark"} rounded-[10px] font-semibold text-sm transition-colors duration-150 disabled:opacity-50`}
                   >
                     Assign
                   </button>
@@ -4564,54 +4560,54 @@ export default function TicketDetailPage() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-[2.5rem] w-full max-w-lg p-8 relative z-10 shadow-2xl overflow-hidden`}
+                className={`${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"} border rounded-2xl w-full max-w-lg p-8 relative z-10 shadow-2xl overflow-hidden`}
               >
                 <div className="flex items-center justify-between mb-2">
                   <h2
-                    className={`text-2xl font-black ${isDark ? "text-white" : "text-slate-900"} italic`}
+                    className={`text-xl font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                   >
-                    Edit Request
+                    Edit request
                   </h2>
                   <button
                     onClick={() => setIsEditing(false)}
-                    className={`p-2 rounded-xl transition-all ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-900"}`}
+                    className={`p-2 rounded-[10px] transition-colors duration-150 ${isDark ? "hover:bg-[#21262d] text-slate-500 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-900"}`}
                   >
-                    <X className="w-5 h-5" />
+                    <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
                   </button>
                 </div>
                 <p
-                  className={`${isDark ? "text-slate-500" : "text-slate-400"} text-sm mb-8 italic`}
+                  className={`${isDark ? "text-slate-400" : "text-slate-500"} text-sm mb-6`}
                 >
-                  Modify the transmission data for this ticket.
+                  Update the title and description of this ticket
                 </p>
 
                 <div className="space-y-6 mb-8">
                   <div>
                     <label
-                      className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-2 block`}
+                      className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} mb-2 block`}
                     >
-                      Mission Title
+                      Title
                     </label>
                     <input
                       type="text"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
-                      placeholder="Mission name..."
-                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} px-4 py-4 rounded-2xl border-2 focus:border-primary focus:outline-none transition-all font-bold`}
+                      placeholder="Short summary of the issue"
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} px-4 py-3 rounded-[10px] border focus:border-primary focus:outline-none transition-colors duration-150 text-sm font-medium`}
                     />
                   </div>
                   <div>
                     <label
-                      className={`text-[10px] font-black uppercase tracking-widest ${isDark ? "text-slate-500" : "text-slate-400"} mb-2 block`}
+                      className={`text-xs font-medium ${isDark ? "text-slate-500" : "text-slate-400"} mb-2 block`}
                     >
-                      Detailed Intelligence
+                      Description
                     </label>
                     <textarea
                       value={editDescription}
                       onChange={(e) => setEditDescription(e.target.value)}
-                      placeholder="Intelligence briefing..."
+                      placeholder="What is wrong, where, and since when"
                       rows={5}
-                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} px-4 py-4 rounded-2xl border-2 focus:border-primary focus:outline-none transition-all font-medium resize-none`}
+                      className={`w-full ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"} px-4 py-3 rounded-[10px] border focus:border-primary focus:outline-none transition-colors duration-150 text-sm resize-none`}
                     />
                   </div>
                 </div>
@@ -4619,21 +4615,21 @@ export default function TicketDetailPage() {
                 <div className="flex gap-3">
                   <button
                     onClick={() => setIsEditing(false)}
-                    className={`flex-1 py-4 ${isDark ? "bg-[#21262d] text-slate-400" : "bg-slate-100 text-slate-500"} rounded-2xl font-black text-xs uppercase tracking-widest hover:text-white transition-all`}
+                    className={`flex-1 py-3 ${isDark ? "bg-[#21262d] text-slate-400 hover:text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900"} rounded-[10px] font-semibold text-sm transition-colors duration-150`}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={handleEditSubmit}
                     disabled={isUpdatingContent || !editTitle.trim()}
-                    className={`flex-1 py-4 ${isDark ? "bg-white text-black hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark shadow-primary/20"} rounded-2xl font-black text-xs uppercase tracking-widest transition-all disabled:opacity-50 shadow-xl flex items-center justify-center gap-2`}
+                    className={`flex-1 py-3 ${isDark ? "bg-white text-slate-900 hover:bg-slate-200" : "bg-primary text-white hover:bg-primary-dark"} rounded-[10px] font-semibold text-sm transition-colors duration-150 disabled:opacity-50 flex items-center justify-center gap-2`}
                   >
                     {isUpdatingContent ? (
-                      <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                      <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
                       <CheckCircle2 className="w-4 h-4" />
                     )}
-                    {isUpdatingContent ? "Updating..." : "Save Intel"}
+                    {isUpdatingContent ? "Updating..." : "Save changes"}
                   </button>
                 </div>
               </motion.div>
@@ -4651,8 +4647,8 @@ export default function TicketDetailPage() {
           onCapture={handleMediaCapture}
           title={
             activeCameraType === "before"
-              ? "Capture Before Site"
-              : "Capture After Site"
+              ? "Capture before work"
+              : "Capture after work"
           }
         />
 
@@ -4684,7 +4680,7 @@ export default function TicketDetailPage() {
                 transition={{ type: "spring", stiffness: 400, damping: 30 }}
                 src={peekUrl}
                 alt="Peek"
-                className="max-w-[85vw] max-h-[85vh] rounded-3xl shadow-2xl object-contain ring-4 ring-white/20"
+                className="max-w-[85vw] max-h-[85vh] rounded-2xl shadow-2xl object-contain ring-4 ring-white/20"
               />
             </motion.div>
           )}
@@ -4713,9 +4709,9 @@ export default function TicketDetailPage() {
               />
               <button
                 onClick={() => setLightboxUrl(null)}
-                className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors backdrop-blur-sm"
+                className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-colors duration-150 backdrop-blur-sm"
               >
-                ✕
+                <X className="w-[18px] h-[18px]" strokeWidth={1.5} />
               </button>
             </motion.div>
           )}
@@ -4739,25 +4735,25 @@ export default function TicketDetailPage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 <h2
-                  className={`text-lg font-bold ${isDark ? "text-white" : "text-slate-900"}`}
+                  className={`text-lg font-semibold ${isDark ? "text-white" : "text-slate-900"}`}
                 >
                   Why wasn't this resolved?
                 </h2>
                 <p
                   className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}
                 >
-                  Optional — let the team know what still needs to be done.
+                  Optional: tell the team what still needs to be done
                 </p>
                 <textarea
                   value={rejectNote}
                   onChange={(e) => setRejectNote(e.target.value)}
-                  placeholder="Describe what's still missing or incorrect..."
-                  className={`w-full h-28 px-4 py-3 ${isDark ? "bg-[#0d1117] border-[#30363d] text-white placeholder-slate-500" : "bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400"} border rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-red-400 transition-all text-sm`}
+                  placeholder="What is still missing or incorrect"
+                  className={`w-full h-28 px-4 py-3 ${isDark ? "bg-[#0d1117] border-[#30363d] text-white placeholder-slate-500" : "bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400"} border rounded-[10px] resize-none focus:outline-none focus:ring-2 focus:ring-red-400 transition-colors text-sm`}
                 />
                 <div className="flex gap-3 justify-end">
                   <button
                     onClick={() => setShowRejectModal(false)}
-                    className={`px-4 py-2 ${isDark ? "text-slate-400 hover:bg-[#21262d]" : "text-slate-600 hover:bg-slate-100"} font-semibold rounded-xl transition-colors text-sm`}
+                    className={`px-4 py-2 ${isDark ? "text-slate-400 hover:bg-[#21262d]" : "text-slate-600 hover:bg-slate-100"} font-semibold rounded-[10px] transition-colors duration-150 text-sm`}
                   >
                     Cancel
                   </button>
@@ -4766,9 +4762,9 @@ export default function TicketDetailPage() {
                       handleValidate(false, rejectNote || undefined);
                       setShowRejectModal(false);
                     }}
-                    className="px-5 py-2 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl transition-colors text-sm"
+                    className="px-5 py-2 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-[10px] transition-colors duration-150 text-sm"
                   >
-                    Reopen Request
+                    Reopen request
                   </button>
                 </div>
               </motion.div>
@@ -4789,7 +4785,7 @@ export default function TicketDetailPage() {
                 animate={{ y: 0 }}
                 exit={{ y: "100%" }}
                 transition={{ type: "spring", damping: 25, stiffness: 200 }}
-                className={`relative flex-1 mt-12 ${isDark ? "bg-[#0b141a]" : "bg-[#efe7de]"} rounded-t-[32px] overflow-hidden flex flex-col shadow-2xl`}
+                className={`relative flex-1 mt-12 ${isDark ? "bg-[#0b141a]" : "bg-[#efe7de]"} rounded-t-2xl overflow-hidden flex flex-col shadow-2xl`}
                 style={isDark ? { backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'overlay', backgroundColor: '#0b141a' } : { backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'overlay', backgroundColor: '#efe7de' }}
               >
                 {/* Mobile Chat Header */}
@@ -4802,10 +4798,10 @@ export default function TicketDetailPage() {
                       <X className="w-5 h-5" />
                     </button>
                     <div>
-                      <h3 className={`text-sm font-bold ${isDark ? "text-slate-100" : "text-slate-900"}`}>
-                        Ticket Thread
+                      <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-slate-900"}`}>
+                        Ticket thread
                       </h3>
-                      <p className={`text-[10px] ${isDark ? "text-emerald-400" : "text-emerald-600"} font-bold uppercase tracking-widest`}>
+                      <p className={`text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                         Online
                       </p>
                     </div>
@@ -4816,7 +4812,7 @@ export default function TicketDetailPage() {
                 <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                   {comments.length === 0 && (
                     <div className="text-center py-20 opacity-50">
-                      <div className={`inline-block px-4 py-1 rounded-lg ${isDark ? "bg-[#182229] text-amber-200/50" : "bg-white text-slate-500"} text-[10px] font-bold uppercase tracking-wider`}>
+                      <div className={`inline-block px-4 py-1 rounded-[8px] ${isDark ? "bg-[#182229] text-slate-400" : "bg-white text-slate-500"} text-[11px] font-medium`}>
                         No messages yet
                       </div>
                     </div>
@@ -4854,7 +4850,7 @@ export default function TicketDetailPage() {
                     if (isSystemMessage) {
                       return (
                         <div key={comment.id} className="w-full flex justify-center py-1">
-                          <div className={`px-3 py-1 rounded-lg text-center shadow-sm text-[11px] font-bold uppercase tracking-tighter ${isDark ? "bg-[#182229] text-amber-200/70 border border-white/5" : "bg-white/80 backdrop-blur-sm text-slate-500 border border-slate-200"
+                          <div className={`px-3 py-1 rounded-[8px] text-center shadow-sm text-[11px] font-medium ${isDark ? "bg-[#182229] text-slate-400 border border-white/5" : "bg-white text-slate-500 border border-slate-200"
                             }`}>
                             {comment.comment}
                           </div>
@@ -4875,7 +4871,7 @@ export default function TicketDetailPage() {
                                 : "bg-white text-slate-800 rounded-tl-none border border-slate-200/50"
                             }`}
                         >
-                          <span className={`text-[11px] font-bold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
+                          <span className={`text-[11px] font-semibold mb-0.5 ${isMe ? (isDark ? "text-emerald-400" : "text-emerald-600") : getParticipantColor(comment.user?.full_name || "Unknown")}`}>
                             {isMe ? "You" : formatName(comment.user?.full_name || "Unknown")}
                           </span>
 
@@ -4883,7 +4879,7 @@ export default function TicketDetailPage() {
                             <p className={`text-[14px] font-medium grow leading-relaxed ${isMe ? "text-slate-900 dark:text-white" : isDark ? "text-slate-100" : "text-slate-900"}`}>
                               {comment.comment}
                             </p>
-                            <div className={`text-[9px] font-medium ml-auto flex items-center gap-1 shrink-0 ${isMe ? "text-slate-700 dark:text-slate-300" : "text-slate-500"}`}>
+                            <div className={`text-[11px] font-mono tabular-nums ml-auto flex items-center gap-1 shrink-0 ${isMe ? "text-slate-700 dark:text-slate-300" : "text-slate-500"}`}>
                               {parseDate(comment.created_at)?.toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
@@ -4912,7 +4908,7 @@ export default function TicketDetailPage() {
                     <button
                       onClick={handlePostComment}
                       disabled={!commentText.trim()}
-                      className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-lg transition-all bg-primary text-white ${!commentText.trim() && "opacity-50"}`}
+                      className={`w-11 h-11 flex-none rounded-full flex items-center justify-center shadow-sm transition-colors duration-150 bg-primary text-white ${!commentText.trim() && "opacity-50"}`}
                     >
                       <ArrowRight className="w-5 h-5" />
                     </button>
@@ -4946,10 +4942,10 @@ export default function TicketDetailPage() {
           isOpen={!!deleteRequestId}
           onClose={() => setDeleteRequestId(null)}
           onConfirm={executeDeleteRequest}
-          title="Delete Material Request"
+          title="Delete material request"
           message="Are you sure you want to delete this material request? This action cannot be undone."
-          confirmText="Yes, Delete"
-          cancelText="Keep Request"
+          confirmText="Delete"
+          cancelText="Keep request"
           type="danger"
           isLoading={isDeleting}
         />
@@ -4960,24 +4956,24 @@ export default function TicketDetailPage() {
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className={`w-full max-w-lg rounded-3xl p-6 shadow-2xl border ${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"
+              className={`w-full max-w-lg rounded-2xl p-6 shadow-2xl border ${isDark ? "bg-[#161b22] border-[#30363d] text-white" : "bg-white border-slate-200 text-slate-900"
                 }`}
             >
               <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-[#30363d]">
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center">
-                    <Brain className="w-4 h-4" />
+                  <div className={`w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center ${isDark ? "text-primary-light" : "text-primary-dark"}`}>
+                    <Brain className="w-4 h-4" strokeWidth={1.5} />
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm">Override AI Classification</h3>
-                    <p className={`text-[10px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                    <h3 className="font-semibold text-sm">Override AI classification</h3>
+                    <p className={`text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                       Select correct department and skill group
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowOverrideModal(false)}
-                  className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors"
+                  className="p-1.5 rounded-[10px] hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -4985,8 +4981,8 @@ export default function TicketDetailPage() {
 
               <div className="space-y-4 py-4">
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-                    Select Target Issue Category
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Issue category
                   </label>
                   <select
                     value={selectedCategoryOverride}
@@ -4997,10 +4993,10 @@ export default function TicketDetailPage() {
                         setSelectedSkillGroupOverride(selectedCat.skill_group_id);
                       }
                     }}
-                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-semibold ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    className={`w-full px-3 py-2.5 rounded-[10px] border text-xs font-medium ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
                       }`}
                   >
-                    <option value="">-- Choose Category --</option>
+                    <option value="">Choose a category</option>
                     {availableCategories.map((cat) => (
                       <option key={cat.id} value={cat.id}>
                         {cat.name} ({cat.code})
@@ -5010,15 +5006,15 @@ export default function TicketDetailPage() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1.5">
-                    Override Rationale / Notes (Optional)
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                    Reason or notes (optional)
                   </label>
                   <input
                     type="text"
                     value={overrideReason}
                     onChange={(e) => setOverrideReason(e.target.value)}
-                    placeholder="e.g., Escalated to specialized vendor / Incorrect initial categorization"
-                    className={`w-full px-3 py-2.5 rounded-xl border text-xs font-medium ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
+                    placeholder="e.g. Needs a specialised vendor, or wrong initial category"
+                    className={`w-full px-3 py-2.5 rounded-[10px] border text-xs font-medium ${isDark ? "bg-[#0d1117] border-[#30363d] text-white" : "bg-slate-50 border-slate-200 text-slate-900"
                       }`}
                   />
                 </div>
@@ -5027,7 +5023,7 @@ export default function TicketDetailPage() {
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100 dark:border-[#30363d]">
                 <button
                   onClick={() => setShowOverrideModal(false)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold ${isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  className={`px-4 py-2 rounded-[10px] text-xs font-semibold transition-colors duration-150 ${isDark ? "bg-[#21262d] text-slate-300 hover:bg-[#30363d]" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                     }`}
                 >
                   Cancel
@@ -5035,9 +5031,9 @@ export default function TicketDetailPage() {
                 <button
                   onClick={handleOverrideClassification}
                   disabled={isSubmittingOverride || !selectedCategoryOverride}
-                  className="px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-600/30 disabled:opacity-50 transition-all"
+                  className="px-5 py-2 rounded-[10px] text-xs font-semibold bg-primary hover:bg-primary-dark text-white disabled:opacity-50 transition-colors duration-150"
                 >
-                  {isSubmittingOverride ? "Saving..." : "Apply Override"}
+                  {isSubmittingOverride ? "Saving..." : "Apply override"}
                 </button>
               </div>
             </motion.div>

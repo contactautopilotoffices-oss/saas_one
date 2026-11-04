@@ -266,7 +266,7 @@ function AuthContent() {
                     window.location.href = '/onboarding';
                     return;
                 } else if (res?.user) {
-                    setSuccess('Account created! Please check your email inbox to verify your account before logging in.');
+                    setSuccess('Account created. Please check your email inbox to verify your account before logging in.');
                 } else {
                     throw new Error('Signup failed to return user data.');
                 }
@@ -460,7 +460,7 @@ function AuthContent() {
                 // Sign out after password change to force re-login with new password
                 await supabase.auth.signOut();
 
-                setSuccess('Password updated successfully! Please sign in with your new password.');
+                setSuccess('Password updated. Please sign in with your new password.');
                 setAuthMode('signin');
             }
         } catch (err: any) {
@@ -554,13 +554,13 @@ function AuthContent() {
                 {/* Left Side - Auth Form */}
                 <div className="w-full lg:w-1/2 p-8 lg:p-12 flex flex-col justify-start pt-6 lg:pt-8 bg-surface">
                     {/* Logo */}
-                    <div className="flex items-center gap-2 mb-4 -mt-[10px]">
+                    <div className="flex items-center gap-2 mb-4 -mt-2">
                         <Image
                             src="/autopilot-logo-new.png"
                             alt="Autopilot Logo"
                             width={260}
                             height={90}
-                            className="object-contain transition-smooth"
+                            className="object-contain"
                             priority
                         />
                     </div>
@@ -578,15 +578,15 @@ function AuthContent() {
                                 <div className="w-20 h-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-success/20">
                                     <Mail className="w-10 h-10 text-success" />
                                 </div>
-                                <h2 className="text-3xl font-display font-bold text-text-primary mb-4">Check your email</h2>
+                                <h2 className="text-3xl font-display font-semibold text-text-primary mb-4">Check your email</h2>
                                 <p className="text-text-secondary font-body mb-8">
                                     We've sent a password reset link to <span className="text-text-primary font-semibold">{email}</span>.
                                 </p>
                                 <button
                                     onClick={() => setAuthMode('signin')}
-                                    className="text-primary font-semibold hover:underline transition-smooth"
+                                    className="text-primary-dark font-semibold hover:underline"
                                 >
-                                    Back to Sign In
+                                    Back to sign in
                                 </button>
                             </motion.div>
                         ) : (
@@ -598,18 +598,18 @@ function AuthContent() {
                                 transition={{ duration: 0.25, ease: [0.4, 0.0, 0.2, 1] }}
                             >
                                 <div className="mb-8">
-                                    <h1 className="text-3xl lg:text-4xl font-display font-bold text-text-primary mb-2 leading-tight">
-                                        {authMode === 'otp-verify' ? 'Verify OTP' : authMode === 'signup' ? 'Start Your Journey' : authMode === 'forgot' ? 'Reset Password' : authMode === 'update-password' ? 'New Password' : 'Welcome Back'}
+                                    <h1 className="text-3xl lg:text-4xl font-display font-semibold text-text-primary mb-2 leading-tight">
+                                        {authMode === 'otp-verify' ? 'Verify OTP' : authMode === 'signup' ? 'Sign up' : authMode === 'forgot' ? 'Reset password' : authMode === 'update-password' ? 'New password' : 'Sign in'}
                                     </h1>
                                     <p className="text-text-secondary font-body">
-                                        {authMode === 'otp-verify' ? `Enter the 6-digit code sent to ${email}` : authMode === 'signup' ? 'Create your account to get started' : authMode === 'forgot' ? 'Enter your email to receive a recovery link' : authMode === 'update-password' ? 'Secure your account with a new password' : 'Sign in to your facility management hub'}
+                                        {authMode === 'otp-verify' ? `Enter the 6-digit code sent to ${email}` : authMode === 'signup' ? 'Create your account to get started' : authMode === 'forgot' ? 'Enter your email to receive a recovery link' : authMode === 'update-password' ? 'Secure your account with a new password' : 'Open your facility management workspace'}
                                     </p>
                                 </div>
 
                                 {authMode === 'otp-verify' && (
                                     <div className="space-y-4">
                                         <div className="space-y-2">
-                                            <label className="text-sm font-semibold text-text-primary font-body">6-Digit Code*</label>
+                                            <label className="text-sm font-semibold text-text-primary font-body">6-digit code*</label>
                                             <input
                                                 type="text"
                                                 maxLength={6}
@@ -618,7 +618,7 @@ function AuthContent() {
                                                 onChange={(e) => setOtpCode(e.target.value)}
                                                 autoFocus
                                                 required
-                                                className="w-full h-12 px-4 text-center tracking-[0.5em] text-xl font-mono font-bold rounded-[var(--radius-md)] border border-border bg-surface text-text-primary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                                                className="w-full h-12 px-4 text-center tracking-[0.5em] text-xl font-mono font-semibold tabular-nums rounded-[var(--radius-md)] border border-border bg-surface text-text-primary transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                                             />
                                         </div>
 
@@ -626,15 +626,15 @@ function AuthContent() {
                                             <button
                                                 type="button"
                                                 onClick={() => { setAuthMode('signin'); setError(''); setSuccess(''); }}
-                                                className="text-text-secondary hover:text-text-primary transition-smooth"
+                                                className="text-text-secondary hover:text-text-primary transition-colors duration-150"
                                             >
-                                                ← Change Email
+                                                ← Change email
                                             </button>
                                             <button
                                                 type="button"
                                                 onClick={() => handleSendOtp()}
                                                 disabled={loading}
-                                                className="text-primary font-semibold hover:underline transition-smooth disabled:opacity-50"
+                                                className="text-primary-dark font-semibold hover:underline disabled:opacity-50"
                                             >
                                                 Resend OTP
                                             </button>
@@ -646,21 +646,21 @@ function AuthContent() {
                                     <div className="flex gap-1 mb-8 p-1 bg-muted rounded-xl border border-border w-full">
                                         <button
                                             onClick={() => setAuthMode('signin')}
-                                            className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm transition-smooth ${authMode === 'signin'
+                                            className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm transition-colors duration-150 ${authMode === 'signin'
                                                 ? 'bg-primary text-text-inverse shadow-sm'
                                                 : 'text-text-secondary hover:text-text-primary'
                                                 }`}
                                         >
-                                            Sign In
+                                            Sign in
                                         </button>
                                         <button
                                             onClick={() => setAuthMode('signup')}
-                                            className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm transition-smooth ${authMode === 'signup'
+                                            className={`flex-1 py-2.5 px-4 rounded-lg font-semibold text-sm transition-colors duration-150 ${authMode === 'signup'
                                                 ? 'bg-primary text-text-inverse shadow-sm'
                                                 : 'text-text-secondary hover:text-text-primary'
                                                 }`}
                                         >
-                                            Sign Up
+                                            Sign up
                                         </button>
                                     </div>
                                 )}
@@ -676,7 +676,7 @@ function AuthContent() {
                                                     value={fullName}
                                                     onChange={(e) => setFullName(e.target.value)}
                                                     required
-                                                    className="w-full h-10 px-4 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
+                                                    className="w-full h-10 px-4 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
                                                 />
                                             </div>
 
@@ -694,7 +694,7 @@ function AuthContent() {
                                                 value={email}
                                                 onChange={(e) => setEmail(e.target.value)}
                                                 required
-                                                className="w-full h-10 px-4 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
+                                                className="w-full h-10 px-4 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
                                             />
                                         </div>
                                     )}
@@ -703,15 +703,15 @@ function AuthContent() {
                                         <div className="space-y-2">
                                             <div className="flex justify-between items-center">
                                                 <label className="text-sm font-semibold text-text-primary font-body">
-                                                    {authMode === 'update-password' ? 'New Password*' : 'Password*'}
+                                                    {authMode === 'update-password' ? 'New password*' : 'Password*'}
                                                 </label>
                                                 {authMode === 'signin' && (
                                                     <button
                                                         type="button"
                                                         onClick={() => router.push('/forgot-password')}
-                                                        className="text-xs font-semibold text-primary hover:underline transition-smooth"
+                                                        className="text-xs font-semibold text-primary-dark hover:underline"
                                                     >
-                                                        Forgot Password?
+                                                        Forgot password?
                                                     </button>
                                                 )}
                                             </div>
@@ -722,12 +722,12 @@ function AuthContent() {
                                                     value={password}
                                                     onChange={(e) => setPassword(e.target.value)}
                                                     required
-                                                    className="w-full h-10 px-4 pr-10 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
+                                                    className="w-full h-10 px-4 pr-10 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
                                                 />
                                                 <button
                                                     type="button"
                                                     onClick={() => setShowPassword(!showPassword)}
-                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary focus:outline-none transition-smooth"
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary focus:outline-none transition-colors duration-150"
                                                 >
                                                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                                                 </button>
@@ -737,7 +737,7 @@ function AuthContent() {
 
                                     {authMode === 'update-password' && (
                                         <div className="space-y-2">
-                                            <label className="text-sm font-semibold text-text-primary font-body">Confirm New Password*</label>
+                                            <label className="text-sm font-semibold text-text-primary font-body">Confirm new password*</label>
                                             <div className="relative">
                                                 <input
                                                     type={showConfirmPassword ? "text" : "password"}
@@ -745,12 +745,12 @@ function AuthContent() {
                                                     value={confirmPassword}
                                                     onChange={(e) => setConfirmPassword(e.target.value)}
                                                     required
-                                                    className="w-full h-10 px-4 pr-10 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
+                                                    className="w-full h-10 px-4 pr-10 rounded-[var(--radius-md)] border border-border bg-surface text-text-primary font-body placeholder:text-text-tertiary transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
                                                 />
                                                 <button
                                                     type="button"
                                                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary focus:outline-none transition-smooth"
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-secondary focus:outline-none transition-colors duration-150"
                                                 >
                                                     {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                                                 </button>
@@ -772,7 +772,7 @@ function AuthContent() {
                                     <button
                                         type="submit"
                                         disabled={loading || (authMode === 'signin' && !!lockUntil && Date.now() < lockUntil)}
-                                        className="w-full bg-secondary hover:bg-secondary-dark text-text-inverse font-semibold py-3 rounded-[var(--radius-md)] shadow-sm transition-smooth flex items-center justify-center gap-2 group border border-secondary-dark disabled:opacity-50"
+                                        className="w-full bg-secondary hover:bg-secondary-dark text-text-inverse font-semibold py-3 rounded-[var(--radius-md)] shadow-sm transition-colors duration-150 active:scale-[0.98] flex items-center justify-center gap-2 group border border-secondary-dark disabled:opacity-50"
                                     >
                                         {loading ? (
                                             <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -780,8 +780,8 @@ function AuthContent() {
                                             `Locked (${Math.floor(lockoutCountdown / 60)}:${lockoutCountdown % 60 < 10 ? '0' : ''}${lockoutCountdown % 60})`
                                         ) : (
                                             <>
-                                                {authMode === 'otp-verify' ? 'Verify & Continue' : authMode === 'signup' ? 'Create Account' : authMode === 'forgot' ? 'Send Reset Link' : authMode === 'update-password' ? 'Update Password' : 'Sign In'}
-                                                <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-smooth" />
+                                                {authMode === 'otp-verify' ? 'Verify and continue' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Send reset link' : authMode === 'update-password' ? 'Update password' : 'Sign in'}
+                                                <ArrowRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform duration-150" />
                                             </>
                                         )}
                                     </button>
@@ -791,14 +791,14 @@ function AuthContent() {
                                     <div className="mt-6">
                                         <div className="relative flex items-center gap-3 mb-4">
                                             <div className="flex-1 h-px bg-border" />
-                                            <span className="text-xs font-semibold text-text-tertiary uppercase tracking-wider">or continue with</span>
+                                            <span className="text-xs font-medium text-text-tertiary">Or continue with</span>
                                             <div className="flex-1 h-px bg-border" />
                                         </div>
                                         <div className="flex flex-col gap-3">
                                             <button
                                                 type="button"
                                                 onClick={handleGoogleAuth}
-                                                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-[var(--radius-md)] border border-border bg-surface hover:bg-muted transition-smooth font-semibold text-sm text-text-primary"
+                                                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-[var(--radius-md)] border border-border bg-surface hover:bg-muted transition-colors duration-150 font-semibold text-sm text-text-primary"
                                             >
                                                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                                                     <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -811,7 +811,7 @@ function AuthContent() {
                                             <button
                                                 type="button"
                                                 onClick={handleZohoAuth}
-                                                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-[var(--radius-md)] border border-border bg-surface hover:bg-muted transition-smooth font-semibold text-sm text-text-primary"
+                                                className="w-full flex items-center justify-center gap-3 py-2.5 px-4 rounded-[var(--radius-md)] border border-border bg-surface hover:bg-muted transition-colors duration-150 font-semibold text-sm text-text-primary"
                                             >
                                                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 40 40" fill="none">
                                                     {/* Red — top left */}
@@ -834,11 +834,7 @@ function AuthContent() {
                 </div>
 
                 {/* Right Side - Brand Showcase */}
-                <div className="hidden lg:block w-1/2 p-8 relative overflow-hidden bg-primary/90 dark:bg-primary/20 transition-smooth">
-                    <div className="absolute inset-0">
-                        <div className="absolute top-0 right-0 w-[60%] h-[60%] bg-primary-light/30 rounded-full blur-3xl" />
-                        <div className="absolute bottom-0 left-0 w-[50%] h-[50%] bg-primary-dark/30 rounded-full blur-3xl" />
-                    </div>
+                <div className="hidden lg:block w-1/2 p-8 relative overflow-hidden bg-primary/90 dark:bg-primary/20">
                     <div className="relative z-10 h-full flex flex-col justify-center items-center">
                         <div className="w-full max-w-sm space-y-6">
                             <AnimatePresence mode="wait">
@@ -848,13 +844,13 @@ function AuthContent() {
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: -50 }}
                                     transition={{ duration: 0.4, ease: [0.4, 0.0, 0.2, 1] }}
-                                    className="bg-surface/90 backdrop-blur-xl border border-border/30 rounded-[var(--radius-lg)] p-6 shadow-xl"
+                                    className="bg-surface border border-slate-900/[0.08] rounded-[var(--radius-lg)] p-6 shadow-[0_8px_24px_rgba(0,0,0,0.06)]"
                                 >
-                                    <div className="w-14 h-14 rounded-[var(--radius-md)] bg-secondary flex items-center justify-center mb-4 shadow-sm">
+                                    <div className="w-14 h-14 rounded-[var(--radius-md)] bg-secondary flex items-center justify-center mb-4">
                                         <Ticket className="w-7 h-7 text-white" />
                                     </div>
-                                    <h3 className="text-text-primary text-xl font-display font-bold mb-2">95% Faster Resolution</h3>
-                                    <p className="text-text-secondary text-sm font-body">Smart AI-powered ticketing for facility management operations.</p>
+                                    <h3 className="text-text-primary text-xl font-display font-semibold mb-2">Daily operations for your sites</h3>
+                                    <p className="text-text-secondary text-sm font-body">Tickets, SOP checklists, utility readings, procurement and petty cash for site teams and admins</p>
                                 </motion.div>
                             </AnimatePresence>
                         </div>
@@ -867,7 +863,7 @@ function AuthContent() {
 
 export default function AuthPage() {
     return (
-        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-emerald-50"><Loader size="lg" text="Loading..." /></div>}>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-background"><Loader size="lg" text="Loading..." /></div>}>
             <AuthContent />
         </Suspense>
     );

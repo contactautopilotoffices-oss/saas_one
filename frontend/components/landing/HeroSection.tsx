@@ -83,8 +83,8 @@ export default function HeroSection() {
                     </div>
                     <div className="flex gap-8 items-center">
                         <Link href="/login">
-                            <button className="px-8 py-3 bg-white text-black font-black rounded-sm hover:bg-zinc-200 transition-colors text-[10px] uppercase tracking-[0.2em] shadow-2xl">
-                                Log In
+                            <button className="h-11 px-5 bg-white text-slate-950 font-medium rounded-[10px] hover:bg-zinc-200 transition-colors duration-150 active:scale-[0.98] text-sm">
+                                Log in
                             </button>
                         </Link>
                     </div>
@@ -97,10 +97,10 @@ export default function HeroSection() {
                         transition={{ duration: 1, delay: 0.5 }}
                     >
                         <h1 className={cn("text-4xl md:text-6xl lg:text-7xl font-light text-white leading-[1.1] mb-6 tracking-tight", fontHeading)}>
-                            Where Autonomy <span className="font-semibold text-white/95">Meets Operations.</span>
+                            Where autonomy <span className="font-semibold text-white/95">meets operations</span>
                         </h1>
                         <div className="flex items-center gap-3 text-white/60 text-xs md:text-sm tracking-wide pl-2 border-l border-white/20 font-body">
-                            The building is the interface.
+                            The building is the interface
                         </div>
                     </motion.div>
                 </div>

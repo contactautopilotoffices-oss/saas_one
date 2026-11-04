@@ -8,7 +8,7 @@ import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
     Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan,
-    Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets,
+    Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets, Droplet,
     TrendingUp, Smartphone, MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList,
     FlaskConical, PhoneCall, AlertCircle, CheckCircle2, Clock, Calendar, Mic, BookOpen, FileCheck2, Target
 } from 'lucide-react';
@@ -319,9 +319,9 @@ const OrgAdminDashboard = () => {
         <div className="hidden lg:block relative">
             <button
                 onClick={() => setIsSelectorOpen(!isSelectorOpen)}
-                className="flex items-center gap-3 bg-surface-elevated border border-border rounded-xl px-4 py-2.5 hover:border-primary transition-all group min-w-[200px]"
+                className="flex items-center gap-3 bg-surface-elevated border border-border rounded-[10px] px-4 py-2 hover:border-primary transition-colors duration-150 group min-w-[200px]"
             >
-                <div className="w-6 h-6 rounded-lg bg-background flex items-center justify-center overflow-hidden">
+                <div className="w-6 h-6 rounded-[8px] bg-background flex items-center justify-center overflow-hidden">
                     {activeProperty && activeProperty.image_url ? (
                         <img src={activeProperty.image_url} alt="" className="w-full h-full object-cover" />
                     ) : (
@@ -329,7 +329,7 @@ const OrgAdminDashboard = () => {
                     )}
                 </div>
                 <span className="text-sm font-body font-medium text-text-primary flex-1 text-left">
-                    {selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
+                    {selectedPropertyId === 'all' ? 'All properties' : activeProperty?.name}
                 </span>
                 <ChevronDown className={`w-4 h-4 text-text-tertiary transition-transform ${isSelectorOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -345,19 +345,19 @@ const OrgAdminDashboard = () => {
                             initial={{ opacity: 0, y: 10, scale: 0.95 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute right-0 mt-2 w-72 bg-surface-elevated rounded-2xl shadow-2xl border border-border z-[70] overflow-hidden"
+                            className="absolute right-0 mt-2 w-72 bg-surface-elevated rounded-2xl shadow-lg border border-border z-[70] overflow-hidden"
                         >
                             <div className="p-2 border-b border-border">
                                 <button
                                     onClick={() => { handlePropertyChange('all'); setIsSelectorOpen(false); }}
-                                    className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                    className={`w-full flex items-center gap-2.5 p-2 rounded-[10px] transition-colors duration-150 ${selectedPropertyId === 'all' ? 'bg-primary/15 text-primary-dark' : 'text-text-secondary hover:bg-background'}`}
                                 >
-                                    <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center">
+                                    <div className="w-8 h-8 rounded-[8px] bg-background flex items-center justify-center">
                                         <LayoutDashboard className="w-4 h-4" />
                                     </div>
                                     <div className="text-left">
-                                        <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
-                                        <p className="text-[10px] text-text-tertiary font-body font-medium">{properties.length} Locations</p>
+                                        <p className="text-sm font-medium">All properties</p>
+                                        <p className="text-xs text-text-tertiary font-body tabular-nums">{properties.length} locations</p>
                                     </div>
                                 </button>
                             </div>
@@ -366,9 +366,9 @@ const OrgAdminDashboard = () => {
                                     <button
                                         key={prop.id}
                                         onClick={() => { handlePropertyChange(prop.id); setIsSelectorOpen(false); }}
-                                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === prop.id ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                        className={`w-full flex items-center gap-2.5 p-2 rounded-[10px] transition-colors duration-150 ${selectedPropertyId === prop.id ? 'bg-primary/15 text-primary-dark' : 'text-text-secondary hover:bg-background'}`}
                                     >
-                                        <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center overflow-hidden">
+                                        <div className="w-8 h-8 rounded-[8px] bg-background flex items-center justify-center overflow-hidden">
                                             {prop.image_url ? (
                                                 <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
                                             ) : (
@@ -376,8 +376,8 @@ const OrgAdminDashboard = () => {
                                             )}
                                         </div>
                                         <div className="text-left overflow-hidden">
-                                            <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{prop.code}</p>
+                                            <p className="text-sm font-medium truncate">{prop.name}</p>
+                                            <p className="text-[11px] text-text-tertiary font-mono uppercase">{prop.code}</p>
                                         </div>
                                     </button>
                                 ))}
@@ -862,7 +862,7 @@ const OrgAdminDashboard = () => {
 
             {/* Sidebar */}
             <aside className={`
-                w-72 bg-white border-r border-border flex flex-col inset-y-0 z-50 transition-all duration-300
+                w-72 bg-white border-r border-border flex flex-col inset-y-0 z-50 transition-[transform,opacity] duration-300
                 fixed left-0
                 ${sidebarOpen ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 lg:translate-x-0 lg:opacity-100'}
                 overflow-hidden
@@ -870,7 +870,7 @@ const OrgAdminDashboard = () => {
                 {/* Mobile Close Button */}
                 <button
                     onClick={() => setSidebarOpen(false)}
-                    className="absolute top-4 right-4 lg:hidden p-2 rounded-lg hover:bg-surface-elevated transition-colors"
+                    className="absolute top-4 right-4 lg:hidden p-2 rounded-[10px] hover:bg-surface-elevated transition-colors"
                 >
                     <X className="w-5 h-5 text-text-secondary" />
                 </button>
@@ -878,42 +878,41 @@ const OrgAdminDashboard = () => {
                 <div className="p-4 lg:p-5 pb-2 flex-shrink-0">
                     <div className="flex flex-col items-center gap-1 mb-3">
         <img src="/autopilot-logo-new.png" alt="Logo" className="h-10 w-auto object-contain" />
-                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">Super Admin Console</p>
+                        <p className="text-xs text-text-tertiary font-medium">Super admin console</p>
                     </div>
                 </div>
 
                 <nav className="flex-1 px-4 overflow-y-auto min-h-0 custom-scrollbar">
                     {/* Quick Action Row */}
-                    <div className="mb-8">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-6 mb-4 flex items-center gap-2">
-                            <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
-                            Quick Actions
+                    <div className="mb-6">
+                        <p className="text-xs font-medium text-text-tertiary px-4 mb-2">
+                            Quick actions
                         </p>
                         <div className="px-4 grid grid-cols-3 gap-2.5">
                             {/* Primary Action: New Ticket */}
                             <button
                                 type="button"
                                 onClick={() => setShowTicketCreateModal(true)}
-                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-primary text-text-inverse rounded-xl hover:brightness-110 transition-all border border-primary shadow-sm min-h-[64px] cursor-pointer group"
-                                title="Create New Ticket"
+                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-primary text-text-inverse rounded-[10px] hover:bg-primary-dark hover:border-primary-dark transition-colors duration-150 border border-primary shadow-sm min-h-16 cursor-pointer group"
+                                title="Create ticket"
                             >
-                                <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center text-white group-hover:scale-110 transition-transform">
-                                    <Plus className="w-4 h-4 font-black" />
+                                <div className="w-7 h-7 bg-white/20 rounded-[8px] flex items-center justify-center text-white">
+                                    <Plus className="w-4 h-4" />
                                 </div>
-                                <span className="text-[10px] font-black uppercase tracking-tight text-center">New</span>
+                                <span className="text-[11px] font-medium text-center">New</span>
                             </button>
 
                             {/* Secondary Action: Add Member */}
                             <button
                                 type="button"
                                 onClick={() => setShowAddMemberModal(true)}
-                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 rounded-xl transition-all border border-emerald-300 shadow-2xs min-h-[64px] cursor-pointer group"
-                                title="Add Organization Member"
+                                className="w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-secondary/10 hover:bg-secondary/15 text-secondary-dark rounded-[10px] transition-colors duration-150 border border-secondary/30 shadow-2xs min-h-16 cursor-pointer group"
+                                title="Add organization member"
                             >
-                                <div className="w-7 h-7 bg-emerald-200/80 rounded-lg flex items-center justify-center text-emerald-800 group-hover:scale-110 transition-transform">
-                                    <UserPlus className="w-4 h-4 font-black" />
+                                <div className="w-7 h-7 bg-secondary/20 rounded-[8px] flex items-center justify-center text-secondary-dark">
+                                    <UserPlus className="w-4 h-4" />
                                 </div>
-                                <span className="text-[10px] font-black uppercase tracking-tight text-center">Member</span>
+                                <span className="text-[11px] font-medium text-center">Member</span>
                             </button>
 
                             {/* Utility Action: Scanner */}
@@ -921,32 +920,31 @@ const OrgAdminDashboard = () => {
                                 type="button"
                                 onClick={() => selectedPropertyId !== 'all' && setIsScannerModalOpen(true)}
                                 disabled={selectedPropertyId === 'all'}
-                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-slate-50 text-slate-800 rounded-xl transition-all border border-slate-200 shadow-2xs min-h-[64px] group ${
+                                className={`w-full flex flex-col items-center justify-center gap-1.5 p-2.5 bg-slate-50 text-slate-800 rounded-[10px] transition-colors duration-150 border border-slate-200 shadow-2xs min-h-16 group ${
                                     selectedPropertyId === 'all' 
                                         ? 'opacity-40 cursor-not-allowed' 
                                         : 'hover:bg-slate-100 cursor-pointer'
                                 }`}
-                                title={selectedPropertyId === 'all' ? 'Select a property first' : 'Stock Scanner'}
+                                title={selectedPropertyId === 'all' ? 'Select a property first' : 'Stock scanner'}
                             >
-                                <div className="w-7 h-7 bg-slate-200 rounded-lg flex items-center justify-center text-slate-700 group-hover:scale-110 transition-transform">
-                                    <Scan className="w-4 h-4 font-black" />
+                                <div className="w-7 h-7 bg-slate-200 rounded-[8px] flex items-center justify-center text-slate-700">
+                                    <Scan className="w-4 h-4" />
                                 </div>
-                                <span className="text-[10px] font-bold uppercase tracking-tight text-center">Scanner</span>
+                                <span className="text-[11px] font-medium text-center">Scanner</span>
                             </button>
                         </div>
                     </div>
 
                     {/* Core Operations */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            Core Operations
+                        <p className="text-xs font-medium text-text-tertiary px-4 mb-2">
+                            Core operations
                         </p>
                         <div className="space-y-1">
                             <button
                                 onClick={() => handleTabChange('overview')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'overview'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'overview'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -957,38 +955,38 @@ const OrgAdminDashboard = () => {
                                 <>
                                     <button
                                         onClick={() => handleTabChange('org_progress')}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_progress'
-                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                        className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'org_progress'
+                                            ? 'bg-primary/15 text-primary-dark'
                                             : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                             }`}
                                     >
                                         <Gauge className="w-4 h-4" />
-                                        Organization Progress
+                                        Organization progress
                                     </button>
                                     <button
                                         onClick={() => handleTabChange('org_efficiency')}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'org_efficiency'
-                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                        className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'org_efficiency'
+                                            ? 'bg-primary/15 text-primary-dark'
                                             : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                             }`}
                                     >
                                         <TrendingUp className="w-4 h-4" />
-                                        Org Efficiency
+                                        Org efficiency
                                     </button>
                                     <button
                                         onClick={() => handleTabChange('agent_console')}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'agent_console'
-                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                        className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'agent_console'
+                                            ? 'bg-primary/15 text-primary-dark'
                                             : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                             }`}
                                     >
                                         <Cpu className="w-4 h-4" />
-                                        Agent Console
+                                        Agent console
                                     </button>
                                     <button
                                         onClick={() => handleTabChange('wiki')}
-                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'wiki'
-                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                        className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'wiki'
+                                            ? 'bg-primary/15 text-primary-dark'
                                             : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                             }`}
                                     >
@@ -999,8 +997,8 @@ const OrgAdminDashboard = () => {
                             )}
                             <button
                                 onClick={() => handleTabChange('requests')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'requests'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'requests'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1009,8 +1007,8 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('reports')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'reports'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'reports'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1019,149 +1017,148 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('guest_experience')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'guest_experience'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'guest_experience'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Smartphone className="w-4 h-4" />
-                                Client Support
+                                Client support
                             </button>
                         </div>
                     </div>
 
                     {/* Management Hub */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            Management Hub
+                        <p className="text-xs font-medium text-text-tertiary px-4 mb-2">
+                            Management hub
                         </p>
                         <div className="space-y-1">
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('properties')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'properties'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'properties'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Building2 className="w-4 h-4" />
-                                Property Management
+                                Property management
                             </button>
                             <button
                                 onClick={() => handleTabChange('users')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'users'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'users'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Users className="w-4 h-4" />
-                                User Management
+                                User management
                             </button>
                             <button
                                 onClick={() => handleTabChange('visitors')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'visitors'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'visitors'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <UsersRound className="w-4 h-4" />
-                                Visitor Management
+                                Visitor management
                             </button>
                             <button
                                 onClick={() => handleTabChange('revenue')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'revenue'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'revenue'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Coffee className="w-4 h-4" />
-                                Cafeteria Revenue
+                                Cafeteria revenue
                             </button>
                             <button
                                 onClick={() => handleTabChange('water_logger')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'water_logger'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'water_logger'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Droplets className="w-4 h-4" />
-                                Water Logger
+                                Water logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('water')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'water'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'water'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Droplets className="w-4 h-4" />
-                                Water Analytics
+                                Water analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('diesel_logger')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'diesel_logger'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'diesel_logger'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Fuel className="w-4 h-4" />
-                                Diesel Logger
+                                Diesel logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('diesel')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'diesel'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'diesel'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Fuel className="w-4 h-4" />
-                                Diesel Analytics
+                                Diesel analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('electricity_logger')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'electricity_logger'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'electricity_logger'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Zap className="w-4 h-4" />
-                                Electricity Logger
+                                Electricity logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('electricity')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'electricity'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'electricity'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Zap className="w-4 h-4" />
-                                Electricity Analytics
+                                Electricity analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('roster')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'roster'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'roster'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <CalendarDays className="w-4 h-4" />
-                                Roster Management
+                                Roster management
                             </button>
                             <button
                                 onClick={() => handleTabChange('stock_reports')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'stock_reports'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'stock_reports'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <Package className="w-4 h-4" />
-                                Stock Reports
+                                Stock reports
                             </button>
                             <button
                                 onClick={() => handleTabChange('procurement')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'procurement'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1171,29 +1168,29 @@ const OrgAdminDashboard = () => {
 
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'payment-tracker')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <IndianRupee className="w-4 h-4" />
-                                Payment Tracker
+                                Payment tracker
                             </button>
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'invoices')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'invoices'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'invoices'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <FileCheck2 className="w-4 h-4" />
-                                Invoice Control
+                                Invoice control
                             </button>
                             {isOrgSuperAdmin && (
                                 <button
                                     onClick={() => handleTabChange('po-approvals')}
-                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'po-approvals'
-                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                    className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'po-approvals'
+                                        ? 'bg-primary/15 text-primary-dark'
                                         : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                         }`}
                                 >
@@ -1203,8 +1200,8 @@ const OrgAdminDashboard = () => {
                             )}
                             <button
                                 onClick={() => handleTabChange('bounty')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'bounty'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'bounty'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1213,19 +1210,19 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <PhoneCall className="w-4 h-4" />
-                                Vendor Discovery (Meera)
+                                Vendor discovery (Meera)
                             </button>
                             {org && (
                                 <button
                                     onClick={() => handleTabChange('meetings')}
-                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meetings'
-                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                    className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'meetings'
+                                        ? 'bg-primary/15 text-primary-dark'
                                         : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                         }`}
                                 >
@@ -1237,19 +1234,19 @@ const OrgAdminDashboard = () => {
                             {isOrgSuperAdmin && (
                                 <button
                                     onClick={() => handleTabChange('meeting_assistant')}
-                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meeting_assistant'
-                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                    className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'meeting_assistant'
+                                        ? 'bg-primary/15 text-primary-dark'
                                         : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                         }`}
                                 >
                                     <Mic className="w-4 h-4" />
-                                    Meeting Assistant
+                                    Meeting assistant
                                 </button>
                             )}
                             <button
                                 onClick={() => handleTabChange('checklist')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'checklist'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1258,8 +1255,8 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('ppm')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'ppm'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'ppm'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1268,8 +1265,8 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('assets')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'assets'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'assets'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1281,18 +1278,18 @@ const OrgAdminDashboard = () => {
                                 This is a direct entry to the same component, not a second copy. */}
                             <button
                                 onClick={() => handleTabChange('document_bank')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'document_bank'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'document_bank'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <FolderLock className="w-4 h-4" />
-                                Document Bank
+                                Document bank
                             </button>
                             <button
                                 onClick={() => handleTabChange('escalation')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'escalation'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'escalation'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1301,72 +1298,71 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('rooms')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'rooms'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'rooms'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
                                 <DoorOpen className="w-4 h-4" />
-                                Meeting Rooms
+                                Meeting rooms
                             </button>
                             <button
                                 onClick={() => router.push(`/${org?.id}/crm`)}
-                                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                className="w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                             >
                                 <TrendingUp className="w-4 h-4" />
-                                Business Development
+                                Business development
                             </button>
                         </div>
                     </div>
 
                     {/* System & Personal */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            System & Personal
+                        <p className="text-xs font-medium text-text-tertiary px-4 mb-2">
+                            System & personal
                         </p>
                         <div className="space-y-1">
                             <button
                                 onClick={() => handleTabChange('tasks')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'tasks'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${activeTab === 'tasks'
+                                    ? 'bg-primary/15 text-primary-dark'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <ClipboardList className={`w-4 h-4 transition-transform ${activeTab === 'tasks' ? '' : 'group-hover:scale-110'}`} />
-                                <span className="flex-1 text-left">Task Manager</span>
+                                <ClipboardList className="w-4 h-4" />
+                                <span className="flex-1 text-left">Task manager</span>
                             </button>
                             <button
                                 onClick={() => handleTabChange('ai_tickets')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${activeTab === 'ai_tickets'
+                                    ? 'bg-primary/15 text-primary-dark'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Bot className={`w-4 h-4 transition-transform ${activeTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
-                                AI Automation
+                                <Bot className="w-4 h-4" />
+                                AI automation
                             </button>
                             <button
                                 onClick={() => handleTabChange('grievance')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'grievance'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${activeTab === 'grievance'
+                                    ? 'bg-primary/15 text-primary-dark'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <ShieldCheck className="w-4 h-4 text-primary group-hover:scale-110 transition-transform" />
+                                <ShieldCheck className="w-4 h-4" />
                                 <span className="flex-1 text-left">HR & Grievances</span>
                             </button>
                             <button
                                 onClick={() => setShowFeedbackModal(true)}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary`}
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm text-text-secondary hover:bg-muted hover:text-text-primary`}
                             >
                                 <MessageSquarePlus className="w-4 h-4" />
-                                Feedback / Bug
+                                Feedback / bug
                             </button>
                             <button
                                 onClick={() => handleTabChange('settings')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'settings'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'settings'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1375,8 +1371,8 @@ const OrgAdminDashboard = () => {
                             </button>
                             <button
                                 onClick={() => handleTabChange('profile')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'profile'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-2.5 px-4 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === 'profile'
+                                    ? 'bg-primary/15 text-primary-dark'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
@@ -1391,14 +1387,14 @@ const OrgAdminDashboard = () => {
                     {/* User Profile Section */}
                     {user?.user_metadata?.role !== 'org_super_admin' && (
                         <div className="flex items-center gap-2 px-1 mb-2">
-                            <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-text-inverse font-bold text-xs">
+                            <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-text-inverse font-semibold text-xs">
                                 {user?.email?.[0].toUpperCase() || 'O'}
                             </div>
                             <div className="flex flex-col overflow-hidden">
                                 <span className="font-display font-semibold text-xs text-text-primary truncate">
                                     {user?.user_metadata?.full_name || 'Super Admin'}
                                 </span>
-                                <span className="text-[9px] text-text-tertiary truncate font-body font-medium">
+                                <span className="text-[11px] text-text-tertiary truncate font-body">
                                     {user?.email}
                                 </span>
                             </div>
@@ -1407,10 +1403,10 @@ const OrgAdminDashboard = () => {
 
                     <button
                         onClick={() => setShowSignOutModal(true)}
-                        className="flex items-center gap-2 px-3 py-2 text-text-tertiary hover:text-red-400 hover:bg-red-500/10 rounded-lg w-full transition-smooth text-xs font-bold group"
+                        className="flex items-center gap-2 px-3 py-2 text-text-tertiary hover:text-red-400 hover:bg-red-500/10 rounded-[10px] w-full transition-colors duration-150 text-xs font-medium"
                     >
-                        <LogOut className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                        Sign Out
+                        <LogOut className="w-4 h-4" />
+                        Sign out
                     </button>
                 </div>
             </aside>
@@ -1424,7 +1420,7 @@ const OrgAdminDashboard = () => {
             {/* Main Content */}
             {/* Owner 2026-10-26: globals.css redefines .p-4 (32px) after the utilities, so on phones it beat pt-16 and the top of
                 each tab sat under the fixed 64px bar; max-md:!pt-16 gives phones the full room back (md and up unchanged). */}
-            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12 max-md:!pt-16'}`}>
+            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12 max-md:!pt-16'}`}>
                 {(showCommandCenter || dashboardContent !== undefined) && (
                     <div className="lg:hidden fixed top-0 inset-x-0 h-14 bg-white border-b border-border flex items-center gap-3 px-4 z-30">
                         <button type="button" aria-label="Open menu" onClick={() => setSidebarOpen(true)} className="p-2 text-text-secondary"><Menu className="w-6 h-6" /></button>
@@ -1445,7 +1441,7 @@ const OrgAdminDashboard = () => {
                         <div>
                             <h1 className="text-2xl md:text-3xl font-display font-semibold text-text-primary tracking-tight">Dashboard</h1>
                             <p className="hidden md:block text-text-tertiary text-xs font-body font-medium mt-1">
-                                Here&apos;s what&apos;s happening across your portfolio today.
+                                What&apos;s happening across your portfolio today
                             </p>
                         </div>
                         {renderPropertySelector()}
@@ -1459,8 +1455,8 @@ const OrgAdminDashboard = () => {
                 </>
             ) : !org && !isLoading ? (
                 <div className="p-10 text-center">
-                    <h2 className="text-xl font-bold text-red-600">Error Loading Dashboard</h2>
-                    <p className="text-slate-600 mt-2">{errorMsg || 'Organization not found.'}</p>
+                    <h2 className="text-xl font-semibold text-red-600">Couldn&apos;t load the dashboard</h2>
+                    <p className="text-slate-600 mt-2">{errorMsg || 'Organization not found'}</p>
                 </div>
             ) : (
             <>
@@ -1478,7 +1474,7 @@ const OrgAdminDashboard = () => {
                             </button>
                             <div>
                                 <h1 className="text-2xl md:text-3xl font-display font-semibold text-text-primary tracking-tight capitalize">{activeTab === 'ppm' ? 'Planned Preventive Maintenance' : activeTab.replace(/_/g, ' ')}</h1>
-                                <p className="hidden md:block text-text-tertiary text-xs font-body font-medium mt-1">Manage your organization's resources.</p>
+                                <p className="hidden md:block text-text-tertiary text-xs font-body font-medium mt-1">Manage your organization's resources</p>
                             </div>
                         </div>
                         <div className="flex items-center gap-4">
@@ -1499,8 +1495,8 @@ const OrgAdminDashboard = () => {
                                 />
                             )}
                             <div className="flex flex-col items-end">
-                                <span className="text-sm font-display font-semibold text-text-primary tracking-tight">System Status</span>
-                                <span className="text-[10px] text-primary font-bold uppercase tracking-widest">Online</span>
+                                <span className="text-sm font-display font-semibold text-text-primary tracking-tight">System status</span>
+                                <span className="text-xs text-primary-dark font-medium">Online</span>
                             </div>
                         </div>
                     </header>
@@ -1528,11 +1524,11 @@ const OrgAdminDashboard = () => {
                         )}
                         {activeTab === 'roster' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                                    <span className="text-3xl">📋</span>
+                                <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                    <ClipboardList className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
-                                <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view the roster.</p>
+                                <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                <p className="text-sm text-slate-500 max-w-xs">Choose a property from the selector above to view the roster</p>
                             </div>
                         )}
                         {activeTab === 'roster' && selectedPropertyId !== 'all' && (
@@ -1543,22 +1539,22 @@ const OrgAdminDashboard = () => {
                         )}
                         {activeTab === 'water_logger' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                                    <span className="text-3xl">💧</span>
+                                <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                    <Droplet className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
-                                <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view water logs.</p>
+                                <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                <p className="text-sm text-slate-500 max-w-xs">Choose a property from the selector above to view water logs</p>
                             </div>
                         )}
                         {activeTab === 'water_logger' && selectedPropertyId !== 'all' && <WaterDashboard propertyId={selectedPropertyId} />}
                         
                         {activeTab === 'guest_experience' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                                    <Smartphone className="w-8 h-8 text-blue-600" />
+                                <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                    <Smartphone className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
-                                <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view client support requests.</p>
+                                <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                <p className="text-sm text-slate-500 max-w-xs">Choose a property from the selector above to view client support requests</p>
                             </div>
                         )}
                         {activeTab === 'guest_experience' && selectedPropertyId !== 'all' && (
@@ -1588,8 +1584,8 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'bounty' && org && (
                             <div className="space-y-3">
                                 <div>
-                                    <h2 className="text-xl font-bold text-text-primary">AOP Bounty</h2>
-                                    <p className="text-sm text-text-secondary">What the month&apos;s AOP still needs, who owes it, and how long it has waited.</p>
+                                    <h2 className="text-xl font-semibold text-text-primary">AOP bounty</h2>
+                                    <p className="text-sm text-text-secondary">What the month&apos;s AOP still needs, who owes it, and how long it has waited</p>
                                 </div>
                                 <BountyInbox orgId={org.id} />
                             </div>
@@ -1638,14 +1634,14 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'reports' && org && (
                             <div key="reports-tab" className="space-y-6">
                                 {isOrgSuperAdmin && (
-                                    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                    <div className="inline-flex rounded-2xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
                                         {([['imports', 'Import reports'], ['app_usage', 'App usage']] as const).map(([id, label]) => (
                                             <button
                                                 key={id}
                                                 type="button"
                                                 onClick={() => setReportsView(id)}
                                                 aria-pressed={reportsView === id}
-                                                className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                                className={`rounded-[8px] px-4 py-1.5 text-xs font-medium transition-colors duration-150 ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
                                             >
                                                 {label}
                                             </button>
@@ -1678,11 +1674,11 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'diesel_logger' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4">
-                                    <Fuel className="w-8 h-8 text-amber-600" />
+                                <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                    <Fuel className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
-                                <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view diesel logs.</p>
+                                <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                <p className="text-sm text-slate-500 max-w-xs">Choose a property from the selector above to view diesel logs</p>
                             </div>
                         )}
                         {activeTab === 'diesel_logger' && selectedPropertyId !== 'all' && (
@@ -1702,11 +1698,11 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'electricity_logger' && selectedPropertyId === 'all' && (
                             <div className="flex flex-col items-center justify-center py-16 text-center">
-                                <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-4">
-                                    <Zap className="w-8 h-8 text-amber-600" />
+                                <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                    <Zap className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                 </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
-                                <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view electricity logs.</p>
+                                <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                <p className="text-sm text-slate-500 max-w-xs">Choose a property from the selector above to view electricity logs</p>
                             </div>
                         )}
                         {activeTab === 'electricity_logger' && selectedPropertyId !== 'all' && (
@@ -1730,11 +1726,11 @@ const OrgAdminDashboard = () => {
                                 <StockReportView key="stock-report-view" propertyId={selectedPropertyId} orgId={org.id} propertyName={activeProperty?.name} />
                             ) : (
                                 <div key="stock-report-empty" className="flex flex-col items-center justify-center py-20 text-center">
-                                    <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
-                                        <Package className="w-8 h-8 text-primary" />
+                                    <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                        <Package className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                     </div>
-                                    <h3 className="text-lg font-black text-slate-900 mb-2">Select a Property</h3>
-                                    <p className="text-sm text-slate-500 max-w-md">Please select a specific property from the property selector above to view stock reports.</p>
+                                    <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                    <p className="text-sm text-slate-500 max-w-md">Choose a property from the selector above to view stock reports</p>
                                 </div>
                             )
                         )}
@@ -1779,13 +1775,13 @@ const OrgAdminDashboard = () => {
                             <div className="p-4 md:p-8 lg:p-12 space-y-6">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <h2 className="text-xl font-black text-slate-900 tracking-tight">Meeting Rooms</h2>
-                                        <p className="text-sm text-slate-500 font-medium mt-0.5">Manage meeting rooms and bookings across your properties</p>
+                                        <h2 className="text-xl font-semibold text-slate-900">Meeting rooms</h2>
+                                        <p className="text-sm text-slate-500 mt-0.5">Manage meeting rooms and bookings across your properties</p>
                                     </div>
                                     {properties.length > 0 && (
                                         <div className="flex flex-col items-end">
-                                            <span className="text-[10px] text-primary font-black uppercase tracking-widest">Active Context</span>
-                                            <span className="text-xs font-bold text-slate-400">{roomsPropertyId === 'all' ? 'All Properties' : properties.find(p => p.id === roomsPropertyId)?.name}</span>
+                                            <span className="text-xs text-slate-500 font-medium">Property</span>
+                                            <span className="text-sm font-medium text-slate-900">{roomsPropertyId === 'all' ? 'All properties' : properties.find(p => p.id === roomsPropertyId)?.name}</span>
                                         </div>
                                     )}
                                 </div>
@@ -1793,11 +1789,11 @@ const OrgAdminDashboard = () => {
                                     <AdminRoomManager propertyId={roomsPropertyId} user={user!} />
                                 ) : (
                                     <div className="flex flex-col items-center justify-center py-20 text-center">
-                                        <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
-                                            <DoorOpen className="w-8 h-8 text-primary" />
+                                        <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center mb-4">
+                                            <DoorOpen className="w-[18px] h-[18px] text-slate-500" strokeWidth={1.5} />
                                         </div>
-                                        <h3 className="text-lg font-black text-slate-900 mb-2">Select a Property</h3>
-                                        <p className="text-sm text-slate-500 max-w-md">Select a property from the dropdown above to manage its meeting rooms and bookings.</p>
+                                        <h3 className="text-lg font-semibold text-slate-900 mb-2">Select a property</h3>
+                                        <p className="text-sm text-slate-500 max-w-md">Choose a property from the selector above to manage its meeting rooms and bookings</p>
                                     </div>
                                 )}
                             </div>
@@ -1866,7 +1862,7 @@ const OrgAdminDashboard = () => {
                         )}
                         {activeTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
-                                <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
+                                <div className="bg-white border border-slate-900/[0.08] rounded-2xl shadow-sm w-full max-w-md overflow-hidden">
                                     {/* Card Header with Autopilot Logo */}
                                     <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
                                         {/* Autopilot Logo */}
@@ -1889,14 +1885,14 @@ const OrgAdminDashboard = () => {
                                                     className="w-full h-full object-cover"
                                                 />
                                             ) : (
-                                                <span className="text-4xl font-black text-white">
+                                                <span className="text-4xl font-semibold text-white">
                                                     {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
                                                 </span>
                                             )}
                                         </div>
 
                                         {/* Role Badge */}
-                                        <span className="px-4 py-1.5 bg-amber-500 text-slate-900 rounded-full text-xs font-black uppercase tracking-wider">
+                                        <span className="px-3 py-1 bg-secondary/20 text-secondary-light rounded-full text-xs font-medium capitalize">
                                             {userRole}
                                         </span>
                                     </div>
@@ -1905,36 +1901,36 @@ const OrgAdminDashboard = () => {
                                     <div className="p-8 space-y-6">
                                         <div className="space-y-4">
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {user?.user_metadata?.full_name || 'Not Set'}
+                                                <span className="text-xs font-medium text-slate-500">Full name</span>
+                                                <span className="text-sm font-medium text-slate-900">
+                                                    {user?.user_metadata?.full_name || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {user?.user_metadata?.phone || 'Not Set'}
+                                                <span className="text-xs font-medium text-slate-500">Phone</span>
+                                                <span className="text-sm font-medium text-slate-900 tabular-nums">
+                                                    {user?.user_metadata?.phone || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
+                                                <span className="text-xs font-medium text-slate-500">Email</span>
                                                 <span className="text-sm font-medium text-slate-700">
-                                                    {user?.email || 'Not Set'}
+                                                    {user?.email || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Organization</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {org?.name || 'Not Assigned'}
+                                                <span className="text-xs font-medium text-slate-500">Organization</span>
+                                                <span className="text-sm font-medium text-slate-900">
+                                                    {org?.name || 'Not assigned'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Role</span>
-                                                <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold capitalize">
+                                                <span className="text-xs font-medium text-slate-500">Role</span>
+                                                <span className="px-2 py-0.5 bg-primary/10 text-primary-dark rounded-sm text-xs font-medium capitalize">
                                                     {userRole}
                                                 </span>
                                             </div>
@@ -2046,11 +2042,11 @@ const OrgAdminDashboard = () => {
 
 const DieselSphere = ({ percentage }: { percentage: number }) => {
     return (
-        <div className="relative w-full aspect-square max-w-[200px] mx-auto group">
+        <div className="relative w-full aspect-square max-w-[200px] mx-auto">
             {/* Outer Glass Sphere */}
-            <div className="absolute inset-0 rounded-full border-4 border-white/20 bg-slate-900/10 backdrop-blur-[2px] shadow-2xl overflow-hidden group-hover:scale-105 transition-transform duration-700">
+            <div className="absolute inset-0 rounded-full border-4 border-white/20 bg-slate-900/10 shadow-md overflow-hidden">
                 {/* 3D Inner Shadow for Depth */}
-                <div className="absolute inset-0 rounded-full shadow-[inset_0_10px_40px_rgba(0,0,0,0.5)] z-20" />
+                <div className="absolute inset-0 rounded-full shadow-[inset_0_4px_16px_rgba(0,0,0,0.16)] z-20" />
 
                 {/* Liquid Fill */}
                 <motion.div
@@ -2105,7 +2101,7 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
                                 repeat: Infinity,
                                 delay: i * 0.5,
                             }}
-                            className="absolute bottom-0 rounded-full bg-white/30 backdrop-blur-sm"
+                            className="absolute bottom-0 rounded-full bg-white/30"
                             style={{
                                 width: 4 + (i * 2),
                                 height: 4 + (i * 2),
@@ -2118,7 +2114,6 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
                 {/* Reflection/Lighting Highlights */}
                 <div className="absolute inset-0 rounded-full bg-gradient-to-tr from-transparent via-white/5 to-white/20 z-30 pointer-events-none" />
                 <div className="absolute top-[10%] left-[15%] w-[25%] h-[15%] bg-white/20 rounded-full blur-[4px] rotate-[-25deg] z-30 pointer-events-none" />
-                <div className="absolute bottom-[15%] right-[15%] w-[10%] h-[10%] bg-amber-500/20 rounded-full blur-[2px] z-30 pointer-events-none" />
             </div>
 
             {/* Percentage Display */}
@@ -2126,16 +2121,14 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
                 <motion.span
                     initial={{ opacity: 0, scale: 0.5 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="text-4xl font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]"
+                    className="text-4xl font-semibold text-slate-900 tabular-nums"
                 >
                     {Math.round(percentage)}
                     <span className="text-sm ml-0.5 opacity-80">%</span>
                 </motion.span>
-                <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest drop-shadow-md">Consumption</span>
+                <span className="text-xs font-medium text-slate-700">Consumption</span>
             </div>
 
-            {/* Bottom Glow */}
-            <div className={`absolute -bottom-4 left-1/2 -translate-x-1/2 w-[60%] h-4 bg-amber-500/20 blur-xl rounded-full transition-opacity duration-300 ${percentage > 0 ? 'opacity-100' : 'opacity-0'}`} />
         </div>
     );
 };
@@ -2148,54 +2141,54 @@ const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: 
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                     type="text"
-                    placeholder="Search properties..."
-                    className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-100 w-64"
+                    placeholder="Search properties"
+                    className="pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-[10px] text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 w-64"
                 />
             </div>
             <button
                 onClick={onCreate}
-                className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white font-bold text-xs rounded-xl uppercase tracking-widest hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200"
+                className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white font-medium text-sm rounded-[10px] hover:bg-slate-800 transition-colors duration-150 shadow-sm"
             >
-                <Plus className="w-4 h-4" /> Add Property
+                <Plus className="w-4 h-4" /> Add property
             </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-6">
             {properties.map((prop: any) => (
-                <div key={prop.id} className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 group overflow-hidden flex flex-col">
+                <div key={prop.id} className="bg-white rounded-2xl border border-slate-900/[0.08] shadow-sm hover:border-slate-900/[0.16] transition-colors duration-150 group overflow-hidden flex flex-col">
                     {/* Image Header with aspect-ratio handling */}
                     <div className="relative h-56 bg-slate-50 overflow-hidden">
                         {prop.image_url ? (
                             <img
                                 src={prop.image_url}
                                 alt={prop.name}
-                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                className="w-full h-full object-cover"
                             />
                         ) : (
                             <div className="w-full h-full flex flex-col items-center justify-center text-slate-200 gap-2">
-                                <Building2 className="w-16 h-16" />
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Standard Asset View</span>
+                                <Building2 className="w-10 h-10" strokeWidth={1.5} />
+                                <span className="text-xs font-medium text-slate-400">No photo yet</span>
                             </div>
                         )}
 
                         {/* Overlay Controls */}
-                        <div className="absolute top-4 right-4 flex gap-2 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
+                        <div className="absolute top-4 right-4 flex gap-2 translate-y-1 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 transition-[transform,opacity] duration-200">
                             <button
                                 onClick={() => onEdit(prop)}
-                                className="p-3 bg-white/90 backdrop-blur-xl text-slate-600 rounded-2xl hover:bg-blue-500 hover:text-white shadow-xl shadow-black/5 transition-all"
+                                className="p-2.5 bg-white/95 text-slate-600 rounded-[10px] hover:bg-slate-900 hover:text-white shadow-sm transition-colors duration-150"
                             >
                                 <Edit className="w-4 h-4" />
                             </button>
                             <button
                                 onClick={() => onConfigure(prop)}
-                                title="Configure Features"
-                                className="p-3 bg-white/90 backdrop-blur-xl text-slate-600 rounded-2xl hover:bg-slate-900 hover:text-white shadow-xl shadow-black/5 transition-all"
+                                title="Configure features"
+                                className="p-2.5 bg-white/95 text-slate-600 rounded-[10px] hover:bg-slate-900 hover:text-white shadow-sm transition-colors duration-150"
                             >
                                 <Settings className="w-4 h-4" />
                             </button>
                             <button
                                 onClick={() => onDelete(prop.id)}
-                                className="p-3 bg-white/90 backdrop-blur-xl text-slate-600 rounded-2xl hover:bg-rose-500 hover:text-white shadow-xl shadow-black/5 transition-all"
+                                className="p-2.5 bg-white/95 text-slate-600 rounded-[10px] hover:bg-rose-600 hover:text-white shadow-sm transition-colors duration-150"
                             >
                                 <Trash2 className="w-4 h-4" />
                             </button>
@@ -2203,15 +2196,15 @@ const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: 
 
                         {/* Property Tag */}
                         <div className="absolute bottom-4 left-4">
-                            <span className="px-3 py-1.5 bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-black rounded-xl uppercase tracking-widest border border-white/10 shadow-lg">
+                            <span className="px-2 py-1 bg-slate-900/80 text-white text-[11px] font-mono font-medium rounded-sm uppercase border border-white/10">
                                 {prop.code}
                             </span>
                         </div>
                     </div>
 
-                    <div className="p-8 flex-1 flex flex-col">
-                        <h3 className="text-xl font-black text-slate-900 leading-tight mb-2 truncate decoration-blue-500 decoration-4">{prop.name}</h3>
-                        <div className="flex items-start gap-2.5 text-slate-500 text-xs font-medium mb-4">
+                    <div className="px-6 py-6 flex-1 flex flex-col">
+                        <h3 className="text-lg font-semibold text-slate-900 leading-tight mb-2 truncate">{prop.name}</h3>
+                        <div className="flex items-start gap-2.5 text-slate-500 text-xs mb-4">
                             <MapPin className="w-4 h-4 mt-0.5 text-slate-400 shrink-0" />
                             <span className="line-clamp-2 leading-relaxed">{prop.address || 'No physical address registered'}</span>
                         </div>
@@ -2219,21 +2212,21 @@ const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: 
                         {/* Validation badge */}
                         <div className="mb-6 flex flex-wrap gap-x-2 gap-y-2">
                             {prop.operation_type === 'capex' && (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border bg-amber-50 text-amber-700 border-amber-200">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-sm text-[11px] font-medium border bg-amber-50 text-amber-700 border-amber-200">
                                     CAPEX only
                                 </span>
                             )}
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest border ${prop.validation_enabled !== false ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[11px] font-medium border ${prop.validation_enabled !== false ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                                 <span className={`w-1.5 h-1.5 rounded-full ${prop.validation_enabled !== false ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                                {prop.validation_enabled !== false ? 'Validation On' : 'Validation Off'}
+                                {prop.validation_enabled !== false ? 'Validation on' : 'Validation off'}
                             </span>
                         </div>
 
                         <button
                             onClick={() => onConfigure(prop)}
-                            className="w-full py-4 bg-slate-50 border border-slate-100 text-slate-900 font-bold rounded-2xl text-[10px] hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all mt-auto uppercase tracking-[0.2em] shadow-sm flex items-center justify-center gap-2"
+                            className="w-full py-2.5 bg-slate-50 border border-slate-200 text-slate-900 font-medium rounded-[10px] text-sm hover:bg-slate-100 transition-colors duration-150 mt-auto flex items-center justify-center gap-2"
                         >
-                            <Settings className="w-3.5 h-3.5" /> Configure Property
+                            <Settings className="w-4 h-4" /> Configure property
                         </button>
                     </div>
                 </div>
@@ -2243,11 +2236,11 @@ const PropertiesTab = ({ properties, onCreate, onEdit, onConfigure, onDelete }: 
 );
 
 const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
-    <div className="bg-white border border-slate-100 rounded-3xl shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-slate-50 flex justify-between items-center">
-            <h3 className="font-black text-slate-900">User Directory</h3>
+    <div className="bg-white border border-slate-900/[0.08] rounded-2xl shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-slate-100 flex justify-between items-center">
+            <h3 className="font-semibold text-slate-900">User directory</h3>
             <div className="flex gap-2">
-                <button className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:text-slate-900 transition-colors">
+                <button className="p-2 bg-slate-50 text-slate-400 rounded-[10px] hover:text-slate-900 transition-colors">
                     <Filter className="w-4 h-4" />
                 </button>
             </div>
@@ -2255,10 +2248,10 @@ const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
         <table className="w-full text-left">
             <thead className="bg-slate-50/50 border-b border-slate-100">
                 <tr>
-                    <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Name</th>
-                    <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Role</th>
-                    <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Properties</th>
-                    <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Actions</th>
+                    <th className="px-5 py-3 text-xs font-medium text-slate-500">Name</th>
+                    <th className="px-5 py-3 text-xs font-medium text-slate-500">Active role</th>
+                    <th className="px-5 py-3 text-xs font-medium text-slate-500">Properties</th>
+                    <th className="px-5 py-3 text-xs font-medium text-slate-500">Actions</th>
                 </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -2266,28 +2259,28 @@ const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
                     <tr key={`${u.user_id}-${orgId}`} className="hover:bg-slate-50/30 transition-colors group">
                         <td className="px-5 py-4">
                             <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-700 font-bold text-xs">
+                                <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-semibold text-xs">
                                     {u.user?.full_name?.substring(0, 1) || 'U'}
                                 </div>
                                 <div>
-                                    <p className="font-bold text-slate-900 text-sm">{u.user?.full_name || 'Unknown'}</p>
-                                    <p className="text-[10px] text-slate-400 font-medium">{u.user?.email}</p>
+                                    <p className="font-medium text-slate-900 text-sm">{u.user?.full_name || 'Unknown'}</p>
+                                    <p className="text-xs text-slate-500">{u.user?.email}</p>
                                 </div>
                             </div>
                         </td>
                         <td className="px-5 py-4">
                             {u.role ? (
-                                <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide ${u.role === 'org_super_admin' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-900 text-white'
+                                <span className={`px-2 py-0.5 rounded-sm text-[11px] font-medium capitalize ${u.role === 'org_super_admin' ? 'bg-primary/15 text-primary-dark' : 'bg-slate-100 text-slate-700'
                                     }`}>
                                     {u.role?.replace(/_/g, ' ')}
                                 </span>
                             ) : u.propertyMemberships?.[0] ? (
-                                <span className="px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-100">
+                                <span className="px-2 py-0.5 rounded-sm text-[11px] font-medium capitalize bg-secondary/10 text-secondary-dark border border-secondary/20">
                                     {u.propertyMemberships[0].role?.replace(/_/g, ' ')}
                                 </span>
                             ) : (
-                                <span className="text-[10px] font-bold text-slate-400 italic uppercase tracking-wider">
-                                    No Assignment
+                                <span className="text-[11px] font-medium text-slate-400">
+                                    No assignment
                                 </span>
                             )}
                         </td>
@@ -2296,32 +2289,32 @@ const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
                                 {u.role === 'org_super_admin' ? (
                                     // Super Admins see all properties
                                     allProperties.map((p: any) => (
-                                        <div key={p.id} className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded-md text-[9px] font-black border border-emerald-100 flex items-center gap-1">
+                                        <div key={p.id} className="bg-primary/10 text-primary-dark px-2 py-1 rounded-sm text-[11px] font-medium border border-primary/20 flex items-center gap-1">
                                             <Building2 className="w-3 h-3" />
                                             {p.name}
-                                            <span className="opacity-50 text-[8px] tracking-tighter ml-1 font-bold">ALL ACCESS</span>
+                                            <span className="opacity-60 ml-1">All access</span>
                                         </div>
                                     ))
                                 ) : (
                                     // Others see assigned properties with their specific roles
                                     u.propertyMemberships?.map((pm: any) => (
-                                        <div key={pm.property_id} className="bg-slate-50 text-slate-600 px-2 py-1 rounded-md text-[9px] font-black border border-slate-100 flex items-center gap-1 group/chip hover:bg-white transition-colors">
+                                        <div key={pm.property_id} className="bg-slate-50 text-slate-600 px-2 py-1 rounded-sm text-[11px] font-medium border border-slate-100 flex items-center gap-1 group/chip hover:bg-white transition-colors duration-150">
                                             <Building2 className="w-3 h-3 text-slate-400" />
                                             {pm.property_name}
-                                            <span className="bg-slate-200 text-slate-500 px-1 py-0.5 rounded text-[8px] ml-1 uppercase letter-spacing-tight">
+                                            <span className="bg-slate-200 text-slate-500 px-1 py-0.5 rounded ml-1 capitalize">
                                                 {pm.role?.replace(/_/g, ' ')}
                                             </span>
                                         </div>
                                     ))
                                 )}
                                 {u.role !== 'org_super_admin' && (!u.propertyMemberships || u.propertyMemberships.length === 0) && (
-                                    <span className="text-slate-300 text-[10px] italic">No directly assigned properties</span>
+                                    <span className="text-slate-400 text-xs">No directly assigned properties</span>
                                 )}
                             </div>
                         </td>
                         <td className="px-5 py-4">
                             <div className="flex items-center gap-2">
-                                <button onClick={() => onEdit(u)} className="p-2 text-slate-400 hover:text-emerald-600 transition-colors">
+                                <button onClick={() => onEdit(u)} className="p-2 text-slate-400 hover:text-slate-900 transition-colors duration-150">
                                     <Edit className="w-4 h-4" />
                                 </button>
                                 <button onClick={() => onDelete(u.user_id)} className="p-2 text-slate-400 hover:text-rose-600 transition-colors">
@@ -2390,50 +2383,50 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="bg-white/90 backdrop-blur-xl rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl relative overflow-hidden max-h-[85vh] overflow-y-auto custom-scrollbar border border-white/20"
+                className="bg-white rounded-2xl p-8 max-w-md w-full shadow-xl relative overflow-hidden max-h-[85vh] overflow-y-auto custom-scrollbar border border-slate-900/[0.08]"
             >
-                <button onClick={onClose} className="absolute right-6 top-5 text-slate-300 hover:text-slate-900 transition-colors">
-                    <X className="w-6 h-6" />
+                <button onClick={onClose} className="absolute right-6 top-6 text-slate-400 hover:text-slate-900 transition-colors duration-150">
+                    <X className="w-5 h-5" />
                 </button>
                 <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-600">
-                        <Building2 className="w-6 h-6" />
+                    <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center text-slate-600">
+                        <Building2 className="w-5 h-5" strokeWidth={1.5} />
                     </div>
                     <div>
-                        <h3 className="text-2xl font-black text-slate-900 leading-tight">
-                            {property ? 'Edit Property' : 'Add Property'}
+                        <h3 className="text-xl font-semibold text-slate-900 leading-tight">
+                            {property ? 'Edit property' : 'Add property'}
                         </h3>
-                        <p className="text-slate-400 text-sm font-medium">Define your physical asset details.</p>
+                        <p className="text-slate-500 text-sm">Name, code, address and photo</p>
                     </div>
                 </div>
 
                 <div className="space-y-5">
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Property Name</label>
-                        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100 transition-all" placeholder="e.g. Skyline Towers" />
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Property name</label>
+                        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150" placeholder="e.g. Skyline Towers" />
                     </div>
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Property Code</label>
-                        <input type="text" value={code} onChange={e => setCode(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100 transition-all" placeholder="e.g. SKY-01" />
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Property code</label>
+                        <input type="text" value={code} onChange={e => setCode(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150" placeholder="e.g. SKY-01" />
                     </div>
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Address</label>
-                        <input type="text" value={address} onChange={e => setAddress(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100 transition-all" placeholder="123 Main St, City" />
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Address</label>
+                        <input type="text" value={address} onChange={e => setAddress(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150" placeholder="123 Main St, City" />
                     </div>
 
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Property Image</label>
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Property image</label>
                         <div
                             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                             onDragLeave={() => setIsDragging(false)}
                             onDrop={handleDrop}
-                            className={`relative h-40 rounded-2xl border-2 border-dashed transition-all duration-300 flex flex-col items-center justify-center overflow-hidden bg-slate-50 ${isDragging ? 'border-emerald-500 bg-emerald-50/50' : 'border-slate-200'
+                            className={`relative h-40 rounded-2xl border-2 border-dashed transition-colors duration-150 flex flex-col items-center justify-center overflow-hidden bg-slate-50 ${isDragging ? 'border-primary bg-primary/5' : 'border-slate-200'
                                 }`}
                         >
                             {isUploading ? (
                                 <div className="flex flex-col items-center gap-2">
-                                    <div className="w-8 h-8 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-tight">Uploading photo...</p>
+                                    <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin" />
+                                    <p className="text-xs font-medium text-slate-500">Uploading photo...</p>
                                 </div>
                             ) : imageUrl ? (
                                 <>
@@ -2441,19 +2434,19 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
                                     <button
                                         type="button"
                                         onClick={() => setImageUrl('')}
-                                        className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-lg hover:bg-rose-600 transition-colors"
+                                        className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-full shadow-sm hover:bg-rose-600 transition-colors duration-150"
                                     >
                                         <X className="w-3 h-3" />
                                     </button>
                                 </>
                             ) : (
                                 <div className="flex flex-col items-center gap-2 pointer-events-none">
-                                    <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center text-slate-400">
+                                    <div className="w-10 h-10 bg-white rounded-md shadow-sm flex items-center justify-center text-slate-400">
                                         <Plus className="w-5 h-5" />
                                     </div>
                                     <div className="text-center">
-                                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-tight">Drop Image Here</p>
-                                        <p className="text-[9px] text-slate-400 font-bold">or click to browse</p>
+                                        <p className="text-xs font-medium text-slate-600">Drop an image here</p>
+                                        <p className="text-[11px] text-slate-400">or click to browse</p>
                                     </div>
                                 </div>
                             )}
@@ -2470,7 +2463,7 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
                     {/* OPEX / CAPEX only. Hidden until the operation_type column exists. */}
                     {supportsOperationType && (
                         <div>
-                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Property Type</label>
+                            <label className="text-xs font-medium text-slate-600 mb-1.5 block">Property type</label>
                             <div className="grid grid-cols-2 gap-2">
                                 {([
                                     { id: 'opex', label: 'OPEX', hint: 'Operational, uses the app daily' },
@@ -2481,21 +2474,21 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
                                         type="button"
                                         onClick={() => setOperationType(o.id)}
                                         aria-pressed={operationType === o.id}
-                                        className={`text-left px-4 py-3 rounded-2xl border transition-colors ${operationType === o.id ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
+                                        className={`text-left px-4 py-3 rounded-[10px] border transition-colors duration-150 ${operationType === o.id ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-100 bg-slate-50 text-slate-700 hover:bg-slate-100'}`}
                                     >
-                                        <span className="block text-sm font-black">{o.label}</span>
+                                        <span className="block text-sm font-medium">{o.label}</span>
                                         <span className={`block text-[11px] mt-0.5 ${operationType === o.id ? 'text-slate-300' : 'text-slate-400'}`}>{o.hint}</span>
                                     </button>
                                 ))}
                             </div>
-                            <p className="text-[11px] text-slate-400 mt-1.5">CAPEX-only properties are left out of the App usage report.</p>
+                            <p className="text-[11px] text-slate-400 mt-1.5">CAPEX-only properties are left out of the App usage report</p>
                         </div>
                     )}
 
                     {/* Validation Flow Toggle */}
                     <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                         <div>
-                            <p className="text-sm font-black text-slate-800">Client Validation Flow</p>
+                            <p className="text-sm font-medium text-slate-800">Client validation flow</p>
                             <p className="text-xs text-slate-400 mt-0.5">When enabled, tenants must approve completed tickets before they close</p>
                         </div>
                         <button
@@ -2508,8 +2501,8 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
                     </div>
 
                     <div className="flex gap-3 mt-8">
-                        <button onClick={onClose} className="flex-1 py-4 font-black text-slate-400 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancel</button>
-                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled, ...(supportsOperationType ? { operation_type: operationType } : {}) })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
+                        <button onClick={onClose} className="flex-1 py-2.5 font-medium text-slate-700 bg-slate-100 rounded-[10px] hover:bg-slate-200 transition-colors duration-150 text-sm">Cancel</button>
+                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled, ...(supportsOperationType ? { operation_type: operationType } : {}) })} className="flex-1 py-2.5 font-medium text-white bg-slate-900 rounded-[10px] hover:bg-slate-800 transition-colors duration-150 shadow-sm text-sm flex items-center justify-center gap-2">
                             <Check className="w-4 h-4" /> {property ? 'Update' : 'Create'}
                         </button>
                     </div>
@@ -2602,34 +2595,34 @@ const UserModal = ({ user, onClose, onSave, allProperties = [], orgId = '' }: an
             <motion.div
                 initial={{ scale: 0.95, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="bg-white/90 backdrop-blur-xl rounded-[2.5rem] p-10 max-w-lg w-full shadow-2xl relative border border-white/20 max-h-[90vh] overflow-y-auto"
+                className="bg-white rounded-2xl p-8 max-w-lg w-full shadow-xl relative border border-slate-900/[0.08] max-h-[90vh] overflow-y-auto"
             >
-                <button onClick={onClose} className="absolute right-6 top-5 text-slate-300 hover:text-slate-900 transition-colors">
-                    <X className="w-6 h-6" />
+                <button onClick={onClose} className="absolute right-6 top-6 text-slate-400 hover:text-slate-900 transition-colors duration-150">
+                    <X className="w-5 h-5" />
                 </button>
                 <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">
-                        <Users className="w-6 h-6" />
+                    <div className="w-12 h-12 bg-slate-100 rounded-md flex items-center justify-center text-slate-600">
+                        <Users className="w-5 h-5" strokeWidth={1.5} />
                     </div>
                     <div>
-                        <h3 className="text-2xl font-black text-slate-900 leading-tight">Edit User</h3>
-                        <p className="text-slate-400 text-sm font-medium">{user?.user?.email}</p>
+                        <h3 className="text-xl font-semibold text-slate-900 leading-tight">Edit user</h3>
+                        <p className="text-slate-500 text-sm">{user?.user?.email}</p>
                     </div>
                 </div>
 
                 <div className="space-y-5">
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Full Name</label>
-                        <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Full name</label>
+                        <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150" />
                     </div>
                     <div>
-                        <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Phone Number</label>
-                        <input type="text" value={phone} onChange={e => setPhone(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100" />
+                        <label className="text-xs font-medium text-slate-600 mb-1.5 block">Phone number</label>
+                        <input type="text" value={phone} onChange={e => setPhone(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150" />
                     </div>
                     {user?.role && (
                         <div>
-                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Organization Role</label>
-                            <select value={orgRole} onChange={e => setOrgRole(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100 appearance-none">
+                            <label className="text-xs font-medium text-slate-600 mb-1.5 block">Organization role</label>
+                            <select value={orgRole} onChange={e => setOrgRole(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 rounded-[10px] border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary appearance-none">
                                 <option value="org_super_admin">Super Admin</option>
                                 <option value="org_admin">Admin</option>
                             </select>
@@ -2639,26 +2632,26 @@ const UserModal = ({ user, onClose, onSave, allProperties = [], orgId = '' }: an
                     {/* Property Access Manager — shown for property-level users */}
                     {isPropertyUser && (
                         <div className="pt-2 border-t border-slate-100">
-                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 block flex items-center gap-2">
-                                <Building2 className="w-3.5 h-3.5" /> Property Access
+                            <label className="text-xs font-medium text-slate-600 mb-3 flex items-center gap-2">
+                                <Building2 className="w-4 h-4" /> Property access
                             </label>
 
                             {/* Current assignments */}
                             <div className="space-y-2 mb-3">
                                 {assignedProps.length === 0 && (
-                                    <p className="text-xs text-slate-400 italic">No properties assigned yet.</p>
+                                    <p className="text-xs text-slate-400">No properties assigned yet</p>
                                 )}
                                 {assignedProps.map(pm => (
-                                    <div key={pm.property_id} className="flex items-center justify-between px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl">
+                                    <div key={pm.property_id} className="flex items-center justify-between px-3 py-2 bg-slate-50 border border-slate-100 rounded-[10px]">
                                         <div>
-                                            <span className="text-sm font-bold text-slate-800">{pm.property_name}</span>
-                                            <span className="ml-2 text-[10px] font-black uppercase text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded">{pm.role?.replace(/_/g, ' ')}</span>
+                                            <span className="text-sm font-medium text-slate-800">{pm.property_name}</span>
+                                            <span className="ml-2 text-[11px] font-medium capitalize text-slate-500 bg-slate-200 px-1.5 py-0.5 rounded">{pm.role?.replace(/_/g, ' ')}</span>
                                         </div>
                                         <button
                                             type="button"
                                             onClick={() => handleRemoveProperty(pm.property_id)}
                                             disabled={propSaving}
-                                            className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors rounded-lg hover:bg-rose-50"
+                                            className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors rounded-[8px] hover:bg-rose-50"
                                         >
                                             <X className="w-3.5 h-3.5" />
                                         </button>
@@ -2672,7 +2665,7 @@ const UserModal = ({ user, onClose, onSave, allProperties = [], orgId = '' }: an
                                     <select
                                         value={assigningPropId}
                                         onChange={e => setAssigningPropId(e.target.value)}
-                                        className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-900 focus:outline-none appearance-none"
+                                        className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-[10px] text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
                                     >
                                         <option value="">+ Add property…</option>
                                         {unassignedProps.map((p: any) => (
@@ -2682,7 +2675,7 @@ const UserModal = ({ user, onClose, onSave, allProperties = [], orgId = '' }: an
                                     <select
                                         value={propAssignRole}
                                         onChange={e => setPropAssignRole(e.target.value)}
-                                        className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-bold text-slate-900 focus:outline-none appearance-none"
+                                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-[10px] text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
                                     >
                                         <option value="property_admin">Admin</option>
                                         <option value="staff">Staff</option>
@@ -2694,20 +2687,20 @@ const UserModal = ({ user, onClose, onSave, allProperties = [], orgId = '' }: an
                                         type="button"
                                         onClick={handleAddProperty}
                                         disabled={!assigningPropId || propSaving}
-                                        className="px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-black disabled:opacity-40 hover:bg-slate-800 transition-colors"
+                                        className="px-4 py-2 bg-slate-900 text-white rounded-[10px] text-sm font-medium disabled:opacity-40 hover:bg-slate-800 transition-colors duration-150"
                                     >
                                         {propSaving ? '…' : 'Add'}
                                     </button>
                                 </div>
                             )}
-                            {propError && <p className="text-xs text-rose-500 font-bold mt-2">{propError}</p>}
+                            {propError && <p className="text-xs text-rose-600 font-medium mt-2">{propError}</p>}
                         </div>
                     )}
 
                     <div className="flex gap-3 mt-8">
-                        <button onClick={onClose} className="flex-1 py-4 font-black text-slate-400 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancel</button>
-                        <button onClick={() => onSave({ full_name: fullName, phone, orgRole })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors uppercase text-xs tracking-widest">
-                            Save Changes
+                        <button onClick={onClose} className="flex-1 py-2.5 font-medium text-slate-700 bg-slate-100 rounded-[10px] hover:bg-slate-200 transition-colors duration-150 text-sm">Cancel</button>
+                        <button onClick={() => onSave({ full_name: fullName, phone, orgRole })} className="flex-1 py-2.5 font-medium text-white bg-slate-900 rounded-[10px] hover:bg-slate-800 transition-colors duration-150 shadow-sm text-sm">
+                            Save changes
                         </button>
                     </div>
                 </div>
@@ -2770,7 +2763,7 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
         document.body.removeChild(link);
     };
 
-    if (isLoading) return <div className="p-12 text-center text-slate-400 font-bold italic">Gathering intelligence...</div>;
+    if (isLoading) return <div className="p-12 text-center text-sm text-slate-400">Loading revenue...</div>;
 
     const totalRevenue = vendors.reduce((acc, v) => acc + (v.vendor_daily_revenue?.reduce((sum: number, r: any) => sum + r.revenue_amount, 0) || 0), 0);
     const totalCommission = vendors.reduce((acc, v) => {
@@ -2780,18 +2773,18 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
 
     return (
         <div className="space-y-8">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-900/[0.08] shadow-sm">
                 <div>
-                    <h2 className="text-xl font-black text-slate-900 leading-tight">Revenue Analytics</h2>
-                    <p className="text-slate-500 text-sm font-medium">Cross-property financial oversight.</p>
+                    <h2 className="text-xl font-semibold text-slate-900 leading-tight">Revenue analytics</h2>
+                    <p className="text-slate-500 text-sm">Cafeteria vendor revenue and commission by property</p>
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
                     <select
                         value={selectedProperty}
                         onChange={(e) => setSelectedProperty(e.target.value)}
-                        className="flex-1 md:flex-none p-3.5 bg-slate-50 border border-slate-100 rounded-2xl font-black text-slate-900 text-xs focus:ring-2 focus:ring-blue-100 outline-none"
+                        className="flex-1 md:flex-none px-3 py-2 bg-slate-50 border border-slate-200 rounded-[10px] font-medium text-slate-900 text-sm focus:ring-2 focus:ring-primary/20 outline-none"
                     >
-                        <option value="all">All Properties</option>
+                        <option value="all">All properties</option>
                         {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <button
@@ -2803,55 +2796,52 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
                             setVendorToEdit(null);
                             setIsManageModalOpen(true);
                         }}
-                        className="p-3.5 bg-indigo-600 text-white rounded-2xl font-black text-xs hover:bg-indigo-500 transition-all flex items-center gap-2"
+                        className="px-4 py-2 bg-primary-dark text-white rounded-[10px] font-medium text-sm hover:bg-primary-dark/90 transition-colors duration-150 shadow-sm flex items-center gap-2"
                     >
-                        <Plus className="w-4 h-4" /> Add Vendor
+                        <Plus className="w-4 h-4" /> Add vendor
                     </button>
                     <button
                         onClick={handleExportAll}
-                        className="p-3.5 bg-slate-900 text-white rounded-2xl font-black text-xs hover:bg-slate-800 transition-all flex items-center gap-2"
+                        className="px-4 py-2 bg-white border border-slate-200 text-slate-900 rounded-[10px] font-medium text-sm hover:bg-slate-50 transition-colors duration-150 flex items-center gap-2"
                     >
-                        <FileDown className="w-4 h-4" /> Export All
+                        <FileDown className="w-4 h-4" /> Export all
                     </button>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50/50 rounded-full -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 relative z-10">Total Revenue</p>
-                    <p className="text-3xl font-black text-slate-900 relative z-10">₹{totalRevenue.toLocaleString()}</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-5 gap-y-5">
+                <div className="bg-white px-6 py-6 rounded-2xl border border-slate-900/[0.08] shadow-sm">
+                    <p className="text-xs font-medium text-slate-500 mb-1">Total revenue</p>
+                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">₹{totalRevenue.toLocaleString('en-IN')}</p>
                 </div>
-                <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-50/50 rounded-full -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 relative z-10">Total Commission</p>
-                    <p className="text-3xl font-black text-emerald-600 relative z-10">₹{totalCommission.toLocaleString()}</p>
+                <div className="bg-white px-6 py-6 rounded-2xl border border-slate-900/[0.08] shadow-sm">
+                    <p className="text-xs font-medium text-slate-500 mb-1">Total commission</p>
+                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">₹{totalCommission.toLocaleString('en-IN')}</p>
                 </div>
-                <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-50/50 rounded-full -mr-16 -mt-16 group-hover:scale-110 transition-transform duration-500" />
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 relative z-10">Total Vendors</p>
-                    <p className="text-3xl font-black text-slate-900 relative z-10">{vendors.length}</p>
+                <div className="bg-white px-6 py-6 rounded-2xl border border-slate-900/[0.08] shadow-sm">
+                    <p className="text-xs font-medium text-slate-500 mb-1">Vendors</p>
+                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">{vendors.length}</p>
                 </div>
             </div>
 
-            <div className="bg-white border border-slate-100 rounded-[32px] overflow-hidden shadow-sm">
+            <div className="bg-white border border-slate-900/[0.08] rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead className="bg-slate-50/50 border-b border-slate-100">
                             <tr>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Property / Shop</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Vendor</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Comm %</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Revenue</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Last Entry</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Commission</th>
-                                <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500">Property / shop</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500">Vendor</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500 text-center">Comm %</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500 text-right">Revenue</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500 text-center">Last entry</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500 text-right">Commission</th>
+                                <th className="px-6 py-3 text-xs font-medium text-slate-500 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {vendors.length === 0 ? (
                                 <tr>
-                                    <td colSpan={7} className="px-8 py-16 text-center text-slate-400 font-bold italic">No vendor data available.</td>
+                                    <td colSpan={7} className="px-6 py-16 text-center text-sm text-slate-400">No vendors yet</td>
                                 </tr>
                             ) : (
                                 vendors.map((v) => {
@@ -2864,27 +2854,27 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
                                         : '—';
                                     return (
                                         <tr key={v.id} className="hover:bg-slate-50/50 transition-colors group">
-                                            <td className="px-8 py-5">
+                                            <td className="px-6 py-4">
                                                 <div>
-                                                    <p className="font-black text-slate-900 text-sm group-hover:text-blue-600 transition-colors uppercase tracking-tight">{v.shop_name}</p>
-                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">{v.properties?.name}</p>
+                                                    <p className="font-medium text-slate-900 text-sm">{v.shop_name}</p>
+                                                    <p className="text-xs text-slate-500 mt-0.5">{v.properties?.name}</p>
                                                 </div>
                                             </td>
-                                            <td className="px-8 py-5 text-sm font-bold text-slate-600">{v.owner_name}</td>
-                                            <td className="px-8 py-5 text-center">
-                                                <span className="px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-black text-slate-500 uppercase tracking-wider">{v.commission_rate}%</span>
+                                            <td className="px-6 py-4 text-sm text-slate-600">{v.owner_name}</td>
+                                            <td className="px-6 py-4 text-center">
+                                                <span className="px-2 py-0.5 bg-slate-100 rounded-sm text-xs font-medium text-slate-600 tabular-nums">{v.commission_rate}%</span>
                                             </td>
-                                            <td className="px-8 py-5 text-right font-black text-sm text-slate-900">₹{(Number(rev) || 0).toLocaleString()}</td>
-                                            <td className="px-8 py-5 text-center text-xs font-bold text-slate-500">{lastEntryDisplay}</td>
-                                            <td className="px-8 py-5 text-right font-black text-sm text-emerald-600">₹{(Number(comm) || 0).toLocaleString()}</td>
-                                            <td className="px-8 py-5 text-right">
+                                            <td className="px-6 py-4 text-right font-medium text-sm text-slate-900 tabular-nums">₹{(Number(rev) || 0).toLocaleString('en-IN')}</td>
+                                            <td className="px-6 py-4 text-center text-xs font-mono tabular-nums text-text-tertiary">{lastEntryDisplay}</td>
+                                            <td className="px-6 py-4 text-right font-medium text-sm text-slate-900 tabular-nums">₹{(Number(comm) || 0).toLocaleString('en-IN')}</td>
+                                            <td className="px-6 py-4 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     <button
                                                         onClick={() => {
                                                             setVendorToEdit(v);
                                                             setIsManageModalOpen(true);
                                                         }}
-                                                        className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg transition-colors"
+                                                        className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-[10px] transition-colors"
                                                     >
                                                         <Settings className="w-4 h-4" />
                                                     </button>
@@ -2900,7 +2890,7 @@ const RevenueTab = ({ properties, selectedPropertyId }: { properties: any[], sel
                                                                 }
                                                             }
                                                         }}
-                                                        className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
+                                                        className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-[10px] transition-colors"
                                                     >
                                                         <X className="w-4 h-4" />
                                                     </button>
@@ -3026,66 +3016,66 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
 
     return (
         <div className="space-y-5">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-900/[0.08] shadow-sm">
                 <div>
-                    <h2 className="text-xl font-black text-slate-900 leading-tight">Visitor Management</h2>
-                    <p className="text-slate-500 text-sm font-medium">Track and manage visitors across all properties.</p>
+                    <h2 className="text-xl font-semibold text-slate-900 leading-tight">Visitor management</h2>
+                    <p className="text-slate-500 text-sm">Track and manage visitors across all properties</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                     <div className="relative flex-1 md:flex-none">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
                             type="text"
-                            placeholder="Search visitors..."
+                            placeholder="Search visitors"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full md:w-64 pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                            className="w-full md:w-64 pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-[10px] text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />
                     </div>
                     <select
                         value={selectedProperty}
                         onChange={(e) => setSelectedProperty(e.target.value)}
-                        className="p-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm text-slate-700 outline-none focus:ring-2 focus:ring-emerald-100"
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-[10px] font-medium text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
                     >
-                        <option value="all">All Properties</option>
+                        <option value="all">All properties</option>
                         {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                     <select
                         value={dateFilter}
                         onChange={(e) => setDateFilter(e.target.value as any)}
-                        className="p-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm text-slate-700 outline-none focus:ring-2 focus:ring-emerald-100"
+                        className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-[10px] font-medium text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
                     >
-                        <option value="all">All Time</option>
+                        <option value="all">All time</option>
                         <option value="today">Today</option>
-                        <option value="week">This Week</option>
-                        <option value="month">This Month</option>
+                        <option value="week">This week</option>
+                        <option value="month">This month</option>
                     </select>
                     <button
                         onClick={handleExport}
-                        className="p-3 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-colors"
+                        className="p-2 bg-slate-900 text-white rounded-[10px] hover:bg-slate-800 transition-colors duration-150"
                     >
-                        <FileDown className="w-5 h-5" />
+                        <FileDown className="w-4 h-4" />
                     </button>
                 </div>
             </div>
 
-            <div className="bg-white border border-slate-100 rounded-[32px] overflow-hidden shadow-sm">
+            <div className="bg-white border border-slate-900/[0.08] rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead className="bg-slate-50/50 border-b border-slate-100">
                             <tr>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Visitor Info</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Host / Purpose</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Timing</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Visitor</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Property</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Host / purpose</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Timing</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {isLoading ? (
                                 <tr><td colSpan={5} className="p-8 text-center text-slate-400">Loading visitors...</td></tr>
                             ) : filteredVisitors.length === 0 ? (
-                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">No visitors found matching your criteria.</td></tr>
+                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">No visitors match these filters</td></tr>
                             ) : (
                                 filteredVisitors.map((visitor) => (
                                     <tr
@@ -3102,46 +3092,46 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                                                         className="w-10 h-10 rounded-full object-cover border-2 border-slate-100"
                                                     />
                                                 ) : (
-                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-bold">
+                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-semibold">
                                                         {visitor.name?.[0]}
                                                     </div>
                                                 )}
                                                 <div>
-                                                    <div className="font-bold text-slate-900 text-sm hover:text-indigo-600 transition-colors">{visitor.name}</div>
-                                                    <div className="text-xs text-slate-500 font-medium">{visitor.mobile || 'No mobile'}</div>
-                                                    <div className="text-[10px] text-slate-400 mt-0.5 font-mono">{visitor.visitor_id}</div>
+                                                    <div className="font-medium text-slate-900 text-sm">{visitor.name}</div>
+                                                    <div className="text-xs text-slate-500 tabular-nums">{visitor.mobile || 'No mobile'}</div>
+                                                    <div className="text-[11px] text-slate-400 mt-0.5 font-mono">{visitor.visitor_id}</div>
                                                 </div>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
                                             <div className="flex items-center gap-1.5">
                                                 <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                                                <span className="text-sm font-bold text-slate-700">{visitor.properties?.name}</span>
+                                                <span className="text-sm font-medium text-slate-700">{visitor.properties?.name}</span>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
-                                            <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
+                                            <div className="text-sm font-medium text-slate-900">{visitor.whom_to_meet}</div>
                                             <div className="text-xs text-slate-500 capitalize">{visitor.category}</div>
-                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">
+                                            <div className="text-[11px] text-slate-400 mt-1">
                                                 Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
-                                            <div className="text-xs font-bold text-slate-900">
+                                            <div className="text-xs font-mono tabular-nums text-slate-700">
                                                 In: {new Date(visitor.checkin_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </div>
                                             {visitor.checkout_time && (
-                                                <div className="text-xs text-slate-500 mt-1">
+                                                <div className="text-xs font-mono tabular-nums text-text-tertiary mt-1">
                                                     Out: {new Date(visitor.checkout_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                 </div>
                                             )}
                                         </td>
                                         <td className="px-5 py-4">
-                                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${visitor.status === 'checked_in'
+                                            <span className={`px-2 py-0.5 rounded-sm text-[11px] font-medium ${visitor.status === 'checked_in'
                                                 ? 'bg-emerald-100 text-emerald-700'
                                                 : 'bg-slate-100 text-slate-600'
                                                 }`}>
-                                                {visitor.status === 'checked_in' ? 'On Premise' : 'Checked Out'}
+                                                {visitor.status === 'checked_in' ? 'On premises' : 'Checked out'}
                                             </span>
                                         </td>
                                     </tr>
@@ -3166,14 +3156,14 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                             initial={{ scale: 0.9 }}
                             animate={{ scale: 1 }}
                             exit={{ scale: 0.9 }}
-                            className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl"
+                            className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-xl"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header with Photo */}
-                            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 text-white relative">
+                            <div className="bg-slate-900 p-6 text-white relative">
                                 <button
                                     onClick={() => setSelectedVisitor(null)}
-                                    className="absolute top-4 right-4 p-1 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                                    className="absolute top-4 right-4 p-1 rounded-full bg-white/10 hover:bg-white/20 transition-colors duration-150"
                                 >
                                     <X className="w-5 h-5" />
                                 </button>
@@ -3185,12 +3175,12 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                                             className="w-20 h-20 rounded-2xl object-cover border-4 border-white/30"
                                         />
                                     ) : (
-                                        <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center">
+                                        <div className="w-20 h-20 rounded-2xl bg-white/10 flex items-center justify-center">
                                             <UserCircle className="w-10 h-10" />
                                         </div>
                                     )}
                                     <div>
-                                        <h3 className="text-2xl font-black">{selectedVisitor.name}</h3>
+                                        <h3 className="text-xl font-semibold">{selectedVisitor.name}</h3>
                                         <p className="text-white/70 font-mono text-sm">{selectedVisitor.visitor_id}</p>
                                     </div>
                                 </div>
@@ -3200,19 +3190,19 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                             <div className="p-6 space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</p>
+                                        <p className="text-xs font-medium text-slate-500">Category</p>
                                         <p className="text-slate-900 font-medium capitalize">{selectedVisitor.category}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</p>
-                                        <p className="text-slate-900 font-medium">{selectedVisitor.mobile || '-'}</p>
+                                        <p className="text-xs font-medium text-slate-500">Mobile</p>
+                                        <p className="text-slate-900 font-medium tabular-nums">{selectedVisitor.mobile || '-'}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Coming From</p>
+                                        <p className="text-xs font-medium text-slate-500">Coming from</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.coming_from || '-'}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Whom to Meet</p>
+                                        <p className="text-xs font-medium text-slate-500">Whom to meet</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.whom_to_meet}</p>
                                     </div>
                                 </div>
@@ -3220,8 +3210,8 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                                 <div className="border-t border-slate-100 pt-4">
                                     <div className="flex justify-between items-center mb-2">
                                         <div>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-in</p>
-                                            <p className="text-slate-900 font-medium">
+                                            <p className="text-xs font-medium text-slate-500">Check-in</p>
+                                            <p className="text-slate-900 font-mono tabular-nums">
                                                 {new Date(selectedVisitor.checkin_time).toLocaleString('en-IN', {
                                                     day: '2-digit',
                                                     month: '2-digit',
@@ -3232,16 +3222,16 @@ const VisitorsTab = ({ properties, selectedPropertyId }: { properties: any[], se
                                             </p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Duration</p>
-                                            <p className="text-slate-900 font-bold">
+                                            <p className="text-xs font-medium text-slate-500">Duration</p>
+                                            <p className="text-slate-900 font-medium tabular-nums">
                                                 {getDuration(selectedVisitor.checkin_time, selectedVisitor.checkout_time)}
                                             </p>
                                         </div>
                                     </div>
                                     {selectedVisitor.checkout_time && (
                                         <div>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-out</p>
-                                            <p className="text-slate-900 font-medium">
+                                            <p className="text-xs font-medium text-slate-500">Check-out</p>
+                                            <p className="text-slate-900 font-mono tabular-nums">
                                                 {new Date(selectedVisitor.checkout_time).toLocaleString('en-IN', {
                                                     day: '2-digit',
                                                     month: '2-digit',
@@ -3322,7 +3312,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
 
     const handleAssign = async () => {
         if (!selectedUserId || selectedPropertyIds.length === 0) {
-            showToast('Select a user and at least one property.', false);
+            showToast('Select a user and at least one property', false);
             return;
         }
         setIsSaving(true);
@@ -3337,7 +3327,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
                 throw new Error(data.error || 'Request failed');
             }
             const data = await res.json();
-            showToast('Super Tenant assigned successfully.');
+            showToast('Super tenant assigned');
             setShowModal(false);
             setSelectedUserId('');
             setSelectedPropertyIds([]);
@@ -3356,8 +3346,8 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: userId, property_id: propertyId }),
         });
-        if (res.ok) { showToast('Property removed.'); fetchData(); }
-        else showToast('Failed to remove.', false);
+        if (res.ok) { showToast('Property removed'); fetchData(); }
+        else showToast('Couldn\'t remove the property', false);
     };
 
     const toggleProp = (id: string) =>
@@ -3367,33 +3357,33 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-2xl font-black text-slate-900">Super Tenants</h2>
+                    <h2 className="text-xl font-semibold text-slate-900">Super tenants</h2>
                     <p className="text-sm text-slate-500 mt-0.5">Assign cross-property analytics access to tenant accounts</p>
                 </div>
                 <button
                     onClick={() => setShowModal(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 text-white font-bold text-xs rounded-xl uppercase tracking-widest hover:bg-violet-700 transition-all shadow-lg shadow-violet-200"
+                    className="flex items-center gap-2 px-4 py-2 bg-primary-dark text-white font-medium text-sm rounded-[10px] hover:bg-primary-dark/90 transition-colors duration-150 shadow-sm"
                 >
-                    <Plus className="w-4 h-4" /> Assign Super Tenant
+                    <Plus className="w-4 h-4" /> Assign super tenant
                 </button>
             </div>
 
-            <div className="flex items-start gap-3 p-4 rounded-2xl bg-violet-50 border border-violet-200 text-violet-700">
-                <Key className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <p className="text-xs font-semibold leading-relaxed">
+            <div className="flex items-start gap-3 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-slate-600">
+                <Key className="w-4 h-4 mt-0.5 flex-shrink-0 text-slate-400" strokeWidth={1.5} />
+                <p className="text-xs leading-relaxed">
                     Super Tenants have read-only access to view and analyze all tickets across their assigned properties. They cannot create tickets, manage users, or access admin settings.
                 </p>
             </div>
 
             {isLoading ? (
                 <div className="flex items-center justify-center py-16">
-                    <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
             ) : superTenants.length === 0 ? (
                 <div className="text-center py-20 border-2 border-dashed border-slate-200 rounded-2xl">
                     <Key className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-                    <p className="text-sm font-semibold text-slate-500">No super tenant accounts yet.</p>
-                    <p className="text-xs text-slate-400 mt-1">Click "Assign Super Tenant" to get started.</p>
+                    <p className="text-sm font-medium text-slate-500">No super tenant accounts yet</p>
+                    <p className="text-xs text-slate-400 mt-1">Use Assign super tenant above to add one</p>
                 </div>
             ) : (
                 <div className="space-y-3">
@@ -3401,29 +3391,29 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
                         <div key={i} className="p-5 rounded-2xl border border-slate-200 bg-white shadow-sm space-y-3">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-9 h-9 rounded-xl bg-violet-100 flex items-center justify-center text-violet-700 font-black text-sm">
+                                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary-dark font-semibold text-sm">
                                         {st.users?.full_name?.[0]?.toUpperCase() || 'S'}
                                     </div>
                                     <div>
-                                        <p className="font-bold text-slate-900 text-sm">{st.users?.full_name || '—'}</p>
+                                        <p className="font-medium text-slate-900 text-sm">{st.users?.full_name || '—'}</p>
                                         <p className="text-xs text-slate-500">{st.users?.email}</p>
                                     </div>
                                 </div>
-                                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-violet-100 text-violet-700 tracking-widest">
-                                    Super Tenant
+                                <span className="px-2 py-0.5 rounded-sm text-[11px] font-medium bg-secondary/10 text-secondary-dark">
+                                    Super tenant
                                 </span>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {st.assignedProperties.map((ap: any) => (
-                                    <div key={ap.property_id} className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200">
+                                    <div key={ap.property_id} className="flex items-center gap-2 px-3 py-1.5 rounded-[8px] bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200">
                                         <Building2 className="w-3 h-3 text-slate-400" />
                                         {ap.properties?.name || ap.property_id}
-                                        <button onClick={() => handleRemove(st.user_id, ap.property_id)} className="ml-1 text-slate-400 hover:text-red-500 transition-colors">
+                                        <button onClick={() => handleRemove(st.user_id, ap.property_id)} className="ml-1 text-slate-400 hover:text-red-500 transition-colors duration-150">
                                             <X className="w-3 h-3" />
                                         </button>
                                     </div>
                                 ))}
-                                {st.assignedProperties.length === 0 && <span className="text-xs text-slate-400 italic">No properties assigned</span>}
+                                {st.assignedProperties.length === 0 && <span className="text-xs text-slate-400">No properties assigned</span>}
                             </div>
                         </div>
                     ))}
@@ -3437,38 +3427,38 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
                         onClick={() => setShowModal(false)}>
                         <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
-                            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6 space-y-5">
+                            className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-6 space-y-5">
                             <div className="flex items-center justify-between">
-                                <h3 className="font-black text-slate-900 text-lg">Assign Super Tenant</h3>
-                                <button onClick={() => setShowModal(false)} className="p-2 rounded-xl hover:bg-slate-100 text-slate-400"><X className="w-4 h-4" /></button>
+                                <h3 className="font-semibold text-slate-900 text-lg">Assign super tenant</h3>
+                                <button onClick={() => setShowModal(false)} className="p-2 rounded-[10px] hover:bg-slate-100 text-slate-400 transition-colors duration-150"><X className="w-4 h-4" /></button>
                             </div>
                             <div className="space-y-1.5">
-                                <label className="text-xs font-black uppercase tracking-widest text-slate-500">Select User</label>
+                                <label className="text-xs font-medium text-slate-600">User</label>
                                 <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}
-                                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-violet-500">
-                                    <option value="">— Choose user —</option>
+                                    className="w-full px-3 py-2 border border-slate-200 rounded-[10px] text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                                    <option value="">Choose a user</option>
                                     {orgUsers.map((u: any) => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
                                 </select>
                             </div>
                             <div className="space-y-2">
-                                <label className="text-xs font-black uppercase tracking-widest text-slate-500">Assign Properties</label>
-                                <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-3">
-                                    {properties.length === 0 && <p className="text-xs text-slate-400 text-center py-4">No properties found.</p>}
+                                <label className="text-xs font-medium text-slate-600">Properties</label>
+                                <div className="max-h-48 overflow-y-auto space-y-1 border border-slate-200 rounded-2xl p-2">
+                                    {properties.length === 0 && <p className="text-xs text-slate-400 text-center py-4">No properties found</p>}
                                     {properties.map(prop => (
-                                        <label key={prop.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
-                                            <input type="checkbox" checked={selectedPropertyIds.includes(prop.id)} onChange={() => toggleProp(prop.id)} className="w-4 h-4 rounded accent-violet-600" />
+                                        <label key={prop.id} className="flex items-center gap-3 p-2 rounded-[10px] hover:bg-slate-50 cursor-pointer">
+                                            <input type="checkbox" checked={selectedPropertyIds.includes(prop.id)} onChange={() => toggleProp(prop.id)} className="w-4 h-4 rounded accent-primary" />
                                             <div>
-                                                <p className="text-sm font-bold text-slate-800">{prop.name}</p>
-                                                <p className="text-[10px] font-mono text-slate-400">{prop.code}</p>
+                                                <p className="text-sm font-medium text-slate-800">{prop.name}</p>
+                                                <p className="text-[11px] font-mono text-slate-400">{prop.code}</p>
                                             </div>
                                         </label>
                                     ))}
                                 </div>
-                                {selectedPropertyIds.length > 0 && <p className="text-xs font-semibold text-violet-600">{selectedPropertyIds.length} propert{selectedPropertyIds.length > 1 ? 'ies' : 'y'} selected</p>}
+                                {selectedPropertyIds.length > 0 && <p className="text-xs font-medium text-primary-dark tabular-nums">{selectedPropertyIds.length} propert{selectedPropertyIds.length > 1 ? 'ies' : 'y'} selected</p>}
                             </div>
                             <button onClick={handleAssign} disabled={isSaving || !selectedUserId || selectedPropertyIds.length === 0}
-                                className="w-full py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm">
-                                {isSaving ? 'Assigning...' : 'Assign Super Tenant Role & Properties'}
+                                className="w-full py-2.5 bg-primary-dark text-white font-medium rounded-[10px] hover:bg-primary-dark/90 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed text-sm">
+                                {isSaving ? 'Assigning...' : 'Assign role and properties'}
                             </button>
                         </motion.div>
                     </motion.div>
@@ -3479,7 +3469,7 @@ const SuperTenantOrgTab = ({ orgId, properties }: { orgId: string; properties: S
                 {toastMsg && (
                     <motion.div initial={{ opacity: 0, y: 40 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
                         className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100]">
-                        <div className={`px-6 py-3 rounded-2xl shadow-2xl font-bold text-sm border ${toastMsg.ok ? 'bg-emerald-900 border-emerald-500/50 text-emerald-50' : 'bg-rose-900 border-rose-500/50 text-rose-50'}`}>
+                        <div className={`px-5 py-3 rounded-2xl shadow-lg font-medium text-sm border ${toastMsg.ok ? 'bg-emerald-900 border-emerald-500/50 text-emerald-50' : 'bg-rose-900 border-rose-500/50 text-rose-50'}`}>
                             {toastMsg.msg}
                         </div>
                     </motion.div>
@@ -3503,7 +3493,7 @@ function PropertySelectorPill({ properties, selectedId, isOpen, onToggle, onSele
         <div className="relative">
             <button
                 onClick={onToggle}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 transition-all"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-[10px] hover:bg-slate-200 transition-colors duration-150"
             >
                 <div className="w-4 h-4 rounded flex items-center justify-center overflow-hidden flex-shrink-0">
                     {selectedId === 'all'
@@ -3513,8 +3503,8 @@ function PropertySelectorPill({ properties, selectedId, isOpen, onToggle, onSele
                             : <Building2 className="w-3.5 h-3.5 text-slate-500" />
                     }
                 </div>
-                <span className="text-[11px] font-black text-slate-700 max-w-[90px] truncate">
-                    {selectedId === 'all' ? 'All Properties' : selected?.name}
+                <span className="text-xs font-medium text-slate-700 max-w-[90px] truncate">
+                    {selectedId === 'all' ? 'All properties' : selected?.name}
                 </span>
                 <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -3527,19 +3517,19 @@ function PropertySelectorPill({ properties, selectedId, isOpen, onToggle, onSele
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 8, scale: 0.95 }}
                             transition={{ duration: 0.15 }}
-                            className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-slate-200 z-[70] overflow-hidden"
+                            className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-lg border border-slate-200 z-[70] overflow-hidden"
                         >
                             <div className="p-2 border-b border-slate-100">
                                 <button
                                     onClick={() => onSelect('all')}
-                                    className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedId === 'all' ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                                    className={`w-full flex items-center gap-2.5 p-2 rounded-[10px] transition-colors duration-150 ${selectedId === 'all' ? 'bg-primary/15 text-primary-dark' : 'text-slate-600 hover:bg-slate-50'}`}
                                 >
-                                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+                                    <div className="w-8 h-8 rounded-[8px] bg-slate-100 flex items-center justify-center flex-shrink-0">
                                         <LayoutDashboard className="w-4 h-4 text-slate-500" />
                                     </div>
                                     <div className="text-left">
-                                        <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
-                                        <p className="text-[10px] opacity-70 font-medium">{properties.length} Locations</p>
+                                        <p className="text-sm font-medium">All properties</p>
+                                        <p className="text-xs opacity-70 tabular-nums">{properties.length} locations</p>
                                     </div>
                                 </button>
                             </div>
@@ -3548,17 +3538,17 @@ function PropertySelectorPill({ properties, selectedId, isOpen, onToggle, onSele
                                     <button
                                         key={prop.id}
                                         onClick={() => onSelect(prop.id)}
-                                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedId === prop.id ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                                        className={`w-full flex items-center gap-2.5 p-2 rounded-[10px] transition-colors duration-150 ${selectedId === prop.id ? 'bg-primary/15 text-primary-dark' : 'text-slate-600 hover:bg-slate-50'}`}
                                     >
-                                        <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                        <div className="w-8 h-8 rounded-[8px] bg-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
                                             {prop.image_url
                                                 ? <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
                                                 : <Building2 className="w-4 h-4 text-slate-400" />
                                             }
                                         </div>
                                         <div className="text-left overflow-hidden">
-                                            <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
-                                            <p className="text-[10px] opacity-70 font-bold uppercase tracking-widest">{prop.code}</p>
+                                            <p className="text-sm font-medium truncate">{prop.name}</p>
+                                            <p className="text-[11px] opacity-70 font-mono uppercase">{prop.code}</p>
                                         </div>
                                     </button>
                                 ))}
@@ -3616,21 +3606,22 @@ function WhatsAppSummaryCard({
         <div className="bg-white border border-slate-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4">
             {/* Icon + text */}
             <div className="flex items-center gap-4 flex-1">
-                <div className="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                <div className="w-12 h-12 rounded-md bg-emerald-50 flex items-center justify-center flex-shrink-0">
                     <MessageCircle className="w-6 h-6 text-emerald-600" />
                 </div>
                 <div>
-                    <p className="text-sm font-black text-slate-900">Send Ticket Report on WhatsApp</p>
+                    <p className="text-sm font-semibold text-slate-900">Send ticket report on WhatsApp</p>
                     <p className="text-xs text-slate-500 mt-0.5">
-                        Sends a live open-tickets summary to all Org Super Admins via WhatsApp instantly.
+                        Sends the open-ticket summary to every org super admin on WhatsApp
                     </p>
                     {status === 'success' && info && (
-                        <p className="text-xs text-emerald-600 font-bold mt-1">
-                            ✅ Sent to {info.recipients} admin{info.recipients !== 1 ? 's' : ''} — {info.open_tickets} open ticket{info.open_tickets !== 1 ? 's' : ''} reported.
+                        <p className="text-xs text-emerald-600 font-medium mt-1 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-4 h-4" strokeWidth={1.5} />
+                            Sent to {info.recipients} admin{info.recipients !== 1 ? 's' : ''}, {info.open_tickets} open ticket{info.open_tickets !== 1 ? 's' : ''} reported
                         </p>
                     )}
                     {status === 'error' && (
-                        <p className="text-xs text-rose-500 font-bold mt-1">❌ {errorMsg}</p>
+                        <p className="text-xs text-rose-600 font-medium mt-1 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" strokeWidth={1.5} />{errorMsg}</p>
                     )}
                 </div>
             </div>
@@ -3639,7 +3630,7 @@ function WhatsAppSummaryCard({
             <button
                 onClick={handleSend}
                 disabled={status === 'loading'}
-                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all duration-200 flex-shrink-0"
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-medium rounded-[10px] transition-colors duration-150 flex-shrink-0"
             >
                 {status === 'loading' ? (
                     <>
@@ -3649,7 +3640,7 @@ function WhatsAppSummaryCard({
                 ) : (
                     <>
                         <Send className="w-4 h-4" />
-                        Send Report
+                        Send report
                     </>
                 )}
             </button>

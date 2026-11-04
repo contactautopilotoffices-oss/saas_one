@@ -10,7 +10,7 @@ import {
     Key, Eye, EyeOff, Globe, Copy, X, Ticket, Link as LinkIcon, LogOut,
     UserCircle, FileDown, Brain, Wrench, MessageCircle,
     TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
-  MessageSquarePlus, Mail, Sparkles, Menu, ScanText
+  MessageSquarePlus, Mail, Bot, Menu, ScanText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -352,7 +352,7 @@ const MasterAdminDashboard = () => {
                 throw new Error(data.error || 'Failed to delete user');
             }
 
-            showToast('User deleted successfully.');
+            showToast('User deleted');
             fetchUsers();
         } catch (error: any) {
             showToast(error.message || 'Failed to delete user', 'error');
@@ -435,7 +435,7 @@ const MasterAdminDashboard = () => {
                 body: JSON.stringify({ email_preferences: prefs })
             });
             if (response.ok) {
-                showToast('Email preferences updated successfully');
+                showToast('Email preferences updated');
                 setOrganizations(prev => prev.map(o => o.id === orgId ? { ...o, email_preferences: prefs } : o));
             } else {
                 showToast('Failed to update email preferences', 'error');
@@ -466,26 +466,26 @@ const MasterAdminDashboard = () => {
         // Agent Council sits second on purpose. It was originally 15th of 21 in a
         // sidebar whose nav scrolls behind a 5px scrollbar, so it sat below the fold
         // on a 1080p screen and read as "not built". Position is the whole fix.
-        { id: 'council', label: 'Agent Council', icon: Sparkles },
-        { id: 'bd-pipeline', label: 'BD Pipeline', icon: TrendingUp },
+        { id: 'council', label: 'Agent council', icon: Bot },
+        { id: 'bd-pipeline', label: 'BD pipeline', icon: TrendingUp },
         { id: 'analytics', label: 'Engagement', icon: Activity },
-        { id: 'daily-progress', label: 'Daily Progress', icon: LayoutGrid },
-        { id: 'usage', label: 'Usage Overview', icon: Gauge, section: 'Reports' },
-        { id: 'ocr-monitor', label: 'OCR Monitor', icon: ScanText },
+        { id: 'daily-progress', label: 'Daily progress', icon: LayoutGrid },
+        { id: 'usage', label: 'Usage overview', icon: Gauge, section: 'Reports' },
+        { id: 'ocr-monitor', label: 'OCR monitor', icon: ScanText },
         { id: 'resolvers', label: 'Resolvers', icon: Wrench },
         { id: 'organizations', label: 'Organizations', icon: Building2 },
-        { id: 'tickets', label: 'Support Tickets', icon: Ticket },
-        { id: 'users', label: 'User Directory', icon: Users },
-        { id: 'super-tenants', label: 'Super Tenants', icon: Key },
+        { id: 'tickets', label: 'Support tickets', icon: Ticket },
+        { id: 'users', label: 'User directory', icon: Users },
+        { id: 'super-tenants', label: 'Super tenants', icon: Key },
         { id: 'visitors', label: 'Visitors', icon: UserCircle },
-        { id: 'invite-links', label: 'Invite Links', icon: LinkIcon },
-        { id: 'ai-insights', label: 'AI Intelligence', icon: Brain },
-        { id: 'ai-assistant', label: 'AI Assistant', icon: MessageSquareCode },
-        { id: 'issue-config', label: 'Issue Mapping', icon: LayoutGrid },
-        { id: 'issues', label: 'Issue Tracker', icon: AlertTriangle },
-        { id: 'whatsapp-templates', label: 'WhatsApp Templates', icon: MessageCircle },
-        { id: 'modules', label: 'Module Control', icon: LayoutGrid },
-        { id: 'email-config', label: 'Email Control', icon: Mail },
+        { id: 'invite-links', label: 'Invite links', icon: LinkIcon },
+        { id: 'ai-insights', label: 'AI intelligence', icon: Brain },
+        { id: 'ai-assistant', label: 'AI assistant', icon: MessageSquareCode },
+        { id: 'issue-config', label: 'Issue mapping', icon: LayoutGrid },
+        { id: 'issues', label: 'Issue tracker', icon: AlertTriangle },
+        { id: 'whatsapp-templates', label: 'WhatsApp templates', icon: MessageCircle },
+        { id: 'modules', label: 'Module control', icon: LayoutGrid },
+        { id: 'email-config', label: 'Email control', icon: Mail },
         { id: 'settings', label: 'System', icon: Settings },
     ];
 
@@ -493,32 +493,32 @@ const MasterAdminDashboard = () => {
         <div className="min-h-screen bg-background flex font-inter text-foreground">
             {/* Sidebar */}
             {sidebarOpen && <button aria-label="Close menu" className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />}
-            <aside className={`w-72 bg-sidebar border-r border-border flex flex-col p-6 fixed inset-y-0 left-0 overflow-hidden z-50 transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-                <button className="lg:hidden self-end p-2" aria-label="Close menu" onClick={() => setSidebarOpen(false)}><X className="w-5 h-5" /></button>
+            <aside className={`w-72 bg-sidebar border-r border-border flex flex-col px-6 py-6 fixed inset-y-0 left-0 overflow-hidden z-50 transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+                <button className="lg:hidden self-end p-2" aria-label="Close menu" onClick={() => setSidebarOpen(false)}><X strokeWidth={1.5} className="w-5 h-5" /></button>
                 <div className="flex items-center gap-3 mb-8 flex-shrink-0">
-                    <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center border border-primary/20">
+                    <div className="w-10 h-10 bg-primary/10 rounded-md flex items-center justify-center border border-primary/20">
                         <div className="w-5 h-5 border-2 border-primary rounded-sm rotate-45"></div>
                     </div>
                     <div className="flex flex-col">
-                        <span className="font-black text-xl tracking-tighter text-text-primary">MASTER</span>
-                        <span className="text-[10px] font-bold text-text-tertiary uppercase tracking-widest -mt-1">Control Hub</span>
+                        <span className="font-display font-semibold text-lg leading-none text-text-primary">Master</span>
+                        <span className="text-xs font-medium text-text-tertiary mt-1">Control hub</span>
                     </div>
                 </div>
 
-                <nav className="space-y-2 flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-0">
+                <nav className="space-y-0.5 flex-1 overflow-y-auto pr-2 custom-scrollbar min-h-0">
                     {navItems.map((item) => (
                         <React.Fragment key={item.id}>
                             {item.section && (
-                                <p className="px-4 pt-4 pb-1 text-[10px] font-black text-text-tertiary uppercase tracking-widest">{item.section}</p>
+                                <p className="px-3 pt-6 pb-2 text-xs font-medium text-text-tertiary">{item.section}</p>
                             )}
                             <button
                                 onClick={() => handleTabChange(item.id)}
-                                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-300 font-bold text-sm ${activeTab === item.id
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm ${activeTab === item.id
+                                    ? 'bg-primary/10 text-primary-dark dark:text-primary-light'
                                     : 'text-muted-foreground hover:text-foreground hover:bg-muted'
                                     }`}
                             >
-                                <item.icon className="w-4 h-4" />
+                                <item.icon strokeWidth={1.5} className="w-4 h-4" />
                                 {item.label}
                             </button>
                         </React.Fragment>
@@ -528,23 +528,23 @@ const MasterAdminDashboard = () => {
 </nav>
 
                 <div className="pt-6 pb-12 border-t border-border flex-shrink-0">
-                    <div className="bg-orange-500/10 p-4 rounded-2xl border border-orange-500/20 mb-4">
-                        <p className="text-[10px] font-black text-brand-orange uppercase tracking-widest mb-1">Status</p>
+                    <div className="bg-surface-elevated p-3 rounded-md border border-border mb-4">
+                        <p className="text-xs font-medium text-text-tertiary mb-1">Status</p>
                         <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="text-xs font-bold text-foreground">Production Mode</span>
+                            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span className="text-xs font-medium text-foreground">Production mode</span>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-3 px-2 mb-6">
-                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold text-sm">
+                        <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center text-primary-dark font-semibold text-sm">
                             {user?.email?.[0]?.toUpperCase() || 'M'}
                         </div>
                         <div className="flex-1 overflow-hidden">
-                            <p className="font-bold text-sm text-foreground truncate">
+                            <p className="font-medium text-sm text-foreground truncate">
                                 {user?.user_metadata?.full_name || 'Master Admin'}
                             </p>
-                            <p className="text-[10px] text-muted-foreground truncate font-medium">
+                            <p className="text-xs text-muted-foreground truncate font-medium">
                                 {user?.email}
                             </p>
                         </div>
@@ -552,20 +552,20 @@ const MasterAdminDashboard = () => {
 
                     <button
                         onClick={() => setShowFeedbackModal(true)}
-                        className="flex items-center gap-3 px-4 py-3.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-2xl w-full transition-all duration-300 text-sm font-bold group mb-1"
+                        className="flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-primary-dark hover:bg-primary/10 rounded-[10px] w-full transition-colors duration-150 text-sm font-medium mb-1"
                     >
-                        <MessageSquarePlus className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                        Feedback / Bug
+                        <MessageSquarePlus strokeWidth={1.5} className="w-4 h-4" />
+                        Feedback / bug
                     </button>
 
             <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
 
                     <button
                         onClick={() => setShowSignOutModal(true)}
-                        className="flex items-center gap-3 px-4 py-3.5 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 rounded-2xl w-full transition-all duration-300 text-sm font-bold group"
+                        className="flex items-center gap-3 px-3 py-2 text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 rounded-[10px] w-full transition-colors duration-150 text-sm font-medium"
                     >
-                        <LogOut className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-                        Sign Out
+                        <LogOut strokeWidth={1.5} className="w-4 h-4" />
+                        Sign out
                     </button>
                 </div>
             </aside>
@@ -577,23 +577,23 @@ const MasterAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 ${activeTab === 'ai-assistant' || activeTab === 'council' ? 'p-0' : 'p-12'} lg:ml-72 transition-all duration-500 overflow-y-auto`}>
+            <main id="main-scroll-container" className={`flex-1 ${activeTab === 'ai-assistant' || activeTab === 'council' ? 'p-0' : 'px-6 py-6 lg:p-8'} lg:ml-72 overflow-y-auto`}>
 
                 {activeTab !== 'ai-assistant' && activeTab !== 'council' && (
-                    <header className="flex justify-between items-center mb-12">
-                    <button type="button" aria-label="Open menu" className="lg:hidden p-2" onClick={() => setSidebarOpen(true)}><Menu className="w-6 h-6" /></button>
+                    <header className="flex justify-between items-center mb-8">
+                    <button type="button" aria-label="Open menu" className="lg:hidden p-2" onClick={() => setSidebarOpen(true)}><Menu strokeWidth={1.5} className="w-5 h-5" /></button>
                         <div>
-                            <h2 className="text-3xl font-black text-text-primary tracking-tight capitalize">{activeTab.replace('-', ' ')}</h2>
-                            <p className="text-text-tertiary text-sm font-medium mt-1">Real-time system oversight and governance.</p>
+                            <h2 className="text-3xl font-display font-semibold text-text-primary tracking-tight capitalize">{activeTab.replace('-', ' ')}</h2>
+                            <p className="text-text-tertiary text-sm font-medium mt-1">System oversight and governance</p>
                         </div>
 
                         <div className="flex items-center gap-4">
                             <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
+                                <Search strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
                                 <input
                                     type="text"
-                                    placeholder="Search master data..."
-                                    className="pl-10 pr-4 py-2.5 bg-surface-elevated border border-border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 w-64"
+                                    placeholder="Search"
+                                    className="pl-10 pr-4 py-2.5 bg-surface-elevated border border-border rounded-[10px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 w-64"
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
                                 />
@@ -601,24 +601,24 @@ const MasterAdminDashboard = () => {
                             {activeTab === 'organizations' && (
                                 <button
                                     onClick={() => setShowCreateOrgModal(true)}
-                                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-text-inverse font-bold text-xs rounded-xl uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-primary-dark text-white font-semibold text-sm rounded-[10px] hover:opacity-90 transition-opacity duration-150 shadow-sm"
                                 >
-                                    <Plus className="w-4 h-4" /> New Org
+                                    <Plus strokeWidth={1.5} className="w-4 h-4" /> New organization
                                 </button>
                             )}
                             {activeTab === 'users' && (
                                 <button
                                     onClick={() => setShowCreateUserModal(true)}
-                                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-text-inverse font-bold text-xs rounded-xl uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                                    className="flex items-center gap-2 px-4 py-2.5 bg-primary-dark text-white font-semibold text-sm rounded-[10px] hover:opacity-90 transition-opacity duration-150 shadow-sm"
                                 >
-                                    <Plus className="w-4 h-4" /> New User
+                                    <Plus strokeWidth={1.5} className="w-4 h-4" /> New user
                                 </button>
                             )}
                             <button
                                 onClick={() => setShowSignOutModal(true)}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-rose-500 text-white font-bold text-xs rounded-xl uppercase tracking-widest hover:bg-rose-600 transition-all shadow-lg shadow-rose-100"
+                                className="flex items-center gap-2 px-4 py-2.5 bg-card border border-border text-text-secondary font-semibold text-sm rounded-[10px] hover:text-rose-600 hover:border-rose-200 transition-colors duration-150"
                             >
-                                <LogOut className="w-4 h-4" /> Sign Out
+                                <LogOut strokeWidth={1.5} className="w-4 h-4" /> Sign out
                             </button>
                         </div>
                     </header>
@@ -741,16 +741,16 @@ const MasterAdminDashboard = () => {
                         exit={{ opacity: 0, y: 20, scale: 0.9 }}
                         className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100]"
                     >
-                        <div className={`px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border ${toast.type === 'success'
-                            ? 'bg-emerald-900 border-emerald-500/50 text-emerald-50'
-                            : 'bg-rose-900 border-rose-500/50 text-rose-50'
+                        <div className={`px-4 py-3 rounded-md shadow-lg flex items-center gap-3 border ${toast.type === 'success'
+                            ? 'bg-slate-900 border-white/10 text-white'
+                            : 'bg-slate-900 border-white/10 text-white'
                             }`}>
                             {toast.type === 'success' ? (
-                                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                                <CheckCircle2 strokeWidth={1.5} className="w-[18px] h-[18px] text-emerald-400" />
                             ) : (
-                                <AlertTriangle className="w-5 h-5 text-rose-400" />
+                                <AlertTriangle strokeWidth={1.5} className="w-[18px] h-[18px] text-rose-400" />
                             )}
-                            <span className="font-bold text-sm tracking-tight">{toast.message}</span>
+                            <span className="font-medium text-sm">{toast.message}</span>
                         </div>
                     </motion.div>
                 )}
@@ -821,59 +821,59 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
     const kpiStats = [
         {
             id: 'licensed-entities',
-            label: 'Licensed Entities',
+            label: 'Licensed entities',
             value: safeStats.entities.toString(),
             icon: Building2,
             trend: '-',
-            color: 'text-blue-600',
-            bg: 'bg-blue-50',
+            color: 'text-primary-dark',
+            bg: 'bg-primary/10',
             analytics: {
-                title: 'Entity Growth',
+                title: 'Entity growth',
                 items: [
-                    { region: 'Current Total', count: safeStats.entities, delta: '-' },
+                    { region: 'Current total', count: safeStats.entities, delta: '-' },
                 ]
             }
         },
         {
             id: 'active-sessions',
-            label: 'Active Sessions',
+            label: 'Active sessions',
             value: safeStats.activeSessions.toString(),
             icon: Activity,
-            trend: safeStats.activeSessions > 0 ? 'LIVE' : '-',
+            trend: safeStats.activeSessions > 0 ? 'Live' : '-',
             color: 'text-emerald-600',
             bg: 'bg-emerald-50',
             analytics: {
                 title: 'Engagement',
                 items: [
-                    { label: 'Live Users', count: safeStats.activeSessions, delta: '0' },
+                    { label: 'Live users', count: safeStats.activeSessions, delta: '0' },
                 ]
             }
         },
         {
             id: 'security-alerts',
-            label: 'Security Alerts',
+            label: 'Security alerts',
             value: safeStats.securityAlerts.toString(),
             icon: ShieldCheck,
-            trend: safeStats.securityAlerts === 0 ? 'SAFE' : 'NOTICE',
-            color: 'text-indigo-600',
-            bg: 'bg-indigo-50',
+            trend: safeStats.securityAlerts === 0 ? 'Safe' : 'Notice',
+            color: 'text-secondary-dark',
+            bg: 'bg-secondary/10',
             analytics: {
-                title: 'Threat Timeline',
+                title: 'Threat timeline',
                 items: [
-                    { label: 'Resolved Today', count: safeStats.securityAlerts, delta: '-' },
+                    { label: 'Resolved today', count: safeStats.securityAlerts, delta: '-' },
                 ]
             }
         },
         {
             id: 'pending-deletions',
-            label: 'Pending Deletions',
+            label: 'Pending deletions',
             value: safeStats.pendingDeletions.toString(),
             icon: Trash2,
-            trend: safeStats.pendingDeletions > 0 ? 'QUEUED' : '-',
+            trend: safeStats.pendingDeletions > 0 ? 'Queued' : '-',
             color: 'text-rose-600',
             bg: 'bg-rose-50',
             analytics: {
-                title: 'Deletion Queue',
+                title: 'Deletion queue',
                 items: [
                     { label: 'Pending', count: safeStats.pendingDeletions, delta: '-' },
                 ]
@@ -884,7 +884,7 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
     return (
         <div className="space-y-8">
             <div
-                className="grid gap-6 transition-all duration-500 ease-out"
+                className="grid gap-6"
                 style={{
                     gridTemplateColumns: expandedId
                         ? 'repeat(4, minmax(0, 1fr))'
@@ -907,31 +907,31 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
                                 <>
                                     <div className="flex justify-between items-start mb-6">
                                         <div className="w-12 h-12 kpi-icon flex items-center justify-center">
-                                            <stat.icon className="w-6 h-6 text-secondary" />
+                                            <stat.icon strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
                                         </div>
-                                        <span className="text-[11px] font-body font-medium text-text-tertiary px-2 py-1 rounded-lg tracking-wider">
+                                        <span className="text-[11px] font-body font-medium text-text-tertiary px-2 py-1 rounded-md">
                                             {stat.trend}
                                         </span>
                                     </div>
-                                    <p className="text-4xl metric-number text-text-primary mb-1">{stat.value}</p>
-                                    <p className="text-[10px] font-body font-medium text-text-tertiary tracking-widest">{stat.label}</p>
+                                    <p className="text-3xl metric-number tabular-nums text-text-primary mb-1">{stat.value}</p>
+                                    <p className="text-xs font-body font-medium text-text-tertiary">{stat.label}</p>
                                 </>
                             }
                             expandedContent={
                                 <div className="pt-4 space-y-3">
-                                    <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
+                                    <h4 className="text-xs font-medium text-slate-500 mb-3">
                                         {stat.analytics.title}
                                     </h4>
                                     {stat.analytics.items.map((item: any, idx: number) => (
-                                        <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
-                                            <span className="text-sm font-bold text-slate-700">
+                                        <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-[10px]">
+                                            <span className="text-sm font-medium text-slate-700">
                                                 {item.region || item.time || item.label || item.name}
                                             </span>
                                             <div className="flex items-center gap-2">
-                                                <span className="text-sm font-black text-slate-900">
+                                                <span className="text-sm font-semibold text-slate-900 tabular-nums">
                                                     {item.count || item.expires}
                                                 </span>
-                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${item.status === 'Urgent' ? 'bg-rose-100 text-rose-600' :
+                                                <span className={`text-[11px] font-medium px-1.5 py-0.5 rounded tabular-nums ${item.status === 'Urgent' ? 'bg-rose-100 text-rose-600' :
                                                     item.delta?.startsWith('+') ? 'bg-emerald-100 text-emerald-600' :
                                                         'bg-slate-100 text-slate-500'
                                                     }`}>
@@ -951,8 +951,8 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
                 <WhatsAppSystemControl />
                 <div className="lg:col-span-2">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
-                        <div className="glass-panel p-8 h-full">
-                            <h3 className="text-2xl font-display font-semibold text-text-primary mb-6">Regional Performance</h3>
+                        <div className="bg-card border border-border rounded-2xl px-6 py-6 h-full">
+                            <h3 className="text-lg font-display font-semibold text-text-primary mb-6">Regional performance</h3>
                             <div className="space-y-6">
                                 {[
                                     { name: 'North America', status: 'Optimal', load: 45 },
@@ -960,11 +960,11 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
                                     { name: 'Asia Pacific', status: 'Optimal', load: 12 },
                                 ].map((reg, i) => (
                                     <div key={i} className="space-y-2">
-                                        <div className="flex justify-between text-xs font-body font-medium tracking-widest text-text-secondary">
+                                        <div className="flex justify-between text-xs font-body font-medium text-text-secondary">
                                             <span>{reg.name}</span>
                                             <span className={reg.load > 80 ? 'text-error' : 'text-success'}>{reg.status}</span>
                                         </div>
-                                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                        <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
                                             <div className={`h-full ${reg.load > 80 ? 'bg-error' : 'bg-success'} rounded-full`} style={{ width: `${reg.load}%` }} />
                                         </div>
                                     </div>
@@ -972,17 +972,17 @@ const OverviewGrid = ({ stats }: { stats: any }) => {
                             </div>
                         </div>
 
-                        <div className="glass-panel p-8 h-full">
-                            <h3 className="text-2xl font-display font-semibold text-text-primary mb-6">System Health</h3>
-                            <div className="space-y-4">
+                        <div className="bg-card border border-border rounded-2xl px-6 py-6 h-full">
+                            <h3 className="text-lg font-display font-semibold text-text-primary mb-6">System health</h3>
+                            <div className="space-y-2">
                                 {[
-                                    { id: 'AUTH-SV', label: 'Auth Middleware', status: 'Healthy' },
-                                    { id: 'DB-IDX', label: 'Global Indexes', status: 'Warning' },
-                                    { id: 'OAUTH-API', label: 'OAuth Gateway', status: 'Healthy' }
+                                    { id: 'AUTH-SV', label: 'Auth middleware', status: 'Healthy' },
+                                    { id: 'DB-IDX', label: 'Global indexes', status: 'Warning' },
+                                    { id: 'OAUTH-API', label: 'OAuth gateway', status: 'Healthy' }
                                 ].map((svc, i) => (
-                                    <div key={i} className="flex items-center justify-between p-4 premium-list">
+                                    <div key={i} className="flex items-center justify-between p-3 rounded-[10px] bg-muted/60">
                                         <div className="flex items-center gap-3">
-                                            <span className="text-[10px] font-body font-medium text-text-tertiary px-2 py-0.5 border border-border/10 rounded-md tracking-widest">{svc.id}</span>
+                                            <span className="text-[11px] font-mono text-text-tertiary px-1.5 py-0.5 border border-border rounded">{svc.id}</span>
                                             <span className="text-sm font-body font-medium text-text-secondary">{svc.label}</span>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -1040,7 +1040,7 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
     if (error) {
         return (
             <div className="text-center py-20 border border-dashed border-border rounded-2xl">
-                <AlertTriangle className="w-10 h-10 mx-auto mb-3 text-warning" />
+                <AlertTriangle strokeWidth={1.5} className="w-10 h-10 mx-auto mb-3 text-warning" />
                 <p className="text-sm font-semibold text-muted-foreground">{error}</p>
             </div>
         );
@@ -1054,12 +1054,12 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
     const hotLeads = data?.hot_leads ?? [];
 
     const kpiCards: { id: string; label: string; value: number; icon: any; color: string; tint: string }[] = [
-        { id: 'total', label: 'Total Leads', value: kpis.total_leads, icon: TrendingUp, color: 'var(--primary)', tint: 'rgba(112,143,150,0.12)' },
-        { id: 'hot', label: 'Hot Leads', value: kpis.hot_leads, icon: Flame, color: 'var(--danger)', tint: 'rgba(239,68,68,0.1)' },
-        { id: 'warm', label: 'Warm Leads', value: kpis.warm_leads, icon: Activity, color: 'var(--warning)', tint: 'rgba(245,158,11,0.1)' },
-        { id: 'won', label: 'Won Leads', value: kpis.won_leads, icon: CheckCircle2, color: 'var(--success)', tint: 'rgba(16,185,129,0.1)' },
-        { id: 'lost', label: 'Lost Leads', value: kpis.lost_leads, icon: XCircle, color: 'var(--text-tertiary)', tint: 'rgba(100,116,139,0.1)' },
-        { id: 'followups', label: 'Follow-ups Due', value: kpis.followups_due, icon: Phone, color: 'var(--info)', tint: 'rgba(59,130,246,0.1)' },
+        { id: 'total', label: 'Total leads', value: kpis.total_leads, icon: TrendingUp, color: 'var(--primary)', tint: 'rgba(112,143,150,0.12)' },
+        { id: 'hot', label: 'Hot leads', value: kpis.hot_leads, icon: Flame, color: 'var(--danger)', tint: 'rgba(239,68,68,0.1)' },
+        { id: 'warm', label: 'Warm leads', value: kpis.warm_leads, icon: Activity, color: 'var(--warning)', tint: 'rgba(245,158,11,0.1)' },
+        { id: 'won', label: 'Won leads', value: kpis.won_leads, icon: CheckCircle2, color: 'var(--success)', tint: 'rgba(16,185,129,0.1)' },
+        { id: 'lost', label: 'Lost leads', value: kpis.lost_leads, icon: XCircle, color: 'var(--text-tertiary)', tint: 'rgba(100,116,139,0.1)' },
+        { id: 'followups', label: 'Follow-ups due', value: kpis.followups_due, icon: Phone, color: 'var(--info)', tint: 'rgba(59,130,246,0.1)' },
     ];
 
     const maxLocation = Math.max(1, ...byLocation.map(l => l.count));
@@ -1077,34 +1077,34 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
             {/* KPI tiles */}
             <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
                 {kpiCards.map((c) => (
-                    <div key={c.id} className="relative overflow-hidden rounded-2xl bg-card border border-border shadow-[var(--shadow-md)] p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform duration-200">
+                    <div key={c.id} className="relative overflow-hidden rounded-2xl bg-card border border-border shadow-[var(--shadow-md)] px-5 py-5 flex flex-col gap-3 hover:border-text-tertiary/40 transition-colors duration-150">
                         <div className="flex items-start justify-between">
-                            <span className="text-[11px] font-semibold text-text-tertiary tracking-widest uppercase">{c.label}</span>
-                            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: c.tint }}>
-                                <c.icon className="w-4 h-4" style={{ color: c.color }} />
+                            <span className="text-xs font-medium text-text-tertiary">{c.label}</span>
+                            <div className="w-9 h-9 rounded-[10px] bg-muted flex items-center justify-center flex-shrink-0">
+                                <c.icon strokeWidth={1.5} className="w-4 h-4 text-text-tertiary" />
                             </div>
                         </div>
-                        <p className="text-3xl metric-number" style={{ color: 'var(--text-primary)' }}>{c.value}</p>
+                        <p className="text-3xl metric-number tabular-nums" style={{ color: 'var(--text-primary)' }}>{c.value}</p>
                     </div>
                 ))}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Leads by Location */}
-                <div className="bg-card border border-border rounded-3xl p-8">
+                <div className="bg-card border border-border rounded-2xl px-6 py-6">
                     <div className="flex items-center gap-2 mb-6">
-                        <MapPin className="w-5 h-5 text-secondary" />
-                        <h3 className="text-lg font-black text-foreground">Leads by Location</h3>
+                        <MapPin strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
+                        <h3 className="text-lg font-semibold text-foreground">Leads by location</h3>
                     </div>
                     {byLocation.length === 0 ? (
-                        <p className="text-sm text-muted-foreground italic py-6 text-center">No location data yet.</p>
+                        <p className="text-sm text-muted-foreground py-6 text-center">No location data yet</p>
                     ) : (
                         <div className="space-y-4">
                             {byLocation.slice(0, 10).map((l) => (
                                 <div key={l.location} className="space-y-1.5">
-                                    <div className="flex justify-between text-xs font-bold text-text-secondary">
+                                    <div className="flex justify-between text-xs font-medium text-text-secondary">
                                         <span className="truncate pr-2">{l.location}</span>
-                                        <span className="flex-shrink-0">{l.count}</span>
+                                        <span className="flex-shrink-0 tabular-nums">{l.count}</span>
                                     </div>
                                     <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
                                         <div className="h-full rounded-full" style={{ width: `${Math.round((l.count / maxLocation) * 100)}%`, background: 'var(--primary)' }} />
@@ -1116,29 +1116,29 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
                 </div>
 
                 {/* Leads by Source */}
-                <div className="bg-card border border-border rounded-3xl p-8">
+                <div className="bg-card border border-border rounded-2xl px-6 py-6">
                     <div className="flex items-center gap-2 mb-6">
-                        <Radio className="w-5 h-5 text-secondary" />
-                        <h3 className="text-lg font-black text-foreground">Leads by Source</h3>
+                        <Radio strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
+                        <h3 className="text-lg font-semibold text-foreground">Leads by source</h3>
                     </div>
                     {bySource.length === 0 ? (
-                        <p className="text-sm text-muted-foreground italic py-6 text-center">No campaign source data yet.</p>
+                        <p className="text-sm text-muted-foreground py-6 text-center">No campaign source data yet</p>
                     ) : (
                         <div className="space-y-4">
                             {bySource.slice(0, 10).map((s) => {
                                 const Icon = sourceIcon(s.source_name);
                                 return (
                                     <div key={s.source_name} className="flex items-center gap-3">
-                                        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(59,130,246,0.1)' }}>
-                                            <Icon className="w-4 h-4 text-info" />
+                                        <div className="w-8 h-8 rounded-[10px] bg-muted flex items-center justify-center flex-shrink-0">
+                                            <Icon strokeWidth={1.5} className="w-4 h-4 text-text-tertiary" />
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <div className="flex justify-between text-xs font-bold text-text-secondary mb-1">
+                                            <div className="flex justify-between text-xs font-medium text-text-secondary mb-1">
                                                 <span className="truncate pr-2">{s.source_name}</span>
-                                                <span className="flex-shrink-0">{s.count}</span>
+                                                <span className="flex-shrink-0 tabular-nums">{s.count}</span>
                                             </div>
                                             <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
-                                                <div className="h-full rounded-full" style={{ width: `${Math.round((s.count / maxSource) * 100)}%`, background: 'var(--info)' }} />
+                                                <div className="h-full rounded-full" style={{ width: `${Math.round((s.count / maxSource) * 100)}%`, background: 'var(--primary)' }} />
                                             </div>
                                         </div>
                                     </div>
@@ -1150,23 +1150,23 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
             </div>
 
             {/* BD Rep Performance */}
-            <div className="bg-card border border-border rounded-3xl p-8">
+            <div className="bg-card border border-border rounded-2xl px-6 py-6">
                 <div className="flex items-center gap-2 mb-6">
-                    <Users className="w-5 h-5 text-secondary" />
-                    <h3 className="text-lg font-black text-foreground">BD Rep Performance</h3>
+                    <Users strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
+                    <h3 className="text-lg font-semibold text-foreground">BD rep performance</h3>
                 </div>
                 {repPerformance.length === 0 ? (
-                    <p className="text-sm text-muted-foreground italic py-6 text-center">No assigned reps yet.</p>
+                    <p className="text-sm text-muted-foreground py-6 text-center">No assigned reps yet</p>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead>
                                 <tr className="border-b border-border">
-                                    <th className="py-3 text-[10px] font-black text-text-tertiary uppercase tracking-widest">POC / BD Rep</th>
-                                    <th className="py-3 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Total Leads</th>
-                                    <th className="py-3 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Hot</th>
-                                    <th className="py-3 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Won</th>
-                                    <th className="py-3 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Follow-ups Due</th>
+                                    <th className="py-3 text-xs font-medium text-text-tertiary">POC / BD rep</th>
+                                    <th className="py-3 text-xs font-medium text-text-tertiary text-right">Total leads</th>
+                                    <th className="py-3 text-xs font-medium text-text-tertiary text-right">Hot</th>
+                                    <th className="py-3 text-xs font-medium text-text-tertiary text-right">Won</th>
+                                    <th className="py-3 text-xs font-medium text-text-tertiary text-right">Follow-ups due</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -1174,16 +1174,16 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
                                     <tr key={r.user_id} className="hover:bg-muted/40 transition-colors">
                                         <td className="py-4">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-black text-xs flex-shrink-0">
+                                                <div className="w-8 h-8 rounded-[10px] bg-primary/10 flex items-center justify-center text-primary-dark font-semibold text-xs flex-shrink-0">
                                                     {(r.user_name || '?')[0]?.toUpperCase() || '?'}
                                                 </div>
-                                                <span className="text-sm font-bold text-foreground">{r.user_name || 'Unknown'}</span>
+                                                <span className="text-sm font-medium text-foreground">{r.user_name || 'Unknown'}</span>
                                             </div>
                                         </td>
-                                        <td className="py-4 text-right text-sm font-black text-foreground">{r.total_leads}</td>
-                                        <td className="py-4 text-right text-sm font-bold" style={{ color: 'var(--danger)' }}>{r.hot}</td>
-                                        <td className="py-4 text-right text-sm font-bold" style={{ color: 'var(--success)' }}>{r.won}</td>
-                                        <td className="py-4 text-right text-sm font-bold" style={{ color: r.followups_due > 0 ? 'var(--info)' : 'var(--text-tertiary)' }}>{r.followups_due}</td>
+                                        <td className="py-4 text-right text-sm font-semibold text-foreground tabular-nums">{r.total_leads}</td>
+                                        <td className="py-4 text-right text-sm font-medium tabular-nums" style={{ color: 'var(--danger)' }}>{r.hot}</td>
+                                        <td className="py-4 text-right text-sm font-medium tabular-nums" style={{ color: 'var(--success)' }}>{r.won}</td>
+                                        <td className="py-4 text-right text-sm font-medium tabular-nums" style={{ color: r.followups_due > 0 ? 'var(--info)' : 'var(--text-tertiary)' }}>{r.followups_due}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -1193,25 +1193,25 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
             </div>
 
             {/* Hot / Priority Leads */}
-            <div className="bg-card border border-border rounded-3xl p-8">
+            <div className="bg-card border border-border rounded-2xl px-6 py-6">
                 <div className="flex items-center gap-2 mb-6">
-                    <Flame className="w-5 h-5" style={{ color: 'var(--danger)' }} />
-                    <h3 className="text-lg font-black text-foreground">Hot / Priority Leads</h3>
+                    <Flame strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
+                    <h3 className="text-lg font-semibold text-foreground">Hot / priority leads</h3>
                 </div>
                 {hotLeads.length === 0 ? (
-                    <p className="text-sm text-muted-foreground italic py-6 text-center">No hot leads right now.</p>
+                    <p className="text-sm text-muted-foreground py-6 text-center">No hot leads right now</p>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
                             <thead>
                                 <tr className="border-b border-border">
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Company</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Contact</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Location</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Source</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">POC</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Status</th>
-                                    <th className="py-3 px-2 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Follow-up</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Company</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Contact</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Location</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Source</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">POC</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Status</th>
+                                    <th className="py-3 px-2 text-xs font-medium text-text-tertiary">Follow-up</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-border">
@@ -1223,17 +1223,17 @@ const BDPipelineTab = ({ router }: { router: ReturnType<typeof useRouter> }) => 
                                             onClick={canLink ? () => router.push(`/${l.organization_id}/crm`) : undefined}
                                             className={`transition-colors ${canLink ? 'cursor-pointer hover:bg-muted/40' : ''}`}
                                         >
-                                            <td className="py-4 px-2 text-sm font-bold text-foreground">{l.company_name || '—'}</td>
+                                            <td className="py-4 px-2 text-sm font-medium text-foreground">{l.company_name || '—'}</td>
                                             <td className="py-4 px-2 text-sm text-text-secondary">{l.contact_person || '—'}</td>
                                             <td className="py-4 px-2 text-sm text-text-secondary">{l.location || '—'}</td>
                                             <td className="py-4 px-2 text-sm text-text-secondary">{l.source_name || '—'}</td>
                                             <td className="py-4 px-2 text-sm text-text-secondary">{l.poc || '—'}</td>
                                             <td className="py-4 px-2">
-                                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)' }}>
+                                                <span className="px-2 py-0.5 rounded-md text-xs font-medium capitalize" style={{ background: 'rgba(239,68,68,0.1)', color: 'var(--danger)' }}>
                                                     {l.status_name}
                                                 </span>
                                             </td>
-                                            <td className="py-4 px-2 text-xs font-medium text-text-secondary">
+                                            <td className="py-4 px-2 text-xs font-medium text-text-secondary tabular-nums">
                                                 {l.next_followup_date ? new Date(l.next_followup_date).toLocaleDateString() : '—'}
                                             </td>
                                         </tr>
@@ -1261,18 +1261,18 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
 
     return (
         <div className="space-y-6">
-            <div className="premium-list overflow-hidden">
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
                 <table className="w-full text-left">
-                    <thead className="bg-text-primary/5 border-b border-border/10">
+                    <thead className="bg-text-primary/5 border-b border-border">
                         <tr>
-                            <th className="px-8 py-5 text-[10px] font-body font-medium text-text-tertiary tracking-widest">Organization</th>
-                            <th className="px-8 py-5 text-[10px] font-body font-medium text-text-tertiary tracking-widest">Properties</th>
-                            <th className="px-8 py-5 text-[10px] font-body font-medium text-text-tertiary tracking-widest">Usage</th>
-                            <th className="px-8 py-5 text-[10px] font-body font-medium text-text-tertiary tracking-widest">Status</th>
-                            <th className="px-8 py-5 text-[10px] font-body font-medium text-text-tertiary tracking-widest">Actions</th>
+                            <th className="px-8 py-5 text-xs font-body font-medium text-text-tertiary">Organization</th>
+                            <th className="px-8 py-5 text-xs font-body font-medium text-text-tertiary">Properties</th>
+                            <th className="px-8 py-5 text-xs font-body font-medium text-text-tertiary">Usage</th>
+                            <th className="px-8 py-5 text-xs font-body font-medium text-text-tertiary">Status</th>
+                            <th className="px-8 py-5 text-xs font-body font-medium text-text-tertiary">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-border/10">
+                    <tbody className="divide-y divide-border">
                         {organizations.map((org) => {
                             // Correct deduplicated count of users in this organization
                             const orgMemberIds = new Set([
@@ -1290,21 +1290,21 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
                                 >
                                     <td className="px-8 py-6">
                                         <div className="flex items-center gap-4">
-                                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary text-xs font-bold border border-primary/20">
+                                            <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center text-primary-dark text-xs font-semibold border border-primary/20">
                                                 {(org.name || '??').substring(0, 2).toUpperCase()}
                                             </div>
                                             <div>
-                                                <p className="font-black text-text-primary text-sm leading-none mb-1">{org.name}</p>
-                                                <p className="text-xs text-text-tertiary font-medium">/{org.code}</p>
+                                                <p className="font-semibold text-text-primary text-sm leading-none mb-1">{org.name}</p>
+                                                <p className="text-xs text-text-tertiary font-mono">/{org.code}</p>
                                             </div>
                                         </div>
                                     </td>
                                     <td className="px-8 py-6">
-                                        <span className="text-sm font-black text-slate-700">{propertiesCount} Entities</span>
+                                        <span className="text-sm font-medium text-slate-700 tabular-nums">{propertiesCount} entities</span>
                                     </td>
                                     <td className="px-8 py-6">
                                         <div className="flex flex-col gap-1">
-                                            <span className="text-xs font-bold text-slate-600">{orgMemberIds.size} Users</span>
+                                            <span className="text-xs font-medium text-slate-600 tabular-nums">{orgMemberIds.size} users</span>
                                             <div className="w-20 h-1 bg-slate-100 rounded-full overflow-hidden">
                                                 <div className="h-full bg-slate-400 rounded-full" style={{ width: orgMemberIds.size > 0 ? '70%' : '0%' }} />
                                             </div>
@@ -1312,33 +1312,33 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
                                     </td>
                                     <td className="px-8 py-6">
                                         {org.is_deleted ? (
-                                            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-50 text-rose-600 rounded-full text-[10px] font-black uppercase tracking-wider border border-rose-100 animate-pulse">
-                                                Cooling Down
+                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-rose-50 text-rose-700 rounded-full text-xs font-medium border border-rose-100">
+                                                Cooling down
                                             </div>
                                         ) : (
-                                            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase tracking-wider border border-emerald-100">
+                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 rounded-full text-xs font-medium border border-emerald-100">
                                                 Active
                                             </div>
                                         )}
                                     </td>
                                     <td className="px-8 py-6" onClick={(e) => e.stopPropagation()}>
                                         <div className="flex items-center gap-2">
-                                            <button className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-100">
-                                                <ExternalLink className="w-4 h-4" />
+                                            <button className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-[10px] transition-colors duration-150 border border-transparent hover:border-slate-100">
+                                                <ExternalLink strokeWidth={1.5} className="w-4 h-4" />
                                             </button>
                                             {org.is_deleted ? (
                                                 <button
                                                     onClick={() => onRestore(org.id)}
-                                                    className="p-2 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded-lg transition-all border border-indigo-100"
+                                                    className="p-2 text-primary-dark hover:bg-primary/10 rounded-[10px] transition-colors duration-150 border border-primary/20"
                                                 >
-                                                    <RefreshCcw className="w-4 h-4" />
+                                                    <RefreshCcw strokeWidth={1.5} className="w-4 h-4" />
                                                 </button>
                                             ) : (
                                                 <button
                                                     onClick={() => setDeleteConfirmId(org.id)}
-                                                    className="p-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all border border-transparent hover:border-rose-100"
+                                                    className="p-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50 rounded-[10px] transition-colors duration-150 border border-transparent hover:border-rose-100"
                                                 >
-                                                    <Trash2 className="w-4 h-4" />
+                                                    <Trash2 strokeWidth={1.5} className="w-4 h-4" />
                                                 </button>
                                             )}
                                         </div>
@@ -1363,15 +1363,15 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
                             initial={{ scale: 0.95 }}
                             animate={{ scale: 1 }}
                             exit={{ scale: 0.95 }}
-                            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl"
+                            className="bg-white rounded-2xl px-6 py-6 max-w-md w-full shadow-xl"
                         >
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="w-12 h-12 bg-rose-100 rounded-2xl flex items-center justify-center">
-                                    <AlertTriangle className="w-6 h-6 text-rose-600" />
+                                <div className="w-10 h-10 bg-rose-100 rounded-md flex items-center justify-center">
+                                    <AlertTriangle strokeWidth={1.5} className="w-5 h-5 text-rose-600" />
                                 </div>
                                 <div>
-                                    <h3 className="text-xl font-black text-slate-900">Soft Delete Organization</h3>
-                                    <p className="text-sm text-slate-500">This action has a 24-hour cooling period.</p>
+                                    <h3 className="text-xl font-semibold text-slate-900">Soft delete organization</h3>
+                                    <p className="text-sm text-slate-500">This action has a 24-hour cooling period</p>
                                 </div>
                             </div>
                             <p className="text-slate-600 mb-8">
@@ -1380,7 +1380,7 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
                             <div className="flex gap-4">
                                 <button
                                     onClick={() => setDeleteConfirmId(null)}
-                                    className="flex-1 py-3 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                                    className="flex-1 py-3 border border-slate-200 rounded-[10px] font-semibold text-slate-600 hover:bg-slate-50 transition-colors duration-150"
                                 >
                                     Cancel
                                 </button>
@@ -1389,9 +1389,9 @@ const OrganizationsList = ({ organizations, users, isLoading, onSoftDelete, onRe
                                         onSoftDelete(deleteConfirmId);
                                         setDeleteConfirmId(null);
                                     }}
-                                    className="flex-1 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-colors"
+                                    className="flex-1 py-3 bg-rose-600 text-white rounded-[10px] font-semibold hover:bg-rose-700 transition-colors duration-150"
                                 >
-                                    Confirm Delete
+                                    Confirm delete
                                 </button>
                             </div>
                         </motion.div>
@@ -1422,18 +1422,18 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
         );
 
     return (
-        <div className="premium-list p-8">
+        <div className="bg-card border border-border rounded-2xl px-6 py-6">
             <div className="flex justify-between items-center mb-8">
                 <div className="flex items-center gap-4">
-                    <h3 className="text-xl font-display font-semibold text-text-primary">System Users ({filteredUsers.length})</h3>
+                    <h3 className="text-xl font-display font-semibold text-text-primary">System users ({filteredUsers.length})</h3>
                     <div className="relative">
-                        <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
+                        <Filter strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
                         <select
                             value={selectedOrgFilter}
                             onChange={(e) => setSelectedOrgFilter(e.target.value)}
-                            className="pl-10 pr-8 py-2 bg-text-primary/5 border border-border/10 rounded-xl text-xs font-body font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none cursor-pointer text-text-secondary"
+                            className="pl-10 pr-8 py-2 bg-text-primary/5 border border-border rounded-[10px] text-xs font-body font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none cursor-pointer text-text-secondary"
                         >
-                            <option value="all">All Organizations</option>
+                            <option value="all">All organizations</option>
                             {organizations.map(org => (
                                 <option key={org.id} value={org.id}>{org.name}</option>
                             ))}
@@ -1443,19 +1443,19 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
                 <div className="flex items-center gap-3">
                     <button
                         onClick={onAddUser}
-                        className="px-5 py-2.5 bg-success text-text-inverse font-body font-semibold text-xs rounded-xl tracking-widest flex items-center gap-2 hover:opacity-90 transition-smooth"
+                        className="px-4 py-2.5 bg-primary-dark text-white font-body font-semibold text-sm rounded-[10px] flex items-center gap-2 hover:opacity-90 transition-opacity duration-150"
                     >
-                        <Plus className="w-4 h-4" /> ADD USER
+                        <Plus strokeWidth={1.5} className="w-4 h-4" /> Add user
                     </button>
-                    <button className="px-5 py-2.5 bg-text-primary text-text-inverse font-body font-semibold text-xs rounded-xl tracking-widest flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98] transition-smooth">
-                        <Users className="w-4 h-4" /> EXPORT AUDIT LOG
+                    <button className="px-4 py-2.5 bg-text-primary text-text-inverse font-body font-semibold text-sm rounded-[10px] flex items-center gap-2 hover:opacity-90 active:scale-[0.98] transition-[transform,opacity] duration-150">
+                        <Users strokeWidth={1.5} className="w-4 h-4" /> Export audit log
                     </button>
                 </div>
             </div>
 
             <div className="space-y-4">
                 {filteredUsers.length === 0 ? (
-                    <div className="text-center py-12 text-text-tertiary italic font-body">No users found for this selection.</div>
+                    <div className="text-center py-12 text-text-tertiary font-body">No users found for this selection</div>
                 ) : (
                     filteredUsers.map((user) => {
                         const isMasterAdmin = user.is_master_admin === true;
@@ -1471,17 +1471,17 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
                         const hasMemberships = orgMemberships.length > 0 || propMemberships.length > 0;
 
                         return (
-                            <div key={user.id} className="flex items-center justify-between p-6 border border-border/10 rounded-3xl hover:border-border/20 transition-smooth group">
+                            <div key={user.id} className="flex items-center justify-between px-5 py-5 border border-border rounded-2xl hover:border-text-tertiary/40 transition-colors duration-150 group">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                                        <Users className="w-6 h-6" />
+                                    <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center text-primary-dark">
+                                        <Users strokeWidth={1.5} className="w-5 h-5" />
                                     </div>
                                     <div>
                                         <h4 className="font-display font-semibold text-text-primary flex items-center gap-2">
-                                            {user.full_name || 'Unknown User'}
+                                            {user.full_name || 'Unknown user'}
                                             {user.is_master_admin && (
-                                                <span className="text-[9px] bg-text-primary text-text-inverse font-body font-semibold px-1.5 py-0.5 rounded-md tracking-widest border border-text-primary flex items-center gap-1">
-                                                    <ShieldCheck className="w-3 h-3" /> MASTER
+                                                <span className="text-[11px] bg-text-primary text-text-inverse font-body font-medium px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                                                    <ShieldCheck strokeWidth={1.5} className="w-3 h-3" /> Master
                                                 </span>
                                             )}
                                         </h4>
@@ -1490,29 +1490,29 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
                                         {/* Context Badges (Where do they belong?) */}
                                         <div className="mt-2 flex flex-wrap gap-2">
                                             {isMasterAdmin && (
-                                                <span className="text-xs text-indigo-600 font-bold italic">
+                                                <span className="text-xs text-primary-dark font-medium">
                                                     Platform-level access
                                                 </span>
                                             )}
 
                                             {!isMasterAdmin && !hasMemberships && (
-                                                <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-lg border border-slate-100">
+                                                <span className="text-[11px] font-medium text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200">
                                                     Unassigned
                                                 </span>
                                             )}
 
                                             {orgMemberships.map((m, idx) => {
-                                                const orgName = organizations.find(o => o.id === m.organization_id)?.name || 'Unknown Org';
+                                                const orgName = organizations.find(o => o.id === m.organization_id)?.name || 'Unknown org';
                                                 return (
-                                                    <span key={`org-${idx}`} className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100 flex items-center gap-1">
-                                                        <Building2 className="w-3 h-3" /> {orgName}
+                                                    <span key={`org-${idx}`} className="text-[11px] font-medium text-primary-dark bg-primary/10 px-2 py-0.5 rounded-md border border-primary/20 flex items-center gap-1">
+                                                        <Building2 strokeWidth={1.5} className="w-3 h-3" /> {orgName}
                                                     </span>
                                                 );
                                             })}
 
                                             {propMemberships.map((m, idx) => (
-                                                <span key={`prop-${idx}`} className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100 flex items-center gap-1">
-                                                    <Building2 className="w-3 h-3" /> {m.property?.name || 'Unknown Property'}
+                                                <span key={`prop-${idx}`} className="text-[11px] font-medium text-secondary-dark bg-secondary/10 px-2 py-0.5 rounded-md border border-secondary/20 flex items-center gap-1">
+                                                    <Building2 strokeWidth={1.5} className="w-3 h-3" /> {m.property?.name || 'Unknown property'}
                                                 </span>
                                             ))}
                                         </div>
@@ -1522,21 +1522,21 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
                                 {/* Roles Column */}
                                 <div className="flex items-center gap-8">
                                     <div className="flex flex-col items-end gap-1">
-                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assigned Roles</span>
+                                        <span className="text-xs font-medium text-slate-500 mb-1">Assigned roles</span>
 
                                         {isMasterAdmin && (
-                                            <span className="text-[10px] bg-indigo-50 text-indigo-600 px-2 py-1 rounded uppercase font-black">
-                                                MASTER ADMIN
+                                            <span className="text-xs bg-primary/10 text-primary-dark px-2 py-0.5 rounded-md font-medium">
+                                                Master admin
                                             </span>
                                         )}
 
                                         {orgMemberships.map((m, idx) => (
                                             <div key={`org-role-${idx}`} className="flex items-center gap-2">
-                                                <span className="text-[10px] text-slate-400 font-medium">Org:</span>
+                                                <span className="text-[11px] text-slate-500 font-medium">Org:</span>
                                                 <select
                                                     value={m.role}
                                                     onChange={(e) => onUpdateRole(user.id, e.target.value, m.organization_id)}
-                                                    className="text-sm font-bold text-emerald-700 bg-transparent cursor-pointer border-b border-dotted border-emerald-300 focus:outline-none"
+                                                    className="text-sm font-medium text-primary-dark bg-transparent cursor-pointer border-b border-dotted border-primary/40 focus:outline-none"
                                                 >
                                                     {roleOptions.map(role => (
                                                         <option key={role} value={role}>{role.replace('_', ' ').toUpperCase()}</option>
@@ -1547,15 +1547,15 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
 
                                         {propMemberships.map((m, idx) => (
                                             <div key={`prop-role-${idx}`} className="flex items-center gap-2">
-                                                <span className="text-[10px] text-slate-400 font-medium">Prop:</span>
-                                                <span className="text-sm font-bold text-blue-700 border-b border-dotted border-blue-300">
+                                                <span className="text-[11px] text-slate-500 font-medium">Prop:</span>
+                                                <span className="text-sm font-medium text-secondary-dark border-b border-dotted border-secondary/40">
                                                     {m.role?.replace('_', ' ').toUpperCase()}
                                                 </span>
                                             </div>
                                         ))}
 
                                         {!isMasterAdmin && !hasMemberships && (
-                                            <span className="text-xs text-slate-300 italic">No Role</span>
+                                            <span className="text-xs text-slate-400">No role</span>
                                         )}
                                     </div>
 
@@ -1564,10 +1564,10 @@ const UserDirectory = ({ users, organizations, onUpdateRole, onToggleStatus, onD
                                         {/* Status Toggles Logic - complex for multiple roles, maybe just show delete for now */}
                                         <button
                                             onClick={() => onDeleteUser(user.id)}
-                                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition-colors"
-                                            title="Delete User"
+                                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-[10px] transition-colors"
+                                            title="Delete user"
                                         >
-                                            <Trash2 className="w-4 h-4" />
+                                            <Trash2 strokeWidth={1.5} className="w-4 h-4" />
                                         </button>
                                     </div>
                                 </div>
@@ -1586,11 +1586,11 @@ const ModuleConfig = ({ organizations, onUpdateModules }: {
     onUpdateModules: (orgId: string, modules: string[]) => void;
 }) => {
     const modulesList = [
-        { id: 'ticketing', name: 'Ticketing & SLA', desc: 'Manage maintenance requests with SLAs.' },
-        { id: 'viewer', name: '2.5D Building Viewer', desc: 'Interactive floor-wise visual maps.' },
-        { id: 'analytics', name: 'Performance Analytics', desc: 'Deep insights into operational health.' },
-        { id: 'procurement', name: 'Inventory Control', desc: 'Stock and vendor management.' },
-        { id: 'visitors', name: 'Visitor Management', desc: 'Gate pass and visitor tracking.' },
+        { id: 'ticketing', name: 'Ticketing & SLA', desc: 'Manage maintenance requests with SLAs' },
+        { id: 'viewer', name: '2.5D building viewer', desc: 'Interactive floor-wise visual maps' },
+        { id: 'analytics', name: 'Performance analytics', desc: 'Insights into operational health' },
+        { id: 'procurement', name: 'Inventory control', desc: 'Stock and vendor management' },
+        { id: 'visitors', name: 'Visitor management', desc: 'Gate pass and visitor tracking' },
     ];
 
     const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
@@ -1620,21 +1620,21 @@ const ModuleConfig = ({ organizations, onUpdateModules }: {
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 bg-white border border-slate-100 rounded-[32px] p-8 h-fit">
-                <h3 className="text-lg font-black text-slate-900 mb-6">Select Organization</h3>
+            <div className="lg:col-span-1 bg-white border border-slate-900/[0.08] rounded-2xl px-6 py-6 h-fit">
+                <h3 className="text-lg font-semibold text-slate-900 mb-4">Select organization</h3>
                 <div className="space-y-2">
                     {organizations.map((org) => (
                         <button
                             key={org.id}
                             onClick={() => setSelectedOrg(org.id)}
-                            className={`w-full text-left p-4 rounded-2xl border transition-all ${selectedOrg === org.id
-                                ? 'border-slate-900 bg-slate-900 text-white'
-                                : 'border-slate-50 bg-slate-50 text-slate-400 hover:border-slate-200'
+                            className={`w-full text-left p-3 rounded-md border transition-colors duration-150 ${selectedOrg === org.id
+                                ? 'border-primary/30 bg-primary/10 text-primary-dark'
+                                : 'border-transparent bg-slate-50 text-slate-700 hover:border-slate-200'
                                 }`}
                         >
-                            <p className="text-sm font-black">{org.name}</p>
-                            <p className={`text-[10px] font-bold uppercase tracking-widest ${selectedOrg === org.id ? 'text-white/40' : 'text-slate-300'}`}>
-                                {org.available_modules?.length || 0} Active Modules
+                            <p className="text-sm font-medium">{org.name}</p>
+                            <p className={`text-xs tabular-nums ${selectedOrg === org.id ? 'text-primary-dark/70' : 'text-slate-500'}`}>
+                                {org.available_modules?.length || 0} active modules
                             </p>
                         </button>
                     ))}
@@ -1643,41 +1643,41 @@ const ModuleConfig = ({ organizations, onUpdateModules }: {
 
             <div className="lg:col-span-2 space-y-6">
                 {!selectedOrg ? (
-                    <div className="h-96 border-2 border-dashed border-slate-100 rounded-[32px] flex items-center justify-center text-slate-300 font-bold italic">
-                        Choose an organization on the left to configure modules.
+                    <div className="h-96 border border-dashed border-slate-200 rounded-2xl flex items-center justify-center text-slate-500 text-sm font-medium">
+                        Choose an organization on the left to configure modules
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        <header className="flex justify-between items-center mb-8 bg-slate-50 p-6 rounded-[24px]">
+                        <header className="flex justify-between items-center mb-6 bg-slate-50 px-5 py-5 rounded-md">
                             <div>
-                                <h4 className="text-lg font-black text-slate-800">Capability Matrix</h4>
-                                <p className="text-xs text-slate-400 font-medium italic">Customizing licensing for {organizations.find((o) => o.id === selectedOrg)?.name}</p>
+                                <h4 className="text-lg font-semibold text-slate-800">Capability matrix</h4>
+                                <p className="text-xs text-slate-500 font-medium">Customizing licensing for {organizations.find((o) => o.id === selectedOrg)?.name}</p>
                             </div>
                             <button
                                 onClick={handleSave}
-                                className="px-6 py-3 bg-emerald-500 text-white font-black text-xs rounded-xl uppercase tracking-widest shadow-lg shadow-emerald-100 hover:bg-emerald-600 transition-all"
+                                className="px-4 py-2.5 bg-primary-dark text-white font-semibold text-sm rounded-[10px] shadow-sm hover:opacity-90 transition-opacity duration-150"
                             >
-                                Save Configuration
+                                Save configuration
                             </button>
                         </header>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {modulesList.map((mod) => (
-                                <div key={mod.id} className="bg-white border border-slate-100 p-6 rounded-[28px] flex flex-col justify-between hover:shadow-lg transition-all">
+                                <div key={mod.id} className="bg-white border border-slate-900/[0.08] px-5 py-5 rounded-2xl flex flex-col justify-between hover:border-slate-900/[0.16] transition-colors duration-150">
                                     <div className="flex justify-between items-start mb-4">
-                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${activeModules.includes(mod.id) ? 'bg-emerald-100' : 'bg-slate-50'}`}>
-                                            <CheckCircle2 className={`w-5 h-5 ${activeModules.includes(mod.id) ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                        <div className={`w-10 h-10 rounded-md flex items-center justify-center ${activeModules.includes(mod.id) ? 'bg-primary/10' : 'bg-slate-50'}`}>
+                                            <CheckCircle2 strokeWidth={1.5} className={`w-5 h-5 ${activeModules.includes(mod.id) ? 'text-primary-dark' : 'text-slate-400'}`} />
                                         </div>
                                         <button
                                             onClick={() => toggleModule(mod.id)}
-                                            className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${activeModules.includes(mod.id) ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                            className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${activeModules.includes(mod.id) ? 'bg-primary' : 'bg-slate-200'}`}
                                         >
                                             <span className={`inline-block w-5 h-5 transform bg-white rounded-full transition-transform shadow ${activeModules.includes(mod.id) ? 'translate-x-5' : 'translate-x-0.5'}`} />
                                         </button>
                                     </div>
                                     <div>
-                                        <p className="font-black text-slate-900 mb-1">{mod.name}</p>
-                                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">{mod.desc}</p>
+                                        <p className="font-semibold text-slate-900 mb-1">{mod.name}</p>
+                                        <p className="text-xs text-slate-500 leading-relaxed">{mod.desc}</p>
                                     </div>
                                 </div>
                             ))}
@@ -1723,7 +1723,7 @@ const CreateOrgModal = ({ onClose, onCreated, showToast }: { onClose: () => void
             }
 
             setCreatedSecret(data.deletion_secret);
-            showToast(`Organization "${name}" created.`, 'success');
+            showToast(`Organization "${name}" created`, 'success');
         } catch (error: any) {
             showToast(error.message || 'Failed to create organization', 'error');
         } finally {
@@ -1748,22 +1748,22 @@ const CreateOrgModal = ({ onClose, onCreated, showToast }: { onClose: () => void
                 initial={{ scale: 0.95, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.95, y: 20 }}
-                className="bg-white/90 backdrop-blur-xl rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-white/20"
+                className="bg-white rounded-2xl px-6 py-6 max-w-lg w-full shadow-xl border border-slate-900/[0.08]"
             >
                 <div className="flex justify-between items-start mb-6">
                     <div>
-                        <h3 className="text-2xl font-black text-slate-900 mb-1">Create Organization</h3>
-                        <p className="text-sm text-slate-500">Set up a new organization entity.</p>
+                        <h3 className="text-xl font-semibold text-slate-900 mb-1">Create organization</h3>
+                        <p className="text-sm text-slate-500">Set up a new organization entity</p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
-                        <X className="w-5 h-5 text-slate-400" />
+                    <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-[10px] transition-colors duration-150">
+                        <X strokeWidth={1.5} className="w-5 h-5 text-slate-400" />
                     </button>
                 </div>
 
                 {!createdSecret ? (
                     <div className="space-y-6">
                         <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-700">Organization Name*</label>
+                            <label className="text-sm font-medium text-slate-700">Organization name*</label>
                             <input
                                 type="text"
                                 value={name}
@@ -1772,18 +1772,18 @@ const CreateOrgModal = ({ onClose, onCreated, showToast }: { onClose: () => void
                                     setCode(e.target.value.toLowerCase().replace(/\s+/g, '-'));
                                 }}
                                 placeholder="e.g. Acme Corporation"
-                                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100"
+                                className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20"
                             />
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-700">Organization Code*</label>
+                            <label className="text-sm font-medium text-slate-700">Organization code*</label>
                             <input
                                 type="text"
                                 value={code}
                                 onChange={(e) => setCode(e.target.value)}
                                 placeholder="e.g. acme-corp"
-                                className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100"
+                                className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20"
                             />
                             <p className="text-xs text-slate-400">Will be used in URLs: /acme-corp/dashboard</p>
                         </div>
@@ -1791,38 +1791,38 @@ const CreateOrgModal = ({ onClose, onCreated, showToast }: { onClose: () => void
                         <button
                             onClick={handleCreate}
                             disabled={isCreating || !name || !code}
-                            className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {isCreating ? 'Creating...' : 'Create Organization'}
+                            {isCreating ? 'Creating...' : 'Create organization'}
                         </button>
                     </div>
                 ) : (
                     <div className="space-y-6">
-                        <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-6 text-center">
-                            <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto mb-4" />
-                            <h4 className="text-lg font-black text-slate-900 mb-2">Organization Created!</h4>
+                        <div className="bg-emerald-50 border border-emerald-100 rounded-md px-6 py-6 text-center">
+                            <CheckCircle2 strokeWidth={1.5} className="w-10 h-10 text-emerald-600 mx-auto mb-4" />
+                            <h4 className="text-lg font-semibold text-slate-900 mb-2">Organization created</h4>
                             <p className="text-sm text-slate-600">Save this deletion secret key. You'll need it to restore the organization if soft-deleted.</p>
                         </div>
 
                         <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                                <Key className="w-4 h-4" /> Deletion Secret Key
+                            <label className="text-sm font-medium text-slate-700 flex items-center gap-2">
+                                <Key strokeWidth={1.5} className="w-4 h-4" /> Deletion secret key
                             </label>
                             <div className="flex items-center gap-2">
-                                <div className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm">
+                                <div className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-[10px] font-mono text-sm">
                                     {showSecret ? createdSecret : '••••••••••••••••••••••'}
                                 </div>
                                 <button
                                     onClick={() => setShowSecret(!showSecret)}
-                                    className="p-3 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                                    className="p-3 border border-slate-200 rounded-[10px] hover:bg-slate-50 transition-colors duration-150"
                                 >
-                                    {showSecret ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                                    {showSecret ? <EyeOff strokeWidth={1.5} className="w-[18px] h-[18px]" /> : <Eye strokeWidth={1.5} className="w-[18px] h-[18px]" />}
                                 </button>
                                 <button
                                     onClick={handleCopySecret}
-                                    className="p-3 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                                    className="p-3 border border-slate-200 rounded-[10px] hover:bg-slate-50 transition-colors duration-150"
                                 >
-                                    <Copy className="w-5 h-5" />
+                                    <Copy strokeWidth={1.5} className="w-[18px] h-[18px]" />
                                 </button>
                             </div>
                         </div>
@@ -1832,7 +1832,7 @@ const CreateOrgModal = ({ onClose, onCreated, showToast }: { onClose: () => void
                                 onCreated();
                                 onClose();
                             }}
-                            className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors"
+                            className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150"
                         >
                             Done
                         </button>
@@ -1855,10 +1855,10 @@ const SystemSettings = ({ onRestore }: { onRestore: (secret: string) => Promise<
         setMessage(null);
         try {
             await onRestore(secret);
-            setMessage({ type: 'success', text: 'Organization successfully restored!' });
+            setMessage({ type: 'success', text: 'Organization restored' });
             setSecret('');
         } catch (err: any) {
-            setMessage({ type: 'error', text: err.message || 'Restoration failed.' });
+            setMessage({ type: 'error', text: err.message || 'Restoration failed' });
         } finally {
             setIsRestoring(false);
         }
@@ -1867,36 +1867,36 @@ const SystemSettings = ({ onRestore }: { onRestore: (secret: string) => Promise<
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-6">
-                <div className="bg-white border border-slate-100 p-8 rounded-[40px] shadow-sm">
+                <div className="bg-white border border-slate-900/[0.08] px-6 py-6 rounded-2xl shadow-sm">
                     <div className="flex items-center gap-4 mb-8">
-                        <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center">
-                            <RefreshCcw className="w-6 h-6 text-indigo-600" />
+                        <div className="w-10 h-10 bg-primary/10 rounded-md flex items-center justify-center">
+                            <RefreshCcw strokeWidth={1.5} className="w-5 h-5 text-primary-dark" />
                         </div>
                         <div>
-                            <h3 className="text-xl font-black text-slate-900">Organization Recovery</h3>
-                            <p className="text-sm text-slate-500 font-medium">Restore soft-deleted entities using their secret key.</p>
+                            <h3 className="text-xl font-semibold text-slate-900">Organization recovery</h3>
+                            <p className="text-sm text-slate-500 font-medium">Restore soft-deleted entities using their secret key</p>
                         </div>
                     </div>
 
                     <form onSubmit={handleRestore} className="space-y-4">
                         <div className="space-y-2">
-                            <label className="text-xs font-black text-slate-400 uppercase tracking-widest pl-1">Secret Key</label>
+                            <label className="text-xs font-medium text-slate-500 pl-1">Secret key</label>
                             <div className="relative">
-                                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                <Key strokeWidth={1.5} className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                                 <input
                                     type="password"
                                     value={secret}
                                     onChange={(e) => setSecret(e.target.value)}
                                     placeholder="Enter sk_..."
-                                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-slate-100 font-mono text-sm"
+                                    className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20 font-mono text-sm"
                                     required
                                 />
                             </div>
                         </div>
 
                         {message && (
-                            <div className={`p-4 rounded-xl text-sm font-bold flex items-center gap-2 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                                {message.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                            <div className={`p-4 rounded-[10px] text-sm font-medium flex items-center gap-2 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                {message.type === 'success' ? <CheckCircle2 strokeWidth={1.5} className="w-4 h-4" /> : <XCircle strokeWidth={1.5} className="w-4 h-4" />}
                                 {message.text}
                             </div>
                         )}
@@ -1904,70 +1904,69 @@ const SystemSettings = ({ onRestore }: { onRestore: (secret: string) => Promise<
                         <button
                             type="submit"
                             disabled={isRestoring || !secret}
-                            className="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                            className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150 disabled:opacity-50 flex items-center justify-center gap-2"
                         >
-                            {isRestoring ? 'Verifying...' : 'Restore Organization'}
-                            {!isRestoring && <RefreshCcw className="w-4 h-4" />}
+                            {isRestoring ? 'Verifying...' : 'Restore organization'}
+                            {!isRestoring && <RefreshCcw strokeWidth={1.5} className="w-4 h-4" />}
                         </button>
                     </form>
                 </div>
 
-                <div className="bg-white border border-slate-100 p-8 rounded-[40px] shadow-sm">
-                    <h3 className="text-xl font-black text-slate-900 mb-6">Backup & Maintenance</h3>
+                <div className="bg-white border border-slate-900/[0.08] px-6 py-6 rounded-2xl shadow-sm">
+                    <h3 className="text-xl font-semibold text-slate-900 mb-6">Backup & maintenance</h3>
                     <div className="space-y-4">
-                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-md">
                             <div>
-                                <p className="text-sm font-bold text-slate-800">Maintenance Mode</p>
-                                <p className="text-[10px] text-slate-400 font-medium">Prevents new logins while active.</p>
+                                <p className="text-sm font-medium text-slate-800">Maintenance mode</p>
+                                <p className="text-xs text-slate-500">Prevents new logins while active</p>
                             </div>
                             <div className="w-12 h-6 bg-slate-200 rounded-full relative cursor-not-allowed">
                                 <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
                             </div>
                         </div>
-                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl opacity-50">
+                        <div className="flex items-center justify-between p-4 bg-slate-50 rounded-md opacity-50">
                             <div>
-                                <p className="text-sm font-bold text-slate-800">Database Snapshot</p>
-                                <p className="text-[10px] text-slate-400 font-medium">Last: 4 hours ago</p>
+                                <p className="text-sm font-medium text-slate-800">Database snapshot</p>
+                                <p className="text-xs text-slate-500">Last: 4 hours ago</p>
                             </div>
-                            <button className="px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-[10px] font-black uppercase tracking-widest text-slate-400">Trigger</button>
+                            <button className="px-3 py-1.5 bg-white border border-slate-200 rounded-[10px] text-xs font-medium text-slate-500">Trigger</button>
                         </div>
                     </div>
                 </div>
             </div>
 
             <div className="space-y-6">
-                <div className="bg-slate-900 p-8 rounded-[40px] text-white overflow-hidden relative">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl -mr-10 -mt-10" />
-                    <h3 className="text-xl font-black mb-6 flex items-center gap-2">
-                        <Globe className="w-5 h-5 text-indigo-400" />
-                        Global API Configuration
+                <div className="bg-slate-900 px-6 py-6 rounded-2xl text-white overflow-hidden relative">
+                    <h3 className="text-xl font-semibold mb-6 flex items-center gap-2">
+                        <Globe strokeWidth={1.5} className="w-[18px] h-[18px] text-white/60" />
+                        Global API configuration
                     </h3>
                     <div className="space-y-4">
                         {[
-                            { label: 'Supabase Instance', value: 'production-main', status: 'Healthy' },
-                            { label: 'OAuth Flow', value: 'enabled', status: 'Healthy' },
-                            { label: 'Edge Runtime', value: 'v4.2.1', status: 'Optimal' }
+                            { label: 'Supabase instance', value: 'production-main', status: 'Healthy' },
+                            { label: 'OAuth flow', value: 'enabled', status: 'Healthy' },
+                            { label: 'Edge runtime', value: 'v4.2.1', status: 'Optimal' }
                         ].map((item, i) => (
                             <div key={i} className="flex justify-between items-center py-3 border-b border-white/10 last:border-0">
                                 <div>
-                                    <p className="text-[10px] font-black text-white/40 uppercase tracking-widest">{item.label}</p>
-                                    <p className="text-sm font-bold">{item.value}</p>
+                                    <p className="text-xs font-medium text-white/60">{item.label}</p>
+                                    <p className="text-sm font-mono">{item.value}</p>
                                 </div>
-                                <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
+                                <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-[10px] border border-white/10">
                                     <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-                                    <span className="text-[10px] font-black text-white/60 uppercase">{item.status}</span>
+                                    <span className="text-[11px] font-medium text-white/70">{item.status}</span>
                                 </div>
                             </div>
                         ))}
                     </div>
                 </div>
 
-                <div className="bg-orange-50 border border-orange-100 p-8 rounded-[40px]">
-                    <h3 className="text-xl font-black text-orange-900 mb-2 italic">Developer Portal</h3>
-                    <p className="text-xs text-orange-700 font-medium mb-6">Access system logs, sandbox environments, and API documentation.</p>
-                    <button className="w-full py-4 bg-orange-600 text-white font-bold rounded-2xl hover:bg-orange-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-200">
-                        Launch Console
-                        <ExternalLink className="w-4 h-4" />
+                <div className="bg-white border border-slate-900/[0.08] px-6 py-6 rounded-2xl shadow-sm">
+                    <h3 className="text-xl font-semibold text-slate-900 mb-2">Developer portal</h3>
+                    <p className="text-sm text-slate-500 mb-6">Access system logs, sandbox environments and API documentation</p>
+                    <button className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150 flex items-center justify-center gap-2">
+                        Launch console
+                        <ExternalLink strokeWidth={1.5} className="w-4 h-4" />
                     </button>
                 </div>
             </div>
@@ -2019,13 +2018,13 @@ const CreateUserModal = ({ onClose, onCreated, organizations, showToast }: {
             if (data.temp_password) {
                 // Auto-generated case
                 setGeneratedPassword(data.temp_password);
-                showToast(`User created with auto-generated password.`, 'success');
+                showToast(`User created with auto-generated password`, 'success');
             } else {
                 // Manual password case (API doesn't return it back)
                 // We show what the admin typed just for confirmation, or just a success message.
                 // Let's reuse the success view but with the manual password.
                 setGeneratedPassword(manualPassword);
-                showToast(`User created with manual password.`, 'success');
+                showToast(`User created with manual password`, 'success');
             }
 
         } catch (error: any) {
@@ -2053,38 +2052,38 @@ const CreateUserModal = ({ onClose, onCreated, organizations, showToast }: {
                 initial={{ scale: 0.95, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.95, y: 20 }}
-                className="bg-white/90 backdrop-blur-xl rounded-3xl p-8 max-w-lg w-full shadow-2xl border border-white/20"
+                className="bg-white rounded-2xl px-6 py-6 max-w-lg w-full shadow-xl border border-slate-900/[0.08]"
             >
                 {generatedPassword ? (
                     <div className="space-y-6 text-center">
                         <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
-                            <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+                            <CheckCircle2 strokeWidth={1.5} className="w-8 h-8 text-emerald-600" />
                         </div>
                         <div>
-                            <h3 className="text-2xl font-black text-slate-900 mb-2">User Created!</h3>
+                            <h3 className="text-xl font-semibold text-slate-900 mb-2">User created</h3>
                             <p className="text-sm text-slate-500">
                                 Share these login details with the user securely. <br />
-                                <span className="text-rose-500 font-bold">This password will not be shown again.</span>
+                                <span className="text-rose-600 font-medium">This password will not be shown again.</span>
                             </p>
                         </div>
 
-                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 text-left space-y-4">
+                        <div className="bg-slate-50 px-5 py-5 rounded-md border border-slate-200 text-left space-y-4">
                             <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Email</p>
-                                <p className="font-bold text-slate-900">{email}</p>
+                                <p className="text-xs font-medium text-slate-500 mb-1">Email</p>
+                                <p className="font-medium text-slate-900">{email}</p>
                             </div>
                             <div>
-                                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Password</p>
+                                <p className="text-xs font-medium text-slate-500 mb-1">Password</p>
                                 <div className="flex items-center gap-2">
-                                    <code className="bg-white px-3 py-2 rounded-lg border border-slate-200 font-mono text-lg font-bold text-slate-800 flex-1">
+                                    <code className="bg-white px-3 py-2 rounded-[10px] border border-slate-200 font-mono text-lg font-medium text-slate-800 flex-1">
                                         {generatedPassword}
                                     </code>
                                     <button
                                         onClick={handleCopyPassword}
-                                        className="p-3 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-                                        title="Copy Password"
+                                        className="p-3 bg-white border border-slate-200 rounded-[10px] hover:bg-slate-50 transition-colors duration-150"
+                                        title="Copy password"
                                     >
-                                        <Copy className="w-5 h-5 text-slate-600" />
+                                        <Copy strokeWidth={1.5} className="w-[18px] h-[18px] text-slate-600" />
                                     </button>
                                 </div>
                             </div>
@@ -2095,7 +2094,7 @@ const CreateUserModal = ({ onClose, onCreated, organizations, showToast }: {
                                 onCreated();
                                 onClose();
                             }}
-                            className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors"
+                            className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150"
                         >
                             Done
                         </button>
@@ -2105,72 +2104,72 @@ const CreateUserModal = ({ onClose, onCreated, organizations, showToast }: {
                         {/* Header */}
                         <div className="flex justify-between items-start mb-6">
                             <div>
-                                <h3 className="text-2xl font-black text-slate-900 mb-1">Add New User</h3>
-                                <p className="text-sm text-slate-500">Create a new user and assign roles.</p>
+                                <h3 className="text-xl font-semibold text-slate-900 mb-1">Add new user</h3>
+                                <p className="text-sm text-slate-500">Create a new user and assign roles</p>
                             </div>
-                            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
-                                <X className="w-5 h-5 text-slate-400" />
+                            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-[10px] transition-colors duration-150">
+                                <X strokeWidth={1.5} className="w-5 h-5 text-slate-400" />
                             </button>
                         </div>
 
                         {/* Form */}
                         <div className="space-y-4">
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-slate-700">Full Name</label>
+                                <label className="text-sm font-medium text-slate-700">Full name</label>
                                 <input
                                     type="text"
                                     value={fullName}
                                     onChange={(e) => setFullName(e.target.value)}
                                     placeholder="John Doe"
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100"
+                                    className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20"
                                 />
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-700">Email Address</label>
+                                    <label className="text-sm font-medium text-slate-700">Email address</label>
                                     <input
                                         type="email"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
                                         placeholder="john@example.com"
-                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100"
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20"
                                     />
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-700">Password <span className="text-slate-400 font-medium text-xs">(Optional)</span></label>
+                                    <label className="text-sm font-medium text-slate-700">Password <span className="text-slate-400 font-medium text-xs">(optional)</span></label>
                                     <input
                                         type="text"
                                         value={manualPassword}
                                         onChange={(e) => setManualPassword(e.target.value)}
                                         placeholder="Auto-generate"
-                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100"
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20"
                                     />
                                 </div>
                             </div>
 
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-slate-700">Role</label>
+                                <label className="text-sm font-medium text-slate-700">Role</label>
                                 <select
                                     value={role}
                                     onChange={(e) => setRole(e.target.value)}
-                                    className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100 bg-white"
+                                    className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white"
                                 >
                                     <option value="tenant">Client</option>
                                     <option value="staff">Staff</option>
-                                    <option value="property_admin">Property Admin</option>
-                                    <option value="org_super_admin">Org Super Admin</option>
-                                    <option value="master_admin">Master Admin (Platform)</option>
+                                    <option value="property_admin">Property admin</option>
+                                    <option value="org_super_admin">Org super admin</option>
+                                    <option value="master_admin">Master admin (platform)</option>
                                 </select>
                             </div>
 
                             {role !== 'master_admin' && (
                                 <div className="space-y-2">
-                                    <label className="text-sm font-bold text-slate-700">Organization</label>
+                                    <label className="text-sm font-medium text-slate-700">Organization</label>
                                     <select
                                         value={selectedOrgId}
                                         onChange={(e) => setSelectedOrgId(e.target.value)}
-                                        className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-100 bg-white"
+                                        className="w-full px-4 py-3 border border-slate-200 rounded-[10px] focus:outline-none focus:ring-2 focus:ring-primary/20 bg-white"
                                     >
                                         {organizations.map(org => (
                                             <option key={org.id} value={org.id}>{org.name}</option>
@@ -2182,9 +2181,9 @@ const CreateUserModal = ({ onClose, onCreated, organizations, showToast }: {
                             <button
                                 onClick={handleCreate}
                                 disabled={isCreating || !email || !fullName || (role !== 'master_admin' && !selectedOrgId)}
-                                className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+                                className="w-full py-3 bg-slate-900 text-white font-semibold rounded-[10px] hover:bg-slate-800 transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed mt-4"
                             >
-                                {isCreating ? 'Creating...' : 'Create User'}
+                                {isCreating ? 'Creating...' : 'Create user'}
                             </button>
                         </div>
                     </>
@@ -2286,59 +2285,59 @@ const MasterVisitorsTab = () => {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white px-5 py-5 rounded-2xl border border-slate-900/[0.08] shadow-sm">
                 <div>
-                    <h2 className="text-xl font-black text-slate-900 leading-tight">Visitor Management</h2>
-                    <p className="text-slate-500 text-sm font-medium">Cross-organization visitor tracking.</p>
+                    <h2 className="text-xl font-semibold text-slate-900 leading-tight">Visitor management</h2>
+                    <p className="text-slate-500 text-sm font-medium">Cross-organization visitor tracking</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                     <div className="relative flex-1 md:flex-none">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <Search strokeWidth={1.5} className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
                             type="text"
-                            placeholder="Search visitors..."
+                            placeholder="Search visitors"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full md:w-64 pl-10 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-slate-100"
+                            className="w-full md:w-64 pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-[10px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
                         />
                     </div>
                     <select
                         value={dateFilter}
                         onChange={(e) => setDateFilter(e.target.value as any)}
-                        className="p-3 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-sm text-slate-700 outline-none focus:ring-2 focus:ring-slate-100"
+                        className="px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-[10px] font-medium text-sm text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
                     >
-                        <option value="all">All Time</option>
+                        <option value="all">All time</option>
                         <option value="today">Today</option>
-                        <option value="week">This Week</option>
-                        <option value="month">This Month</option>
+                        <option value="week">This week</option>
+                        <option value="month">This month</option>
                     </select>
                     <button
                         onClick={handleExport}
-                        className="flex items-center gap-2 p-3 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition-colors font-bold text-sm"
+                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-[10px] hover:bg-slate-800 transition-colors duration-150 font-semibold text-sm"
                     >
-                        <FileDown className="w-4 h-4" />
+                        <FileDown strokeWidth={1.5} className="w-4 h-4" />
                         Export
                     </button>
                 </div>
             </div>
 
-            <div className="bg-white border border-slate-100 rounded-[32px] overflow-hidden shadow-sm">
+            <div className="bg-white border border-slate-900/[0.08] rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead className="bg-slate-50/50 border-b border-slate-100">
                             <tr>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Visitor Info</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Host / Purpose</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Timing</th>
-                                <th className="px-5 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Visitor info</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Property</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Host / purpose</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Timing</th>
+                                <th className="px-5 py-3 text-xs font-medium text-slate-500">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {isLoading ? (
                                 <tr><td colSpan={5} className="p-8 text-center text-slate-400">Loading visitors...</td></tr>
                             ) : filteredVisitors.length === 0 ? (
-                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">No visitors found.</td></tr>
+                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">No visitors found</td></tr>
                             ) : (
                                 filteredVisitors.map((visitor) => (
                                     <tr
@@ -2355,46 +2354,46 @@ const MasterVisitorsTab = () => {
                                                         className="w-10 h-10 rounded-full object-cover border-2 border-slate-100"
                                                     />
                                                 ) : (
-                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-bold">
+                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-semibold">
                                                         {visitor.name?.[0]}
                                                     </div>
                                                 )}
                                                 <div>
-                                                    <div className="font-bold text-slate-900 text-sm hover:text-indigo-600 transition-colors">{visitor.name}</div>
+                                                    <div className="font-medium text-slate-900 text-sm hover:text-primary-dark transition-colors duration-150">{visitor.name}</div>
                                                     <div className="text-xs text-slate-500 font-medium">{visitor.mobile || 'No mobile'}</div>
-                                                    <div className="text-[10px] text-slate-400 mt-0.5 font-mono">{visitor.visitor_id}</div>
+                                                    <div className="text-[11px] text-slate-500 mt-0.5 font-mono">{visitor.visitor_id}</div>
                                                 </div>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
                                             <div className="flex items-center gap-1.5">
-                                                <Building2 className="w-3.5 h-3.5 text-slate-400" />
-                                                <span className="text-sm font-bold text-slate-700">{visitor.properties?.name}</span>
+                                                <Building2 strokeWidth={1.5} className="w-3.5 h-3.5 text-slate-400" />
+                                                <span className="text-sm font-medium text-slate-700">{visitor.properties?.name}</span>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
-                                            <div className="text-sm font-bold text-slate-900">{visitor.whom_to_meet}</div>
+                                            <div className="text-sm font-medium text-slate-900">{visitor.whom_to_meet}</div>
                                             <div className="text-xs text-slate-500 capitalize">{visitor.category}</div>
-                                            <div className="text-[10px] text-slate-400 mt-1 font-medium">
-                                                Logged by: <span className="font-semibold text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
+                                            <div className="text-[11px] text-slate-500 mt-1">
+                                                Logged by <span className="font-medium text-slate-600">{visitor.creator?.full_name || 'Gate / Kiosk'}</span>
                                             </div>
                                         </td>
                                         <td className="px-5 py-4">
-                                            <div className="text-xs font-bold text-slate-900">
-                                                In: {new Date(visitor.checkin_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            <div className="text-xs text-slate-500">
+                                                In <span className="font-mono tabular-nums text-text-tertiary">{new Date(visitor.checkin_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                             </div>
                                             {visitor.checkout_time && (
                                                 <div className="text-xs text-slate-500 mt-1">
-                                                    Out: {new Date(visitor.checkout_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    Out <span className="font-mono tabular-nums text-text-tertiary">{new Date(visitor.checkout_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                                 </div>
                                             )}
                                         </td>
                                         <td className="px-5 py-4">
-                                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${visitor.status === 'checked_in'
+                                            <span className={`px-2 py-0.5 rounded-md text-xs font-medium ${visitor.status === 'checked_in'
                                                 ? 'bg-emerald-100 text-emerald-700'
                                                 : 'bg-slate-100 text-slate-600'
                                                 }`}>
-                                                {visitor.status === 'checked_in' ? 'On Premise' : 'Checked Out'}
+                                                {visitor.status === 'checked_in' ? 'On premises' : 'Checked out'}
                                             </span>
                                         </td>
                                     </tr>
@@ -2419,53 +2418,53 @@ const MasterVisitorsTab = () => {
                             initial={{ scale: 0.9 }}
                             animate={{ scale: 1 }}
                             exit={{ scale: 0.9 }}
-                            className="bg-white rounded-3xl w-full max-w-md overflow-hidden shadow-2xl"
+                            className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-xl"
                             onClick={(e) => e.stopPropagation()}
                         >
                             {/* Header with Photo */}
-                            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 text-white relative">
+                            <div className="bg-primary-dark px-6 py-6 text-white relative">
                                 <button
                                     onClick={() => setSelectedVisitor(null)}
-                                    className="absolute top-4 right-4 p-1 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                                    className="absolute top-4 right-4 p-1 rounded-[10px] bg-white/15 hover:bg-white/25 transition-colors duration-150"
                                 >
-                                    <X className="w-5 h-5" />
+                                    <X strokeWidth={1.5} className="w-5 h-5" />
                                 </button>
                                 <div className="flex items-center gap-4">
                                     {selectedVisitor.photo_url ? (
                                         <img
                                             src={selectedVisitor.photo_url}
                                             alt={selectedVisitor.name}
-                                            className="w-20 h-20 rounded-2xl object-cover border-4 border-white/30"
+                                            className="w-20 h-20 rounded-md object-cover border-2 border-white/30"
                                         />
                                     ) : (
-                                        <div className="w-20 h-20 rounded-2xl bg-white/20 flex items-center justify-center">
-                                            <UserCircle className="w-10 h-10" />
+                                        <div className="w-20 h-20 rounded-md bg-white/15 flex items-center justify-center">
+                                            <UserCircle strokeWidth={1.5} className="w-10 h-10" />
                                         </div>
                                     )}
                                     <div>
-                                        <h3 className="text-2xl font-black">{selectedVisitor.name}</h3>
+                                        <h3 className="text-xl font-semibold">{selectedVisitor.name}</h3>
                                         <p className="text-white/70 font-mono text-sm">{selectedVisitor.visitor_id}</p>
                                     </div>
                                 </div>
                             </div>
 
                             {/* Details */}
-                            <div className="p-6 space-y-4">
+                            <div className="px-6 py-6 space-y-4">
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</p>
+                                        <p className="text-xs font-medium text-slate-500">Category</p>
                                         <p className="text-slate-900 font-medium capitalize">{selectedVisitor.category}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Mobile</p>
+                                        <p className="text-xs font-medium text-slate-500">Mobile</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.mobile || '-'}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Coming From</p>
+                                        <p className="text-xs font-medium text-slate-500">Coming from</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.coming_from || '-'}</p>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Whom to Meet</p>
+                                        <p className="text-xs font-medium text-slate-500">Whom to meet</p>
                                         <p className="text-slate-900 font-medium">{selectedVisitor.whom_to_meet}</p>
                                     </div>
                                 </div>
@@ -2473,8 +2472,8 @@ const MasterVisitorsTab = () => {
                                 <div className="border-t border-slate-100 pt-4">
                                     <div className="flex justify-between items-center mb-2">
                                         <div>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-in</p>
-                                            <p className="text-slate-900 font-medium">
+                                            <p className="text-xs font-medium text-slate-500">Check-in</p>
+                                            <p className="text-slate-900 font-medium font-mono tabular-nums text-sm">
                                                 {new Date(selectedVisitor.checkin_time).toLocaleString('en-IN', {
                                                     day: '2-digit',
                                                     month: '2-digit',
@@ -2485,16 +2484,16 @@ const MasterVisitorsTab = () => {
                                             </p>
                                         </div>
                                         <div className="text-right">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Duration</p>
-                                            <p className="text-slate-900 font-bold">
+                                            <p className="text-xs font-medium text-slate-500">Duration</p>
+                                            <p className="text-slate-900 font-medium tabular-nums">
                                                 {getDuration(selectedVisitor.checkin_time, selectedVisitor.checkout_time)}
                                             </p>
                                         </div>
                                     </div>
                                     {selectedVisitor.checkout_time && (
                                         <div>
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Check-out</p>
-                                            <p className="text-slate-900 font-medium">
+                                            <p className="text-xs font-medium text-slate-500">Check-out</p>
+                                            <p className="text-slate-900 font-medium font-mono tabular-nums text-sm">
                                                 {new Date(selectedVisitor.checkout_time).toLocaleString('en-IN', {
                                                     day: '2-digit',
                                                     month: '2-digit',
@@ -2584,7 +2583,7 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
 
     const handleAssign = async () => {
         if (!selectedUserId || !selectedOrgId || selectedPropertyIds.length === 0) {
-            showToast('Please select a user, organization, and at least one property.', 'error');
+            showToast('Select a user, an organization and at least one property', 'error');
             return;
         }
         setIsSaving(true);
@@ -2600,7 +2599,7 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to assign');
-            showToast(`Super Tenant assigned successfully.`);
+            showToast(`Super tenant assigned`);
             setShowCreateModal(false);
             setSelectedUserId('');
             setSelectedOrgId('');
@@ -2621,7 +2620,7 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
             body: JSON.stringify({ user_id: userId, property_id: propertyId }),
         });
         if (res.ok) {
-            showToast('Property removed.');
+            showToast('Property removed');
             fetchSuperTenants();
         } else {
             showToast('Failed to remove property', 'error');
@@ -2648,108 +2647,103 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h3 className="text-lg font-black text-foreground">Super Tenant Accounts</h3>
+                    <h3 className="text-lg font-semibold text-foreground">Super tenant accounts</h3>
                     <p className="text-sm text-muted-foreground mt-0.5">
-                        Create super tenant accounts and assign them property portfolios for cross-property analytics.
+                        Create super tenant accounts and assign them property portfolios for cross-property analytics
                     </p>
                 </div>
                 <button
                     onClick={() => setShowCreateModal(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 text-white font-bold text-xs rounded-xl uppercase tracking-widest hover:bg-violet-700 transition-all shadow-lg shadow-violet-200"
+                    className="flex items-center gap-2 px-4 py-2.5 bg-primary-dark text-white font-semibold text-sm rounded-[10px] hover:opacity-90 transition-opacity duration-150 shadow-sm"
                 >
-                    <Plus className="w-4 h-4" /> Assign Super Tenant
+                    <Plus strokeWidth={1.5} className="w-4 h-4" /> Assign super tenant
                 </button>
             </div>
 
             {/* KPI Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* Card 1 — Total Super Tenants */}
-                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform duration-200">
+                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] px-5 py-5 flex flex-col gap-3 hover:border-text-tertiary/40 transition-colors duration-150">
                     <div className="flex items-start justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-semibold text-[var(--text-tertiary)] tracking-widest uppercase">Total Super Tenants</span>
+                            <span className="text-xs font-medium text-[var(--text-tertiary)]">Total super tenants</span>
                         </div>
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(112,143,150,0.12)' }}>
-                            <Users className="w-5 h-5" style={{ color: 'var(--primary)' }} />
+                        <div className="w-10 h-10 rounded-[10px] bg-muted flex items-center justify-center">
+                            <Users strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
                         </div>
                     </div>
-                    <p className="text-4xl metric-number" style={{ color: 'var(--text-primary)' }}>{totalSuperTenants}</p>
+                    <p className="text-3xl metric-number tabular-nums" style={{ color: 'var(--text-primary)' }}>{totalSuperTenants}</p>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{ background: 'rgba(112,143,150,0.12)', color: 'var(--primary)' }}>
-                            {totalSuperTenants > 0 ? 'ACTIVE' : '—'}
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(112,143,150,0.12)', color: 'var(--primary)' }}>
+                            {totalSuperTenants > 0 ? 'Active' : '—'}
                         </span>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">{activeOrgs} org{activeOrgs !== 1 ? 's' : ''} covered</span>
+                        <span className="text-[11px] text-[var(--text-tertiary)] tabular-nums">{activeOrgs} org{activeOrgs !== 1 ? 's' : ''} covered</span>
                     </div>
                     <div>
-                        <div className="flex justify-between text-[10px] text-[var(--text-tertiary)] mb-1">
+                        <div className="flex justify-between text-[11px] text-[var(--text-tertiary)] mb-1 tabular-nums">
                             <span>Assigned</span>
                             <span>{assignedPct}%</span>
                         </div>
                         <div className="w-full h-1.5 rounded-full bg-[var(--border)]">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: `${assignedPct}%`, background: 'var(--primary)' }} />
+                            <div className="h-full rounded-full" style={{ width: `${assignedPct}%`, background: 'var(--primary)' }} />
                         </div>
                     </div>
                 </div>
 
                 {/* Card 2 — Properties Assigned */}
-                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform duration-200">
+                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] px-5 py-5 flex flex-col gap-3 hover:border-text-tertiary/40 transition-colors duration-150">
                     <div className="flex items-start justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-semibold text-[var(--text-tertiary)] tracking-widest uppercase">Properties Assigned</span>
+                            <span className="text-xs font-medium text-[var(--text-tertiary)]">Properties assigned</span>
                         </div>
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.1)' }}>
-                            <Building2 className="w-5 h-5" style={{ color: 'var(--success)' }} />
+                        <div className="w-10 h-10 rounded-[10px] bg-muted flex items-center justify-center">
+                            <Building2 strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
                         </div>
                     </div>
-                    <p className="text-4xl metric-number" style={{ color: 'var(--text-primary)' }}>{totalPropertiesAssigned}</p>
+                    <p className="text-3xl metric-number tabular-nums" style={{ color: 'var(--text-primary)' }}>{totalPropertiesAssigned}</p>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
-                            {totalPropertiesAssigned > 0 ? 'COVERED' : '—'}
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
+                            {totalPropertiesAssigned > 0 ? 'Covered' : '—'}
                         </span>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">avg {avgProperties}/tenant</span>
+                        <span className="text-[11px] text-[var(--text-tertiary)] tabular-nums">avg {avgProperties}/tenant</span>
                     </div>
                     <div>
-                        <div className="flex justify-between text-[10px] text-[var(--text-tertiary)] mb-1">
+                        <div className="flex justify-between text-[11px] text-[var(--text-tertiary)] mb-1 tabular-nums">
                             <span>Coverage</span>
                             <span>{totalPropertiesAssigned > 0 ? '100%' : '0%'}</span>
                         </div>
                         <div className="w-full h-1.5 rounded-full bg-[var(--border)]">
-                            <div className="h-full rounded-full transition-all duration-700" style={{ width: totalPropertiesAssigned > 0 ? '100%' : '0%', background: 'var(--success)' }} />
+                            <div className="h-full rounded-full" style={{ width: totalPropertiesAssigned > 0 ? '100%' : '0%', background: 'var(--success)' }} />
                         </div>
                     </div>
                 </div>
 
                 {/* Card 3 — Unassigned (PRIORITY) */}
-                <div className="relative overflow-hidden rounded-2xl bg-white border-2 shadow-[var(--shadow-md)] p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform duration-200"
+                <div className="relative overflow-hidden rounded-2xl bg-white border shadow-[var(--shadow-md)] px-5 py-5 flex flex-col gap-3 transition-colors duration-150"
                     style={{ borderColor: unassignedCount > 0 ? 'var(--warning)' : 'var(--border)' }}>
                     {unassignedCount > 0 && (
                         <div className="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style={{ background: 'var(--warning)' }} />
                     )}
-                    {unassignedCount > 0 && (
-                        <span className="absolute top-3 right-3 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--warning)' }}>
-                            PRIORITY
-                        </span>
-                    )}
                     <div className="flex items-start justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-semibold text-[var(--text-tertiary)] tracking-widest uppercase">Unassigned</span>
+                            <span className="text-xs font-medium text-[var(--text-tertiary)]">Unassigned</span>
                         </div>
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.1)' }}>
-                            <AlertTriangle className="w-5 h-5" style={{ color: 'var(--warning)' }} />
+                        <div className="w-10 h-10 rounded-[10px] flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.1)' }}>
+                            <AlertTriangle strokeWidth={1.5} className="w-[18px] h-[18px]" style={{ color: 'var(--warning)' }} />
                         </div>
                     </div>
-                    <p className="text-4xl metric-number" style={{ color: unassignedCount > 0 ? 'var(--warning)' : 'var(--text-primary)' }}>{unassignedCount}</p>
+                    <p className="text-3xl metric-number tabular-nums" style={{ color: unassignedCount > 0 ? 'var(--warning)' : 'var(--text-primary)' }}>{unassignedCount}</p>
                     {unassignedCount > 0 ? (
-                        <span className="text-[10px] font-bold tracking-wide" style={{ color: 'var(--warning)' }}>ACTION REQUIRED</span>
+                        <span className="text-xs font-medium" style={{ color: 'var(--warning)' }}>Action required</span>
                     ) : (
-                        <span className="text-[10px] font-bold tracking-wide" style={{ color: 'var(--success)' }}>ALL ASSIGNED</span>
+                        <span className="text-xs font-medium" style={{ color: 'var(--success)' }}>All assigned</span>
                     )}
                     <div>
-                        <div className="flex justify-between text-[10px] text-[var(--text-tertiary)] mb-1">
+                        <div className="flex justify-between text-[11px] text-[var(--text-tertiary)] mb-1">
                             <span>No-property tenants</span>
                         </div>
                         <div className="w-full h-1.5 rounded-full bg-[var(--border)]">
-                            <div className="h-full rounded-full transition-all duration-700"
+                            <div className="h-full rounded-full"
                                 style={{
                                     width: totalSuperTenants > 0 ? `${Math.round((unassignedCount / totalSuperTenants) * 100)}%` : '0%',
                                     background: 'var(--warning)'
@@ -2759,29 +2753,29 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
                 </div>
 
                 {/* Card 4 — Orgs Covered */}
-                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] p-5 flex flex-col gap-3 hover:-translate-y-0.5 transition-transform duration-200">
+                <div className="relative overflow-hidden rounded-2xl bg-white border border-[var(--border)] shadow-[var(--shadow-md)] px-5 py-5 flex flex-col gap-3 hover:border-text-tertiary/40 transition-colors duration-150">
                     <div className="flex items-start justify-between">
                         <div className="flex flex-col gap-1">
-                            <span className="text-[11px] font-semibold text-[var(--text-tertiary)] tracking-widest uppercase">Orgs Covered</span>
+                            <span className="text-xs font-medium text-[var(--text-tertiary)]">Orgs covered</span>
                         </div>
-                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(170,137,95,0.12)' }}>
-                            <Globe className="w-5 h-5" style={{ color: 'var(--secondary)' }} />
+                        <div className="w-10 h-10 rounded-[10px] bg-muted flex items-center justify-center">
+                            <Globe strokeWidth={1.5} className="w-[18px] h-[18px] text-text-tertiary" />
                         </div>
                     </div>
-                    <p className="text-4xl metric-number" style={{ color: 'var(--text-primary)' }}>{activeOrgs}</p>
+                    <p className="text-3xl metric-number tabular-nums" style={{ color: 'var(--text-primary)' }}>{activeOrgs}</p>
                     <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg" style={{ background: 'rgba(170,137,95,0.12)', color: 'var(--secondary)' }}>
-                            {activeOrgs > 0 ? 'ACTIVE' : '—'}
+                        <span className="text-[11px] font-medium px-2 py-0.5 rounded-md" style={{ background: 'rgba(170,137,95,0.12)', color: 'var(--secondary)' }}>
+                            {activeOrgs > 0 ? 'Active' : '—'}
                         </span>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">of {organizations.filter(o => !o.is_deleted).length} total</span>
+                        <span className="text-[11px] text-[var(--text-tertiary)] tabular-nums">of {organizations.filter(o => !o.is_deleted).length} total</span>
                     </div>
                     <div>
-                        <div className="flex justify-between text-[10px] text-[var(--text-tertiary)] mb-1">
+                        <div className="flex justify-between text-[11px] text-[var(--text-tertiary)] mb-1 tabular-nums">
                             <span>Reach</span>
                             <span>{organizations.filter(o => !o.is_deleted).length > 0 ? Math.round((activeOrgs / organizations.filter(o => !o.is_deleted).length) * 100) : 0}%</span>
                         </div>
                         <div className="w-full h-1.5 rounded-full bg-[var(--border)]">
-                            <div className="h-full rounded-full transition-all duration-700"
+                            <div className="h-full rounded-full"
                                 style={{
                                     width: organizations.filter(o => !o.is_deleted).length > 0 ? `${Math.round((activeOrgs / organizations.filter(o => !o.is_deleted).length) * 100)}%` : '0%',
                                     background: 'var(--secondary)'
@@ -2792,55 +2786,55 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
             </div>
 
             {/* Info banner */}
-            <div className="flex items-start gap-3 p-4 rounded-2xl bg-violet-50 border border-violet-200 text-violet-700">
-                <Key className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <p className="text-xs font-semibold leading-relaxed">
-                    Super Tenants can view and analyze all tickets across their assigned properties. They cannot create users, modify tickets, or access admin settings. Assign an existing user account or create one first via User Directory.
+            <div className="flex items-start gap-3 p-4 rounded-md bg-muted/60 border border-border text-text-secondary">
+                <Key strokeWidth={1.5} className="w-4 h-4 mt-0.5 flex-shrink-0 text-text-tertiary" />
+                <p className="text-sm leading-relaxed">
+                    Super tenants can view and analyze all tickets across their assigned properties. They cannot create users, modify tickets, or access admin settings. Assign an existing user account or create one first via User directory.
                 </p>
             </div>
 
             {/* List */}
             {isLoading ? (
                 <div className="flex items-center justify-center py-16">
-                    <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+                    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 </div>
             ) : superTenants.length === 0 ? (
                 <div className="text-center py-20 border border-dashed border-border rounded-2xl">
-                    <Key className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
-                    <p className="text-sm font-semibold text-muted-foreground">No super tenant accounts yet.</p>
-                    <p className="text-xs text-muted-foreground mt-1">Click "Assign Super Tenant" to get started.</p>
+                    <Key strokeWidth={1.5} className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+                    <p className="text-sm font-semibold text-muted-foreground">No super tenant accounts yet</p>
+                    <p className="text-xs text-muted-foreground mt-1">Click "Assign super tenant" to get started</p>
                 </div>
             ) : (
                 <div className="space-y-3">
                     {superTenants.map((st, i) => (
-                        <div key={i} className="p-5 rounded-2xl border border-border bg-surface-elevated space-y-3">
+                        <div key={i} className="px-5 py-5 rounded-2xl border border-border bg-surface-elevated space-y-3">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-9 h-9 rounded-xl bg-violet-100 flex items-center justify-center text-violet-700 font-black text-sm">
+                                    <div className="w-9 h-9 rounded-[10px] bg-primary/10 flex items-center justify-center text-primary-dark font-semibold text-sm">
                                         {st.users?.full_name?.[0]?.toUpperCase() || 'S'}
                                     </div>
                                     <div>
-                                        <p className="font-bold text-foreground text-sm">{st.users?.full_name || '—'}</p>
+                                        <p className="font-medium text-foreground text-sm">{st.users?.full_name || '—'}</p>
                                         <p className="text-xs text-muted-foreground">{st.users?.email}</p>
                                     </div>
                                 </div>
-                                <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase bg-violet-100 text-violet-700 tracking-widest">Super Tenant</span>
+                                <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary-dark">Super tenant</span>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {st.assignedProperties.map((ap: any) => (
-                                    <div key={ap.property_id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold border border-slate-200">
-                                        <Building2 className="w-3 h-3" />
+                                    <div key={ap.property_id} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200">
+                                        <Building2 strokeWidth={1.5} className="w-3 h-3" />
                                         {ap.properties?.name || ap.property_id}
                                         <button
                                             onClick={() => handleRemoveProperty(st.user_id, ap.property_id)}
-                                            className="ml-1 text-slate-400 hover:text-red-500 transition-colors"
+                                            className="ml-1 text-slate-400 hover:text-red-500 transition-colors duration-150"
                                         >
-                                            <X className="w-3 h-3" />
+                                            <X strokeWidth={1.5} className="w-3 h-3" />
                                         </button>
                                     </div>
                                 ))}
                                 {st.assignedProperties.length === 0 && (
-                                    <span className="text-xs text-muted-foreground italic">No properties assigned</span>
+                                    <span className="text-xs text-muted-foreground">No properties assigned</span>
                                 )}
                             </div>
                         </div>
@@ -2863,22 +2857,22 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
                             animate={{ scale: 1, opacity: 1 }}
                             exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
-                            className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-6 space-y-5"
+                            className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg px-6 py-6 space-y-5"
                         >
                             <div className="flex items-center justify-between">
-                                <h3 className="font-black text-slate-900 text-lg">Assign Super Tenant</h3>
-                                <button onClick={() => setShowCreateModal(false)} className="p-2 rounded-xl hover:bg-slate-100 text-slate-500">
-                                    <X className="w-4 h-4" />
+                                <h3 className="font-semibold text-slate-900 text-lg">Assign super tenant</h3>
+                                <button onClick={() => setShowCreateModal(false)} className="p-2 rounded-[10px] hover:bg-slate-100 text-slate-500 transition-colors duration-150">
+                                    <X strokeWidth={1.5} className="w-4 h-4" />
                                 </button>
                             </div>
 
                             {/* User */}
                             <div className="space-y-1.5">
-                                <label className="text-xs font-black uppercase tracking-widest text-slate-500">Select User</label>
+                                <label className="text-xs font-medium text-slate-500">Select user</label>
                                 <select
                                     value={selectedUserId}
                                     onChange={e => setSelectedUserId(e.target.value)}
-                                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-violet-500"
+                                    className="w-full px-3 py-2.5 border border-slate-200 rounded-[10px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/30"
                                 >
                                     <option value="">— Choose user —</option>
                                     {users.filter(u => !u.is_master_admin).map(u => (
@@ -2889,11 +2883,11 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
 
                             {/* Organization */}
                             <div className="space-y-1.5">
-                                <label className="text-xs font-black uppercase tracking-widest text-slate-500">Organization</label>
+                                <label className="text-xs font-medium text-slate-500">Organization</label>
                                 <select
                                     value={selectedOrgId}
                                     onChange={e => { setSelectedOrgId(e.target.value); setSelectedPropertyIds([]); }}
-                                    className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-violet-500"
+                                    className="w-full px-3 py-2.5 border border-slate-200 rounded-[10px] text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/30"
                                 >
                                     <option value="">— Choose organization —</option>
                                     {organizations.filter(o => !o.is_deleted).map(o => (
@@ -2905,28 +2899,28 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
                             {/* Properties */}
                             {selectedOrgId && (
                                 <div className="space-y-2">
-                                    <label className="text-xs font-black uppercase tracking-widest text-slate-500">Assign Properties</label>
-                                    <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 rounded-xl p-3">
+                                    <label className="text-xs font-medium text-slate-500">Assign properties</label>
+                                    <div className="max-h-48 overflow-y-auto space-y-1.5 border border-slate-200 rounded-[10px] p-2">
                                         {orgProperties.length === 0 && (
-                                            <p className="text-xs text-slate-400 text-center py-4">No properties in this organization.</p>
+                                            <p className="text-xs text-slate-400 text-center py-4">No properties in this organization</p>
                                         )}
                                         {orgProperties.map(prop => (
-                                            <label key={prop.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                                            <label key={prop.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-slate-50 cursor-pointer">
                                                 <input
                                                     type="checkbox"
                                                     checked={selectedPropertyIds.includes(prop.id)}
                                                     onChange={() => togglePropertyId(prop.id)}
-                                                    className="w-4 h-4 rounded accent-violet-600"
+                                                    className="w-4 h-4 rounded accent-primary"
                                                 />
                                                 <div>
-                                                    <p className="text-sm font-bold text-slate-800">{prop.name}</p>
-                                                    <p className="text-[10px] font-mono text-slate-400">{prop.code}</p>
+                                                    <p className="text-sm font-medium text-slate-800">{prop.name}</p>
+                                                    <p className="text-[11px] font-mono text-slate-500">{prop.code}</p>
                                                 </div>
                                             </label>
                                         ))}
                                     </div>
                                     {selectedPropertyIds.length > 0 && (
-                                        <p className="text-xs font-semibold text-violet-600">{selectedPropertyIds.length} propert{selectedPropertyIds.length > 1 ? 'ies' : 'y'} selected</p>
+                                        <p className="text-xs font-medium text-primary-dark tabular-nums">{selectedPropertyIds.length} propert{selectedPropertyIds.length > 1 ? 'ies' : 'y'} selected</p>
                                     )}
                                 </div>
                             )}
@@ -2934,9 +2928,9 @@ const SuperTenantManagerTab = ({ users, organizations, showToast }: SuperTenantM
                             <button
                                 onClick={handleAssign}
                                 disabled={isSaving || !selectedUserId || !selectedOrgId || selectedPropertyIds.length === 0}
-                                className="w-full py-3 bg-violet-600 text-white font-bold rounded-xl hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                className="w-full py-3 bg-primary-dark text-white font-semibold rounded-[10px] hover:opacity-90 transition-opacity duration-150 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                             >
-                                {isSaving ? 'Assigning...' : 'Assign Super Tenant Role & Properties'}
+                                {isSaving ? 'Assigning...' : 'Assign super tenant role and properties'}
                             </button>
                         </motion.div>
                     </motion.div>
@@ -2958,10 +2952,10 @@ const EmailConfig = ({ organizations, onUpdateEmailPrefs, onUpdateEmailTemplate 
     const [editingTemplate, setEditingTemplate] = useState<{ moduleId: string; moduleName: string } | null>(null);
 
     const emailModulesList = [
-        { id: 'procurement', name: 'Procurement', desc: 'Material requests and fulfillment emails.', hasTemplate: false },
-        { id: 'meeting_rooms', name: 'Meeting Rooms', desc: 'Booking confirmations and cancellations emails.', hasTemplate: true },
-        { id: 'tickets', name: 'Tickets', desc: 'Helpdesk issue updates emails.', hasTemplate: false },
-        { id: 'visitors', name: 'Visitors', desc: 'Gate pass and visitor arrival notification emails.', hasTemplate: false }
+        { id: 'procurement', name: 'Procurement', desc: 'Material requests and fulfillment emails', hasTemplate: false },
+        { id: 'meeting_rooms', name: 'Meeting rooms', desc: 'Booking confirmation and cancellation emails', hasTemplate: true },
+        { id: 'tickets', name: 'Tickets', desc: 'Helpdesk issue update emails', hasTemplate: false },
+        { id: 'visitors', name: 'Visitors', desc: 'Gate pass and visitor arrival notification emails', hasTemplate: false }
     ];
 
     useEffect(() => {
@@ -3024,19 +3018,19 @@ const EmailConfig = ({ organizations, onUpdateEmailPrefs, onUpdateEmailTemplate 
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 bg-white border border-slate-100 rounded-[32px] p-8 h-fit">
-                <h3 className="text-lg font-black text-slate-900 mb-6">Select Organization</h3>
+            <div className="lg:col-span-1 bg-white border border-slate-900/[0.08] rounded-2xl px-6 py-6 h-fit">
+                <h3 className="text-lg font-semibold text-slate-900 mb-4">Select organization</h3>
                 <div className="space-y-2">
                     {organizations.map((org) => (
                         <button
                             key={org.id}
                             onClick={() => setSelectedOrg(org.id)}
-                            className={`w-full text-left p-4 rounded-2xl border transition-all ${selectedOrg === org.id
-                                ? 'border-slate-900 bg-slate-900 text-white'
-                                : 'border-slate-50 bg-slate-50 text-slate-400 hover:border-slate-200'
+                            className={`w-full text-left p-3 rounded-md border transition-colors duration-150 ${selectedOrg === org.id
+                                ? 'border-primary/30 bg-primary/10 text-primary-dark'
+                                : 'border-transparent bg-slate-50 text-slate-700 hover:border-slate-200'
                                 }`}
                         >
-                            <p className="text-sm font-black">{org.name}</p>
+                            <p className="text-sm font-medium">{org.name}</p>
                         </button>
                     ))}
                 </div>
@@ -3044,26 +3038,26 @@ const EmailConfig = ({ organizations, onUpdateEmailPrefs, onUpdateEmailTemplate 
 
             <div className="lg:col-span-2 space-y-6">
                 {!selectedOrg ? (
-                    <div className="h-96 border-2 border-dashed border-slate-100 rounded-[32px] flex items-center justify-center text-slate-300 font-bold italic">
-                        Choose an organization on the left to configure email services.
+                    <div className="h-96 border border-dashed border-slate-200 rounded-2xl flex items-center justify-center text-slate-500 text-sm font-medium">
+                        Choose an organization on the left to configure email services
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        <header className="flex justify-between items-center mb-8 bg-slate-50 p-6 rounded-[24px]">
+                        <header className="flex justify-between items-center mb-6 bg-slate-50 px-5 py-5 rounded-md">
                             <div>
-                                <h4 className="text-lg font-black text-slate-800">Email Control</h4>
-                                <p className="text-xs text-slate-400 font-medium italic">Configure which emails are sent for {selectedOrgData?.name}</p>
+                                <h4 className="text-lg font-semibold text-slate-800">Email control</h4>
+                                <p className="text-xs text-slate-500 font-medium">Configure which emails are sent for {selectedOrgData?.name}</p>
                             </div>
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving}
-                                className={`px-6 py-3 text-white font-black text-xs rounded-xl uppercase tracking-widest transition-all disabled:opacity-50 shadow-lg ${
+                                className={`px-4 py-2.5 text-white font-semibold text-sm rounded-[10px] transition-[background-color,opacity] duration-150 disabled:opacity-50 shadow-sm ${
                                     savedSuccess 
-                                        ? 'bg-blue-500 shadow-blue-100' 
-                                        : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-100'
+                                        ? 'bg-emerald-600' 
+                                        : 'bg-primary-dark hover:opacity-90'
                                 }`}
                             >
-                                {isSaving ? 'Saving...' : savedSuccess ? 'Saved Successfully!' : 'Save Configuration'}
+                                {isSaving ? 'Saving...' : savedSuccess ? 'Saved' : 'Save configuration'}
                             </button>
                         </header>
 
@@ -3071,31 +3065,31 @@ const EmailConfig = ({ organizations, onUpdateEmailPrefs, onUpdateEmailTemplate 
                             {emailModulesList.map((mod) => {
                                 const hasCustomTemplate = !!selectedOrgData?.email_templates?.[mod.id];
                                 return (
-                                    <div key={mod.id} className="bg-white border border-slate-100 p-6 rounded-[28px] flex flex-col justify-between hover:shadow-lg transition-all">
+                                    <div key={mod.id} className="bg-white border border-slate-900/[0.08] px-5 py-5 rounded-2xl flex flex-col justify-between hover:border-slate-900/[0.16] transition-colors duration-150">
                                         <div className="flex justify-between items-start mb-4">
-                                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${emailPrefs[mod.id] !== false ? 'bg-emerald-100' : 'bg-slate-50'}`}>
-                                                <Mail className={`w-5 h-5 ${emailPrefs[mod.id] !== false ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                            <div className={`w-10 h-10 rounded-md flex items-center justify-center ${emailPrefs[mod.id] !== false ? 'bg-primary/10' : 'bg-slate-50'}`}>
+                                                <Mail strokeWidth={1.5} className={`w-5 h-5 ${emailPrefs[mod.id] !== false ? 'text-primary-dark' : 'text-slate-400'}`} />
                                             </div>
                                             <button
                                                 onClick={() => togglePref(mod.id)}
-                                                className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${emailPrefs[mod.id] !== false ? 'bg-emerald-500' : 'bg-slate-200'}`}
+                                                className={`relative inline-flex items-center h-6 w-11 rounded-full transition-colors ${emailPrefs[mod.id] !== false ? 'bg-primary' : 'bg-slate-200'}`}
                                             >
                                                 <span className={`inline-block w-5 h-5 transform bg-white rounded-full transition-transform shadow ${emailPrefs[mod.id] !== false ? 'translate-x-5' : 'translate-x-0.5'}`} />
                                             </button>
                                         </div>
                                         <div>
-                                            <p className="font-black text-slate-900 mb-1">{mod.name}</p>
-                                            <p className="text-[11px] text-slate-400 font-medium leading-relaxed">{mod.desc}</p>
+                                            <p className="font-semibold text-slate-900 mb-1">{mod.name}</p>
+                                            <p className="text-xs text-slate-500 leading-relaxed">{mod.desc}</p>
                                         </div>
                                         {mod.hasTemplate && (
                                             <button
                                                 onClick={() => setEditingTemplate({ moduleId: mod.id, moduleName: mod.name })}
-                                                className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border-2 border-dashed border-slate-200 hover:border-slate-800 hover:bg-slate-900 hover:text-white text-slate-500 font-bold text-xs uppercase tracking-widest transition-all group"
+                                                className="mt-4 w-full flex items-center justify-center gap-2 py-2 px-4 rounded-[10px] border border-slate-200 hover:bg-slate-50 hover:text-slate-900 text-slate-600 font-medium text-sm transition-colors duration-150"
                                             >
-                                                <Mail className="w-3.5 h-3.5" />
-                                                {hasCustomTemplate ? 'Edit Template' : 'Design Template'}
+                                                <Mail strokeWidth={1.5} className="w-4 h-4" />
+                                                {hasCustomTemplate ? 'Edit template' : 'Design template'}
                                                 {hasCustomTemplate && (
-                                                    <span className="ml-auto bg-emerald-100 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider group-hover:bg-emerald-500 group-hover:text-white">Custom</span>
+                                                    <span className="ml-auto bg-primary/10 text-primary-dark text-[11px] font-medium px-2 py-0.5 rounded-full">Custom</span>
                                                 )}
                                             </button>
                                         )}
