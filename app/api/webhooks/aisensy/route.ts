@@ -17,6 +17,7 @@ import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
 import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
+import { claimAiLayerWhatsApp } from '@/backend/lib/aiLayer/whatsappLive';
 import { claimTicketReply } from '@/backend/lib/whatsapp/ticketReply';
 
 export const runtime = 'nodejs';
@@ -141,6 +142,17 @@ export async function POST(req: NextRequest) {
     if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
 
     if (!input) return NextResponse.json({ ok: true, ignored: true });
+
+    // AI Action Layer on WhatsApp (docs/AI_ACTION_LAYER_PLAN.md). Runs AFTER the Task Manager brain, so task messages go
+    // where they always did. It takes a message only when the sender is one approved user that an org super admin
+    // switched WhatsApp on for, and it understood the message. Anything else (and any error inside it) comes back
+    // handled:false and everything below runs exactly as before. No lookups at all while no org has WhatsApp on.
+    const aiLayer = await claimAiLayerWhatsApp(input);
+    if (aiLayer.handled) {
+        await remember();
+        after(guarded(aiLayer.background));
+        return NextResponse.json({ success: true, routedTo: 'AI_LAYER' });
+    }
 
     // CRM Inbound Lead Reply Ingestion:
     // When a prospective lead replies with their preferred reach-out slot,
