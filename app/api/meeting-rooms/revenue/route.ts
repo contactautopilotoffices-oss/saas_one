@@ -3,11 +3,11 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { canViewAllBookings } from '@/backend/lib/meetingRooms/bookingVisibility';
 import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
-import { buildRevenueReport, monthRange, type RevenueBooking, type RevenueCredit, type RevenueRoom } from '@/backend/lib/meetingRooms/revenue';
+import { buildRevenueReport, monthRange, type RevenueBooking, type RevenueCredit, type RevenueRoom, type RevenueView } from '@/backend/lib/meetingRooms/revenue';
 import { buildRevenueWorkbook } from '@/backend/lib/meetingRooms/revenueWorkbook';
 
 /**
- * GET /api/meeting-rooms/revenue?propertyId=&month=YYYY-MM[&format=xlsx]
+ * GET /api/meeting-rooms/revenue?propertyId=&month=YYYY-MM[&view=clients|internal|all][&format=xlsx]
  *
  * Meeting room revenue for one property and one month: per client (credit hours vs
  * exceeded hours) and per room. JSON by default, an Excel workbook with format=xlsx.
@@ -20,6 +20,9 @@ import { buildRevenueWorkbook } from '@/backend/lib/meetingRooms/revenueWorkbook
 export const dynamic = 'force-dynamic';
 
 const PAGE = 1000;
+const VIEWS: RevenueView[] = ['clients', 'internal', 'all'];
+// A booker with one of these roles is a client even without a company.
+const TENANT_ROLES = ['tenant', 'super_tenant'];
 // Ids per .in() call, so the request URL stays well under PostgREST and proxy limits.
 const IN_CHUNK = 200;
 
@@ -57,6 +60,11 @@ export async function GET(request: NextRequest) {
         const propertyId = searchParams.get('propertyId');
         const month = searchParams.get('month') || '';
         const format = searchParams.get('format');
+        const viewParam = searchParams.get('view') || 'clients';
+        if (!VIEWS.includes(viewParam as RevenueView)) {
+            return NextResponse.json({ error: 'view must be clients, internal or all' }, { status: 400 });
+        }
+        const view = viewParam as RevenueView;
 
         if (!propertyId) return NextResponse.json({ error: 'propertyId required' }, { status: 400 });
         const range = monthRange(month);
@@ -118,7 +126,7 @@ export async function GET(request: NextRequest) {
         const userIds = Array.from(new Set(bookings.map(b => b.user_id).filter((v): v is string => !!v)));
         const orgId = property.organization_id as string | null;
 
-        const [credits, companies, users, orgMembers] = await Promise.all([
+        const [credits, companies, users, orgMembers, propertyTenants] = await Promise.all([
             fetchAllPages<RevenueCredit>((from, to) => supabaseAdmin
                 .from('meeting_room_credits')
                 .select('company_id, user_id, monthly_hours')
@@ -137,6 +145,13 @@ export async function GET(request: NextRequest) {
                     .eq('is_active', true)
                     .in('user_id', ids))
                 : Promise.resolve([] as { user_id: string; role: string }[]),
+            fetchInChunks<{ user_id: string; role: string }>(userIds, ids => supabaseAdmin
+                .from('property_memberships')
+                .select('user_id, role')
+                .eq('property_id', propertyId)
+                .eq('is_active', true)
+                .in('role', TENANT_ROLES)
+                .in('user_id', ids)),
         ]);
 
         const companyNames: Record<string, string> = {};
@@ -145,6 +160,11 @@ export async function GET(request: NextRequest) {
         users.forEach(u => { userNames[u.id] = u.full_name || u.email || 'User'; });
         // Same source as the booking API (isCreditExemptBooker): organization roles only.
         const internalUserIds = new Set(orgMembers.filter(m => isCreditFreeBookingRole(m.role)).map(m => m.user_id));
+        // Tenant role at this property, or super tenant on the organization (stored on org memberships).
+        const tenantUserIds = new Set([
+            ...propertyTenants.map(m => m.user_id),
+            ...orgMembers.filter(m => TENANT_ROLES.includes(String(m.role).toLowerCase())).map(m => m.user_id),
+        ]);
 
         const report = buildRevenueReport({
             rooms,
@@ -153,6 +173,8 @@ export async function GET(request: NextRequest) {
             companyNames,
             userNames,
             internalUserIds,
+            tenantUserIds,
+            view,
         });
 
         if (format === 'xlsx') {
@@ -160,7 +182,7 @@ export async function GET(request: NextRequest) {
             const safeName = String(property.name).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
             return new NextResponse(buffer, {
                 headers: {
-                    'Content-Disposition': `attachment; filename="MeetingRoomRevenue-${safeName}-${month}.xlsx"`,
+                    'Content-Disposition': `attachment; filename="MeetingRoomRevenue-${safeName}-${month}${view === 'clients' ? '' : `-${view}`}.xlsx"`,
                     'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     'Cache-Control': 'no-store',
                 },

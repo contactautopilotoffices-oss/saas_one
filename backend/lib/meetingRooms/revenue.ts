@@ -10,8 +10,14 @@
  *   - Hours are drawn from the allowance first ("credit hours"). Once it is used up, every
  *     further hour is an "exceeded hour", which is the billable part.
  *   - A client with no credit record has no allowance, so all their hours are exceeded hours.
- *   - Bookings made by internal teams (HR, CRM/BD, IT, Design) are free by policy. They are
- *     counted as internal hours and never as revenue.
+ *
+ * Who counts as a client (see classifyBooker):
+ *   - Internal: internal teams (HR, CRM/BD, IT, Design), whose bookings are free by policy,
+ *     and anyone who is neither in a company nor a tenant (staff, admins and so on).
+ *     Internal hours are shown per person but are never revenue.
+ *   - Client: a booking linked to a company, or a booker with a tenant role at the property.
+ *
+ * The view picks which bookings the report covers: 'clients' (the default), 'internal' or 'all'.
  *
  * Money for each hour is that room's hourly_rate, so the same client can have hours at
  * different prices in one month. A room with no rate set is valued at 0 and listed in
@@ -40,6 +46,9 @@ export interface RevenueCredit {
     monthly_hours: number | string | null;
 }
 
+export type RevenueView = 'clients' | 'internal' | 'all';
+export type RevenueCategory = 'client' | 'internal';
+
 export interface RevenueInput {
     rooms: RevenueRoom[];
     bookings: RevenueBooking[];
@@ -48,6 +57,9 @@ export interface RevenueInput {
     userNames: Record<string, string>;
     /** user_ids whose bookings are free by policy (HR, CRM/BD, IT, Design). */
     internalUserIds: Set<string>;
+    /** user_ids with a tenant role (tenant, super_tenant) at the property. */
+    tenantUserIds: Set<string>;
+    view?: RevenueView;
 }
 
 export interface RevenueBookingLine {
@@ -69,6 +81,7 @@ export interface RevenueBookingLine {
 
 export interface RevenueClient {
     key: string;
+    category: RevenueCategory;
     type: 'company' | 'individual';
     name: string;
     hasCreditPlan: boolean;
@@ -77,6 +90,7 @@ export interface RevenueClient {
     bookedHours: number;
     creditHours: number;
     exceededHours: number;
+    internalHours: number;
     unusedCreditHours: number;
     creditValue: number;
     exceededRevenue: number;
@@ -111,6 +125,7 @@ export interface RevenueTotals {
 }
 
 export interface RevenueReport {
+    view: RevenueView;
     totals: RevenueTotals;
     clients: RevenueClient[];
     rooms: RevenueRoomTotals[];
@@ -145,7 +160,21 @@ export function monthRange(month: string): { start: string; end: string } | null
     return { start: `${month}-01`, end: `${month}-${String(lastDay).padStart(2, '0')}` };
 }
 
+/** Client or internal, for one booking. Internal-team roles win over company and tenant. */
+export function classifyBooker(
+    booking: Pick<RevenueBooking, 'user_id' | 'company_id'>,
+    internalUserIds: Set<string>,
+    tenantUserIds: Set<string>,
+): RevenueCategory {
+    // Same rule as the booking API: an internal-team booker never draws credits, company or not.
+    if (booking.user_id && internalUserIds.has(booking.user_id)) return 'internal';
+    if (booking.company_id) return 'client';
+    if (booking.user_id && tenantUserIds.has(booking.user_id)) return 'client';
+    return 'internal';
+}
+
 export function buildRevenueReport(input: RevenueInput): RevenueReport {
+    const view: RevenueView = input.view || 'clients';
     const roomById = new Map(input.rooms.map(r => [r.id, r]));
 
     const companyCredit = new Map<string, number>();
@@ -176,7 +205,13 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
     // Every room appears in the room sheet, even with no bookings this month.
     for (const room of input.rooms) roomTotalsFor(room.id);
 
-    const sorted = [...input.bookings].sort((a, b) =>
+    const inView = input.bookings.filter(b => {
+        if (view === 'all') return true;
+        const category = classifyBooker(b, input.internalUserIds, input.tenantUserIds);
+        return view === 'clients' ? category === 'client' : category === 'internal';
+    });
+
+    const sorted = [...inView].sort((a, b) =>
         a.booking_date.localeCompare(b.booking_date)
         || minutesOf(a.start_time) - minutesOf(b.start_time)
         || a.id.localeCompare(b.id));
@@ -203,12 +238,31 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
             creditHours: 0, exceededHours: 0, creditValue: 0, exceededRevenue: 0, totalValue: 0,
         };
 
-        // Same rule as the booking API: an internal booker never draws credits, company or not.
-        if (b.user_id && input.internalUserIds.has(b.user_id)) {
+        room.bookingCount += 1;
+        room.bookedHours += hours;
+
+        if (classifyBooker(b, input.internalUserIds, input.tenantUserIds) === 'internal') {
             internal.bookingCount += 1;
             internal.hours += hours;
             internal.bookings.push(line);
             room.internalHours += hours;
+
+            const key = `internal:${b.user_id || 'unknown'}`;
+            let person = clients.get(key);
+            if (!person) {
+                person = {
+                    key, category: 'internal', type: 'individual', name: bookedBy,
+                    hasCreditPlan: false, monthlyCreditHours: 0,
+                    bookingCount: 0, bookedHours: 0, creditHours: 0, exceededHours: 0, internalHours: 0,
+                    unusedCreditHours: 0, creditValue: 0, exceededRevenue: 0, totalValue: 0,
+                    bookings: [], remaining: 0,
+                };
+                clients.set(key, person);
+            }
+            person.bookingCount += 1;
+            person.bookedHours += hours;
+            person.internalHours += hours;
+            person.bookings.push(line);
             continue;
         }
 
@@ -218,12 +272,13 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
             const allowance = b.company_id ? companyCredit.get(b.company_id) : (b.user_id ? userCredit.get(b.user_id) : undefined);
             client = {
                 key,
+                category: 'client',
                 type: b.company_id ? 'company' : 'individual',
                 name: b.company_id ? (input.companyNames[b.company_id] || 'Unknown company') : bookedBy,
                 hasCreditPlan: allowance !== undefined,
                 monthlyCreditHours: allowance ?? 0,
-                bookingCount: 0, bookedHours: 0, creditHours: 0, exceededHours: 0, unusedCreditHours: 0,
-                creditValue: 0, exceededRevenue: 0, totalValue: 0,
+                bookingCount: 0, bookedHours: 0, creditHours: 0, exceededHours: 0, internalHours: 0,
+                unusedCreditHours: 0, creditValue: 0, exceededRevenue: 0, totalValue: 0,
                 bookings: [],
                 remaining: allowance ?? 0,
             };
@@ -249,8 +304,6 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
         client.totalValue += hours * rate;
         client.bookings.push(line);
 
-        room.bookingCount += 1;
-        room.bookedHours += hours;
         room.creditHours += fromCredit;
         room.exceededHours += exceeded;
         room.creditValue += fromCredit * rate;
@@ -263,13 +316,17 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
         bookedHours: round2(c.bookedHours),
         creditHours: round2(c.creditHours),
         exceededHours: round2(c.exceededHours),
+        internalHours: round2(c.internalHours),
         unusedCreditHours: round2(Math.max(0, remaining)),
         creditValue: round2(c.creditValue),
         exceededRevenue: round2(c.exceededRevenue),
         totalValue: round2(c.totalValue),
     }));
-    // Biggest billable amount first, then biggest total value, then name.
-    clientList.sort((a, b) => b.exceededRevenue - a.exceededRevenue || b.totalValue - a.totalValue || a.name.localeCompare(b.name));
+    // Clients before internal people, then biggest billable amount, total value, hours, name.
+    clientList.sort((a, b) =>
+        (a.category === b.category ? 0 : a.category === 'client' ? -1 : 1)
+        || b.exceededRevenue - a.exceededRevenue || b.totalValue - a.totalValue
+        || b.bookedHours - a.bookedHours || a.name.localeCompare(b.name));
 
     const roomList: RevenueRoomTotals[] = Array.from(roomTotals.values()).map(r => ({
         ...r,
@@ -283,8 +340,9 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
     }));
     roomList.sort((a, b) => b.totalValue - a.totalValue || b.bookedHours - a.bookedHours || a.roomName.localeCompare(b.roomName));
 
+    // bookedHours = creditHours + exceededHours + internalHours, for every row and the totals.
     const totals: RevenueTotals = {
-        bookingCount: clientList.reduce((s, c) => s + c.bookingCount, 0) + internal.bookingCount,
+        bookingCount: clientList.reduce((s, c) => s + c.bookingCount, 0),
         bookedHours: round2(clientList.reduce((s, c) => s + c.bookedHours, 0)),
         creditHours: round2(clientList.reduce((s, c) => s + c.creditHours, 0)),
         exceededHours: round2(clientList.reduce((s, c) => s + c.exceededHours, 0)),
@@ -297,6 +355,7 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
     const roomsWithoutRate = roomList.filter(r => !r.rateSet && (r.bookedHours > 0 || r.internalHours > 0)).map(r => r.roomName);
 
     return {
+        view,
         totals,
         clients: clientList,
         rooms: roomList,

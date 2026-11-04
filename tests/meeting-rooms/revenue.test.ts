@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildRevenueReport, bookingHours, monthRange, type RevenueInput } from '../../backend/lib/meetingRooms/revenue';
+import { buildRevenueReport, bookingHours, classifyBooker, monthRange, type RevenueInput } from '../../backend/lib/meetingRooms/revenue';
 
 const rooms = [
     { id: 'r-board', name: 'Boardroom', hourly_rate: 1000 },
@@ -16,6 +16,7 @@ const base = (overrides: Partial<RevenueInput> = {}): RevenueInput => ({
     companyNames: { acme: 'Acme Pvt Ltd', beta: 'Beta LLP' },
     userNames: { u1: 'Asha', u2: 'Ravi', u3: 'Neha', hr: 'HR Team' },
     internalUserIds: new Set(['hr']),
+    tenantUserIds: new Set(['u2']),
     ...overrides,
 });
 
@@ -95,7 +96,7 @@ test('a client with no credit plan pays for every hour', () => {
     assert.equal(beta.exceededRevenue, 800);
 });
 
-test('individual bookers without a company use their own credit record', () => {
+test('tenant bookers without a company use their own credit record', () => {
     const report = buildRevenueReport(base({
         credits: [{ company_id: null, user_id: 'u2', monthly_hours: 1 }],
         bookings: [bk('b1', 'r-small', '2026-11-02', '10:00', '12:00', 'u2', null)],
@@ -113,10 +114,11 @@ test('internal team bookings are hours only, never revenue', () => {
             bk('b1', 'r-board', '2026-11-02', '10:00', '12:00', 'hr', null),
             bk('b2', 'r-board', '2026-11-03', '10:00', '11:00', 'u1', 'acme'),
         ],
+        view: 'all',
     }));
     assert.equal(report.internal.hours, 2);
     assert.equal(report.totals.internalHours, 2);
-    assert.equal(report.clients.length, 1);
+    assert.equal(report.clients.filter(c => c.category === 'client').length, 1);
     assert.equal(report.totals.totalValue, 1000);
     const board = report.rooms.find(r => r.roomName === 'Boardroom')!;
     assert.equal(board.internalHours, 2);
@@ -146,5 +148,65 @@ test('totals equal the sum of clients and the sum of rooms', () => {
     assert.equal(report.totals.totalValue, sum(report.clients.map(c => c.totalValue)));
     assert.equal(report.totals.totalValue, sum(report.rooms.map(r => r.totalValue)));
     assert.equal(report.totals.exceededRevenue, sum(report.rooms.map(r => r.exceededRevenue)));
-    assert.equal(report.totals.creditHours + report.totals.exceededHours, report.totals.bookedHours);
+    assert.equal(report.totals.bookedHours, sum(report.rooms.map(r => r.bookedHours)));
+    assert.equal(
+        round(report.totals.creditHours + report.totals.exceededHours + report.totals.internalHours),
+        report.totals.bookedHours,
+    );
+});
+
+const round = (n: number) => Math.round(n * 100) / 100;
+
+test('classifyBooker: internal role wins, then company, then tenant, else internal', () => {
+    const internal = new Set(['hr']);
+    const tenants = new Set(['t1']);
+    assert.equal(classifyBooker({ user_id: 'hr', company_id: 'acme' }, internal, tenants), 'internal');
+    assert.equal(classifyBooker({ user_id: 'x', company_id: 'acme' }, internal, tenants), 'client');
+    assert.equal(classifyBooker({ user_id: 't1', company_id: null }, internal, tenants), 'client');
+    assert.equal(classifyBooker({ user_id: 'admin', company_id: null }, internal, tenants), 'internal');
+    assert.equal(classifyBooker({ user_id: null, company_id: null }, internal, tenants), 'internal');
+});
+
+test('a non-tenant individual with no company is internal: hours only, never exceeded revenue', () => {
+    const bookings = [
+        bk('b1', 'r-board', '2026-11-02', '10:00', '12:00', 'u1', null), // u1 is not a tenant
+        bk('b2', 'r-small', '2026-11-03', '10:00', '11:00', 'u3', 'beta'),
+    ];
+    const all = buildRevenueReport(base({ bookings, view: 'all' }));
+    const asha = all.clients.find(c => c.name === 'Asha')!;
+    assert.equal(asha.category, 'internal');
+    assert.equal(asha.internalHours, 2);
+    assert.equal(asha.exceededRevenue, 0);
+    assert.equal(asha.totalValue, 0);
+    assert.equal(all.totals.exceededRevenue, 400); // only Beta's hour
+    assert.equal(all.totals.internalHours, 2);
+    // clients come first in the list
+    assert.equal(all.clients[0].category, 'client');
+});
+
+test('views: clients shows only clients, internal only internal, all shows both', () => {
+    const bookings = [
+        bk('b1', 'r-board', '2026-11-02', '10:00', '12:00', 'u1', null), // internal (not a tenant)
+        bk('b2', 'r-board', '2026-11-03', '10:00', '11:00', 'hr', null), // internal team
+        bk('b3', 'r-small', '2026-11-04', '10:00', '11:00', 'u3', 'beta'), // company client
+        bk('b4', 'r-small', '2026-11-05', '10:00', '12:00', 'u2', null), // tenant client
+    ];
+    const clients = buildRevenueReport(base({ bookings }));
+    assert.equal(clients.view, 'clients');
+    assert.deepEqual(clients.clients.map(c => c.name).sort(), ['Beta LLP', 'Ravi']);
+    assert.equal(clients.totals.internalHours, 0);
+    assert.equal(clients.totals.exceededRevenue, 1200);
+    assert.equal(clients.rooms.find(r => r.roomName === 'Boardroom')!.bookedHours, 0);
+
+    const internal = buildRevenueReport(base({ bookings, view: 'internal' }));
+    assert.deepEqual(internal.clients.map(c => c.name).sort(), ['Asha', 'HR Team']);
+    assert.ok(internal.clients.every(c => c.category === 'internal'));
+    assert.equal(internal.totals.internalHours, 3);
+    assert.equal(internal.totals.totalValue, 0);
+
+    const all = buildRevenueReport(base({ bookings, view: 'all' }));
+    assert.equal(all.clients.length, 4);
+    assert.equal(all.totals.exceededRevenue, 1200);
+    assert.equal(all.totals.internalHours, 3);
+    assert.equal(all.totals.bookedHours, 6);
 });

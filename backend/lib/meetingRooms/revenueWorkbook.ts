@@ -4,7 +4,17 @@ import type { RevenueBookingLine, RevenueReport } from './revenue';
 /**
  * Excel workbook for the meeting room revenue sheet (GET /api/meeting-rooms/revenue?format=xlsx).
  * Tabs: Summary, Client Revenue, Room Revenue, All Bookings, then one tab per client.
+ * The report's view (clients, internal or all) decides which bookings it covers.
  */
+
+const VIEW_LABEL: Record<RevenueReport['view'], string> = {
+    clients: 'Clients only',
+    internal: 'Internal users only',
+    all: 'All users',
+};
+
+const typeLabel = (c: RevenueReport['clients'][number]) =>
+    c.category === 'internal' ? 'Internal' : c.type === 'company' ? 'Company' : 'Tenant';
 
 /** Text that Excel would read as a formula (=, +, -, @) is prefixed with a quote so it stays text. */
 const safeText = (v: string) => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
@@ -71,17 +81,17 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
     // Summary
     const summary = wb.addWorksheet(sheetName('Summary', used));
     summary.columns = [{ width: 34 }, { width: 20 }];
-    const title = summary.addRow([`Meeting Room Revenue | ${safeText(propertyName)} | ${label}`]);
+    const title = summary.addRow([`Meeting Room Revenue | ${safeText(propertyName)} | ${label} | ${VIEW_LABEL[report.view]}`]);
     title.font = { bold: true, size: 12, color: { argb: BRAND } };
     summary.addRow([]);
     styleHeader(summary.addRow(['Metric', 'Value']));
     const t = report.totals;
     const summaryRows: [string, number, 'inr' | 'hrs' | 'count'][] = [
         ['Bookings', t.bookingCount, 'count'],
-        ['Client hours booked', t.bookedHours, 'hrs'],
+        ['Hours booked', t.bookedHours, 'hrs'],
         ['Hours covered by credits', t.creditHours, 'hrs'],
         ['Hours exceeding credits', t.exceededHours, 'hrs'],
-        ['Internal team hours (no charge)', t.internalHours, 'hrs'],
+        ['Internal hours (no charge)', t.internalHours, 'hrs'],
         ['Credit value (₹)', t.creditValue, 'inr'],
         ['Exceeded revenue, billable (₹)', t.exceededRevenue, 'inr'],
         ['Total value (₹)', t.totalValue, 'inr'],
@@ -99,7 +109,8 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
         'Hours after the credits are used up are exceeded hours. These are the billable amount.',
         'A client with no credit plan has no free hours, so all of its hours are exceeded hours.',
         'Value = hours x the room price per hour. Prices are before GST.',
-        'HR, CRM/BD, IT and Design bookings are free by policy and shown as internal hours only.',
+        'Clients are companies and users with a tenant role. Only clients count as revenue.',
+        'Everyone else (HR, CRM/BD, IT, Design, staff, admins) is internal: hours only, no charge.',
         'Cancelled bookings are not counted.',
     ].forEach(line => summary.addRow([line]));
     if (report.roomsWithoutRate.length) {
@@ -112,29 +123,29 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
     const clientWs = wb.addWorksheet(sheetName('Client Revenue', used), { views: [{ state: 'frozen', ySplit: 1 }] });
     clientWs.columns = [
         { width: 32 }, { width: 12 }, { width: 14 }, { width: 10 }, { width: 12 }, { width: 12 },
-        { width: 13 }, { width: 14 }, { width: 16 }, { width: 20 }, { width: 16 },
+        { width: 13 }, { width: 13 }, { width: 14 }, { width: 16 }, { width: 20 }, { width: 16 },
     ];
     styleHeader(clientWs.addRow([
         'Client', 'Type', 'Monthly Credits (Hrs)', 'Bookings', 'Hours Booked', 'Credit Hrs',
-        'Exceeded Hrs', 'Unused Credit Hrs', 'Credit Value (₹)', 'Exceeded Revenue (₹)', 'Total Value (₹)',
+        'Exceeded Hrs', 'Internal Hrs', 'Unused Credit Hrs', 'Credit Value (₹)', 'Exceeded Revenue (₹)', 'Total Value (₹)',
     ]));
     report.clients.forEach(c => {
         const row = clientWs.addRow([
-            safeText(c.name), c.type === 'company' ? 'Company' : 'Individual',
-            c.hasCreditPlan ? c.monthlyCreditHours : 'No plan',
-            c.bookingCount, c.bookedHours, c.creditHours, c.exceededHours, c.unusedCreditHours,
+            safeText(c.name), typeLabel(c),
+            c.category === 'internal' ? 'n/a' : c.hasCreditPlan ? c.monthlyCreditHours : 'No plan',
+            c.bookingCount, c.bookedHours, c.creditHours, c.exceededHours, c.internalHours, c.unusedCreditHours,
             c.creditValue, c.exceededRevenue, c.totalValue,
         ]);
-        formatCells(row, [9, 10, 11], [5, 6, 7, 8]);
+        formatCells(row, [10, 11, 12], [5, 6, 7, 8, 9]);
         if (c.hasCreditPlan) row.getCell(3).numFmt = HRS_FMT;
     });
     const clientTotal = clientWs.addRow([
         'TOTAL', '', '', report.clients.reduce((s, c) => s + c.bookingCount, 0),
-        t.bookedHours, t.creditHours, t.exceededHours,
+        t.bookedHours, t.creditHours, t.exceededHours, t.internalHours,
         report.clients.reduce((s, c) => s + c.unusedCreditHours, 0),
         t.creditValue, t.exceededRevenue, t.totalValue,
     ]);
-    formatCells(clientTotal, [9, 10, 11], [5, 6, 7, 8]);
+    formatCells(clientTotal, [10, 11, 12], [5, 6, 7, 8, 9]);
     styleTotal(clientTotal);
 
     // Room revenue
@@ -168,11 +179,11 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
     detailWs.columns = [{ width: 30 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 },
         { width: 8 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }];
     styleHeader(detailWs.addRow(['Client', ...BOOKING_HEADERS]));
-    report.clients.forEach(c => c.bookings.forEach(b => addBookingRow(detailWs, b, c.name)));
-    report.internal.bookings.forEach(b => addBookingRow(detailWs, b, 'Internal team (no charge)'));
+    report.clients.forEach(c => c.bookings.forEach(b =>
+        addBookingRow(detailWs, b, c.category === 'internal' ? `${c.name} (internal, no charge)` : c.name)));
 
-    // One sheet per client, ready to share with that client
-    report.clients.forEach(c => {
+    // One sheet per client, ready to share with that client. Internal people get none.
+    report.clients.filter(c => c.category === 'client').forEach(c => {
         const ws = wb.addWorksheet(sheetName(c.name, used));
         ws.columns = [{ width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 }, { width: 8 },
             { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }];
