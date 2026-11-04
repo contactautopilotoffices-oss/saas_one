@@ -23,6 +23,7 @@
     "test:whatsapp-interpreter": "node --test --test-isolation=none tests/whatsapp-interpreter-*.test.mjs",
     "test:requisition-drafts": "node --test --test-isolation=none tests/requisition-drafts.test.mjs tests/requisition-drafts-db.test.mjs tests/requisition-drafts-hook.test.mjs",
     "test:hr-assistant": "tsx --test \"tests/hr-assistant/*.test.ts\"",
+    "test:hr-escalation": "tsx --test \"tests/hr-escalation/*.test.ts\"",
     "test:candidates": "tsx --test \"tests/candidates/*.test.ts\"",
     "test:task-manager-report": "tsx --test \"tests/task-manager-report/*.test.ts\"",
     "test:meeting-rooms": "tsx --test \"tests/meeting-rooms/*.test.ts\"",

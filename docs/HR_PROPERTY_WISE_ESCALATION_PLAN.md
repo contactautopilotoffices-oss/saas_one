@@ -1,16 +1,16 @@
 # HR Grievance: Property-wise Escalation Routing (Plan)
 
-Status: **Plan, decisions mostly agreed. No code changed yet.**
+Status: **All decisions agreed. Implemented on this branch (not yet pushed).**
 Branch: `feat/hr-property-wise-escalation`
 
 ## 0. Decisions so far
 
 | # | Question | Decision |
 |---|---|---|
-| 1 | Where does the ticket's property come from? | From the employee's **property membership**. Org-level staff (procurement, design, etc.) with no single property fall back to the org's **primary property: D Mafatlal Chambers**. See section 3. *(Waiting for final OK on the multi-property case.)* |
+| 1 | Where does the ticket's property come from? | From the employee's **property membership**. Org-level staff (procurement, design, etc.) and employees with several properties fall back to the org's **primary property: D Mafatlal Chambers** (set in Admin Config). See section 3. |
 | 2 | Property or city? | **Per property, grouped freely.** At each level the admin picks a set of properties and the people for them. Example: HR Query L1, ETPL + Rabale go to HR A, SS Plaza goes to HR B. |
 | 3 | Which ticket types? | **Grievance and HR Query only.** Confidential and Anonymous keep the org-wide chain. |
-| 4 | Should property HR see only their property's tickets? | Not decided. **No access change** unless explicitly approved. |
+| 4 | Should property HR see only their property's tickets? | **No.** Anyone in a ticket type's escalation setup (default people or any property rule) can open every ticket of that type, as today. |
 | 5 | Existing open tickets? | **Not touched.** Only tickets raised after release use property routing. |
 
 ## 1. The requirement
@@ -83,10 +83,7 @@ server when the ticket is raised, in this order:
 "Primary property for org-level employees", set to D Mafatlal Chambers. If the head office
 moves later, HR changes the setting, no code change.
 
-**Open point for the multi-property case (step 3).** Two choices:
-- **3a. Use the primary property** (simplest, no form change). Recommended to start.
-- **3b. Show a "Property" dropdown on the ticket form** only for these employees, listing just
-  their own properties.
+**Multi-property case (step 3): agreed to use the primary property.** No ticket form change.
 
 **Frozen on the ticket.** The property found above is saved once into
 `employee_snapshot.property_id` (plus `property_name` for display) at creation time. Later
@@ -147,7 +144,7 @@ the config the same way everywhere (today `slaEscalation.ts` reads only the
 `hr_escalation_config` column while the others read `notification_matrix` first).
 
 Place 4 (access check) keeps today's behaviour: anyone configured anywhere in that type's chain,
-default or property rules, can open tickets of that type. Narrowing that is decision 4.
+default or property rules, can open tickets of that type (decision 4).
 
 ## 6. Admin UI
 
@@ -192,9 +189,14 @@ SLA days (`flow_levels`) stay the same for all properties.
 
 Nothing in phases 1 to 4 needs a database migration.
 
-## 9. Still open
+## 9. Implementation notes
 
-1. **Multi-property employees:** use the primary property (3a, recommended) or show a dropdown
-   on the form (3b)?
-2. **Visibility:** should property HR see only their own property's tickets? (No change unless
-   approved.)
+- Shared helper: `backend/lib/hr/levelAssignees.ts`, unit tests in
+  `tests/hr-escalation/levelAssignees.test.ts` (`npm run test:hr-escalation`).
+- The ticket list (`GET /api/hr/tickets`) also reads the level people (current level owner and
+  confidential/anonymous visibility); it uses the same helper.
+- Admin UI: property rules block in `frontend/components/hr/HRPropertyRoutingRules.tsx`, shown
+  inside each level card of `HREscalationTreeVisualizer` for Grievance and HR Query (not on
+  "Reporting Manager" levels, which route automatically). Primary property selector sits above
+  the tree. Incomplete or overlapping rules are blocked before saving.
+- The ticket number format is unchanged.

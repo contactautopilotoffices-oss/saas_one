@@ -2,6 +2,15 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { runAutoSlaEscalation } from '@/backend/lib/hr/slaEscalation';
+import {
+    PROPERTY_ROUTED_TICKET_TYPES,
+    getAllConfiguredAssigneeIds,
+    getLevelAssigneeIds,
+    getTicketPropertyId,
+    isPropertyRoutedTicketType,
+    pickTicketPropertyId,
+    unwrapFlowAssignees
+} from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -86,6 +95,7 @@ let lastSlaCheckTimestamp = 0;
 const SLA_THROTTLE_MS = 5 * 60 * 1000; // Check at most once every 5 minutes in background
 
 interface OrgConfigCacheEntry {
+    escalationConfig: unknown;
     flowAssigneesConfig: any;
     flowLevelsConfig: any;
     manualEscalationConfig: any;
@@ -345,6 +355,7 @@ export async function GET(request: Request) {
 
         // Load organization escalation config with server-side in-memory caching (60s TTL)
         const targetOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
+        let escalationConfig: unknown = {};
         let flowAssigneesConfig: any = {};
         let flowLevelsConfig: any = {};
         let manualEscalationConfig: any = {};
@@ -353,6 +364,7 @@ export async function GET(request: Request) {
 
         const cachedConfig = orgConfigCache.get(targetOrgId);
         if (cachedConfig && (Date.now() - cachedConfig.timestamp < CONFIG_CACHE_TTL_MS)) {
+            escalationConfig = cachedConfig.escalationConfig || {};
             flowAssigneesConfig = cachedConfig.flowAssigneesConfig;
             flowLevelsConfig = cachedConfig.flowLevelsConfig || {};
             manualEscalationConfig = cachedConfig.manualEscalationConfig;
@@ -373,17 +385,15 @@ export async function GET(request: Request) {
                     .maybeSingle();
 
                 const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-                flowAssigneesConfig = configObj.flow_assignees || {};
-                while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                    flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
-                }
+                escalationConfig = configObj;
+                flowAssigneesConfig = unwrapFlowAssignees(configObj);
                 flowLevelsConfig = configObj.flow_levels || {};
                 manualEscalationConfig = configObj.manual_escalation || {};
             } catch (e) {
                 console.warn('Could not read hr_escalation_config in tickets list:', e);
             }
 
-            // Collect all custom assignee IDs from flowAssigneesConfig to resolve names
+            // Collect all custom assignee IDs (default people + property rules) to resolve names
             const allCustomIds = new Set<string>();
             Object.keys(flowAssigneesConfig).forEach(flowType => {
                 const flowObj = flowAssigneesConfig[flowType] || {};
@@ -393,6 +403,9 @@ export async function GET(request: Request) {
                         arr.forEach((id: string) => allCustomIds.add(id));
                     }
                 });
+            });
+            PROPERTY_ROUTED_TICKET_TYPES.forEach(flowType => {
+                getAllConfiguredAssigneeIds(escalationConfig, flowType).forEach(id => allCustomIds.add(id));
             });
 
             if (allCustomIds.size > 0) {
@@ -427,6 +440,7 @@ export async function GET(request: Request) {
 
             // Store in in-memory server cache
             orgConfigCache.set(targetOrgId, {
+                escalationConfig,
                 flowAssigneesConfig,
                 flowLevelsConfig,
                 manualEscalationConfig,
@@ -461,11 +475,7 @@ export async function GET(request: Request) {
 
             // Designated assignee in HR Admin Config flow assignees for this ticket type
             const tType = t.ticket_type || t.category?.ticket_type || '';
-            const configAssigneesForType = new Set<string>();
-            const flowObj = flowAssigneesConfig[tType] || {};
-            Object.values(flowObj).forEach((val: any) => {
-                if (Array.isArray(val)) val.forEach((id: string) => configAssigneesForType.add(id));
-            });
+            const configAssigneesForType = getAllConfiguredAssigneeIds(escalationConfig, tType);
             const isDesignatedAdminConfigAssignee = Boolean(userId && (configAssigneesForType.has(userId) || (myProfile?.id && configAssigneesForType.has(myProfile.id))));
 
             if (isAnonTicket) {
@@ -514,7 +524,8 @@ export async function GET(request: Request) {
         const sanitized = accessibleData.map(t => {
             const tType = t.ticket_type || t.category?.ticket_type || 'grievance';
             const curLvl = t.current_level || 1;
-            const stepAssignees = flowAssigneesConfig[tType]?.[String(curLvl)] || flowAssigneesConfig[tType]?.[curLvl];
+            // Property-aware: Grievance / HR Query tickets use their property's people when a rule exists
+            const stepAssignees = getLevelAssigneeIds(escalationConfig, tType, curLvl, getTicketPropertyId(t));
             let currentLevelOwner = '';
             if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
                 const names = Array.from(new Set(stepAssignees.map(id => profileNameMap.get(id)).filter(Boolean)));
@@ -702,6 +713,9 @@ export async function POST(request: Request) {
         let firstLevelOwnerId: string | null = null;
         let isFallbackHrManager = false;
         let configuredLevel1UserIds: string[] = [];
+        // Property frozen on the ticket for property-wise escalation (Grievance & HR Query only)
+        let routingPropertyId: string | null = null;
+        let routingPropertyName: string | null = null;
 
         // Check organization_settings to see if specific Level 1 assigned users were configured in Admin Config for this ticketType
         try {
@@ -718,13 +732,37 @@ export async function POST(request: Request) {
                 .maybeSingle();
 
             const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-            let flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+
+            // Property for routing: the submitter's single active property membership, otherwise the
+            // org primary property from Admin Config (org-level roles and multi-property employees).
+            if (isPropertyRoutedTicketType(ticketType) && raised_by_user_id) {
+                try {
+                    const { data: memberships } = await supabaseAdmin
+                        .from('property_memberships')
+                        .select('property_id, property:properties(organization_id)')
+                        .eq('user_id', raised_by_user_id)
+                        .eq('is_active', true);
+                    type MembershipRow = { property_id: string; property?: { organization_id?: string | null } | null };
+                    const orgPropertyIds = ((memberships || []) as unknown as MembershipRow[])
+                        .filter(m => !m.property?.organization_id || m.property.organization_id === effectiveOrgId)
+                        .map(m => m.property_id);
+                    routingPropertyId = pickTicketPropertyId(orgPropertyIds, configObj.primary_property_id || null);
+
+                    if (routingPropertyId) {
+                        const { data: routingProp } = await supabaseAdmin
+                            .from('properties')
+                            .select('name')
+                            .eq('id', routingPropertyId)
+                            .maybeSingle();
+                        routingPropertyName = routingProp?.name || null;
+                    }
+                } catch (propErr) {
+                    console.warn('Could not resolve routing property on POST ticket:', propErr);
+                }
             }
 
-            const level1Assignees = flowAssigneesConfig[ticketType]?.[1] || flowAssigneesConfig[ticketType]?.['1'];
-            if (Array.isArray(level1Assignees) && level1Assignees.length > 0) {
+            const level1Assignees = getLevelAssigneeIds(configObj, ticketType, 1, routingPropertyId);
+            if (level1Assignees.length > 0) {
                 const { data: matchedProfiles } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('id, user_id')
@@ -876,7 +914,10 @@ export async function POST(request: Request) {
             department: is_anonymous ? 'Confidential' : (empProfile?.department || 'General'),
             designation: is_anonymous ? 'Confidential' : (empProfile?.designation || 'Staff'),
             location: is_anonymous ? 'Hidden' : empLocation,
-            property_id: is_anonymous ? null : (property_id || empProfile?.property_id || null),
+            property_id: isPropertyRoutedTicketType(ticketType)
+                ? routingPropertyId
+                : (is_anonymous ? null : (property_id || empProfile?.property_id || null)),
+            ...(isPropertyRoutedTicketType(ticketType) && routingPropertyName ? { property_name: routingPropertyName } : {}),
             manager_name: isConfidentialOrAnonymous ? 'Hidden' : submitterManagerName,
             manager_code: isConfidentialOrAnonymous ? null : (empProfile?.reporting_manager_code || null),
             manager_user_id: effectiveManagerUserId,

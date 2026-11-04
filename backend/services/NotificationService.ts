@@ -6,6 +6,7 @@ import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
 import { EmailRecipientResolver } from './EmailRecipientResolver';
 import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
+import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 
 export interface NotificationPayload {
@@ -2805,14 +2806,9 @@ export class NotificationService {
             const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
                 || (orgSettings as any)?.hr_escalation_config
                 || {};
-            let flowAssignees = configObj.flow_assignees || {};
-            while (flowAssignees && flowAssignees.flow_assignees) {
-                flowAssignees = flowAssignees.flow_assignees;
-            }
-
-            const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
-            const levelAssignees = flowAssignees[tType]?.[String(level)] || flowAssignees[tType]?.[level];
-            if (!Array.isArray(levelAssignees) || levelAssignees.length === 0) {
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const levelAssignees = getTicketLevelAssigneeIds(configObj, ticket, level);
+            if (levelAssignees.length === 0) {
                 return Array.from(recipients);
             }
 

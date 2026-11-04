@@ -3,6 +3,8 @@
 import React, { useState } from 'react';
 import { ShieldCheck, HelpCircle, Lock, EyeOff, Clock, ArrowDown, User, Shield, AlertTriangle, Building2, CheckCircle2, ChevronRight, Info, Layers, Sparkles, X, Check, Plus, Trash2, Edit3 } from 'lucide-react';
 import { SearchableEmployeeSelector, formatSlaDisplay } from '@/frontend/components/hr/HRAdminConfigPanel';
+import HRPropertyRoutingRules, { OrgProperty, PropertyRuleDraft } from '@/frontend/components/hr/HRPropertyRoutingRules';
+import { isPropertyRoutedTicketType, validatePropertyRules } from '@/backend/lib/hr/levelAssignees';
 
 export function parseSlaTextToValAndUnit(slaText: string): { val: number; unit: 'mins' | 'hours' | 'days' } {
     if (!slaText || !slaText.trim()) return { val: 3, unit: 'days' };
@@ -406,6 +408,12 @@ export default function HREscalationTreeVisualizer({
     // Per-flow toggle: shows the current handler an "Escalate to next level" button before TAT expires
     const [manualEscalation, setManualEscalation] = React.useState<Record<string, boolean>>({});
 
+    // Property-wise routing (Grievance & HR Query): per flow, per level rules + org primary property
+    const [propertyRules, setPropertyRules] = React.useState<Record<string, Record<string, PropertyRuleDraft[]>>>({});
+    const [primaryPropertyId, setPrimaryPropertyId] = React.useState<string>('');
+    const [orgProperties, setOrgProperties] = React.useState<OrgProperty[]>([]);
+    const [localErrorMsg, setLocalErrorMsg] = React.useState<string>('');
+
     const [localSaveMsg, setLocalSaveMsg] = React.useState<string>('');
     const [isSavingLocal, setIsSavingLocal] = React.useState<boolean>(false);
     const [isSavingToggle, setIsSavingToggle] = React.useState<boolean>(false);
@@ -446,6 +454,13 @@ export default function HREscalationTreeVisualizer({
                     }
                     if (data.data.manual_escalation) {
                         setManualEscalation(data.data.manual_escalation);
+                    }
+                    if (data.data.flow_assignees_by_property && typeof data.data.flow_assignees_by_property === 'object') {
+                        setPropertyRules(data.data.flow_assignees_by_property);
+                    }
+                    setPrimaryPropertyId(data.data.primary_property_id || '');
+                    if (Array.isArray(data.data.properties)) {
+                        setOrgProperties(data.data.properties);
                     }
                     if (data.data.flow_levels && typeof data.data.flow_levels === 'object') {
                         const loadedLevels: Record<string, EscalationLevel[]> = {};
@@ -523,6 +538,16 @@ export default function HREscalationTreeVisualizer({
 
             const levelArr = baseArr.filter(e => e.id !== empId && e.user_id !== empId);
             flowObj[levelKey] = levelArr;
+            return { ...prev, [flowId]: flowObj };
+        });
+    };
+
+    const handleSetLevelPropertyRules = (flowId: string, levelNum: number, rules: PropertyRuleDraft[]) => {
+        setLocalErrorMsg('');
+        setPropertyRules(prev => {
+            const flowObj = { ...(prev[flowId] || {}) };
+            if (rules.length > 0) flowObj[String(levelNum)] = rules;
+            else delete flowObj[String(levelNum)];
             return { ...prev, [flowId]: flowObj };
         });
     };
@@ -632,6 +657,25 @@ export default function HREscalationTreeVisualizer({
     };
 
     const handleSaveFlowAssignees = async () => {
+        // Property rules are sent as ID lists; incomplete or overlapping rules are blocked before saving
+        const payloadPropertyRules: Record<string, Record<string, { property_ids: string[]; assignees: string[] }[]>> = {};
+        ['grievance', 'hr_query'].forEach(fId => {
+            payloadPropertyRules[fId] = {};
+            Object.keys(propertyRules[fId] || {}).forEach(lNum => {
+                const rules = (propertyRules[fId][lNum] || []).map(r => ({
+                    property_ids: r.property_ids.filter(Boolean),
+                    assignees: r.assignees.map(e => e.user_id || e.id).filter((id): id is string => !!id)
+                }));
+                if (rules.length > 0) payloadPropertyRules[fId][lNum] = rules;
+            });
+        });
+        const rulesError = validatePropertyRules(payloadPropertyRules);
+        if (rulesError) {
+            setLocalErrorMsg(rulesError);
+            return;
+        }
+        setLocalErrorMsg('');
+
         setIsSavingLocal(true);
         setLocalSaveMsg('');
         try {
@@ -660,7 +704,14 @@ export default function HREscalationTreeVisualizer({
             });
 
             if (onSaveAuthorities) {
-                await onSaveAuthorities({ organization_id: orgId, flow_assignees: payloadAssignees, flow_levels: cleanFlowLevels, manual_escalation: manualEscalation });
+                await onSaveAuthorities({
+                    organization_id: orgId,
+                    flow_assignees: payloadAssignees,
+                    flow_levels: cleanFlowLevels,
+                    manual_escalation: manualEscalation,
+                    flow_assignees_by_property: payloadPropertyRules,
+                    primary_property_id: primaryPropertyId || null
+                });
                 setLocalSaveMsg('All escalation levels & step assignees saved successfully!');
             } else {
                 const res = await fetch('/api/hr/admin/escalation-config', {
@@ -670,7 +721,9 @@ export default function HREscalationTreeVisualizer({
                         organization_id: orgId,
                         flow_assignees: payloadAssignees,
                         flow_levels: cleanFlowLevels,
-                        manual_escalation: manualEscalation
+                        manual_escalation: manualEscalation,
+                        flow_assignees_by_property: payloadPropertyRules,
+                        primary_property_id: primaryPropertyId || null
                     })
                 });
                 const data = await res.json();
@@ -784,6 +837,13 @@ export default function HREscalationTreeVisualizer({
                     </div>
                 )}
 
+                {(localErrorMsg || authorityErrorMsg) && (
+                    <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-2xl text-xs text-rose-700 dark:text-rose-300 font-bold flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>{localErrorMsg || authorityErrorMsg}</span>
+                    </div>
+                )}
+
                 {/* Manual Escalation Toggle (per ticket type) */}
                 {(() => {
                     const isManualOn = manualEscalation[selectedFlowId] === true;
@@ -857,6 +917,35 @@ export default function HREscalationTreeVisualizer({
                         </div>
                     );
                 })()}
+
+                {/* Primary property for org-level employees (property-wise routing, Grievance & HR Query) */}
+                {isPropertyRoutedTicketType(selectedFlowId) && (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40">
+                        <div className="min-w-0">
+                            <div className="text-xs font-black text-slate-900 dark:text-white flex items-center gap-1.5">
+                                <Building2 className="w-3.5 h-3.5 text-indigo-500" />
+                                Primary Property for Org-level Employees
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                Property-wise routing uses the employee&apos;s property. Employees with no property (org-level roles) or more than one property are routed as this property. Shared by Grievance and HR Query. Click &quot;Save&quot; to apply.
+                            </p>
+                        </div>
+                        <select
+                            value={primaryPropertyId}
+                            onChange={e => setPrimaryPropertyId(e.target.value)}
+                            aria-label="Primary property for org-level employees"
+                            className="w-full sm:w-64 px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 dark:text-slate-100"
+                        >
+                            <option value="">Not set (use default people)</option>
+                            {orgProperties.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                            {primaryPropertyId && !orgProperties.some(p => p.id === primaryPropertyId) && (
+                                <option value={primaryPropertyId}>Removed property</option>
+                            )}
+                        </select>
+                    </div>
+                )}
 
                 {/* Vertical Graphical Flow Chart Tree */}
                 <div className="max-w-3xl mx-auto space-y-0 relative">
@@ -1117,6 +1206,17 @@ export default function HREscalationTreeVisualizer({
                                                              />
                                                          </div>
                                                      )}
+
+                                                    {/* Property-wise routing rules (Grievance & HR Query only) */}
+                                                    {isPropertyRoutedTicketType(selectedFlowId) && (
+                                                        <HRPropertyRoutingRules
+                                                            levelNum={lvl.level}
+                                                            rules={propertyRules[selectedFlowId]?.[levelKey] || []}
+                                                            properties={orgProperties}
+                                                            employeesList={employeesList}
+                                                            onChange={(rules) => handleSetLevelPropertyRules(selectedFlowId, lvl.level, rules)}
+                                                        />
+                                                    )}
                                                  </div>
                                              )}
 

@@ -5,6 +5,7 @@ import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/servi
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 import { sanitizeWhatsAppParam, sanitizeWhatsAppParams } from '@/backend/lib/whatsapp/sanitize';
+import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 interface DispatchOptions {
     durableBatch?: boolean;
@@ -2351,14 +2352,8 @@ export const WhatsAppEventProcessor = {
             const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
                 || (orgSettings as any)?.hr_escalation_config
                 || {};
-            let flowAssignees = configObj.flow_assignees || {};
-            while (flowAssignees && flowAssignees.flow_assignees) {
-                flowAssignees = flowAssignees.flow_assignees;
-            }
-
-            const tType = ticket.ticket_type || ticket.category?.ticket_type || 'grievance';
-            const levelAssignees = flowAssignees[tType]?.[String(level)] || flowAssignees[tType]?.[level];
-            const candidateIds: string[] = Array.isArray(levelAssignees) ? levelAssignees.filter(Boolean) : [];
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const candidateIds: string[] = getTicketLevelAssigneeIds(configObj, ticket, level);
 
             if (candidateIds.length > 0) {
                 const { data: profiles } = await supabaseAdmin
