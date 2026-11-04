@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { AiSensyService } from '@/backend/services/AiSensyService';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { sanitizeWhatsAppParam } from '@/backend/lib/whatsapp/sanitize';
+import { rememberTicketReplyMessage } from '@/backend/lib/whatsapp/ticketReply';
 
 export interface WhatsAppQueuePayload {
     ticketId?: string;
@@ -155,7 +156,7 @@ export class WhatsAppQueueService {
             const { data: insertedRows, error } = await supabaseAdmin
                 .from('whatsapp_queue')
                 .insert(rows)
-                .select('id, phone, template_name, template_params, media_url, message, media_type');
+                .select('id, phone, template_name, template_params, media_url, message, media_type, event_type, entity_id');
 
             if (error) {
                 // Reminder events are deduped by a unique index (event_type, entity_id, user_id) —
@@ -235,6 +236,7 @@ export class WhatsAppQueueService {
                                         });
                                         sent = res.success;
                                         sendError = res.error;
+                                        if (res.success) await rememberTicketReplyMessage(r, res.messageIds);
                                     } else {
                                         sent = await WhatsAppService.sendAsync(r.phone, {
                                             message: r.message,

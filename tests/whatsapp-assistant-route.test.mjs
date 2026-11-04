@@ -24,6 +24,7 @@ function handler(env, enqueue = async () => 'event-1', overrides = {}) {
         '@/backend/lib/whatsapp/greeting': { isGreetingMessage: () => false },
         '@/backend/services/AiSensyService': { AiSensyService: { sendGreeting: async () => {} } },
         '@/whatsapp-test/freeformTest': { handleFreeformTest: async () => false },
+        '@/backend/lib/whatsapp/ticketReply': { claimTicketReply: async () => ({ handled: false }) },
         '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/voice/VoiceIntake':{claimVoiceNote:async()=>({kind:'pass'})},'@/task-manager/TaskMessageRouter': {TaskMessageRouter:{routeInboundMessage:async()=>({handledByTaskManager:false})}},
         '@/task-manager/TaskIdempotencyService': {TaskIdempotencyService:{isDuplicateWebhook:async()=>false,recordProcessedWebhook:()=>{}}},
         '@/backend/services/LeadOutreachService': { LeadOutreachService: { isLeadPhone: async () => false, handleInboundLeadReply: async () => ({ handled: false }) } },
@@ -278,4 +279,38 @@ test('voice intake passing (switch OFF / not a voice note) leaves the original m
     assert.deepEqual(await response.json(), { success: true, queued: true, duplicate: false });
     assert.equal(stored.text, 'Hi');
     assert.equal(stored.messageId, 'wamid-1');
+});
+
+test('a swipe-reply to a ticket notification is taken before voice, task import, smart chat and the facility bot',async()=>{
+    const stop=name=>async()=>assert.fail(`${name} must never see a ticket reply`);
+    const seen=[];
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},stop('the facility bot'),{
+        '@/backend/lib/whatsapp/ticketReply':{claimTicketReply:async body=>{seen.push(body);return {handled:true};}},
+        '@/task-manager/voice/VoiceIntake':{claimVoiceNote:stop('voice intake')},
+        '@/task-manager/TaskImportInbound':{claimTaskImport:stop('task import')},
+        '@/task-manager/brain/live':{claimSmartChat:stop('smart chat')},
+        '@/task-manager/brain/shadow':{scheduleShadow:stop('the shadow brain')},
+        '@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:stop('the task router')}},
+    });
+    const response=await route.POST(request({topic:'message.sender.user',data:{message:{phone_number:'919876543210',messageId:'swipe-1',message_content:{text:'Attached the approval'},context:{id:'ticket-note'}}}}));
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).routedTo,'TICKET_REPLY');
+    assert.equal(seen.length,1);
+    assert.equal(route.callbacks.length,0);
+});
+
+test('a re-delivered swipe-reply is dropped before the ticket reply check runs',async()=>{
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async()=>assert.fail('duplicate'),{
+        '@/task-manager/InboundLedger':{recordInbound:async()=>'duplicate',markRoute:async()=>{},markReplied:async()=>{}},
+        '@/backend/lib/whatsapp/ticketReply':{claimTicketReply:async()=>assert.fail('a duplicate must not add a second comment')},
+    });
+    assert.equal((await route.POST(request())).status,200);
+});
+
+test('anything the ticket reply check does not take carries on to the bots as before',async()=>{
+    let stored=false;
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async()=>{stored=true;return 'event';});
+    const response=await route.POST(request());
+    assert.equal(response.status,200);
+    assert.equal(stored,true);
 });
