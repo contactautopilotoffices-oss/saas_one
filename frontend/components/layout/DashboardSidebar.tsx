@@ -7,7 +7,7 @@ import {
     LayoutDashboard, Users, Ticket, Package, Settings, LogOut,
     Menu, X, ChevronLeft, GitMerge, Calendar, ShoppingCart, UsersRound, BarChart3,
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
-    Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
+    DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
     ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen, Mic, ClipboardCheck
 } from 'lucide-react';
@@ -153,7 +153,7 @@ export default function DashboardSidebar({
             { label: 'Calendar', href: '/crm/calendar', icon: Calendar, domain: 'crm' as const },
             { label: 'Tasks', href: '/crm/tasks', icon: ClipboardList, domain: 'crm' as const },
             { label: 'Target', href: '/crm/target', icon: Target, domain: 'crm' as const },
-            { label: 'AI Copilot', href: '/crm/ai', icon: Sparkles, domain: 'crm' as const },
+            { label: 'AI Copilot', href: '/crm/ai', icon: Bot, domain: 'crm' as const },
             { label: 'Performance', href: '/crm/performance', icon: TrendingUp, domain: 'crm' as const },
         ];
         if (isCrmAdmin) {
@@ -210,13 +210,13 @@ export default function DashboardSidebar({
                 <Link
                     href={`/${orgId}/book-room`}
                     onClick={handleLinkClick}
-                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                    className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                         pathname?.endsWith('/book-room')
-                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                            ? 'bg-[#587e85] text-white'
                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                     }`}
                 >
-                    <DoorOpen className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                    <DoorOpen className="w-4 h-4 shrink-0" />
                     <span className="truncate">Book Meeting Room</span>
                 </Link>
             )}
@@ -253,127 +253,124 @@ export default function DashboardSidebar({
                         onClose?.();
                         onMobileClose?.();
                     }}
-                    className="absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group"
-                    title="Collapse Sidebar"
-                    aria-label="Collapse Sidebar"
+                    className="absolute top-4 right-4 p-1.5 rounded-[8px] bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors duration-150 z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group"
+                    title="Collapse sidebar"
+                    aria-label="Collapse sidebar"
                 >
                     <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
                 </button>
 
                 <div className="p-6 pb-2 shrink-0">
-                    <div className="flex flex-col items-center gap-1.5 mb-4">
+                    <div className="flex flex-col items-center gap-2 mb-6">
                         <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
-                        <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
+                        <p className="text-xs font-medium text-text-tertiary">
                             {(() => {
-                                if (['hr', 'hr_head'].includes(rawRole)) return 'HR HQ CONSOLE';
-                                if (['org_super_admin', 'director'].includes(rawRole)) return 'SUPER ADMIN CONSOLE';
-                                if (rawRole === 'bd_admin' || showBdChrome) return 'BD COMMAND CENTER';
-                                if (rawRole === 'bd_rep' || isBDRole) return 'CRM DASHBOARD';
-                                if (['mst', 'mst_technician', 'technician', 'maintenance_staff'].includes(rawRole)) return 'MAINTENANCE PORTAL';
-                                if (['security', 'security_guard', 'gatekeeper'].includes(rawRole)) return 'SECURITY DASHBOARD';
-                                if (['property_admin', 'building_admin'].includes(rawRole)) return 'PROPERTY ADMIN CONSOLE';
-                                if (['soft_service_manager', 'soft_service_supervisor', 'manager'].includes(rawRole)) return 'OPERATIONS CONSOLE';
-                                if (['ops_super_admin'].includes(rawRole)) return 'OPS SUPER ADMIN CONSOLE';
-                                if (['procurement', 'procurement_admin', 'procurement_manager'].includes(rawRole)) return 'PROCUREMENT CONSOLE';
-                                if (['accounts', 'finance', 'accounts_manager'].includes(rawRole)) return 'FINANCE CONSOLE';
-                                if (['vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(rawRole) || rawRole.includes('vendor')) return 'VENDOR PORTAL';
-                                if (['tenant', 'super_tenant', 'tenant_admin'].includes(rawRole) || rawRole.includes('tenant')) return 'TENANT PORTAL';
-                                return 'STAFF DASHBOARD';
+                                if (['hr', 'hr_head'].includes(rawRole)) return 'HR HQ console';
+                                if (['org_super_admin', 'director'].includes(rawRole)) return 'Super admin console';
+                                if (rawRole === 'bd_admin' || showBdChrome) return 'BD command center';
+                                if (rawRole === 'bd_rep' || isBDRole) return 'CRM dashboard';
+                                if (['mst', 'mst_technician', 'technician', 'maintenance_staff'].includes(rawRole)) return 'Maintenance portal';
+                                if (['security', 'security_guard', 'gatekeeper'].includes(rawRole)) return 'Security dashboard';
+                                if (['property_admin', 'building_admin'].includes(rawRole)) return 'Property admin console';
+                                if (['soft_service_manager', 'soft_service_supervisor', 'manager'].includes(rawRole)) return 'Operations console';
+                                if (['ops_super_admin'].includes(rawRole)) return 'Ops super admin console';
+                                if (['procurement', 'procurement_admin', 'procurement_manager'].includes(rawRole)) return 'Procurement console';
+                                if (['accounts', 'finance', 'accounts_manager'].includes(rawRole)) return 'Finance console';
+                                if (['vendor', 'maintenance_vendor', 'food_vendor', 'pantry_vendor', 'cafeteria_vendor', 'external_vendor'].includes(rawRole) || rawRole.includes('vendor')) return 'Vendor portal';
+                                if (['tenant', 'super_tenant', 'tenant_admin'].includes(rawRole) || rawRole.includes('tenant')) return 'Tenant portal';
+                                return 'Staff dashboard';
                             })()}
                         </p>
                     </div>
 
                     {!isExternalRole && (
-                        <div className="mt-3 space-y-2">
-                            <div className="flex items-center gap-1.5 px-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">
-                                    QUICK ACTIONS
-                                </p>
-                            </div>
+                        <div className="space-y-2">
+                            <p className="text-xs font-medium text-text-tertiary">
+                                Quick actions
+                            </p>
                             <div className="grid grid-cols-3 gap-2">
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&action=create` : `/${orgId}/hr-tickets?action=create`}
-                                    className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[10px] font-bold text-center gap-1 shadow-xs active:scale-95 border border-[#48686e]/40 h-13 min-w-0"
+                                    className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-[#587e85] hover:bg-[#48686e] text-white transition-colors duration-150 text-[11px] font-medium text-center gap-1 shadow-xs active:scale-[0.98] border border-[#48686e]/40 h-13 min-w-0"
                                     title="Raise HR Request / Grievance"
                                 >
                                     <Plus className="w-4 h-4 shrink-0" />
-                                    <span className="tracking-tight whitespace-nowrap leading-none">Request</span>
+                                    <span className="whitespace-nowrap leading-none">Request</span>
                                 </Link>
                                 {(isBDRole && isCrmRoute) || (isBDRole && !isOrgSuperAdmin) ? (
                                     <>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=tickets`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="My Grievances"
                                         >
                                             <ShieldCheck className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Grievance</span>
+                                            <span className="whitespace-nowrap leading-none">Grievance</span>
                                         </Link>
                                         <Link
                                             href={`/${orgId}/crm/leads`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="View Leads"
                                         >
                                             <UsersRound className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Leads</span>
+                                            <span className="whitespace-nowrap leading-none">Leads</span>
                                         </Link>
                                     </>
                                 ) : (userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
                                     <>
                                         <Link
                                             href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=directory&action=add` : `/${orgId}/hr-tickets?tab=directory&action=add`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="Add Employee Member"
                                         >
                                             <Users className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Member</span>
+                                            <span className="whitespace-nowrap leading-none">Member</span>
                                         </Link>
                                         <Link
                                             href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=config` : `/${orgId}/hr-tickets?tab=config`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="HR Admin Configuration"
                                         >
                                             <Settings className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Config</span>
+                                            <span className="whitespace-nowrap leading-none">Config</span>
                                         </Link>
                                     </>
                                 ) : isBDRole ? (
                                     <>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=tickets`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="My Grievances"
                                         >
                                             <ShieldCheck className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Grievance</span>
+                                            <span className="whitespace-nowrap leading-none">Grievance</span>
                                         </Link>
                                         <Link
                                             href={`/${orgId}/crm/leads`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="View Leads"
                                         >
                                             <UsersRound className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Leads</span>
+                                            <span className="whitespace-nowrap leading-none">Leads</span>
                                         </Link>
                                     </>
                                 ) : (
                                     <>
                                         <Link
                                             href={`/${orgId}/hr-tickets?tab=tickets`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="My HR Tickets"
                                         >
                                             <Ticket className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Tickets</span>
+                                            <span className="whitespace-nowrap leading-none">Tickets</span>
                                         </Link>
                                         <Link
                                             href={`/${orgId}/settings?tab=profile`}
-                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-[10px] bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors duration-150 text-[11px] font-medium text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-[0.98] shadow-xs h-13 min-w-0"
                                             title="Profile Settings"
                                         >
                                             <UserCircle className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
-                                            <span className="tracking-tight whitespace-nowrap leading-none">Profile</span>
+                                            <span className="whitespace-nowrap leading-none">Profile</span>
                                         </Link>
                                     </>
                                 )}
@@ -383,16 +380,13 @@ export default function DashboardSidebar({
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
+                <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-4 pb-4">
                     {/* 1. CORE OPERATIONS / HR OPERATIONS Section (For non-BD roles) */}
                     {!isBDRole && (
                         <>
-                            <div className="flex items-center gap-2 px-2 py-1 mb-1">
-                                <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
-                                    {['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) ? 'HR OPERATIONS' : 'CORE OPERATIONS'}
-                                </p>
-                            </div>
+                            <p className="px-3 pb-1.5 text-xs font-medium text-text-tertiary">
+                                {['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) ? 'HR operations' : 'Core operations'}
+                            </p>
                             {NAV_ITEMS.map((item) => {
                                 let isActive = false;
                                 if (item.href.includes('?tab=')) {
@@ -416,14 +410,14 @@ export default function DashboardSidebar({
                                         href={item.href}
                                         onClick={handleLinkClick}
                                         className={`
-                                            flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
+                                            flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group
                                             ${isActive
-                                                ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                                ? 'bg-[#587e85] text-white'
                                                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                             }
                                         `}
                                     >
-                                        <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                                        <item.icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                                         <span className="truncate">{item.label}</span>
                                     </Link>
                                 );
@@ -448,13 +442,13 @@ export default function DashboardSidebar({
 
                     {/* 2. BD Super Admin (CEO) — grouped Overview / Tools sections */}
                     {isBdSuperAdmin && isCrmRoute && (
-                        <div className="space-y-3">
+                        <div className="space-y-6">
                             {BD_SUPER_NAV_SECTIONS.map((section) => (
                                 <div key={section.title}>
-                                    <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
+                                    <p className="px-3 mb-2 text-xs font-medium text-text-tertiary">
                                         {section.title}
                                     </p>
-                                    <div className="space-y-0.5 pl-2">
+                                    <div className="space-y-0.5">
                                         {section.items.map((item) => {
                                             const isActive = item.href.endsWith('/crm')
                                                 ? pathname === item.href
@@ -465,15 +459,15 @@ export default function DashboardSidebar({
                                                     href={item.href}
                                                     onClick={handleLinkClick}
                                                     className={`
-                                                        flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
+                                                        flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group
                                                         ${isActive
-                                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                                            ? 'bg-primary text-text-inverse'
                                                             : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
                                                         }
                                                     `}
                                                 >
-                                                    <item.icon className="w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0" />
-                                                    <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
+                                                    <item.icon className="w-4 h-4 shrink-0" />
+                                                    <span className="truncate">{item.label}</span>
                                                 </Link>
                                             );
                                         })}
@@ -485,11 +479,11 @@ export default function DashboardSidebar({
 
                     {/* 3. CRM Section (for BD roles, or when visiting CRM routes) */}
                     {(isCrmRoute || isBDRole) && !showBdChrome && !['hr', 'hr_head', 'property_admin', 'building_admin', 'ops_super_admin'].includes(userRole) && (
-                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
-                            <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
+                        <div className={isBDRole ? '' : 'pt-3 mt-3 border-t border-border'}>
+                            <p className="px-3 mb-2 text-xs font-medium text-text-tertiary">
                                 CRM
                             </p>
-                            <div className="space-y-0.5 pl-2">
+                            <div className="space-y-0.5">
                                 {CRM_NAV_ITEMS.map((item) => {
                                     const isActive = item.href.endsWith('/crm')
                                         ? pathname === item.href
@@ -500,15 +494,15 @@ export default function DashboardSidebar({
                                             href={item.href}
                                             onClick={handleLinkClick}
                                             className={`
-                                                flex items-center gap-3 px-3 py-1.5 rounded-[var(--radius-md)] transition-smooth group
+                                                flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group
                                                 ${isActive
-                                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                                    ? 'bg-primary text-text-inverse'
                                                     : 'text-text-secondary hover:bg-surface-elevated hover:text-text-primary'
                                                 }
                                             `}
                                         >
-                                            <item.icon className={`w-4 h-4 mr-0.5 transition-smooth group-hover:scale-105 shrink-0`} />
-                                            <span className="font-body font-medium text-xs md:text-sm">{item.label}</span>
+                                            <item.icon className="w-4 h-4 shrink-0" />
+                                            <span className="truncate">{item.label}</span>
                                         </Link>
                                     );
                                 })}
@@ -518,13 +512,10 @@ export default function DashboardSidebar({
 
                     {/* 4. SYSTEM & PERSONAL Section (Always below primary role navigation) */}
                     {!isExternalRole && (
-                        <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
-                            <div className="flex items-center gap-2 px-2 py-1 mb-2">
-                                <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
-                                    SYSTEM & PERSONAL
-                                </p>
-                            </div>
+                        <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-0.5">
+                            <p className="px-3 pb-1.5 text-xs font-medium text-text-tertiary">
+                                System and personal
+                            </p>
 
                             {!isHrRole && pettyCashAndBookRoomLinks}
 
@@ -532,13 +523,13 @@ export default function DashboardSidebar({
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance` : `/${orgId}/hr-tickets?tab=tickets`}
                                     onClick={handleLinkClick}
-                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                                         (isOrgSuperAdmin ? (pathname?.endsWith('/dashboard') && currentTab === 'grievance') : (pathname?.includes('/hr-tickets') && (!currentTab || currentTab === 'tickets')))
-                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            ? 'bg-[#587e85] text-white'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
-                                    <ShieldCheck className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <ShieldCheck className="w-4 h-4 shrink-0" />
                                     <span className="truncate">{isOrgSuperAdmin ? 'HR & Grievances' : 'My Grievances'}</span>
                                 </Link>
                             )}
@@ -547,13 +538,13 @@ export default function DashboardSidebar({
                                 <Link
                                     href={isCrmRoute ? `/${orgId}/crm/tasks` : `/${orgId}/dashboard?tab=tasks`}
                                     onClick={handleLinkClick}
-                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                                         (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/tasks`) : pathname?.includes('tab=tasks'))
-                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            ? 'bg-[#587e85] text-white'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
-                                    <ClipboardList className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <ClipboardList className="w-4 h-4 shrink-0" />
                                     <span className="truncate">Task Manager</span>
                                 </Link>
                             )}
@@ -562,13 +553,13 @@ export default function DashboardSidebar({
                                 <Link
                                     href={isCrmRoute ? `/${orgId}/crm/ai` : `/${orgId}/dashboard?tab=ai_tickets`}
                                     onClick={handleLinkClick}
-                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                                    className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                                         (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/ai`) : pathname?.includes('tab=ai_tickets'))
-                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                                            ? 'bg-[#587e85] text-white'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
-                                    <Bot className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                    <Bot className="w-4 h-4 shrink-0" />
                                     <span className="truncate">{isCrmRoute ? 'AI Agent' : 'AI Automation'}</span>
                                 </Link>
                             )}
@@ -579,39 +570,39 @@ export default function DashboardSidebar({
                                     setShowFeedbackModal(true);
                                     handleLinkClick();
                                 }}
-                                className="w-full flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 text-left group"
+                                className="w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 text-left group"
                             >
-                                <MessageSquarePlus className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                <span className="truncate">Feedback / Bug</span>
+                                <MessageSquarePlus className="w-4 h-4 shrink-0" />
+                                <span className="truncate">Feedback and bugs</span>
                             </button>
 
                             <Link
                                 href={isCrmRoute ? `/${orgId}/crm/settings` : `/${orgId}/settings`}
                                 onClick={handleLinkClick}
-                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                                     (isCrmRoute
                                         ? pathname === `/${orgId}/crm/settings` && (!currentTab || currentTab !== 'profile')
                                         : pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile'))
-                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        ? 'bg-[#587e85] text-white'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
                             >
-                                <Settings className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <Settings className="w-4 h-4 shrink-0" />
                                 <span className="truncate">Settings</span>
                             </Link>
 
                             <Link
                                 href={isCrmRoute ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings?tab=profile`}
                                 onClick={handleLinkClick}
-                                className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
+                                className={`flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${
                                     (isCrmRoute
                                         ? pathname === `/${orgId}/crm/settings` && currentTab === 'profile'
                                         : pathname?.includes('tab=profile'))
-                                        ? 'bg-[#587e85] text-white shadow-sm font-bold'
+                                        ? 'bg-[#587e85] text-white'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
                             >
-                                <UserCircle className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                                <UserCircle className="w-4 h-4 shrink-0" />
                                 <span className="truncate">Profile</span>
                             </Link>
                         </div>
@@ -619,10 +610,10 @@ export default function DashboardSidebar({
                 </nav>
 
                 {/* Bottom Section */}
-                <div className="p-2.5 space-y-1.5 border-t border-slate-200/60 dark:border-slate-800 shrink-0 bg-surface mt-auto">
+                <div className="p-3 space-y-1 border-t border-slate-200/60 dark:border-slate-800 shrink-0 bg-surface mt-auto">
                     {/* User Profile */}
                     {!showBdChrome && (
-                        <div className="px-1.5 py-1">
+                        <div className="px-2 py-1">
                             <div className="flex items-center gap-2.5">
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
                                     <img
@@ -631,15 +622,15 @@ export default function DashboardSidebar({
                                         className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
                                     />
                                 ) : (
-                                    <div className="w-8 h-8 rounded-full bg-[#587e85] flex items-center justify-center text-white font-bold text-xs shrink-0 shadow-sm">
+                                    <div className="w-8 h-8 rounded-full bg-[#587e85] flex items-center justify-center text-white font-semibold text-xs shrink-0">
                                         {getUserInitials(user?.email || 'User')}
                                     </div>
                                 )}
                                 <div className="flex flex-col flex-1 min-w-0">
-                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
                                         {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'}
                                     </span>
-                                    <span className="text-[10px] text-slate-400 font-medium truncate">
+                                    <span className="text-[11px] text-text-tertiary truncate">
                                         {user?.email || 'user@worksquare.in'}
                                     </span>
                                 </div>
@@ -647,13 +638,13 @@ export default function DashboardSidebar({
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-0.5">
+                    <div className="flex items-center justify-between">
                         <button
                             onClick={() => setShowSignOutModal(true)}
-                            className="flex items-center gap-1.5 px-1.5 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30"
+                            className="flex items-center gap-2 px-2 py-1.5 text-slate-500 hover:text-red-600 transition-colors duration-150 text-xs font-medium rounded-[8px] hover:bg-red-50 dark:hover:bg-red-950/30"
                         >
-                            <LogOut className="w-3.5 h-3.5 shrink-0" />
-                            <span>Sign Out</span>
+                            <LogOut className="w-4 h-4 shrink-0" />
+                            <span>Sign out</span>
                         </button>
                     </div>
                 </div>

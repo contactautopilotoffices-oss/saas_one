@@ -201,10 +201,10 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
             <button
                 type="button"
                 onClick={() => !isSingleProperty && setIsOpen(prev => !prev)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl transition-all text-xs font-bold shadow-sm ${
+                className={`flex items-center gap-x-2 px-3 py-2 rounded-[10px] transition-colors duration-150 text-xs font-medium ${
                     variant === 'dark'
-                        ? 'bg-white/15 hover:bg-white/25 text-white border border-white/25 backdrop-blur-md'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200'
+                        ? 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-900/[0.08]'
                 } ${isSingleProperty ? 'cursor-default' : 'cursor-pointer'}`}
             >
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden ${
@@ -216,8 +216,8 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                         <Building2 className="w-3.5 h-3.5" />
                     )}
                 </div>
-                <span className="max-w-[120px] sm:max-w-[160px] md:max-w-[200px] truncate leading-tight font-black">
-                    {currentProperty?.name || 'Select Property'}
+                <span className="max-w-[120px] sm:max-w-[160px] md:max-w-[200px] truncate leading-tight font-semibold">
+                    {currentProperty?.name || 'Select property'}
                 </span>
                 {!isSingleProperty && (
                     <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${
@@ -233,13 +233,13 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -6, scale: 0.98 }}
                         transition={{ duration: 0.15, ease: 'easeOut' }}
-                        className="absolute top-full right-0 mt-2 bg-white border border-slate-200/80 rounded-2xl shadow-2xl z-[400] overflow-hidden w-[290px] sm:w-[320px] max-w-[calc(100vw-2rem)] text-slate-900"
+                        className="absolute top-full right-0 mt-2 bg-white border border-slate-900/[0.08] rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.06)] z-[400] overflow-hidden w-[288px] sm:w-[320px] max-w-[calc(100vw-2rem)] text-slate-900"
                     >
                         {/* Header & Search */}
-                        <div className="p-3 bg-slate-50/80 border-b border-slate-100 space-y-2">
+                        <div className="px-3 py-3 bg-slate-50/80 border-b border-slate-100 space-y-2">
                             <div className="flex items-center justify-between px-1">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Select Property</span>
-                                <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                <span className="text-xs font-medium text-slate-500">Select property</span>
+                                <span className="text-[11px] font-medium text-slate-500 tabular-nums">
                                     {assignedProperties.length} total
                                 </span>
                             </div>
@@ -248,10 +248,10 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                                 <input
                                     ref={searchInputRef}
                                     type="text"
-                                    placeholder="Search properties..."
+                                    placeholder="Search properties"
                                     value={searchQuery}
                                     onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                    className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-900/[0.08] rounded-[10px] text-xs font-medium text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors duration-150"
                                 />
                                 {searchQuery && (
                                     <button
@@ -268,7 +268,7 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                         {/* Property List */}
                         <div className="max-h-[260px] overflow-y-auto p-1.5 space-y-1 custom-scrollbar">
                             {filteredProperties.length === 0 ? (
-                                <div className="p-4 text-center text-xs font-semibold text-slate-400">
+                                <div className="px-4 py-4 text-center text-xs font-medium text-slate-500">
                                     No properties match "{searchQuery}"
                                 </div>
                             ) : (
@@ -282,10 +282,10 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                                                 setIsOpen(false);
                                                 if (!isSelected) onSelectProperty(p.id);
                                             }}
-                                            className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
+                                            className={`w-full flex items-center justify-between gap-x-3 px-3 py-2 rounded-[10px] transition-colors duration-150 text-left group ${
                                                 isSelected
-                                                    ? 'bg-primary/10 text-primary font-bold'
-                                                    : 'hover:bg-slate-50 text-slate-700 hover:pl-4'
+                                                    ? 'bg-primary/10 text-primary-dark font-medium'
+                                                    : 'hover:bg-slate-50 text-slate-700'
                                             }`}
                                         >
                                             <div className="flex items-center gap-2.5 min-w-0">
@@ -299,11 +299,11 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                                                     )}
                                                 </div>
                                                 <div className="min-w-0">
-                                                    <div className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-slate-800'}`}>
+                                                    <div className={`text-xs font-medium truncate ${isSelected ? 'text-primary-dark' : 'text-slate-800'}`}>
                                                         {p.name}
                                                     </div>
                                                     {p.code && (
-                                                        <div className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                                                        <div className="text-[11px] text-slate-500 font-medium uppercase">
                                                             {p.code}
                                                         </div>
                                                     )}
@@ -311,7 +311,7 @@ const PropertySelectorDropdown = memo(function PropertySelectorDropdown({
                                             </div>
                                             {isSelected && (
                                                 <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                                                    <Check className="w-3 h-3 text-primary font-bold" />
+                                                    <Check className="w-3 h-3 text-primary-dark" strokeWidth={2} />
                                                 </div>
                                             )}
                                         </button>
@@ -553,7 +553,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 .maybeSingle();
 
             if (error || !data) {
-                setErrorMsg('Property not found.');
+                setErrorMsg('Property not found');
             } else {
                 setProperty(data);
                 setCachedData(currentCacheKey, data);
@@ -579,7 +579,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     if (isLoading && !property) return (
         <div className="min-h-screen bg-white flex">
-            <aside className="w-72 border-r border-border p-6 space-y-6 hidden lg:block">
+            <aside className="w-72 border-r border-border px-6 py-6 space-y-6 hidden lg:block">
                 <Skeleton className="w-full h-12" />
                 <div className="space-y-2">
                     {[1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="w-full h-10" />)}
@@ -590,7 +590,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                     <Skeleton className="w-64 h-12" />
                     <Skeleton className="w-32 h-12" />
                 </header>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-6">
                     <Skeleton className="w-full h-32" />
                     <Skeleton className="w-full h-32" />
                     <Skeleton className="w-full h-32" />
@@ -605,11 +605,11 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
             <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mb-4">
                 <AlertCircle className="w-8 h-8" />
             </div>
-            <h2 className="text-xl font-black text-slate-900">Unable to Load Dashboard</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Unable to load dashboard</h2>
             <p className="text-slate-500 mt-2 max-w-sm">{errorMsg || 'We couldn\'t find the property details you\'re looking for.'}</p>
-            <div className="flex gap-4 mt-8">
-                <button onClick={() => router.back()} className="px-6 py-2.5 bg-slate-100 text-slate-900 font-bold rounded-xl hover:bg-slate-200 transition-all">Go Back</button>
-                <button onClick={() => fetchPropertyDetails()} className="px-6 py-2.5 bg-primary text-white font-bold rounded-xl hover:opacity-90 transition-all">Try Again</button>
+            <div className="flex gap-x-4 mt-8">
+                <button onClick={() => router.back()} className="px-5 py-2.5 bg-slate-100 text-slate-900 font-semibold rounded-[10px] hover:bg-slate-200 transition-colors duration-150">Go back</button>
+                <button onClick={() => fetchPropertyDetails()} className="px-5 py-2.5 bg-primary text-white font-semibold rounded-[10px] hover:bg-primary-dark transition-colors duration-150">Try again</button>
             </div>
         </div>
     );
@@ -631,7 +631,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
             {/* Sidebar */}
             <aside className={`
-                w-72 bg-white border-r border-slate-300 flex flex-col inset-y-0 z-50 transition-all duration-300
+                w-72 bg-white border-r border-slate-900/[0.08] lg:border-r-0 flex flex-col inset-y-0 z-50 transition-[transform,opacity] duration-300
                 fixed left-0
                 ${sidebarOpen ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 lg:translate-x-0 lg:opacity-100'}
                 overflow-hidden
@@ -639,14 +639,14 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 {/* Mobile Close Button */}
                 <button
                     onClick={() => setSidebarOpen(false)}
-                    className="absolute top-4 right-4 lg:hidden p-2 rounded-lg hover:bg-surface-elevated transition-colors"
+                    className="absolute top-4 right-4 lg:hidden px-2 py-2 rounded-[10px] hover:bg-surface-elevated transition-colors"
                 >
                     <X className="w-5 h-5 text-text-secondary" />
                 </button>
-                <div className="p-4 lg:p-5 pb-2">
-                    <div className="flex flex-col items-center gap-1 mb-3">
+                <div className="px-4 py-4 lg:px-5 lg:py-5 pb-2">
+                    <div className="flex flex-col items-center gap-y-1 mb-3">
                         <img src="/autopilot-logo-new.png" alt="Autopilot Logo" className="h-10 w-auto object-contain" />
-                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">{isOpsSuperAdmin ? 'Ops Super Admin' : 'Property Manager'}</p>
+                        <p className="text-xs text-text-tertiary font-medium">{isOpsSuperAdmin ? 'Ops super admin' : 'Property manager'}</p>
                     </div>
 
                 </div>
@@ -655,29 +655,28 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                     {/* Quick Actions - Compact Version */}
                     <div className="mb-6">
                         {/* Quick Actions - Simplified Dark Version */}
-                        <div className="mb-8">
-                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-6 mb-4 flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></span>
-                                Quick Actions
+                        <div>
+                            <p className="text-xs font-medium text-text-tertiary px-3 mb-2">
+                                Quick actions
                             </p>
-                            <div className="px-4 grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-2 gap-x-2 gap-y-2">
                                 <button
                                     onClick={() => setShowCreateTicketModal(true)}
-                                    className="flex flex-col items-center justify-center gap-1.5 p-2.5 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border-2 border-primary/20 group shadow-sm"
+                                    className="flex flex-col items-center justify-center gap-y-2 px-3 py-3 bg-white text-text-primary rounded-[10px] hover:bg-muted transition-colors duration-150 border border-slate-900/[0.08] active:scale-[0.98]"
                                 >
-                                    <div className="w-8 h-8 bg-primary/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                                        <Plus className="w-5 h-5 font-black" />
+                                    <div className="w-8 h-8 bg-primary/10 rounded-md flex items-center justify-center text-primary-dark">
+                                        <Plus className="w-[18px] h-[18px]" strokeWidth={1.5} />
                                     </div>
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-center mt-1">New Request</span>
+                                    <span className="text-xs font-medium text-center">New request</span>
                                 </button>
                                 <button
                                     onClick={() => setShowUniversalScanner(true)}
-                                    className="flex flex-col items-center justify-center gap-1.5 p-2.5 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border-2 border-primary/20 group shadow-sm"
+                                    className="flex flex-col items-center justify-center gap-y-2 px-3 py-3 bg-white text-text-primary rounded-[10px] hover:bg-muted transition-colors duration-150 border border-slate-900/[0.08] active:scale-[0.98]"
                                 >
-                                    <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                                        <Scan className="w-5 h-5 font-black" />
+                                    <div className="w-8 h-8 bg-primary/10 rounded-md flex items-center justify-center text-primary-dark">
+                                        <Scan className="w-[18px] h-[18px]" strokeWidth={1.5} />
                                     </div>
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-center mt-1">Scanner</span>
+                                    <span className="text-xs font-medium text-center">Scanner</span>
                                 </button>
                             </div>
                         </div>
@@ -685,49 +684,48 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
                     {/* Core Operations */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            Core Operations
+                        <p className="text-xs font-medium text-text-tertiary px-3 mb-2">
+                            Core operations
                         </p>
                         <div className="space-y-1">
                             <button
                                 onClick={() => handleTabChange('overview')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'overview'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'overview'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <LayoutDashboard className="w-4 h-4" />
+                                <LayoutDashboard className="w-4 h-4" strokeWidth={1.5} />
                                 Dashboard
                             </button>
                             <button
                                 onClick={() => handleTabChange('requests')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'requests'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'requests'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Ticket className="w-4 h-4" />
+                                <Ticket className="w-4 h-4" strokeWidth={1.5} />
                                 Requests
                             </button>
                             <button
                                 onClick={() => handleTabChange('guest_experience')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'guest_experience'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'guest_experience'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Smartphone className="w-4 h-4" />
-                                Client Support
+                                <Smartphone className="w-4 h-4" strokeWidth={1.5} />
+                                Client support
                             </button>
                             <button
                                 onClick={() => handleTabChange('reports')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'reports'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'reports'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <FileBarChart className="w-4 h-4" />
+                                <FileBarChart className="w-4 h-4" strokeWidth={1.5} />
                                 Reports
                             </button>
 
@@ -736,261 +734,259 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
                     {/* Management Hub */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            Management Hub
+                        <p className="text-xs font-medium text-text-tertiary px-3 mb-2">
+                            Management hub
                         </p>
                         <div className="space-y-1">
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
 
                             <button
                                 onClick={() => handleTabChange('users')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'users'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'users'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Users className="w-4 h-4" />
-                                User Management
+                                <Users className="w-4 h-4" strokeWidth={1.5} />
+                                User management
                             </button>
                             <button
                                 onClick={() => handleTabChange('visitors')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'visitors'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'visitors'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <UsersRound className="w-4 h-4" />
-                                Visitor Management
+                                <UsersRound className="w-4 h-4" strokeWidth={1.5} />
+                                Visitor management
                             </button>
                             <button
                                 onClick={() => handleTabChange('rooms')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'rooms'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'rooms'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Calendar className="w-4 h-4" />
-                                Meeting Rooms
+                                <Calendar className="w-4 h-4" strokeWidth={1.5} />
+                                Meeting rooms
                             </button>
                             <button
                                 onClick={() => handleTabChange('diesel')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'diesel'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'diesel'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Fuel className="w-4 h-4" />
-                                Diesel Logger
+                                <Fuel className="w-4 h-4" strokeWidth={1.5} />
+                                Diesel logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('diesel_analytics')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'diesel_analytics'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'diesel_analytics'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Fuel className="w-4 h-4" />
-                                Diesel Analytics
+                                <Fuel className="w-4 h-4" strokeWidth={1.5} />
+                                Diesel analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('electricity')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'electricity'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'electricity'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Zap className="w-4 h-4" />
-                                Electricity Logger
+                                <Zap className="w-4 h-4" strokeWidth={1.5} />
+                                Electricity logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('electricity_analytics')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'electricity_analytics'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'electricity_analytics'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Zap className="w-4 h-4" />
-                                Electricity Analytics
+                                <Zap className="w-4 h-4" strokeWidth={1.5} />
+                                Electricity analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('roster')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'roster'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'roster'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <CalendarDays className="w-4 h-4" />
-                                Roster Management
+                                <CalendarDays className="w-4 h-4" strokeWidth={1.5} />
+                                Roster management
                             </button>
                             <button
                                 onClick={() => handleTabChange('water')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'water'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'water'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Droplets className="w-4 h-4" />
-                                Water Logger
+                                <Droplets className="w-4 h-4" strokeWidth={1.5} />
+                                Water logger
                             </button>
                             <button
                                 onClick={() => handleTabChange('water_analytics')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'water_analytics'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'water_analytics'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Droplets className="w-4 h-4" />
-                                Water Analytics
+                                <Droplets className="w-4 h-4" strokeWidth={1.5} />
+                                Water analytics
                             </button>
                             <button
                                 onClick={() => handleTabChange('stock')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'stock'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'stock'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Package className="w-4 h-4" />
-                                Stock Management
+                                <Package className="w-4 h-4" strokeWidth={1.5} />
+                                Stock management
                             </button>
                             <button
                                 onClick={() => handleTabChange('procurement')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'procurement'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'procurement'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <ShoppingCart className="w-4 h-4" />
+                                <ShoppingCart className="w-4 h-4" strokeWidth={1.5} />
                                 Procurement
                             </button>
                             <button
                                 onClick={() => handleTabChange('checklist')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'checklist'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'checklist'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <ClipboardCheck className="w-4 h-4" />
+                                <ClipboardCheck className="w-4 h-4" strokeWidth={1.5} />
                                 Checklists
                             </button>
 
                             <button
                                 onClick={() => handleTabChange('ppm')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'ppm'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'ppm'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <CalendarDays className="w-4 h-4" />
+                                <CalendarDays className="w-4 h-4" strokeWidth={1.5} />
                                 PPM
                             </button>
                             <button
                                 onClick={() => handleTabChange('assets')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'assets'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'assets'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <QrCode className="w-4 h-4" />
+                                <QrCode className="w-4 h-4" strokeWidth={1.5} />
                                 Assets
                             </button>
                             <button
                                 onClick={() => handleTabChange('escalation')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'escalation'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'escalation'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <GitBranch className="w-4 h-4" />
+                                <GitBranch className="w-4 h-4" strokeWidth={1.5} />
                                 Escalation
                             </button>
                             <button
                                 onClick={() => handleTabChange('vendor_revenue')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'vendor_revenue'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'vendor_revenue'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Coffee className="w-4 h-4" />
-                                Cafeteria Revenue
+                                <Coffee className="w-4 h-4" strokeWidth={1.5} />
+                                Cafeteria revenue
                             </button>
                         </div>
                     </div>
 
                     {/* System & Personal */}
                     <div className="mb-6">
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-4 mb-3 flex items-center gap-2">
-                            <span className="w-0.5 h-3 bg-primary rounded-full"></span>
-                            System & Personal
+                        <p className="text-xs font-medium text-text-tertiary px-3 mb-2">
+                            System & personal
                         </p>
                         <div className="space-y-1">
                             <button
                                 onClick={() => handleTabChange('tasks')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'tasks'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${openTab === 'tasks'
+                                    ? 'bg-primary text-text-inverse'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <ClipboardList className={`w-4 h-4 transition-transform ${openTab === 'tasks' ? '' : 'group-hover:scale-110'}`} />
-                                <span className="flex-1 text-left">Task Manager</span>
+                                <ClipboardList className="w-4 h-4" strokeWidth={1.5} />
+                                <span className="flex-1 text-left">Task manager</span>
                             </button>
                             <button
                                 onClick={() => handleTabChange('ai_tickets')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'ai_tickets'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm group ${openTab === 'ai_tickets'
+                                    ? 'bg-primary text-text-inverse'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Bot className={`w-4 h-4 transition-transform ${openTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
-                                AI Automation
+                                <Bot className="w-4 h-4" strokeWidth={1.5} />
+                                AI automation
                             </button>
                             {isElevatedRole && (property?.organization_id || membership?.org_id) && (
                                 <button
                                     onClick={() => router.push(`/${property?.organization_id || membership?.org_id}/meetings`)}
-                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
+                                    className="w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm text-text-secondary hover:bg-muted hover:text-text-primary group"
                                 >
-                                    <Mic className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                    <Mic className="w-4 h-4" strokeWidth={1.5} />
                                     Meetings (Ira)
                                 </button>
                             )}
                             <button
                                 onClick={() => handleTabChange('grievance')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     } group`}
                             >
-                                <ShieldCheck className="w-4 h-4 group-hover:scale-110 transition-transform text-primary" />
-                                <span className="flex-1 text-left">Grievances & Tickets</span>
+                                <ShieldCheck className="w-4 h-4" strokeWidth={1.5} />
+                                <span className="flex-1 text-left">Grievances & tickets</span>
                             </button>
                             <button
                                 onClick={() => setShowFeedbackModal(true)}
-                                className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
+                                className="w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm text-text-secondary hover:bg-muted hover:text-text-primary group"
                             >
-                                <MessageSquarePlus className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                                Feedback / Bug
+                                <MessageSquarePlus className="w-4 h-4" strokeWidth={1.5} />
+                                Feedback / bug
                             </button>
 
             <FeedbackModal isOpen={showFeedbackModal} onClose={() => setShowFeedbackModal(false)} />
 
                             <button
                                 onClick={() => handleTabChange('settings')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'settings'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'settings'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <Settings className="w-4 h-4" />
+                                <Settings className="w-4 h-4" strokeWidth={1.5} />
                                 Settings
                             </button>
                             <button
                                 onClick={() => handleTabChange('profile')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'profile'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                className={`w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] transition-colors duration-150 font-medium text-sm ${openTab === 'profile'
+                                    ? 'bg-primary text-text-inverse'
                                     : 'text-text-secondary hover:bg-muted hover:text-text-primary'
                                     }`}
                             >
-                                <UserCircle className="w-4 h-4" />
+                                <UserCircle className="w-4 h-4" strokeWidth={1.5} />
                                 Profile
                             </button>
                         </div>
@@ -1000,10 +996,10 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 <div className="px-4 pt-3 pb-12 border-t border-border mt-auto flex-shrink-0 bg-white">
                     <button
                         onClick={() => setShowSignOutModal(true)}
-                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-text-secondary hover:bg-red-50 hover:text-red-600 transition-all font-bold text-xs"
+                        className="w-full flex items-center gap-x-3 px-3 h-9 rounded-[10px] text-text-secondary hover:bg-red-50 hover:text-red-600 transition-colors duration-150 font-medium text-sm"
                     >
-                        <LogOut className="w-4 h-4" />
-                        <span>Sign Out</span>
+                        <LogOut className="w-4 h-4" strokeWidth={1.5} />
+                        <span>Sign out</span>
                     </button>
                 </div>
             </aside>
@@ -1036,31 +1032,31 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
             }
 
             {/* Main Content */}
-            <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-72 flex flex-col bg-white border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10">
+            <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-72 flex flex-col bg-white border-l border-slate-900/[0.08] relative z-10">
 
                 {openTab !== 'overview' && (
                     <header className="relative z-40 h-14 flex justify-between items-center px-3 md:px-8 lg:px-12 mb-2 md:mb-4 border-b border-border/10">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-x-3">
                             {/* Mobile Menu Toggle */}
                             <button
                                 onClick={() => setSidebarOpen(true)}
-                                className="w-9 h-9 flex items-center justify-center lg:hidden text-text-tertiary hover:text-text-primary transition-colors rounded-lg hover:bg-slate-100"
+                                className="w-9 h-9 flex items-center justify-center lg:hidden text-text-tertiary hover:text-text-primary transition-colors rounded-[10px] hover:bg-slate-100"
                             >
                                 <Menu className="w-5 h-5" />
                             </button>
                             {openTab !== 'checklist' && (
                                 <div className="hidden md:block">
-                                    <h1 className="text-2xl md:text-3xl font-black text-text-primary tracking-tight capitalize">
-                                        {openTab === 'ppm' ? 'Planned Preventive Maintenance' : 
-                                         openTab === 'rooms' ? 'Meeting Rooms' : 
-                                         openTab === 'tasks' ? 'Task Manager' : 
+                                    <h1 className="text-2xl md:text-3xl font-semibold text-text-primary first-letter:uppercase">
+                                        {openTab === 'ppm' ? 'Planned preventive maintenance' : 
+                                         openTab === 'rooms' ? 'Meeting rooms' : 
+                                         openTab === 'tasks' ? 'Task manager' : 
                                          openTab.replace(/_/g, ' ')}
                                     </h1>
-                                    <p className="text-text-tertiary text-xs md:text-sm font-medium mt-0.5">{property?.address || 'Property Management Hub'}</p>
+                                    <p className="text-text-tertiary text-xs md:text-sm font-medium mt-0.5">{property?.address || 'Property management hub'}</p>
                                 </div>
                             )}
                         </div>
-                        <div className="flex items-center gap-2 md:gap-3">
+                        <div className="flex items-center gap-x-2 md:gap-x-3">
                             {/* Property Indicator / Switcher — always visible, dropdown when 2+ properties */}
                             <PropertySelectorDropdown
                                 currentProperty={property}
@@ -1075,24 +1071,24 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             {/* User Account Info */}
                             <button
                                 onClick={() => handleTabChange('profile')}
-                                className="flex items-center gap-2 group transition-all"
+                                className="flex items-center gap-x-2 group"
                             >
-                                <div className="w-9 h-9 bg-primary rounded-full flex items-center justify-center text-text-inverse font-bold text-sm group-hover:scale-105 transition-transform shadow-sm shadow-primary/20 flex-shrink-0">
+                                <div className="w-9 h-9 bg-primary rounded-full flex items-center justify-center text-text-inverse font-semibold text-sm flex-shrink-0">
                                     {user?.email?.[0].toUpperCase() || 'P'}
                                 </div>
                                 <div className="text-left hidden md:block">
-                                    <h4 className="text-[13px] font-black text-text-primary leading-none mb-0.5 group-hover:text-primary transition-colors">
+                                    <h4 className="text-[13px] font-semibold text-text-primary leading-none mb-1 group-hover:text-primary-dark transition-colors duration-150">
                                         {user?.user_metadata?.full_name || (isOpsSuperAdmin ? 'Ops Super Admin' : 'Property Admin')}
                                     </h4>
-                                    <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.15em]">
-                                        View Profile
+                                    <p className="text-[11px] text-text-tertiary font-medium">
+                                        View profile
                                     </p>
                                 </div>
                             </button>
 
                             <div className="hidden lg:flex flex-col items-end border-l border-border pl-4 h-8 justify-center">
-                                <span className="text-[11px] font-black text-text-tertiary uppercase tracking-widest leading-none mb-1">Access Level</span>
-                                <span className="text-xs text-primary font-black uppercase tracking-widest leading-none">{isOpsSuperAdmin ? 'Ops super admin' : 'Property admin'}</span>
+                                <span className="text-[11px] font-medium text-text-tertiary leading-none mb-1">Access level</span>
+                                <span className="text-xs text-primary-dark font-semibold leading-none">{isOpsSuperAdmin ? 'Ops super admin' : 'Property admin'}</span>
                             </div>
                         </div>
                     </header>
@@ -1165,10 +1161,10 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             <AdminRoomManager propertyId={property.id} user={user} />
                         )}
                         {openTab === 'units' && (
-                            <div className="p-12 text-center text-slate-400 font-bold italic bg-white rounded-3xl border border-slate-100 shadow-sm">
-                                <Building2 className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-                                <h3 className="text-xl font-bold text-slate-900 mb-2 font-inter not-italic">Unit Management</h3>
-                                <p className="text-slate-500 font-inter not-italic font-medium">Unit inventory management loading...</p>
+                            <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-slate-900/[0.08] shadow-sm">
+                                <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-4" strokeWidth={1.5} />
+                                <h3 className="text-xl font-semibold text-slate-900 mb-2 font-inter">Unit management</h3>
+                                <p className="text-slate-500 font-inter">Unit inventory management loading...</p>
                             </div>
                         )}
                         {openTab === 'diesel' && property && <DieselStaffDashboard propertyId={property.id} />}
@@ -1209,7 +1205,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         {openTab === 'ai_tickets' && <AITicketsDashboard propertyId={propertyId || property?.id || (assignedProperties && assignedProperties[0]?.id)} />}
                         {openTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
-                                <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
+                                <div className="bg-white border border-slate-900/[0.08] rounded-2xl shadow-sm w-full max-w-md overflow-hidden">
                                     {/* Card Header with Autopilot Logo */}
                                     <div className="bg-primary/5 p-8 flex flex-col items-center border-b border-border">
                                         {/* Autopilot Logo */}
@@ -1232,15 +1228,15 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                                     className="w-full h-full object-cover"
                                                 />
                                             ) : (
-                                                <span className="text-4xl font-black text-primary">
+                                                <span className="text-4xl font-semibold text-primary-dark">
                                                     {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
                                                 </span>
                                             )}
                                         </div>
 
                                         {/* Role Badge */}
-                                        <span className="px-4 py-1.5 bg-blue-500 text-white rounded-full text-xs font-black uppercase tracking-wider">
-                                            Property Admin
+                                        <span className="px-3 py-1 bg-primary/10 text-primary-dark rounded-full text-xs font-medium">
+                                            Property admin
                                         </span>
                                     </div>
 
@@ -1248,37 +1244,37 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                     <div className="p-8 space-y-6">
                                         <div className="space-y-4">
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {user?.user_metadata?.full_name || 'Not Set'}
+                                                <span className="text-xs font-medium text-slate-500">Full name</span>
+                                                <span className="text-sm font-medium text-slate-900">
+                                                    {user?.user_metadata?.full_name || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {user?.user_metadata?.phone || 'Not Set'}
+                                                <span className="text-xs font-medium text-slate-500">Phone</span>
+                                                <span className="text-sm font-medium text-slate-900">
+                                                    {user?.user_metadata?.phone || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
+                                                <span className="text-xs font-medium text-slate-500">Email</span>
                                                 <span className="text-sm font-medium text-slate-700">
-                                                    {user?.email || 'Not Set'}
+                                                    {user?.email || 'Not set'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
-                                                <span className="text-sm font-bold text-slate-900">
-                                                    {property?.name || 'Not Assigned'}
+                                                <span className="text-xs font-medium text-slate-500">Property</span>
+                                                <span className="text-sm font-medium text-slate-900">
+                                                    {property?.name || 'Not assigned'}
                                                 </span>
                                             </div>
 
                                             <div className="flex justify-between items-center py-3">
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Role</span>
-                                                <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold capitalize">
-                                                    Property Admin
+                                                <span className="text-xs font-medium text-slate-500">Role</span>
+                                                <span className="px-2.5 py-1 bg-primary/10 text-primary-dark rounded-sm text-xs font-medium">
+                                                    Property admin
                                                 </span>
                                             </div>
                                         </div>
@@ -1343,8 +1339,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 const DieselSphere = ({ percentage }: { percentage: number }) => {
     return (
         <div className="relative w-full aspect-square max-w-[200px] mx-auto group">
-            <div className="absolute inset-0 rounded-full border-4 border-white/20 bg-slate-900/10 backdrop-blur-[2px] shadow-2xl overflow-hidden group-hover:scale-105 transition-transform duration-700">
-                <div className="absolute inset-0 rounded-full shadow-[inset_0_10px_40px_rgba(0,0,0,0.5)] z-20" />
+            <div className="absolute inset-0 rounded-full border-4 border-white/20 bg-slate-900/10 shadow-[0_8px_24px_rgba(0,0,0,0.06)] overflow-hidden">
                 <motion.div
                     initial={{ height: 0 }}
                     animate={{ height: `${percentage}%` }}
@@ -1368,7 +1363,7 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
                             key={i}
                             animate={{ y: [0, -40], opacity: [0, 0.6, 0], x: [0, (i % 2 === 0 ? 10 : -10)] }}
                             transition={{ duration: 2 + i, repeat: Infinity, delay: i * 0.5 }}
-                            className="absolute bottom-0 rounded-full bg-white/30 backdrop-blur-sm"
+                            className="absolute bottom-0 rounded-full bg-white/30"
                             style={{ width: 4 + (i * 2), height: 4 + (i * 2), left: `${20 + (i * 15)}%` }}
                         />
                     ))}
@@ -1378,12 +1373,12 @@ const DieselSphere = ({ percentage }: { percentage: number }) => {
                 <div className="absolute bottom-[15%] right-[15%] w-[10%] h-[10%] bg-amber-500/20 rounded-full blur-[2px] z-30 pointer-events-none" />
             </div>
             <div className="absolute inset-0 flex flex-col items-center justify-center z-40 pointer-events-none">
-                <motion.span initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} className="text-4xl font-black text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
+                <motion.span initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} className="text-4xl font-semibold text-slate-900 tabular-nums">
                     {Math.round(percentage)}<span className="text-sm ml-0.5 opacity-80">%</span>
                 </motion.span>
-                <span className="text-[10px] font-bold text-white/60 uppercase tracking-widest drop-shadow-md">Consumption</span>
+                <span className="text-[11px] font-medium text-slate-900/60">Consumption</span>
             </div>
-            <div className={`absolute -bottom-4 left-1/2 -translate-x-1/2 w-[60%] h-4 bg-amber-500/20 blur-xl rounded-full transition-opacity duration-300 ${percentage > 0 ? 'opacity-100' : 'opacity-0'}`} />
+            <div className={`absolute -bottom-4 left-1/2 -translate-x-1/2 w-[60%] h-4 bg-slate-900/10 blur-lg rounded-full transition-opacity duration-300 ${percentage > 0 ? 'opacity-100' : 'opacity-0'}`} />
         </div>
     );
 };
@@ -1782,21 +1777,21 @@ const OverviewTab = memo(function OverviewTab({
 
     if (isLoading && ticketStats.total === 0) return (
         <div className="p-8 space-y-6">
-            <div className="h-48 bg-slate-100 rounded-3xl animate-pulse p-8">
+            <div className="h-48 bg-slate-100 rounded-2xl animate-pulse p-8">
                 <Skeleton className="w-1/3 h-8 mb-4" />
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-x-4 gap-y-4">
                     <Skeleton className="h-20" />
                     <Skeleton className="h-20" />
                     <Skeleton className="h-20" />
                 </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-x-6 gap-y-6">
                 <div className="md:col-span-3 space-y-4">
                     <Skeleton className="h-64" />
                     <Skeleton className="h-48" />
                 </div>
                 <div className="md:col-span-4">
-                    <Skeleton className="h-[430px]" />
+                    <Skeleton className="h-[432px]" />
                 </div>
                 <div className="md:col-span-5 space-y-4">
                     <Skeleton className="h-64" />
@@ -1809,38 +1804,38 @@ const OverviewTab = memo(function OverviewTab({
     return (
         <div className="min-h-screen bg-background">
             {/* Header Section */}
-            <div className="relative z-30 bg-[#708F96] px-2 lg:px-12 py-8 border-b border-white/10 shadow-lg">
+            <div className="relative z-30 bg-primary px-4 lg:px-12 py-8 border-b border-white/10">
                 <div className="relative z-50 flex flex-wrap items-center justify-between gap-y-3 mb-5">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-x-3">
                         {/* Mobile Menu Toggle */}
                         <button
                             onClick={onMenuToggle}
-                            className="p-2 -ml-2 lg:hidden text-white/70 hover:text-white transition-colors"
+                            className="px-2 py-2 -ml-2 lg:hidden text-white/70 hover:text-white transition-colors"
                         >
                             <Menu className="w-6 h-6" />
                         </button>
-                        <h1 className="text-xl md:text-3xl font-black text-white">Unified Dashboard</h1>
+                        <h1 className="text-xl md:text-3xl font-semibold text-white">Unified dashboard</h1>
                     </div>
 
-                    <div className="flex items-center gap-2 md:gap-3">
+                    <div className="flex items-center gap-x-2 md:gap-x-3">
                         {/* Notification Bell */}
-                        <div className="relative z-[300] bg-white/15 hover:bg-white/25 rounded-full p-0.5 border border-white/20 shadow-inner flex items-center justify-center transition-all">
+                        <div className="relative z-[300] bg-white/15 hover:bg-white/25 rounded-full p-0.5 border border-white/20 flex items-center justify-center transition-colors duration-150">
                             <NotificationBell align="right" />
                         </div>
 
                         {/* Global Time Period Filter — always visible, smaller on mobile */}
-                        <div className="flex items-center bg-white/15 backdrop-blur-sm rounded-full p-0.5 md:p-1 border border-white/20 shadow-inner">
+                        <div className="flex items-center bg-white/15 rounded-[10px] p-0.5 md:px-1 md:py-1 border border-white/20">
                             {([
-                                { value: 'today', label: 'TODAY' },
-                                { value: 'month', label: 'THIS MONTH' },
-                                { value: 'all', label: 'ALL TIME' },
+                                { value: 'today', label: 'Today' },
+                                { value: 'month', label: 'This month' },
+                                { value: 'all', label: 'All time' },
                             ] as const).map(opt => (
                                 <button
                                     key={opt.value}
                                     onClick={() => setTimePeriod(opt.value)}
-                                    className={`px-2.5 md:px-4 py-1.5 text-[9px] md:text-[10px] font-black tracking-wider md:tracking-widest rounded-full transition-all whitespace-nowrap ${timePeriod === opt.value
-                                        ? 'bg-yellow-400 text-slate-900 shadow-md'
-                                        : 'text-white/80 hover:text-white'}`}
+                                    className={`px-2.5 md:px-3 py-1.5 text-xs font-medium rounded-[8px] transition-colors duration-150 whitespace-nowrap ${timePeriod === opt.value
+                                        ? 'bg-white text-slate-900 shadow-sm'
+                                        : 'text-white/80 hover:text-white hover:bg-white/10'}`}
                                 >
                                     {opt.label}
                                 </button>
@@ -1858,35 +1853,34 @@ const OverviewTab = memo(function OverviewTab({
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-2 mb-5">
-                    <span className="text-white text-sm font-bold">Dashboard / {property?.name || 'Property'}</span>
+                <div className="flex items-center gap-x-2 mb-5">
+                    <span className="text-white/80 text-sm font-medium">Dashboard / {property?.name || 'Property'}</span>
                 </div>
 
                 {/* KPI Cards Row — 4 insightful cards */}
-                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5 relative ${validationEnabled ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
+                <div className={`grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4 mb-5 relative ${validationEnabled ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
 
                     {/* Card 1 — Total Tickets */}
                     <motion.div
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
                         onClick={() => handleKPIClick('all')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-slate-300 transition-all group relative overflow-hidden"
+                        className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm cursor-pointer hover:border-slate-900/[0.16] transition-colors duration-150 group relative overflow-hidden"
                     >
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-slate-600 transition-colors">
-                                Total Tickets {timePeriod === 'today' ? '(Today)' : timePeriod === 'month' ? '(This Month)' : '(All Time)'}
+                            <span className="text-xs font-medium text-slate-500 group-hover:text-slate-700 transition-colors duration-150">
+                                Total tickets {timePeriod === 'today' ? '(today)' : timePeriod === 'month' ? '(this month)' : '(all time)'}
                             </span>
-                            <div className="w-7 h-7 rounded-xl bg-slate-100 flex items-center justify-center">
-                                <Ticket className="w-3.5 h-3.5 text-slate-500" />
+                            <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center">
+                                <Ticket className="w-4 h-4 text-slate-500" strokeWidth={1.5} />
                             </div>
                         </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedTotal}</span>
-                            <span className="text-xs text-slate-400 font-bold">{completionRate}% resolved</span>
+                        <div className="flex items-baseline gap-x-2 mb-2">
+                            <span className="text-3xl font-semibold text-slate-900 tabular-nums">{animatedTotal}</span>
+                            <span className="text-xs text-slate-500 font-medium tabular-nums">{completionRate}% resolved</span>
                         </div>
                         <div className="w-full h-1.5 bg-slate-100 rounded-full mb-2 overflow-hidden">
-                            <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" style={{ width: `${Math.min(completionRate, 100)}%` }} />
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(completionRate, 100)}%` }} />
                         </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                        <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 tabular-nums">
                             <span>{ticketStats.open + ticketStats.in_progress} open</span>
                             <span>{ticketStats.avg_resolution_hours > 0 ? `Avg ${ticketStats.avg_resolution_hours}h` : 'No data'}</span>
                         </div>
@@ -1894,33 +1888,32 @@ const OverviewTab = memo(function OverviewTab({
 
                     {/* Card 2 — Open & Active */}
                     <motion.div
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
                         onClick={() => handleKPIClick('open,assigned,in_progress,blocked,waitlist')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-blue-200 transition-all group relative overflow-hidden"
+                        className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm cursor-pointer hover:border-slate-900/[0.16] transition-colors duration-150 group relative overflow-hidden"
                     >
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-blue-500 transition-colors">Open & Active</span>
-                            <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${ticketStats.sla_breached > 0 ? 'bg-rose-50' : 'bg-blue-50'}`}>
-                                <AlertCircle className={`w-3.5 h-3.5 ${ticketStats.sla_breached > 0 ? 'text-rose-500' : 'text-blue-500'}`} />
+                            <span className="text-xs font-medium text-slate-500 group-hover:text-slate-700 transition-colors duration-150">Open & active</span>
+                            <div className={`w-7 h-7 rounded-md flex items-center justify-center ${ticketStats.sla_breached > 0 ? 'bg-rose-50' : 'bg-slate-100'}`}>
+                                <AlertCircle className={`w-4 h-4 ${ticketStats.sla_breached > 0 ? 'text-rose-500' : 'text-slate-500'}`} strokeWidth={1.5} />
                             </div>
                         </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedOpen}</span>
+                        <div className="flex items-baseline gap-x-2 mb-2">
+                            <span className="text-3xl font-semibold text-slate-900 tabular-nums">{animatedOpen}</span>
                             {ticketStats.sla_breached > 0 && (
-                                <span className="text-[10px] text-rose-500 font-black uppercase bg-rose-50 px-1.5 py-0.5 rounded-md">{ticketStats.sla_breached} SLA</span>
+                                <span className="text-[11px] text-rose-600 font-medium bg-rose-50 px-1.5 py-0.5 rounded-sm tabular-nums">{ticketStats.sla_breached} past SLA</span>
                             )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="flex flex-wrap gap-x-2 gap-y-2">
 
-                            <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                            <span className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 tabular-nums">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-                                {ticketStats.waitlist} Waitlist
+                                {ticketStats.waitlist} waitlist
                             </span>
 
                             {ticketStats.urgent_open > 0 && (
-                                <span className="flex items-center gap-1 text-[10px] font-bold text-rose-500">
+                                <span className="flex items-center gap-1.5 text-[11px] font-medium text-rose-600 tabular-nums">
                                     <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block" />
-                                    {ticketStats.urgent_open} High/Urgent
+                                    {ticketStats.urgent_open} high/urgent
                                 </span>
                             )}
                         </div>
@@ -1928,24 +1921,23 @@ const OverviewTab = memo(function OverviewTab({
 
                     {/* Card 3 — Resolved & Closed */}
                     <motion.div
-                        whileHover={{ y: -4, transition: { duration: 0.2 } }}
                         onClick={() => handleKPIClick('resolved,closed,pending_validation')}
-                        className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm hover:shadow-md cursor-pointer hover:border-emerald-200 transition-all group relative overflow-hidden"
+                        className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm cursor-pointer hover:border-slate-900/[0.16] transition-colors duration-150 group relative overflow-hidden"
                     >
                         <div className="flex items-center justify-between mb-2">
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-emerald-500 transition-colors">Resolved & Closed</span>
-                            <div className="w-7 h-7 rounded-xl bg-emerald-50 flex items-center justify-center">
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            <span className="text-xs font-medium text-slate-500 group-hover:text-slate-700 transition-colors duration-150">Resolved & closed</span>
+                            <div className="w-7 h-7 rounded-md bg-emerald-50 flex items-center justify-center">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500" strokeWidth={1.5} />
                             </div>
                         </div>
-                        <div className="flex items-baseline gap-2 mb-2">
-                            <span className="text-4xl font-black text-slate-900">{animatedClosed}</span>
-                            <span className="text-xs text-emerald-500 font-bold">{completionRate}%</span>
+                        <div className="flex items-baseline gap-x-2 mb-2">
+                            <span className="text-3xl font-semibold text-slate-900 tabular-nums">{animatedClosed}</span>
+                            <span className="text-xs text-emerald-600 font-medium tabular-nums">{completionRate}%</span>
                         </div>
                         <div className="w-full h-1.5 bg-slate-100 rounded-full mb-2 overflow-hidden">
-                            <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" style={{ width: `${Math.min(completionRate, 100)}%` }} />
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${Math.min(completionRate, 100)}%` }} />
                         </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                        <div className="flex items-center justify-between text-[11px] font-medium text-slate-500 tabular-nums">
                             <span>
                                 <span className="text-emerald-600">{trulyClosedCount} confirmed</span>
                                 {ticketStats.pending_validation > 0 && <span className="text-amber-500"> · {ticketStats.pending_validation} awaiting</span>}
@@ -1957,27 +1949,26 @@ const OverviewTab = memo(function OverviewTab({
                     {/* Card 4 — Pending Validation (only if validation is enabled) */}
                     {validationEnabled && (
                         <motion.div
-                            whileHover={{ y: -4, transition: { duration: 0.2 } }}
                             onClick={() => handleKPIClick('pending_validation')}
-                            className={`bg-white rounded-2xl p-4 border shadow-sm hover:shadow-md cursor-pointer transition-all group relative overflow-hidden ${ticketStats.pending_validation > 0 ? 'border-amber-200 hover:border-amber-300' : 'border-slate-100 hover:border-slate-200'}`}
+                            className={`bg-white rounded-2xl px-5 py-5 border shadow-sm cursor-pointer transition-colors duration-150 group relative overflow-hidden ${ticketStats.pending_validation > 0 ? 'border-amber-200 hover:border-amber-300' : 'border-slate-900/[0.08] hover:border-slate-900/[0.16]'}`}
                         >
                             <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 group-hover:text-amber-500 transition-colors">Needs Review</span>
-                                <div className={`w-7 h-7 rounded-xl flex items-center justify-center ${ticketStats.pending_validation > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}>
-                                    <Clock className={`w-3.5 h-3.5 ${ticketStats.pending_validation > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
+                                <span className="text-xs font-medium text-slate-500 group-hover:text-slate-700 transition-colors duration-150">Needs review</span>
+                                <div className={`w-7 h-7 rounded-md flex items-center justify-center ${ticketStats.pending_validation > 0 ? 'bg-amber-50' : 'bg-emerald-50'}`}>
+                                    <Clock strokeWidth={1.5} className={`w-4 h-4 ${ticketStats.pending_validation > 0 ? 'text-amber-500' : 'text-emerald-500'}`} />
                                 </div>
                             </div>
-                            <div className="flex items-baseline gap-2 mb-2">
-                                <span className={`text-4xl font-black ${ticketStats.pending_validation > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
+                            <div className="flex items-baseline gap-x-2 mb-2">
+                                <span className={`text-3xl font-semibold tabular-nums ${ticketStats.pending_validation > 0 ? 'text-amber-600' : 'text-slate-900'}`}>
                                     {animatedPending}
                                 </span>
                                 {ticketStats.pending_validation === 0 ? (
-                                    <span className="text-[10px] text-emerald-500 font-black">All clear ✓</span>
+                                    <span className="text-[11px] text-emerald-600 font-medium">All clear</span>
                                 ) : (
-                                    <span className="text-[10px] text-amber-500 font-black bg-amber-50 px-1.5 py-0.5 rounded-md">Needs action</span>
+                                    <span className="text-[11px] text-amber-600 font-medium bg-amber-50 px-1.5 py-0.5 rounded-sm">Needs action</span>
                                 )}
                             </div>
-                            <div className="text-[10px] font-bold text-slate-400 leading-relaxed">
+                            <div className="text-[11px] font-medium text-slate-500">
                                 {ticketStats.pending_validation > 0
                                     ? <span className="text-amber-600">Awaiting tenant sign-off</span>
                                     : <span className="text-emerald-600">All resolved tickets confirmed</span>
@@ -1990,19 +1981,18 @@ const OverviewTab = memo(function OverviewTab({
 
 
             {/* Main Content Grid */}
-            <div className="px-2 lg:px-12 py-5 space-y-5">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="px-4 lg:px-12 py-5 space-y-5">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-x-5 gap-y-5">
                     {/* Left Column */}
                     <div className="lg:col-span-3 space-y-5">
                         <div
-                            className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-yellow-300/50 transition-all group relative overflow-hidden"
+                            className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm hover:border-slate-900/[0.16] transition-colors duration-150 group relative overflow-hidden"
                         >
-                            <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-sm font-black text-slate-900">Electricity</h3>
+                            <div className="flex items-center gap-x-3 mb-2">
+                                <h3 className="text-sm font-semibold text-slate-900">Electricity</h3>
                             </div>
-                            <div className="text-yellow-600 text-xs font-bold mb-4 flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full animate-pulse ${timePeriod === 'all' ? 'bg-slate-400' : timePeriod === 'today' ? 'bg-blue-400' : 'bg-yellow-500'}`} />
-                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
+                            <div className="text-slate-500 text-xs font-medium mb-4">
+                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This month' : 'All time'}
                             </div>
                             <div className="flex justify-center my-4" onClick={() => onTabChange('electricity_analytics' as any)}>
                                 <div className="relative w-[140px] h-[140px] cursor-pointer">
@@ -2021,107 +2011,105 @@ const OverviewTab = memo(function OverviewTab({
                                         </defs>
                                     </svg>
                                     <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                        <Zap className="w-5 h-5 text-yellow-500 mb-1" />
-                                        <span className="text-xl font-black text-slate-900">
+                                        <Zap className="w-[18px] h-[18px] text-yellow-500 mb-1" strokeWidth={1.5} />
+                                        <span className="text-xl font-semibold text-slate-900 tabular-nums">
                                             {(timePeriod === 'today' ? electricityStats.total_units_today : timePeriod === 'month' ? electricityStats.total_units_month : electricityStats.total_units || 0).toLocaleString()}
                                         </span>
-                                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">kWh</span>
+                                        <span className="text-[11px] font-medium text-slate-500">kWh</span>
                                     </div>
                                 </div>
                             </div>
                             <div className="space-y-1" onClick={() => onTabChange('electricity_analytics' as any)}>
-                                <div className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Main Meter Consumed</div>
-                                <div className="text-3xl font-black text-slate-900 flex items-baseline gap-1">
+                                <div className="text-slate-500 text-xs font-medium">Main meter consumed</div>
+                                <div className="text-3xl font-semibold text-slate-900 tabular-nums flex items-baseline gap-x-1">
                                     {(timePeriod === 'today' ? electricityStats.total_units_today : timePeriod === 'month' ? electricityStats.total_units_month : electricityStats.total_units || 0).toLocaleString()}
-                                    <span className="text-sm text-slate-400 font-bold">kWh</span>
+                                    <span className="text-sm text-slate-500 font-medium">kWh</span>
                                 </div>
-                                <div className="text-sm font-bold text-slate-600">
+                                <div className="text-sm font-medium text-slate-600 tabular-nums">
                                     ₹{(timePeriod === 'today' ? electricityStats.total_cost_today : timePeriod === 'month' ? electricityStats.total_cost_month : electricityStats.total_cost)?.toLocaleString()}
                                 </div>
-                                <div className="pt-2 border-t border-slate-50 mt-2">
-                                    <span className="text-[10px] font-bold text-yellow-600 uppercase group-hover:underline cursor-pointer">View Analytics →</span>
+                                <div className="pt-3 border-t border-slate-900/[0.06] mt-3">
+                                    <span className="inline-flex items-center gap-x-1 text-xs font-medium text-primary-dark group-hover:underline cursor-pointer">View analytics<ChevronRight className="w-4 h-4" strokeWidth={1.5} /></span>
                                 </div>
                             </div>
                         </div>
                         
                         {/* DG Consumption Tile */}
                         <div
-                            className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-amber-300/50 transition-all group relative overflow-hidden cursor-pointer"
+                            className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm hover:border-slate-900/[0.16] transition-colors duration-150 group relative overflow-hidden cursor-pointer"
                             onClick={() => onTabChange('diesel_analytics' as any)}
                         >
-                            <div className="flex items-center gap-3 mb-2">
-                                <h3 className="text-sm font-black text-slate-900">DG Consumption</h3>
+                            <div className="flex items-center gap-x-3 mb-2">
+                                <h3 className="text-sm font-semibold text-slate-900">DG consumption</h3>
                             </div>
-                            <div className="text-amber-600 text-xs font-bold mb-4 flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full animate-pulse ${timePeriod === 'all' ? 'bg-slate-400' : timePeriod === 'today' ? 'bg-amber-400' : 'bg-amber-500'}`} />
-                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
+                            <div className="text-slate-500 text-xs font-medium mb-4">
+                                {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This month' : 'All time'}
                             </div>
                             <div className="space-y-1">
-                                <div className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                                    {(timePeriod === 'today' ? dieselStats.total_litres_today : timePeriod === 'month' ? dieselStats.total_litres_month : dieselStats.total_litres) === 0 && (timePeriod === 'today' ? dieselStats.total_kwh_today : timePeriod === 'month' ? dieselStats.total_kwh_month : dieselStats.total_kwh) > 0 ? 'kWh' : 'Litres'} Consumed
+                                <div className="text-slate-500 text-xs font-medium">
+                                    {(timePeriod === 'today' ? dieselStats.total_litres_today : timePeriod === 'month' ? dieselStats.total_litres_month : dieselStats.total_litres) === 0 && (timePeriod === 'today' ? dieselStats.total_kwh_today : timePeriod === 'month' ? dieselStats.total_kwh_month : dieselStats.total_kwh) > 0 ? 'kWh' : 'Litres'} consumed
                                 </div>
-                                <div className="text-3xl font-black text-slate-900 flex items-baseline gap-1">
+                                <div className="text-3xl font-semibold text-slate-900 tabular-nums flex items-baseline gap-x-1">
                                     {(Number(timePeriod === 'today' ? dieselStats?.total_units_today : timePeriod === 'month' ? dieselStats?.total_units_month : dieselStats?.total_units) || 0).toLocaleString()}
-                                    <span className="text-sm text-slate-400 font-bold">
+                                    <span className="text-sm text-slate-500 font-medium">
                                         {(timePeriod === 'today' ? dieselStats?.total_litres_today : timePeriod === 'month' ? dieselStats?.total_litres_month : dieselStats?.total_litres) === 0 && (timePeriod === 'today' ? dieselStats?.total_kwh_today : timePeriod === 'month' ? dieselStats?.total_kwh_month : dieselStats?.total_kwh) > 0 ? 'kWh' : 'Litres'}
                                     </span>
                                 </div>
-                                <div className="pt-2 border-t border-slate-50 mt-2">
-                                    <span className="text-[10px] font-bold text-amber-600 uppercase group-hover:underline cursor-pointer">View Analytics →</span>
+                                <div className="pt-3 border-t border-slate-900/[0.06] mt-3">
+                                    <span className="inline-flex items-center gap-x-1 text-xs font-medium text-primary-dark group-hover:underline cursor-pointer">View analytics<ChevronRight className="w-4 h-4" strokeWidth={1.5} /></span>
                                 </div>
                             </div>
                         </div>
-                        <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm">
-                            <h3 className="text-sm font-black text-slate-900 mb-2">Vendor Revenue</h3>
-                            <div className="text-slate-400 text-xs font-bold mb-2">{timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}</div>
-                            <div className="text-3xl font-black text-slate-900">₹ {(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
-                            <div className="text-xs text-slate-500 mt-2">Commission: ₹ {(Number(vendorStats?.total_commission) || 0).toLocaleString()} from {vendorStats?.total_vendors || 0} vendors</div>
+                        <div className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-2">Vendor revenue</h3>
+                            <div className="text-slate-500 text-xs font-medium mb-2">{timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This month' : 'All time'}</div>
+                            <div className="text-3xl font-semibold text-slate-900 tabular-nums">₹{(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
+                            <div className="text-xs text-slate-500 mt-2 tabular-nums">Commission: ₹{(Number(vendorStats?.total_commission) || 0).toLocaleString()} from {vendorStats?.total_vendors || 0} vendors</div>
                         </div>
                     </div>
 
                     {/* Center Column - Property Card */}
                     <div className="lg:col-span-4">
-                        <div className="bg-yellow-400 rounded-3xl p-5 h-full relative overflow-hidden">
-                            <h3 className="text-2xl font-black text-slate-900 mb-2 truncate">{property?.name || 'Property'}</h3>
-                            <div className="text-red-600 text-sm font-bold mb-5 truncate">Property: {property?.code || 'N/A'}</div>
-                            <div className="bg-yellow-500/50 rounded-[2rem] h-56 mb-5 flex items-center justify-center overflow-hidden border-4 border-white/30 shadow-2xl group relative">
+                        <div className="bg-secondary/10 border border-secondary/20 rounded-2xl px-5 py-5 h-full relative overflow-hidden">
+                            <h3 className="text-2xl font-semibold text-slate-900 mb-2 truncate">{property?.name || 'Property'}</h3>
+                            <div className="text-secondary-dark text-sm font-medium mb-5 truncate">Property: {property?.code || 'N/A'}</div>
+                            <div className="bg-secondary/15 rounded-md h-56 mb-5 flex items-center justify-center overflow-hidden border border-secondary/20 relative">
                                 {property?.image_url ? (
                                     <>
                                         <Image
                                             src={property.image_url}
                                             alt={property.name}
                                             fill
-                                            className="object-cover transition-transform duration-700 group-hover:scale-110"
+                                            className="object-cover"
                                         />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-yellow-400/20 to-transparent" />
                                     </>
                                 ) : (
-                                    <div className="flex flex-col items-center gap-2"><Building2 className="w-20 h-20 text-yellow-600/30" /><span className="text-[10px] font-black text-yellow-700/40 uppercase tracking-widest">Awaiting Visuals</span></div>
+                                    <div className="flex flex-col items-center gap-y-2"><Building2 className="w-12 h-12 text-secondary-dark/40" strokeWidth={1.5} /><span className="text-xs font-medium text-secondary-dark/80">No photo yet</span></div>
                                 )}
                             </div>
                             <div className="space-y-4">
-                                <div><div className="text-slate-700 text-xs font-bold">Visitors {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}</div><div className="text-2xl font-black text-slate-900">{vmsStats.total_visitors}</div></div>
-                                <div><div className="text-slate-700 text-xs font-bold">Checked In / Out</div><div className="text-2xl font-black text-slate-900">{vmsStats.checked_in} / {vmsStats.checked_out}</div></div>
+                                <div><div className="text-slate-600 text-xs font-medium">Visitors {timePeriod === 'today' ? 'today' : timePeriod === 'month' ? 'this month' : 'all time'}</div><div className="text-2xl font-semibold text-slate-900 tabular-nums">{vmsStats.total_visitors}</div></div>
+                                <div><div className="text-slate-600 text-xs font-medium">Checked in / out</div><div className="text-2xl font-semibold text-slate-900 tabular-nums">{vmsStats.checked_in} / {vmsStats.checked_out}</div></div>
                             </div>
                         </div>
                     </div>
 
                     <div className="lg:col-span-5 space-y-5">
-                        <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm flex flex-col">
-                            <h3 className="text-sm font-black text-slate-900 mb-4">Recent Tickets & Checklists</h3>
+                        <div className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm flex flex-col">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">Recent tickets & checklists</h3>
                             
                             {/* Checklist Progress Bar */}
                             <div 
                                 onClick={() => onTabChange('checklist')}
-                                className="mb-6 p-4 rounded-xl bg-slate-50 border border-slate-100 cursor-pointer hover:border-emerald-500/30 transition-colors group flex flex-col gap-4"
+                                className="mb-6 px-4 py-4 rounded-md bg-slate-50 border border-slate-900/[0.06] cursor-pointer hover:border-slate-900/[0.16] transition-colors duration-150 group flex flex-col gap-y-4"
                             >
                                 <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-2">
-                                        <ClipboardCheck className="w-4 h-4 text-emerald-500" />
-                                        <span className="text-xs font-bold text-slate-700 group-hover:text-emerald-600 transition-colors">Checklist Progress</span>
+                                    <div className="flex items-center gap-x-2">
+                                        <ClipboardCheck className="w-4 h-4 text-slate-500" strokeWidth={1.5} />
+                                        <span className="text-xs font-medium text-slate-700 group-hover:text-slate-900 transition-colors duration-150">Checklist progress</span>
                                     </div>
-                                    <span className="text-[10px] font-bold text-slate-400">
-                                        {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This Month' : 'All Time'}
+                                    <span className="text-[11px] font-medium text-slate-500">
+                                        {timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'This month' : 'All time'}
                                     </span>
                                 </div>
                                 
@@ -2130,22 +2118,22 @@ const OverviewTab = memo(function OverviewTab({
                                     {(checklistStats.day_total > 0 || checklistStats.total === 0) && (
                                         <div>
                                             <div className="flex justify-between items-center mb-1.5">
-                                                <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1">
-                                                    <Sun className="w-3 h-3" /> Day Shift
+                                                <span className="text-xs font-medium text-secondary-dark flex items-center gap-1.5">
+                                                    <Sun className="w-4 h-4" strokeWidth={1.5} /> Day shift
                                                 </span>
-                                                <span className="text-[10px] font-black text-amber-600">
+                                                <span className="text-xs font-semibold text-secondary-dark tabular-nums">
                                                     {checklistStats.day_total > 0 ? Math.round((checklistStats.day_completed / checklistStats.day_total) * 100) : 0}%
                                                 </span>
                                             </div>
-                                            <div className="w-full bg-amber-100/50 rounded-full h-1.5 overflow-hidden mb-1">
+                                            <div className="w-full bg-secondary/15 rounded-full h-1.5 overflow-hidden mb-1">
                                                 <div 
-                                                    className="bg-amber-500 h-1.5 rounded-full transition-all duration-1000" 
+                                                    className="bg-secondary h-1.5 rounded-full" 
                                                     style={{ width: `${checklistStats.day_total > 0 ? (checklistStats.day_completed / checklistStats.day_total) * 100 : 0}%` }}
                                                 />
                                             </div>
                                             <div className="flex justify-between items-center">
-                                                <span className="text-[9px] font-bold text-slate-400">{checklistStats.day_completed} of {checklistStats.day_total} completed</span>
-                                                {checklistStats.total === 0 && <span className="text-[9px] font-bold text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity">View History &rarr;</span>}
+                                                <span className="text-[11px] font-medium text-slate-500 tabular-nums">{checklistStats.day_completed} of {checklistStats.day_total} completed</span>
+                                                {checklistStats.total === 0 && <span className="text-[11px] font-medium text-primary-dark opacity-0 group-hover:opacity-100 transition-opacity duration-150">View history</span>}
                                             </div>
                                         </div>
                                     )}
@@ -2154,22 +2142,22 @@ const OverviewTab = memo(function OverviewTab({
                                     {checklistStats.night_total > 0 && (
                                         <div>
                                             <div className="flex justify-between items-center mb-1.5">
-                                                <span className="text-[10px] font-bold text-indigo-600 flex items-center gap-1">
-                                                    <Moon className="w-3 h-3" /> Night Shift
+                                                <span className="text-xs font-medium text-primary-dark flex items-center gap-1.5">
+                                                    <Moon className="w-4 h-4" strokeWidth={1.5} /> Night shift
                                                 </span>
-                                                <span className="text-[10px] font-black text-indigo-600">
+                                                <span className="text-xs font-semibold text-primary-dark tabular-nums">
                                                     {checklistStats.night_total > 0 ? Math.round((checklistStats.night_completed / checklistStats.night_total) * 100) : 0}%
                                                 </span>
                                             </div>
-                                            <div className="w-full bg-indigo-100/50 rounded-full h-1.5 overflow-hidden mb-1">
+                                            <div className="w-full bg-primary/15 rounded-full h-1.5 overflow-hidden mb-1">
                                                 <div 
-                                                    className="bg-indigo-500 h-1.5 rounded-full transition-all duration-1000" 
+                                                    className="bg-primary h-1.5 rounded-full" 
                                                     style={{ width: `${checklistStats.night_total > 0 ? (checklistStats.night_completed / checklistStats.night_total) * 100 : 0}%` }}
                                                 />
                                             </div>
                                             <div className="flex justify-between items-center">
-                                                <span className="text-[9px] font-bold text-slate-400">{checklistStats.night_completed} of {checklistStats.night_total} completed</span>
-                                                {checklistStats.total > 0 && <span className="text-[9px] font-bold text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity">View History &rarr;</span>}
+                                                <span className="text-[11px] font-medium text-slate-500 tabular-nums">{checklistStats.night_completed} of {checklistStats.night_total} completed</span>
+                                                {checklistStats.total > 0 && <span className="text-[11px] font-medium text-primary-dark opacity-0 group-hover:opacity-100 transition-opacity duration-150">View history</span>}
                                             </div>
                                         </div>
                                     )}
@@ -2178,31 +2166,31 @@ const OverviewTab = memo(function OverviewTab({
 
                             <div className="space-y-3 max-h-48 overflow-y-auto pr-1">
                                 {recentTickets.map((t, idx) => (
-                                    <div key={t.id || idx} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                                    <div key={t.id || idx} className="flex items-center justify-between gap-x-3 px-3 py-3 bg-slate-50 rounded-[10px]">
                                         <div>
-                                            <div className="font-bold text-slate-900 text-sm truncate max-w-[200px]">{t.title}</div>
-                                            <div className="flex items-center gap-2">
+                                            <div className="font-medium text-slate-900 text-sm truncate max-w-[200px]">{t.title}</div>
+                                            <div className="flex items-center gap-x-2">
                                                 <div className="text-xs text-slate-500 capitalize">{t.status?.replace('_', ' ')}</div>
                                             </div>
                                         </div>
-                                        <div className="text-right"><div className="text-xs text-slate-400">{new Date(t.created_at).toLocaleDateString()}</div></div>
+                                        <div className="text-right"><div className="text-xs font-mono tabular-nums text-text-tertiary">{new Date(t.created_at).toLocaleDateString()}</div></div>
                                     </div>
                                 ))}
-                                {recentTickets.length === 0 && <div className="text-center text-slate-400 py-4">No recent tickets.</div>}
+                                {recentTickets.length === 0 && <div className="text-center text-sm text-slate-500 py-4">No recent tickets</div>}
                             </div>
                         </div>
-                        <div className="bg-white rounded-3xl p-5 border border-slate-100 shadow-sm">
-                            <h3 className="text-sm font-black text-slate-900 mb-4">Module Summary</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="p-4 bg-blue-50 rounded-xl"><div className="text-xs font-bold text-blue-600 mb-1">Tickets</div><div className="text-2xl font-black text-blue-900">{ticketStats.total}</div></div>
-                                <div className="p-4 bg-emerald-50 rounded-xl">
-                                    <div className="text-xs font-bold text-emerald-600 mb-1">Visitors ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
-                                    <div className="text-2xl font-black text-emerald-900">{vmsStats.total_visitors}</div>
+                        <div className="bg-white rounded-2xl px-5 py-5 border border-slate-900/[0.08] shadow-sm">
+                            <h3 className="text-sm font-semibold text-slate-900 mb-4">Module summary</h3>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+                                <div className="px-4 py-4 bg-slate-50 rounded-md"><div className="text-xs font-medium text-slate-500 mb-1">Tickets</div><div className="text-2xl font-semibold text-slate-900 tabular-nums">{ticketStats.total}</div></div>
+                                <div className="px-4 py-4 bg-slate-50 rounded-md">
+                                    <div className="text-xs font-medium text-slate-500 mb-1">Visitors ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
+                                    <div className="text-2xl font-semibold text-slate-900 tabular-nums">{vmsStats.total_visitors}</div>
                                 </div>
-                                <div className="p-4 bg-yellow-50 rounded-xl"><div className="text-xs font-bold text-yellow-600 mb-1">Electricity ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div><div className="text-2xl font-black text-slate-900">{(Number(timePeriod === 'today' ? electricityStats?.total_units_today : timePeriod === 'month' ? electricityStats?.total_units_month : electricityStats?.total_units) || 0).toLocaleString()}</div></div>
-                                <div className="p-4 bg-purple-50 rounded-xl">
-                                    <div className="text-xs font-bold text-purple-600 mb-1">Vendor Revenue ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
-                                    <div className="text-2xl font-black text-purple-900">₹{(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
+                                <div className="px-4 py-4 bg-slate-50 rounded-md"><div className="text-xs font-medium text-slate-500 mb-1">Electricity ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div><div className="text-2xl font-semibold text-slate-900 tabular-nums">{(Number(timePeriod === 'today' ? electricityStats?.total_units_today : timePeriod === 'month' ? electricityStats?.total_units_month : electricityStats?.total_units) || 0).toLocaleString()}</div></div>
+                                <div className="px-4 py-4 bg-slate-50 rounded-md">
+                                    <div className="text-xs font-medium text-slate-500 mb-1">Vendor revenue ({timePeriod === 'today' ? 'Today' : timePeriod === 'month' ? 'Month' : 'All'})</div>
+                                    <div className="text-2xl font-semibold text-slate-900 tabular-nums">₹{(Number(vendorStats?.total_revenue) || 0).toLocaleString()}</div>
                                 </div>
                             </div>
                         </div>
@@ -2229,20 +2217,20 @@ const formatTimeAgo = (date: Date) => {
 };
 
 const StatCard = ({ title, value, icon: Icon, color, bg, breakdown }: any) => (
-    <div className="bg-white p-6 rounded-3xl border border-border shadow-sm">
+    <div className="bg-white px-6 py-6 rounded-2xl border border-border shadow-sm">
         {Icon && (
-            <div className={`w-12 h-12 ${bg} ${color} rounded-2xl flex items-center justify-center mb-4`}>
-                <Icon className="w-6 h-6" />
+            <div className={`w-10 h-10 ${bg} ${color} rounded-md flex items-center justify-center mb-4`}>
+                <Icon className="w-[18px] h-[18px]" strokeWidth={1.5} />
             </div>
         )}
-        <h3 className="text-text-tertiary font-bold text-xs uppercase tracking-widest mb-1">{title}</h3>
-        <p className="text-3xl font-black text-text-primary">{value}</p>
+        <h3 className="text-text-tertiary font-medium text-xs mb-1">{title}</h3>
+        <p className="text-3xl font-semibold text-text-primary tabular-nums">{value}</p>
         {breakdown && breakdown.length > 0 && (
             <div className="mt-4 pt-4 border-t border-border space-y-1.5">
                 {breakdown.map((b: any) => (
-                    <div key={b.label} className="flex items-center justify-between gap-2 text-xs">
+                    <div key={b.label} className="flex items-center justify-between gap-x-2 text-xs">
                         <span className="text-text-tertiary font-medium truncate">{b.label}</span>
-                        <span className="text-text-secondary font-bold shrink-0">{b.value}</span>
+                        <span className="text-text-secondary font-medium tabular-nums shrink-0">{b.value}</span>
                     </div>
                 ))}
             </div>
@@ -2252,33 +2240,33 @@ const StatCard = ({ title, value, icon: Icon, color, bg, breakdown }: any) => (
 
 const ActivityItem = ({ icon: Icon, color, title, desc, time, onClick }: any) => (
     <div
-        className={`flex gap-4 p-2 rounded-xl transition-all ${onClick ? 'cursor-pointer hover:bg-muted' : ''}`}
+        className={`flex gap-x-4 px-2 py-2 rounded-[10px] transition-colors duration-150 ${onClick ? 'cursor-pointer hover:bg-muted' : ''}`}
         onClick={onClick}
     >
-        <div className={`w-10 h-10 ${color} rounded-xl flex items-center justify-center shrink-0`}>
-            <Icon className="w-5 h-5" />
+        <div className={`w-10 h-10 ${color} rounded-md flex items-center justify-center shrink-0`}>
+            <Icon className="w-[18px] h-[18px]" strokeWidth={1.5} />
         </div>
         <div className="flex-1">
-            <h4 className="text-sm font-bold text-text-primary">{title}</h4>
+            <h4 className="text-sm font-medium text-text-primary">{title}</h4>
             <p className="text-xs text-text-secondary">{desc}</p>
         </div>
-        <span className="text-[10px] font-bold text-text-tertiary uppercase tracking-tighter">{time}</span>
+        <span className="text-[11px] font-mono tabular-nums text-text-tertiary">{time}</span>
     </div>
 );
 
 const InspectionItem = ({ date, unit, status }: any) => (
-    <div className="flex items-center justify-between p-4 bg-surface-elevated rounded-2xl border border-border">
-        <div className="flex items-center gap-4">
-            <div className="bg-white w-12 py-2 rounded-xl text-center border border-border">
-                <span className="block text-[8px] font-black text-text-tertiary uppercase tracking-tighter">Jan</span>
-                <span className="block font-black text-sm text-text-primary leading-none">{date.split(' ')[1]}</span>
+    <div className="flex items-center justify-between px-4 py-4 bg-surface-elevated rounded-[10px] border border-border">
+        <div className="flex items-center gap-x-4">
+            <div className="bg-white w-12 py-2 rounded-[8px] text-center border border-border">
+                <span className="block text-[11px] font-medium text-text-tertiary">Jan</span>
+                <span className="block font-semibold text-sm text-text-primary tabular-nums leading-none">{date.split(' ')[1]}</span>
             </div>
             <div>
-                <p className="font-bold text-text-primary text-sm">{unit}</p>
-                <p className="text-[10px] text-text-tertiary font-bold uppercase tracking-widest">{status}</p>
+                <p className="font-medium text-text-primary text-sm">{unit}</p>
+                <p className="text-[11px] text-text-tertiary font-medium capitalize">{status}</p>
             </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-text-tertiary" />
+        <ChevronRight className="w-4 h-4 text-text-tertiary" strokeWidth={1.5} />
     </div>
 );
 
@@ -2453,69 +2441,69 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
 
     const isSingleDay = startDate === endDate;
 
-    if (isLoading) return <div className="p-12 text-center text-slate-400 font-bold">Loading Revenue Data...</div>;
+    if (isLoading) return <div className="p-12 text-center text-slate-500 font-medium">Loading revenue data</div>;
 
     return (
         <div className="space-y-8">
             {/* Stat Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-x-6 gap-y-6">
                 <StatCard
-                    title={`Total Revenue (${isSingleDay ? startDate : `${startDate} to ${endDate}`})`}
+                    title={`Total revenue (${isSingleDay ? startDate : `${startDate} to ${endDate}`})`}
                     value={`₹${totalRevenue.toLocaleString('en-IN')}`}
                     icon={IndianRupee}
-                    color="text-blue-600"
-                    bg="bg-blue-50"
+                    color="text-slate-500"
+                    bg="bg-slate-100"
                     breakdown={perVendorRevenue}
                 />
                 <StatCard
-                    title="Total Commission"
+                    title="Total commission"
                     value={`₹${Math.round(totalCommission).toLocaleString('en-IN')}`}
                     icon={Calendar}
-                    color="text-emerald-600"
-                    bg="bg-emerald-50"
+                    color="text-slate-500"
+                    bg="bg-slate-100"
                     breakdown={perVendorCommission}
                 />
                 <StatCard
-                    title="Logged Daily Entries"
+                    title="Logged daily entries"
                     value={totalEntriesLogged.toString()}
                     icon={Clock}
-                    color="text-amber-600"
-                    bg="bg-amber-50"
+                    color="text-slate-500"
+                    bg="bg-slate-100"
                 />
                 <StatCard
-                    title="Active Vendors"
+                    title="Active vendors"
                     value={vendors.length.toString()}
                     icon={Store}
-                    color="text-indigo-600"
-                    bg="bg-indigo-50"
+                    color="text-slate-500"
+                    bg="bg-slate-100"
                 />
             </div>
 
             {/* Table Container */}
-            <div className="bg-white border border-border rounded-3xl overflow-hidden shadow-sm">
-                <div className="p-6 sm:p-8 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white">
+            <div className="bg-white border border-border rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-6 py-6 sm:p-8 border-b border-border flex flex-col md:flex-row justify-between items-start md:items-center gap-x-4 gap-y-4 bg-white">
                     <div>
-                        <h3 className="text-xl font-bold text-text-primary">Cafeteria Performance</h3>
+                        <h3 className="text-xl font-semibold text-text-primary">Cafeteria performance</h3>
                         {/* Range Selection Controls */}
-                        <div className="flex flex-wrap items-center gap-3 mt-3">
-                            <span className="text-xs text-text-secondary font-medium">Filter Range:</span>
-                            <div className="flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-[#161b22] p-1 rounded-lg border border-slate-200 dark:border-[#30363d]">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-3 mt-3">
+                            <span className="text-xs text-text-secondary font-medium">Range</span>
+                            <div className="flex flex-wrap items-center gap-x-1 gap-y-1 bg-slate-100 dark:bg-[#161b22] px-1 py-1 rounded-[10px] border border-slate-200 dark:border-[#30363d]">
                                 {(['month', 'week', 'today', 'yesterday', 'custom'] as const).map((m) => (
                                     <button
                                         key={m}
                                         onClick={() => handlePresetChange(m)}
-                                        className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all capitalize ${
+                                        className={`px-2.5 py-1 text-xs font-medium rounded-[8px] transition-colors duration-150 capitalize ${
                                             rangeMode === m
-                                                ? 'bg-white dark:bg-[#30363d] shadow-sm text-indigo-600 dark:text-indigo-400'
+                                                ? 'bg-white dark:bg-[#30363d] shadow-sm text-primary-dark dark:text-primary-light'
                                                 : 'text-slate-500 hover:text-slate-700'
                                         }`}
                                     >
-                                        {m === 'month' ? 'This Month' : m === 'week' ? 'Last 7 Days' : m}
+                                        {m === 'month' ? 'This month' : m === 'week' ? 'Last 7 days' : m}
                                     </button>
                                 ))}
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-x-2">
                                 <input 
                                     type="date" 
                                     value={startDate}
@@ -2523,9 +2511,9 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                         setRangeMode('custom');
                                         setStartDate(e.target.value);
                                     }}
-                                    className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                    className="text-xs font-medium text-slate-700 tabular-nums bg-white border border-slate-900/[0.08] rounded-[10px] px-2 py-1 outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                                 />
-                                <span className="text-xs text-slate-400 font-bold">to</span>
+                                <span className="text-xs text-slate-500 font-medium">to</span>
                                 <input 
                                     type="date" 
                                     value={endDate}
@@ -2533,26 +2521,26 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                         setRangeMode('custom');
                                         setEndDate(e.target.value);
                                     }}
-                                    className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-md px-2 py-1 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                    className="text-xs font-medium text-slate-700 tabular-nums bg-white border border-slate-900/[0.08] rounded-[10px] px-2 py-1 outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                                 />
                             </div>
                         </div>
                     </div>
-                    <div className="flex gap-2 shrink-0">
+                    <div className="flex gap-x-2 shrink-0">
                         <button
                             onClick={() => {
                                 setVendorToEdit(null);
                                 setIsManageModalOpen(true);
                             }}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-indigo-600/20"
+                            className="flex items-center gap-x-2 px-4 py-2.5 bg-primary text-text-inverse rounded-[10px] text-sm font-semibold hover:bg-primary-dark transition-colors duration-150 active:scale-[0.98]"
                         >
-                            <Plus className="w-4 h-4" /> Add Vendor
+                            <Plus className="w-4 h-4" strokeWidth={1.5} /> Add vendor
                         </button>
                         <button
                             onClick={() => setShowExportModal(true)}
-                            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-text-inverse rounded-xl text-sm font-black hover:opacity-90 transition-all shadow-lg shadow-primary/20"
+                            className="flex items-center gap-x-2 px-4 py-2.5 bg-white text-text-primary border border-slate-900/[0.08] rounded-[10px] text-sm font-semibold hover:bg-slate-50 transition-colors duration-150 active:scale-[0.98]"
                         >
-                            <FileDown className="w-4 h-4" /> Export
+                            <FileDown className="w-4 h-4 text-text-tertiary" strokeWidth={1.5} /> Export
                         </button>
                     </div>
                 </div>
@@ -2561,18 +2549,18 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-surface-elevated border-b border-border">
                             <tr>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest">Vendor / Shop</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Commission %</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Range Revenue</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Commission Due</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-center">Logs / Status</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-text-tertiary uppercase tracking-widest text-right">Actions</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary">Vendor / shop</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary text-center">Commission %</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary text-right">Range revenue</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary text-right">Commission due</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary text-center">Logs / status</th>
+                                <th className="px-6 py-3 text-xs font-medium text-text-tertiary text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-50">
                             {vendors.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} className="px-8 py-12 text-center text-slate-400 italic">No vendors found for this property.</td>
+                                    <td colSpan={6} className="px-8 py-12 text-center text-slate-500">No vendors found for this property</td>
                                 </tr>
                             ) : (
                                 vendors.map((vendor) => {
@@ -2583,37 +2571,37 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
 
                                     return (
                                         <React.Fragment key={vendor.id}>
-                                            <tr className="hover:bg-slate-50/50 transition-all">
+                                            <tr className="hover:bg-slate-50/50 transition-colors duration-150">
                                                 <td className="px-6 py-5">
-                                                    <div className="flex items-center gap-3">
+                                                    <div className="flex items-center gap-x-3">
                                                         <button
                                                             onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}
-                                                            className="p-1 rounded-md hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                                                            className="px-1 py-1 rounded-[8px] hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
                                                             title="Toggle daily revenue breakdown"
                                                         >
-                                                            {isExpanded ? <ChevronUp className="w-4 h-4 text-indigo-600" /> : <ChevronDown className="w-4 h-4" />}
+                                                            {isExpanded ? <ChevronUp className="w-4 h-4 text-primary-dark" strokeWidth={1.5} /> : <ChevronDown className="w-4 h-4" strokeWidth={1.5} />}
                                                         </button>
                                                         <div>
-                                                            <p className="font-black text-slate-900 text-sm">{vendor.shop_name}</p>
-                                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{vendor.owner_name}</p>
+                                                            <p className="font-medium text-slate-900 text-sm">{vendor.shop_name}</p>
+                                                            <p className="text-xs text-slate-500">{vendor.owner_name}</p>
                                                         </div>
                                                     </div>
                                                 </td>
                                                 <td className="px-6 py-5 text-center">
-                                                    <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border border-blue-100">
+                                                    <span className="text-sm font-medium text-slate-700 tabular-nums">
                                                         {vendor.commission_rate}%
                                                     </span>
                                                 </td>
                                                 <td className="px-6 py-5 text-right">
-                                                    <p className={`font-black text-sm ${periodRevenue > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
+                                                    <p className={`font-medium text-sm tabular-nums ${periodRevenue > 0 ? 'text-slate-900' : 'text-slate-300'}`}>
                                                         ₹{periodRevenue.toLocaleString('en-IN')}
                                                     </p>
                                                 </td>
-                                                <td className="px-6 py-5 text-right text-emerald-600 font-black text-sm">
+                                                <td className="px-6 py-5 text-right text-slate-900 font-medium text-sm tabular-nums">
                                                     ₹{Number(commission).toLocaleString('en-IN')}
                                                 </td>
                                                 <td className="px-6 py-5 text-center">
-                                                    <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider border ${entriesInRange.length > 0
+                                                    <span className={`px-2 py-0.5 rounded-sm text-[11px] font-medium border ${entriesInRange.length > 0
                                                         ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
                                                         : 'bg-amber-50 text-amber-600 border-amber-100'
                                                         }`}>
@@ -2623,22 +2611,22 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                                     </span>
                                                 </td>
                                                 <td className="px-6 py-5 text-right">
-                                                    <div className="flex items-center justify-end gap-2">
+                                                    <div className="flex items-center justify-end gap-x-2">
                                                         <button
                                                             onClick={() => setExpandedVendorId(isExpanded ? null : vendor.id)}
-                                                            className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-all ${isExpanded ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                                                            className={`px-2.5 py-1 text-xs font-medium rounded-[8px] border transition-colors duration-150 ${isExpanded ? 'bg-primary/10 text-primary-dark border-primary/20' : 'bg-slate-50 text-slate-600 border-slate-900/[0.08] hover:bg-slate-100'}`}
                                                         >
-                                                            {isExpanded ? 'Hide Logs' : 'View Logs'}
+                                                            {isExpanded ? 'Hide logs' : 'View logs'}
                                                         </button>
                                                         <button
                                                             onClick={() => {
                                                                 setVendorToEdit(vendor);
                                                                 setIsManageModalOpen(true);
                                                             }}
-                                                            className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-lg transition-colors"
-                                                            title="Vendor Settings"
+                                                            className="px-2 py-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 rounded-[10px] transition-colors"
+                                                            title="Vendor settings"
                                                         >
-                                                            <Settings className="w-4 h-4" />
+                                                            <Settings className="w-4 h-4" strokeWidth={1.5} />
                                                         </button>
                                                         <button
                                                             onClick={async () => {
@@ -2646,7 +2634,7 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                                                     try {
                                                                         const res = await fetch(`/api/properties/${propertyId}/vendors?id=${vendor.id}`, { method: 'DELETE' });
                                                                         if (res.ok) {
-                                                                            setToast({ message: `Vendor "${vendor.shop_name}" deleted successfully!`, type: 'success', visible: true });
+                                                                            setToast({ message: `Vendor "${vendor.shop_name}" deleted`, type: 'success', visible: true });
                                                                             fetchVendors();
                                                                         } else {
                                                                             const errData = await res.json().catch(() => ({}));
@@ -2658,10 +2646,10 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                                                     }
                                                                 }
                                                             }}
-                                                            className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-lg transition-colors"
-                                                            title="Delete Vendor"
+                                                            className="px-2 py-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-[10px] transition-colors"
+                                                            title="Delete vendor"
                                                         >
-                                                            <X className="w-4 h-4" />
+                                                            <X className="w-4 h-4" strokeWidth={1.5} />
                                                         </button>
                                                     </div>
                                                 </td>
@@ -2669,27 +2657,27 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
 
                                             {/* Expandable Daily Revenue Breakdown Sub-Table */}
                                             {isExpanded && (
-                                                <tr className="bg-indigo-50/30">
+                                                <tr className="bg-slate-50/60">
                                                     <td colSpan={6} className="px-8 py-4">
-                                                        <div className="bg-white border border-indigo-100 rounded-2xl p-5 shadow-sm">
+                                                        <div className="bg-white border border-slate-900/[0.08] rounded-2xl px-5 py-5">
                                                             <div className="flex items-center justify-between mb-3">
-                                                                <h4 className="text-xs font-black uppercase text-indigo-700 tracking-wider">
-                                                                    Daily Logs Breakdown: {vendor.shop_name} ({startDate} to {endDate})
+                                                                <h4 className="text-xs font-semibold text-slate-900">
+                                                                    Daily logs breakdown: {vendor.shop_name} ({startDate} to {endDate})
                                                                 </h4>
-                                                                <span className="text-[11px] font-bold text-slate-500">
+                                                                <span className="text-[11px] font-medium text-slate-500 tabular-nums">
                                                                     {entriesInRange.length} record{entriesInRange.length === 1 ? '' : 's'} found
                                                                 </span>
                                                             </div>
                                                             {entriesInRange.length === 0 ? (
-                                                                <p className="text-xs text-slate-400 italic py-2">No daily revenue entries recorded for this selected date range.</p>
+                                                                <p className="text-xs text-slate-500 py-2">No daily revenue entries recorded for this date range</p>
                                                             ) : (
                                                                 <table className="w-full text-xs text-left border-collapse">
                                                                     <thead>
-                                                                        <tr className="border-b border-slate-100 text-slate-400 font-bold text-[10px] uppercase tracking-wider">
+                                                                        <tr className="border-b border-slate-100 text-slate-500 font-medium text-[11px]">
                                                                             <th className="py-2">Date</th>
-                                                                            <th className="py-2 text-right">Daily Revenue</th>
+                                                                            <th className="py-2 text-right">Daily revenue</th>
                                                                             <th className="py-2 text-right">Commission ({vendor.commission_rate}%)</th>
-                                                                            <th className="py-2 pl-6">Entry Status</th>
+                                                                            <th className="py-2 pl-6">Entry status</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-slate-100">
@@ -2699,20 +2687,20 @@ const VendorRevenueTab = memo(function VendorRevenueTab({ propertyId }: { proper
                                                                             const entryDate = entry.revenue_date || entry.entry_date;
                                                                             return (
                                                                                 <tr key={entry.id || entryDate} className="hover:bg-slate-50">
-                                                                                    <td className="py-2.5 font-bold text-slate-800">
+                                                                                    <td className="py-2.5 font-medium text-slate-800 tabular-nums">
                                                                                         {new Date(entryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                                                                                     </td>
-                                                                                    <td className="py-2.5 text-right font-black text-slate-900">
+                                                                                    <td className="py-2.5 text-right font-medium text-slate-900 tabular-nums">
                                                                                         ₹{dRev.toLocaleString('en-IN')}
                                                                                     </td>
-                                                                                    <td className="py-2.5 text-right font-black text-emerald-600">
+                                                                                    <td className="py-2.5 text-right font-medium text-slate-700 tabular-nums">
                                                                                         ₹{Number(dComm).toLocaleString('en-IN')}
                                                                                     </td>
                                                                                     <td className="py-2.5 pl-6 text-slate-500 font-medium">
                                                                                         {dRev > 0 ? (
-                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">Logged</span>
+                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-100">Logged</span>
                                                                                         ) : (
-                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">₹0 Logged</span>
+                                                                                            <span className="inline-block px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-500">₹0 logged</span>
                                                                                         )}
                                                                                     </td>
                                                                                 </tr>

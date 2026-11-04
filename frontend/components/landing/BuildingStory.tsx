@@ -10,24 +10,24 @@ export default function BuildingStory() {
     const features = [
         {
             icon: CheckCircle2,
-            title: "Automated Workflows",
+            title: "Automated workflows",
             desc: "Tasks move without follow-ups. Calm operational state.",
-            color: "text-blue-400",
-            bg: "bg-blue-500/20"
+            color: "text-primary-light",
+            bg: "bg-primary/15"
         },
         {
             icon: ShoppingCart,
-            title: "Inventory & Procurement",
+            title: "Inventory and procurement",
             desc: "Transparent approvals. Predictable purchasing.",
-            color: "text-purple-400",
-            bg: "bg-purple-500/20"
+            color: "text-primary-light",
+            bg: "bg-primary/15"
         },
         {
             icon: BarChart3,
-            title: "Employee Heatmap",
+            title: "Employee heatmap",
             desc: "Floor-wise occupancy clarity. Real-time patterns.",
-            color: "text-rose-400",
-            bg: "bg-rose-500/20"
+            color: "text-primary-light",
+            bg: "bg-primary/15"
         }
     ];
 
@@ -47,15 +47,15 @@ export default function BuildingStory() {
             {/* Content */}
             <div className="relative z-10 max-w-7xl mx-auto px-6">
                 <motion.div
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: 8 }}
                     whileInView={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.8 }}
+                    transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                     viewport={{ once: true }}
                     className="text-center mb-24"
                 >
-                    <h2 className="text-3xl md:text-5xl font-light text-white mb-6">Transform Your Facility Management</h2>
+                    <h2 className="text-3xl md:text-5xl font-light text-white mb-6 tracking-tight">Workflows, procurement and occupancy in one place</h2>
                     <p className="text-white/60 max-w-2xl mx-auto">
-                        A vertical operating system that turns every floor into a data point and every system into a managed asset.
+                        A vertical operating system that turns every floor into a data point and every system into a managed asset
                     </p>
                 </motion.div>
 
@@ -63,14 +63,14 @@ export default function BuildingStory() {
                     {features.map((feature, idx) => (
                         <motion.div
                             key={idx}
-                            initial={{ opacity: 0, y: 50 }}
+                            initial={{ opacity: 0, y: 12 }}
                             whileInView={{ opacity: 1, y: 0 }}
-                            transition={{ delay: idx * 0.2, duration: 0.8 }}
+                            transition={{ delay: idx * 0.06, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                             viewport={{ once: true }}
                         >
-                            <GlassCard className="h-full p-8 hover:bg-white/10 transition-colors group cursor-pointer" intensity="low">
-                                <div className={`w-12 h-12 rounded-2xl ${feature.bg} flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300`}>
-                                    <feature.icon className={`w-6 h-6 ${feature.color}`} />
+                            <GlassCard className="h-full p-8 bg-white/[0.03] border-white/[0.08] backdrop-blur-none shadow-none rounded-2xl transition-none" intensity="low">
+                                <div className={`w-12 h-12 rounded-md ${feature.bg} flex items-center justify-center mb-6`}>
+                                    <feature.icon className={`w-6 h-6 ${feature.color}`} strokeWidth={1.5} />
                                 </div>
                                 <h3 className="text-xl font-medium text-white mb-3">{feature.title}</h3>
                                 <p className="text-white/60 leading-relaxed">

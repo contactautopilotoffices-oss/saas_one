@@ -10,7 +10,6 @@ import Loader from '@/frontend/components/ui/Loader';
 import { useAppSession } from '@/frontend/hooks/useAppSession';
 import { AlertCircle, TrendingUp, ArrowRight, IndianRupee } from 'lucide-react';
 import Link from 'next/link';
-import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import BorderGlow from '@/frontend/components/ui/BorderGlow';
 import dynamic from 'next/dynamic';
 import { prefetchWidgetData } from '@/frontend/lib/dashboard/useWidgetData';
@@ -21,11 +20,9 @@ import { commandCenterPrefetchUrls } from './command-center/prefetchUrls';
 // OWN waiting spot inside the content area (TabLoading), so clicking a tab never brings this screen back (owner, 2026-10-13).
 function RoleLoading() {
     return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
+        <div role="status" className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
             <Loader size="lg" />
-            <TextShimmer duration={1.2} className="text-sm font-medium" baseColor="#64748b" gradientColor="#cbd5e1">
-                Loading your dashboard…
-            </TextShimmer>
+            <p className="text-sm font-medium text-text-secondary">Loading your dashboard…</p>
         </div>
     );
 }
@@ -58,13 +55,11 @@ function AccountsWorkspaceRedirect({ orgId }: { orgId?: string | null }) {
     }, [orgId, router]);
 
     return (
-        <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
-            <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 animate-pulse">
-                <IndianRupee className="w-8 h-8" />
+        <div role="status" className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
+            <div className="w-16 h-16 bg-primary/10 text-primary-dark rounded-2xl flex items-center justify-center mb-4">
+                <IndianRupee className="w-8 h-8" strokeWidth={1.5} />
             </div>
-            <TextShimmer duration={1} className="text-xl font-black" baseColor="#1e293b" gradientColor="#94a3b8">
-                Opening Finance…
-            </TextShimmer>
+            <p className="text-xl font-semibold text-slate-900">Opening Finance…</p>
             <p className="text-slate-500 mt-2 text-sm">Taking you to your workspace</p>
         </div>
     );
@@ -102,17 +97,17 @@ function BDQuickStats({ orgId }: { orgId: string }) {
                 {/* Compact header */}
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
                     <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-primary/10 rounded-lg flex items-center justify-center">
+                        <div className="w-7 h-7 bg-primary/10 rounded-[8px] flex items-center justify-center">
                             <TrendingUp className="w-3.5 h-3.5 text-primary" />
                         </div>
                         <div>
-                            <h3 className="text-sm font-black text-slate-900">BD Pipeline</h3>
-                            <p className="text-[10px] text-slate-400 font-bold">{total} total leads</p>
+                            <h3 className="text-sm font-semibold text-slate-900">BD pipeline</h3>
+                            <p className="text-[11px] text-slate-500 tabular-nums">{total} total leads</p>
                         </div>
                     </div>
                     <Link
                         href={`/${orgId}/crm`}
-                        className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline"
+                        className="flex items-center gap-1 text-xs font-medium text-primary-dark hover:underline"
                     >
                         Open CRM <ArrowRight className="w-3 h-3" />
                     </Link>
@@ -122,16 +117,14 @@ function BDQuickStats({ orgId }: { orgId: string }) {
                     {/* Source-wise tiles */}
                     {loading ? (
                         <div className="flex items-center justify-center py-6">
-                            <TextShimmer duration={1.2} className="text-sm font-bold" baseColor="#94a3b8" gradientColor="#cbd5e1">
-                                Loading pipeline data…
-                            </TextShimmer>
+                            <p role="status" className="text-sm text-slate-400">Loading pipeline data…</p>
                         </div>
                     ) : (
                         <div className="grid grid-cols-3 gap-2">
                             {sources.slice(0, 3).map((src) => (
-                                <div key={src.source_name} className="p-3 bg-slate-50 rounded-xl">
-                                    <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest truncate mb-1">{src.source_name}</div>
-                                    <div className="text-xl font-black text-slate-900">{src.count}</div>
+                                <div key={src.source_name} className="p-3 bg-slate-50 rounded-[8px]">
+                                    <div className="text-xs font-medium text-slate-500 truncate mb-1">{src.source_name}</div>
+                                    <div className="text-xl font-semibold text-slate-900 tabular-nums">{src.count}</div>
                                 </div>
                             ))}
                             {sources.length === 0 && (
@@ -143,19 +136,19 @@ function BDQuickStats({ orgId }: { orgId: string }) {
                     {/* Leads by Status — color-coded bars */}
                     {!loading && statusBreakdown.length > 0 && (
                         <div>
-                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Leads by Status</p>
-                            <div className="space-y-1.5">
+                            <p className="text-xs font-medium text-slate-500 mb-2">Leads by status</p>
+                            <div className="space-y-2">
                                 {statusBreakdown.map((s) => (
                                     <div key={s.status_id} className="flex items-center gap-2">
                                         <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
-                                        <span className="text-[11px] font-bold text-slate-600 flex-1 truncate">{s.status_name}</span>
+                                        <span className="text-[11px] font-medium text-slate-600 flex-1 truncate">{s.status_name}</span>
                                         <div className="w-24 h-1.5 bg-slate-100 rounded-full overflow-hidden flex-shrink-0">
                                             <div
-                                                className="h-full rounded-full transition-all duration-500"
+                                                className="h-full rounded-full"
                                                 style={{ width: `${total > 0 ? (s.count / total) * 100 : 0}%`, backgroundColor: s.color }}
                                             />
                                         </div>
-                                        <span className="text-[11px] font-black text-slate-700 w-8 text-right">{s.count}</span>
+                                        <span className="text-[11px] font-semibold text-slate-700 w-8 text-right tabular-nums">{s.count}</span>
                                     </div>
                                 ))}
                             </div>
@@ -202,11 +195,9 @@ const UnifiedDashboard = () => {
 
     if (isLoading && dashboardContent === undefined) {
         return (
-            <div className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
+            <div role="status" className="h-screen w-full flex flex-col items-center justify-center bg-background gap-3">
                 <Loader size="lg" />
-                <TextShimmer duration={1.2} className="text-sm font-medium" baseColor="#64748b" gradientColor="#cbd5e1">
-                    Loading your dashboard…
-                </TextShimmer>
+                <p className="text-sm font-medium text-text-secondary">Loading your dashboard…</p>
             </div>
         );
     }
@@ -286,13 +277,11 @@ const UnifiedDashboard = () => {
     if (role === 'bd_admin' || role === 'bd_super_admin' || role === 'bd_rep') {
         if (dashboardContent !== undefined) return <GenericPettyCashDashboard>{dashboardContent}</GenericPettyCashDashboard>;
         return (
-            <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
-                <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4 animate-pulse">
-                    <TrendingUp className="w-8 h-8" />
+            <div role="status" className="h-screen w-full flex flex-col items-center justify-center bg-slate-50">
+                <div className="w-16 h-16 bg-primary/10 text-primary-dark rounded-2xl flex items-center justify-center mb-4">
+                    <TrendingUp className="w-8 h-8" strokeWidth={1.5} />
                 </div>
-                <TextShimmer duration={1} className="text-xl font-black" baseColor="#1e293b" gradientColor="#94a3b8">
-                    Opening CRM…
-                </TextShimmer>
+                <p className="text-xl font-semibold text-slate-900">Opening CRM…</p>
                 <p className="text-slate-500 mt-2 text-sm">Taking you to your workspace</p>
             </div>
         );
@@ -310,7 +299,7 @@ const UnifiedDashboard = () => {
             <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center mb-4">
                 <AlertCircle className="w-8 h-8" />
             </div>
-            <h2 className="text-xl font-black text-slate-900">Access Restricted</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Access restricted</h2>
             <p className="text-slate-500 mt-2 max-w-sm">
                 You don&apos;t have an active role assigned for this property. Please contact your administrator.
             </p>
