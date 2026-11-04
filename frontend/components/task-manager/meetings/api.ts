@@ -62,7 +62,7 @@ export async function call<T = Record<string, unknown>>(url: string, body?: Reco
 }
 
 /** Owner 2026-10-29: which dashboard the Meeting Assistant is in — each has its own meetings */
-export type MeetingSpace = 'tech' | 'hr' | 'admin';
+export type MeetingSpace = 'tech' | 'hr' | 'admin' | 'procurement' | 'design' | 'operations';
 export const meetingsUrl = (space: MeetingSpace) => `/api/task-manager/meetings?space=${space}`;
 export const meetingUrl = (id: string, space: MeetingSpace) => `/api/task-manager/meetings/${encodeURIComponent(id)}?space=${space}`;
 
