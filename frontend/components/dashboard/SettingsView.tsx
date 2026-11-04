@@ -8,7 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase
+    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase, Sparkles
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
@@ -19,6 +19,7 @@ import EmailServiceSettings from '@/frontend/components/admin/EmailServiceSettin
 import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppServiceSettings';
 import OmnichannelNotificationSettings from '@/frontend/components/admin/OmnichannelNotificationSettings';
 import AssistantSettings from '@/frontend/components/whatsapp/AssistantSettings';
+import AiAccessSettings from '@/frontend/components/ai-layer/AiAccessSettings';
 
 interface RoleInfo {
     role: string;
@@ -72,7 +73,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [cameraPerm, setCameraPerm] = useState<'granted' | 'denied' | 'prompt' | 'unsupported'>('prompt');
     const [revokeHint, setRevokeHint] = useState<'notif' | 'camera' | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'appearance'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'ai_access' | 'appearance'>('profile');
 
     useEffect(() => {
         // Notification permission
@@ -443,6 +444,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                         }`}
                     >
                         <MessageSquare className="w-4 h-4" /> WhatsApp (AiSensy) Service
+                    </button>
+                )}
+
+                {superAdminOrgId && (
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('ai_access')}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                            activeTab === 'ai_access'
+                                ? 'bg-primary text-white shadow-sm'
+                                : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                    >
+                        <Sparkles className="w-4 h-4" /> AI Assistant
                     </button>
                 )}
 
@@ -965,6 +980,13 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
                     <WhatsAppServiceSettings organizationId={superAdminOrgId} />
                     <AssistantSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
+            {/* AI Assistant access (org super admin; the API enforces it) */}
+            {activeTab === 'ai_access' && superAdminOrgId && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <AiAccessSettings organizationId={superAdminOrgId} />
                 </section>
             )}
 
