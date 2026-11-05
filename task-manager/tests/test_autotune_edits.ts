@@ -116,6 +116,29 @@ async function run() {
     const opus = await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, biggest, capped, recorder as any, null, ['anthropic:claude-opus-5-5']);
     check('the largest draft input still fits the cost cap on Opus', opus.model === 'anthropic:claude-opus-5-5', opus.model);
 
+    console.log('\n2e. Owner 2026-11-05: a test replays with the chat the live bot had');
+    const learning = await import('../LearningLoop');
+    const { runBrain } = await import('../brain');
+    const { tasksDomainWithTeam } = await import('../brain/tasksDomain');
+    const { facilityDomain } = await import('../brain/facilityDomain');
+    const sender = { id: 'u1', name: 'Rahul', department: 'Ops', role: 'employee' as const };
+    const liveTurn = { today: '2026-11-05', sender, people: [sender], assignableIds: ['u1'], tasks: [], departments: ['Ops'], pending: null, recent: [], conversation: ['Person: remind me to call the vendor', 'Assistant: Added.'] };
+    const replayed = H.liveEvalCase({ case_key: 'live-chat', message_text: 'add this too', context_snapshot: learning.sanitizeReplayContext(liveTurn), expectation: { intent: 'create_tasks', outcome: 'CONFIRM', expect: {} } });
+    const sent: any[] = [];
+    const replayLlm = { complete: async (req: any) => { sent.push(req); return { text: JSON.stringify(/"chat"/.test(req.user) ? { request: 'add task call the vendor' } : { intent: 'unknown', confidence: 1, language: 'en', slots: {}, ambiguities: [], clarify_question: null, summary: 's', grounded: true }), tokensIn: 1, tokensOut: 1 }; } };
+    if (replayed.ok) await runBrain(replayed.item.c.message, replayed.item.ctx, { llm: replayLlm as any, skipReply: true, domains: [tasksDomainWithTeam, facilityDomain] });
+    check('a replayed test reaches the rewrite step, which runs only with a real chat', replayed.ok && sent.some(r => /"chat"/.test(r.user) && r.user.includes('call the vendor')), sent.length);
+    check('the understand step sees the chat too, as live', sent.some(r => /"conversation"/.test(r.user) && r.user.includes('remind me to call the vendor')));
+    const chatty = Array.from({ length: 8 }, (_, i) => `Person: ${i} ${'c'.repeat(290)}`);
+    const trimmed: any[] = [];
+    const trimRecorder = { complete: async (req: any) => { trimmed.push(req); return { text: JSON.stringify({ edits: [{ section: 'examples', op: 'insert_after', index: -1, text: 'Example. short' }], change_summary: 's' }), tokensIn: 1, tokensOut: 1 }; } };
+    await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [{ message_text: 'a', context_snapshot: { conversation: chatty }, expectation: {} }], { ...state, costUsd: 0 } as any, trimRecorder as any, null, ['glm-5.3-flash']);
+    const toDrafter = JSON.parse(trimmed[0].user).labelled_cases[0].context.conversation;
+    check('the drafter gets only the end of the chat, trimmed', toDrafter.length === 4 && toDrafter[0].startsWith('Person: 4') && toDrafter.every((l: string) => l.length === 200), toDrafter?.length);
+    const biggestWithChat = biggest.map(x => ({ ...x, context_snapshot: { ...x.context_snapshot, conversation: chatty } }));
+    const opusChat = await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, biggestWithChat, { ...state, costUsd: 0 } as any, trimRecorder as any, null, ['anthropic:claude-opus-5-5']);
+    check('the largest input with chat still fits the cost cap on Opus', opusChat.model === 'anthropic:claude-opus-5-5', opusChat.model);
+
     console.log('\n3. Its own nightly slot');
     const vercel = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));
     const cron = vercel.crons.find((c: any) => c.path === '/api/cron/bot-autotune');

@@ -36,6 +36,16 @@ async function run() {
     learning.learningTriggers({ exact: 'undo' }).includes('undo'));
   const safe = learning.sanitizeReplayContext({ today: '2026-10-11', sender: { id: 'u1', name: 'A', phone: '999' } as any, people: [{ id: 'u2', name: 'B', phone: '888' }] as any, tasks: [{ id: 't1', title: 'Quote', status: 'pending' }] as any, pending: { kind: 'confirm', summary: 'Call +91 98765 43210' } });
   check('replay context keeps opaque ids and model facts but no phones', JSON.stringify(safe).includes('u1') && JSON.stringify(safe).includes('Quote') && !JSON.stringify(safe).includes('999') && !JSON.stringify(safe).includes('888') && !JSON.stringify(safe).includes('98765'));
+  const chatCtx = (lines: unknown, pending: any = null) => learning.sanitizeReplayContext({ today: '2026-11-05', conversation: lines, pending } as any) as any;
+  const chatLines = Array.from({ length: 12 }, (_, i) => `Person: line ${i}`);
+  check('the recent chat is kept with a test, newest 8, in order', JSON.stringify(chatCtx(chatLines).conversation) === JSON.stringify(chatLines.slice(-8)));
+  const redacted = chatCtx(['Person: call me on +91 98765 43210', 'Person: mail priya.shah@autopilotoffices.com today', 'Assistant: ok']).conversation;
+  check('phone numbers and email addresses never stay in a saved chat line', !/98765|priya\.shah|autopilotoffices/.test(JSON.stringify(redacted)) && redacted[0].includes('[phone redacted]') && redacted[1].includes('[email redacted]'));
+  check('a long chat line is cut', chatCtx(['Person: ' + 'x'.repeat(2000)]).conversation[0].length === 300);
+  check('no chat → no conversation field, as in a live turn', !('conversation' in chatCtx([])) && !('conversation' in chatCtx(undefined)) && !('conversation' in chatCtx([7, null])));
+  const draftPending = chatCtx([], { kind: 'draft', request: 'add task, mail a@b.co', question: 'For whom?', at: '2026-11-05T10:00:00Z', suggested: 'Call vendor' }).pending;
+  check('an unfinished request is kept with a test, without contact details', draftPending?.kind === 'draft' && draftPending.question === 'For whom?' && draftPending.suggested === 'Call vendor' && draftPending.at === '2026-11-05T10:00:00Z' && !draftPending.request.includes('a@b.co'));
+  check('an unfinished request is enough context for an answer test', learning.repairReviewLabel({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }, { pending: draftPending }).ok);
   check('review labels are closed-list and structurally checked', learning.validateReviewLabel({ intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'self' } }).ok && !learning.validateReviewLabel({ intent: 'invented', outcome: 'ACT', expect: {} } as any).ok);
   check('review labels reject invalid typed details', !learning.validateReviewLabel({ intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'planet' } }).ok && !learning.validateReviewLabel({ intent: 'complete_tasks', outcome: 'CONFIRM', expect: { taskIds: [7] } }).ok);
 
