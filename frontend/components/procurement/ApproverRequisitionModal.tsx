@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
-import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { siteVendorQuotation, siteEstimatedAmount, fileRevision } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface ApproverRequisitionModalProps {
@@ -111,7 +111,8 @@ export default function ApproverRequisitionModal({
             const res = await fetch(`/api/procurement/requisitions/${requisition.id}/approve`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, remarks: remarks.trim() })
+                // The server refuses the decision if procurement replaced the file after this screen loaded.
+                body: JSON.stringify({ action, remarks: remarks.trim(), file_revision: fileRevision(requisition) })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to update approval status');
@@ -299,6 +300,49 @@ export default function ApproverRequisitionModal({
                             )}
                         </div>
                     </div>
+
+                    {/* Re-approval: procurement replaced the comparison file after sending it */}
+                    {vendorQuotation?.is_reapproval && (
+                        <div role="status" className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-2xl p-4 text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
+                            <h3 className="font-black uppercase tracking-wider flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                                Re-approval request · Rev {fileRevision(requisition)}
+                            </h3>
+                            <p>
+                                The comparison file was updated
+                                {vendorQuotation.replaced_by_name ? <> by <b>{vendorQuotation.replaced_by_name}</b></> : null}
+                                {vendorQuotation.replaced_at ? <> on <b>{new Date(vendorQuotation.replaced_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</b></> : null}.
+                                {' '}Please review the new file before deciding.
+                            </p>
+                            {vendorQuotation.previous_decision?.status === 'approved' && (
+                                <p className="font-bold">
+                                    This site was approved earlier by {vendorQuotation.previous_decision.by_name || 'the approver'} on the old file and needs approval again.
+                                </p>
+                            )}
+                            {vendorQuotation.previous_decision?.status === 'rejected' && (
+                                <p>
+                                    Rejected earlier by {vendorQuotation.previous_decision.by_name || 'the approver'}
+                                    {vendorQuotation.previous_decision.remarks ? <>: &quot;{vendorQuotation.previous_decision.remarks}&quot;</> : '.'}
+                                </p>
+                            )}
+                            {vendorQuotation.reapproval_note && (
+                                <p><b>What was corrected:</b> {vendorQuotation.reapproval_note}</p>
+                            )}
+                            {Array.isArray(vendorQuotation.previous_files) && vendorQuotation.previous_files.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
+                                    <span className="font-semibold">Previous files:</span>
+                                    {vendorQuotation.previous_files.map((previous: { revision?: number; file_url?: string; file_name?: string }) => previous?.file_url ? (
+                                        <a key={`${previous.revision}-${previous.file_url}`}
+                                            href={maskStorageUrl(previous.file_url) || previous.file_url}
+                                            target="_blank" rel="noreferrer"
+                                            className="inline-flex items-center gap-1 text-amber-800 dark:text-amber-300 underline">
+                                            <Download className="w-3 h-3" /> Rev {previous.revision}{previous.file_name ? `: ${previous.file_name}` : ''}
+                                        </a>
+                                    ) : null)}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Vendor Quotation Box (If Uploaded by Procurement) */}
                     {vendorQuotation && (

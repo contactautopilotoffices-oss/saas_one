@@ -158,8 +158,9 @@ export async function PATCH(
             if (action === 'issue_po' && existing.status !== 'approved') {
                 return NextResponse.json({ error: 'Review and approve this requisition before issuing a PO.' }, { status: 409 });
             }
-            if (action === 'submit_for_approval' && !['submitted', 'uploaded', 'acknowledged', 'pending_approval', 'rejected'].includes(existing.status)) {
-                return NextResponse.json({ error: 'This requisition is already approved or ordered.' }, { status: 409 });
+            // A quote already sent is replaced through the re-approval route, which flags the change for the approver.
+            if (action === 'submit_for_approval' && !['submitted', 'uploaded', 'acknowledged'].includes(existing.status)) {
+                return NextResponse.json({ error: 'This requisition was already sent for approval. Use Replace Comparison File to upload a corrected file.' }, { status: 409 });
             }
             if (action === 'issue_po') {
                 const poNumber = formData.get('po_number') as string || '';
