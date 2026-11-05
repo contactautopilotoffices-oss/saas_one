@@ -36,7 +36,7 @@ Not in place: any external way in, any per-tool permission list, any record of w
 ## What we plan to do
 
 ### Phase 0 — Decisions only you can make
-1. **Who can connect. DECIDED 2026-10-26: founders only, permanently.** Saniel and Rushab, both org super admins. No staff, no ops leads, no widening later. This is a rule of the design, not a pilot stage.
+1. **Who can connect. REVISED 2026-11-05 by the owner: every user who can sign in to the FMS, clients included.** Each person connects as themselves and sees exactly what they see when they log in to the app, nothing more. A property admin of one property sees that property only; a client sees only their own data. (This replaces the 2026-10-26 decision of founders only.)
 2. **Which assistants.** Claude first (desktop and web connectors). Any other that supports MCP comes free after.
 3. **The action rule.** Reads are open to the person's role. Anything that changes money or customers needs a confirm step (below).
 4. **Provider and spend cap. DECIDED 2026-10-26: use Engy.** Cap not yet named; working assumption **US$25 a month hard stop, alert to both founders at 70%**, held in our router (we have not checked any limit on the Engy account itself). Change the number any time.
@@ -97,8 +97,18 @@ This is the "build intelligence and route to frontier models" part.
 ## Where we are (update this)
 - 2026-10-26 — Plan written. Nothing built for MCP yet.
 - 2026-10-26 — PO approval, the first write tool: Zoho link and decision logic written and type-checked; migration written, **not applied**; routes, screen and tests still to do. This work is the same code the MCP approve tool will call, so it is not wasted effort.
+- 2026-11-05 — Owner widened access: every FMS user (clients included) can connect, each scoped to their own data. Design section added. Nothing built yet.
+
+## Design for "every user, their own data" (proposed 2026-11-05)
+
+- **Sign-in:** Supabase Auth's OAuth 2.1 server (public beta). Claude discovers it, the person sees the normal FMS login and an approve screen, and Claude receives a Supabase token for that one user. Revoking it or deactivating the user cuts Claude off. Needs someone to switch it on in the Supabase dashboard (Authentication, OAuth Server) and a small consent page in the app.
+- **Same permission checks as the app:** the MCP tools call the app's own API routes as that user, so the role and property filtering already written in each route applies unchanged. No tool reads the database with the admin key on the user's behalf.
+- **Coverage:** a catalogue of the app's read (GET) routes, grouped by module, plus one tool that fetches any catalogued route. New screens become available by adding them to the catalogue. The most used modules also get their own well-described tools (doctrine L8).
+- **Never exposed:** cron, webhooks, internal, diag, test, auth and session routes, and any GET route found to change data.
+- **Writes:** not in the first release. Added later per module, with the preview and confirm step above.
+- **Log:** every call recorded (who, which tool, which route, result), append-only.
 
 ## Open questions for the founder
-1. ~~Who connects~~ Decided: founders only, forever.
+1. ~~Who connects~~ Revised 2026-11-05: every FMS user, clients included, each limited to their own data.
 2. ~~Provider~~ Decided: Engy. Spend cap: confirm US$25 a month, or name another number.
 3. Should a Claude conversation be able to approve a PO at all, or should the assistant only prepare the decision and the founder confirm it in the FMS? (My recommendation: allow it, with the confirm code, for the org super admin only.)
