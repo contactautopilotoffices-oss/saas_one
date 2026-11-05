@@ -6,7 +6,7 @@
  *   <app>/api/task-manager/zoho/callback
  * as an extra Authorized Redirect URI on that application.
  *
- * Scope is ZohoMail.tasks.READ only — this connection can list tasks and nothing else.
+ * Scope is ZohoMail.tasks.READ + UPDATE — this connection can list tasks and change their status.
  * `state` is single-use and bound to the signed-in user, so a consent cannot be replayed
  * or redeemed for someone else.
  */

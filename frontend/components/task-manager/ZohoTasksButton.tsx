@@ -5,7 +5,8 @@ import { Link2, RefreshCw, Check, X } from 'lucide-react';
 
 /**
  * "Connect Zoho Tasks" — the signed-in person links their own Zoho account so their open Zoho Mail tasks are
- * copied into their list (read-only, every 15 minutes). Once connected it shows a small menu: Sync now / Disconnect.
+ * copied into their list every 15 minutes, and tasks they complete here are completed in Zoho.
+ * Once connected it shows a small menu: Sync now / Disconnect, plus Reconnect on an older read-only connection.
  */
 
 interface Status {
@@ -14,6 +15,7 @@ interface Status {
     lastImported: number | null;
     lastError: string | null;
     ready: boolean;
+    canUpdate: boolean;
 }
 
 function ago(iso: string | null): string {
@@ -99,7 +101,9 @@ export default function ZohoTasksButton({ onSynced }: { onSynced?: () => void })
             <button onClick={() => setOpen(o => !o)} className={btn} title="Zoho Tasks">
                 {status.lastError
                     ? <X className="w-3 h-3 text-red-500" />
-                    : <Check className="w-3 h-3 text-emerald-500" />}
+                    : status.canUpdate
+                        ? <Check className="w-3 h-3 text-emerald-500" />
+                        : <Link2 className="w-3 h-3 text-amber-500" />}
                 Zoho Tasks
             </button>
             {open && (
@@ -110,6 +114,14 @@ export default function ZohoTasksButton({ onSynced }: { onSynced?: () => void })
                         {status.lastError && <div className="mt-1 text-red-600 dark:text-red-400 break-words">{status.lastError}</div>}
                         {note && <div className="mt-1 text-indigo-600 dark:text-indigo-300">{note}</div>}
                     </div>
+                    {!status.canUpdate && (
+                        <div>
+                            <div className="mb-1.5 text-amber-700 dark:text-amber-400">Reconnect so that tasks you complete here are also completed in Zoho.</div>
+                            <a href="/api/task-manager/zoho/connect" target="_blank" rel="noopener" className={`${btn} w-fit`}>
+                                <Link2 className="w-3 h-3 text-zinc-400" /> Reconnect
+                            </a>
+                        </div>
+                    )}
                     <div className="flex gap-1.5">
                         <button onClick={syncNow} disabled={busy} className={`${btn} disabled:opacity-50`}>
                             <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} /> Sync now

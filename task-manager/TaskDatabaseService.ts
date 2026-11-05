@@ -521,8 +521,17 @@ export class TaskDatabaseService {
     static async updateAssignmentStatus(params: {
         assignmentId: string;
         status: TaskStatus;
+        skipZohoPush?: boolean; // the Zoho sync itself: the change came FROM Zoho, so there is nothing to send back
     }): Promise<TaskAssignment> {
         const completedAt = params.status === 'completed' ? new Date().toISOString() : null;
+
+        // Only a reopen goes back to Zoho, so "pending" -> "in progress" here never overwrites a custom Zoho status.
+        let wasCompleted = false;
+        if (params.status !== 'completed') {
+            const { data: before } = await supabaseAdmin
+                .from('task_assignments').select('status').eq('id', params.assignmentId).maybeSingle();
+            wasCompleted = before?.status === 'completed';
+        }
 
         const { data, error } = await supabaseAdmin
             .from('task_assignments')
@@ -538,6 +547,18 @@ export class TaskDatabaseService {
         if (error || !data) {
             console.error('[TaskDatabaseService] Error updating assignment status:', error);
             throw error || new Error('Failed to update task assignment');
+        }
+
+        // Every completion (app, WhatsApp, bot) passes through here. The push never throws, so Zoho being down
+        // cannot fail the person's action; a missed completion is retried by the next sync.
+        if (data.source === 'zoho' && !params.skipZohoPush && (params.status === 'completed' || wasCompleted)) {
+            // Loaded here because ZohoTaskSync imports this file.
+            const { ZohoTaskSync } = await import('./ZohoTaskSync');
+            await ZohoTaskSync.pushStatus({
+                userId: String(data.employee_id),
+                externalId: String(data.external_id),
+                done: params.status === 'completed',
+            });
         }
         return data as TaskAssignment;
     }
