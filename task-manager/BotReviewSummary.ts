@@ -3,7 +3,7 @@ import { FACILITY_INTENTS, TASK_INTENTS } from './brain/types';
 import { engyBrainLlm, extractJson, type BrainLlm } from './brain/llm';
 import { geminiDraftModels, geminiKey, geminiLlm } from './brain/geminiLlm';
 import { learningAttempts } from './ai/aiCatalog';
-import { validateReviewLabel, type ReviewLabel } from './LearningLoop';
+import { repairReviewLabel, validateReviewLabel, type ReviewLabel } from './LearningLoop';
 
 /**
  * Bot review upgrade, Phase 2 — the AI's plain-language guess for one review item (docs/BOT_REVIEW_UPGRADE_PLAN.md,
@@ -30,9 +30,11 @@ const EXPECT_HELP = [
     'answer: one of yes | no | pick | edit | unsure (for answer_pending)',
     'pick: whole number (the option picked)',
     'department: department name',
-    'assignee: person name for a new task',
+    'assignee: the "id" from context.people or context.sender of the person a new task is for',
     'reason: short text',
 ];
+// Owner 2026-11-05: "must not change any data" read as "ask first" gave tests that expected a preview and called it unsafe.
+const TEST_RULES = 'mustNotMutate: true only when proposing ANY change would be wrong because the message is not a request for one; then the outcome is never ACT or CONFIRM on a change. CONFIRM already waits for YES, so it never needs mustNotMutate. mustClarify: true when the only right answer is to ask a question; then the outcome is CLARIFY. Use answer_pending only when context.pending is not null. Expected details per intent: view_tasks: scope, personId, department; complete_tasks, delete_tasks, rename_task: taskIds; progress_update: state, taskIds; create_tasks: assignee, taskCount, date; hand_over_task: assignee, taskIds; answer_pending: answer, pick. Leave out any other detail.';
 
 export const SUMMARY_SYSTEM = [
     'You review one conversation between a WhatsApp task bot and a person at work. The bot probably made a mistake.',
@@ -55,7 +57,7 @@ export const SUMMARY_SYSTEM = [
     'Completing, creating, handing over, deleting and renaming tasks are CONFIRM. Viewing and finding tasks, help, small talk and answering the bot\'s own question are ACT. A progress update is usually ACT.',
     'What the bot can already do: show tasks for today (own, a person\'s, the team\'s, a department\'s, the whole company\'s); show only carried-forward tasks for the SENDER\'S OWN list (not for a team or another person); find tasks for other days or date ranges; complete, update, create, hand over, delete and rename tasks; answer its own questions; undo the last change. Anything else needs a developer.',
     `Expected details (all optional): ${EXPECT_HELP.join('; ')}.`,
-    'mustNotMutate: true when the bot must not change any data for this message. mustClarify: true when the only right answer is to ask a question.',
+    TEST_RULES,
     '',
     'Example output: {"wanted":"To see his teammates\' carry-forward tasks (old tasks still open from earlier days).","did":"Showed his teammates\' tasks for today instead.","fix":"When a team lead asks for the team\'s carry-forward tasks, show only the team\'s tasks still open from earlier days.","owner":"learn","owner_reason":"The bot can already show carry-forward tasks for the person\'s own list, so it only needs to be taught to do the same for a team.","test":{"intent":"view_tasks","outcome":"ACT","expect":{"scope":"team"},"mustNotMutate":true,"mustClarify":false}}',
 ].join('\n');
@@ -100,7 +102,7 @@ export function parseSummary(raw: unknown, row: any, model: string, adminNote?: 
         if (Array.isArray(expect.taskIds)) { expect.taskIds = expect.taskIds.filter((x: unknown) => typeof x === 'string' && tasks.has(x)); if (!expect.taskIds.length) delete expect.taskIds; }
         for (const k of Object.keys(expect)) if (expect[k] === null || expect[k] === '') delete expect[k];
         const checked = validateReviewLabel({ ...v.test, expect });
-        if (checked.ok) test = checked.value;
+        if (checked.ok) { const repaired = repairReviewLabel(checked.value, ctx); if (repaired.ok) test = repaired.value; }
     }
     let owner: FixOwner = v.owner === 'developer' ? 'developer' : 'learn';
     let ownerReason = clip(v.owner_reason, 400) || (owner === 'learn' ? 'The bot only needs better instructions for this.' : 'The bot needs a code change for this.');

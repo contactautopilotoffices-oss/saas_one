@@ -86,3 +86,50 @@ export function validateReviewLabel(value: unknown): { ok: true; value: ReviewLa
     if (e.pick !== undefined && !Number.isInteger(e.pick)) return { ok: false, error: 'pick must be a whole number.' };
     return { ok: true, value: { intent: v.intent as Intent, outcome: v.outcome as Outcome, expect: v.expect as Record<string, unknown>, mustNotMutate: v.mustNotMutate === true, mustClarify: v.mustClarify === true } };
 }
+
+/** Intents that change something: the bot proposes them, or does them straight away, depending on the confirmation rules. */
+const CHANGE_INTENTS: readonly Intent[] = ['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'add_note', 'remind_tasks', 'lock_task', 'change_task', 'answer_request'];
+/** The details each intent's action really carries, so the only ones scoreCase can compare. Any other detail can never match. */
+const COMPARABLE: Partial<Record<Intent, readonly string[]>> = {
+    view_tasks: ['scope', 'personId', 'department'], complete_tasks: ['taskIds'], progress_update: ['state', 'taskIds'],
+    create_tasks: ['assignee', 'taskCount', 'date'], hand_over_task: ['assignee', 'taskIds'], answer_pending: ['answer', 'pick'],
+    delete_tasks: ['taskIds'], rename_task: ['taskIds'], add_note: ['taskIds'], remind_tasks: ['taskIds'], lock_task: ['taskIds'],
+    change_task: ['assignee', 'date', 'taskIds'],
+};
+
+/**
+ * Owner 2026-11-05: 16 of 23 saved tests could not be passed, so every new prompt was rejected. Make a label one the scorer can
+ * really judge, using only its replay context, or say why no answer could be right. Used when a test is loaded and when one is
+ * written, so old rows are repaired without touching the database and new ones never go wrong.
+ *   • mustNotMutate on an expected proposal contradicts itself (scoreCase counts any proposal as unsafe). A proposal already
+ *     waits for YES, so the expected outcome stands and the flag goes.
+ *   • a person is compared by id, so a name becomes that person's id; details the action does not carry are dropped.
+ *   • no answer can be right: a reply to a question the snapshot never saved, or "unknown" with an action to take.
+ */
+export function repairReviewLabel(label: ReviewLabel, ctx: Record<string, any> | null | undefined): { ok: true; value: ReviewLabel } | { ok: false; error: string } {
+    const proposes = label.outcome === 'ACT' || label.outcome === 'CONFIRM';
+    if (label.mustClarify && label.outcome !== 'CLARIFY') return { ok: false, error: 'It must ask a question, but expects another outcome.' };
+    if (label.intent === 'unknown' && proposes) return { ok: false, error: 'It expects an action for a message the bot cannot read.' };
+    if (label.intent === 'answer_pending' && !ctx?.pending) return { ok: false, error: 'It answers a question that was not saved with the test.' };
+
+    const keep = COMPARABLE[label.intent] ?? [];
+    const expect = Object.fromEntries(Object.entries(label.expect).filter(([k]) => k === 'reason' || keep.includes(k)));
+    if (typeof expect.assignee === 'string') {
+        const wanted = expect.assignee.trim().toLowerCase();
+        const person = [ctx?.sender, ...(Array.isArray(ctx?.people) ? ctx.people : [])].find((p: any) => p && (p.id === expect.assignee || String(p.name ?? '').trim().toLowerCase() === wanted));
+        if (person) expect.assignee = person.id; else delete expect.assignee;
+    }
+    if (Array.isArray(expect.taskIds)) {
+        const known = new Set((Array.isArray(ctx?.tasks) ? ctx.tasks : []).map((t: any) => t?.id));
+        expect.taskIds = expect.taskIds.filter(id => known.has(id));
+        if (!(expect.taskIds as unknown[]).length) delete expect.taskIds;
+    }
+    const mustNotMutate = !!label.mustNotMutate && !(proposes && CHANGE_INTENTS.includes(label.intent));
+    return { ok: true, value: { ...label, expect, mustNotMutate } };
+}
+
+/** Asking first or acting straight away is set by the confirmation rules (One front door), not by the prompt: a test accepts both. */
+export function acceptedOutcomes(label: Pick<ReviewLabel, 'intent' | 'outcome'>): Outcome[] {
+    const proposes = label.outcome === 'ACT' || label.outcome === 'CONFIRM';
+    return proposes && CHANGE_INTENTS.includes(label.intent) ? ['ACT', 'CONFIRM'] : [label.outcome];
+}

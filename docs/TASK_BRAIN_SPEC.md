@@ -289,7 +289,7 @@ versions. Voting agents would add cost without adding authority.
 
 **8. Evaluation — all four axes** `[BAA pp.118–119]` System: resumable batches, three attempts per unavailable case,
 US$0.25 nightly cap. Quality: base English + Hinglish + team + live cases; no lower overall score, at most one lost case
-per group, and zero unsafe/missed-clarify/wrong-proposal results. Human audit: **100% of activations** require an admin
+per group, and no more unsafe/missed-clarify/wrong-proposal results than the prompt in use (see Changes 2026-11-05). Human audit: **100% of activations** require an admin
 click. Tool interaction: N/A. Efficiency: zero provider calls on quiet nights; cost and checkpoints are persisted.
 
 **9. Trace** `[BAA pp.119–120]` Version, source-label timestamp, case-level before/after scores, retries, cost, status,
@@ -298,6 +298,39 @@ rejection reason, activation actor and alert audits are persisted. Offline fake-
 **10. Laws knowingly violated, and why:** L6's independent-family rubric grader is not used; the safety gate is the
 hand-written answer key plus deterministic scorer and required human activation. No paid auto-tune run has been made,
 so real cost and improvement quality remain unmeasured until the owner explicitly approves provider use.
+
+### Changes 2026-11-05: judged against the prompt in use, and tests that can be passed
+
+All three versions so far were rejected with "safety metric was not zero". The prompt in use had never been at zero
+(1–3 unsafe, 1 missed question, 1–2 wrong proposals), so a better prompt could not pass: v1 scored 66.7% against 63.6%
+with the same safety numbers. All 15 base cases passed; nearly all failures came from the saved live tests. Fed the exact
+answer each saved test asks for, with no AI, only 7 of 23 came out clean.
+
+- **Gate** `[BAA p.118]`: a candidate is compared with the prompt in use: no safety metric may go up, no test that was safe
+  may become flagged (equal totals can hide a swap), no lower overall score, at most one lost case per group. Passing still
+  only means `waiting`: **100% of activations stay an admin click**, so §3's false-positive control is unchanged. Rejections
+  therefore err strict: model randomness that flags one new test rejects the version.
+- **Saved tests** (the rubric scale's top mark means "matches ground truth" `[BAA p.97]`, which these tests could not
+  reach): `repairReviewLabel` runs on load and when a test is written. It removes `mustNotMutate` from expected proposals (the scorer counts any proposal as unsafe,
+  and a proposal already waits for YES), turns names into ids, drops details the action does not carry, and refuses tests no
+  answer could pass. Rows are not edited. Refused tests are listed as "not counted" on the version, never silently hidden.
+- **Ask first or act at once** both count for a change in a saved test: the confirmation policy (One front door) decides
+  that, not the prompt, and the safety test runs with the default policy, unlike the live bot.
+- **Group bug**: a group at 0 passes has no entry and was read as -Infinity, so 1 → 0 rejected a version. It now reads as 0.
+- **Trace** `[BAA pp.119–120]`: per-test failures are kept in `eval_before` / `eval_after` and shown on the version. §9
+  claimed case-level scores were persisted; they were deleted with `evaluation_state` until now.
+
+- **Why a model failed is kept** `[BAA pp.119–120]`: the failure reasons of earlier models were dropped whenever a later one
+  succeeded, so Claude's drafts failed unseen on all three nights while Opus wrote 30 of 30 review summaries. Each reason is
+  now saved in `eval_after.draftFailures` and shown on the version; a size failure states how many characters it used.
+- **Size limit stated** `[BAA p.114]`: the drafter's step 3 now gives the characters it may add (20% of the current text,
+  729 for the built-in prompt; four 600-character edits fit the per-line rule but not this total). The limit itself did
+  not change. Whether it caused those failures is unconfirmed until the next run records the reasons.
+
+Laws: follows L5 and L6 rule 5 in spirit (the grader's own output is audited). L6's independent-family grader is still not
+used, as in §10. Only the review summariser's test-writing rules changed; its Spec Block in
+`docs/BOT_REVIEW_UPGRADE_PLAN.md` still holds, and no model, tool or path changed. Not yet measured: no paid run has been
+made with these changes.
 
 ### Changes 2026-10-20: small edits and its own nightly slot
 
