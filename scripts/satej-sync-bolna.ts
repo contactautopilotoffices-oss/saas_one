@@ -102,6 +102,24 @@ const TASK_SETTINGS: Record<string, unknown> = {
     call_hangup_message: { en: 'Okay, bye.', hi: 'Theek hai ji, bye.' }, // was "The call will now disconnect. Goodbye!"
     check_user_online_message: { en: 'Hello? Can you hear me?', hi: 'Hello? Aawaz aa rahi hai?' },
     call_cancellation_prompt: VOICE_HANGUP_PROMPT,
+
+    // 2026-11-05, a real line has pauses and holds. Vendors say "ek minute" and go
+    // to check a rate; at 10 s / 15 s Meera asked "aawaz aa rahi hai?" and then hung
+    // up on them. A person waits longer.
+    trigger_user_online_message_after: 15, // was 10
+    hangup_after_silence: 30, // was 15
+    // "Haan ji" (two words) used to cut her off mid-sentence. Three words means a
+    // real interruption still stops her, a nod does not.
+    number_of_words_for_interruption: 3, // was 2
+    // Short "hmm / haan" sounds while the vendor talks at length, the way a person
+    // listens. Starts only after 6 s of vendor speech, at most every 6 s.
+    // Verify on "Call me first" that Bolna's sounds fit a Hinglish call; set false to undo.
+    backchanneling: true, // was false
+    backchanneling_start_delay: 6, // was 5 (unused while off)
+    backchanneling_message_gap: 6, // was 5 (unused while off)
+    // use_fillers stays off: Bolna plays fillers while the brain thinks, and with a
+    // ~0.1 s first token they would talk over her own reply. Pauses and "hmm" come
+    // from the prompt instead ("# A real phone line").
 };
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -182,7 +200,7 @@ function untouched(agent: Json): Json {
         toolchain: t.toolchain,
         languages: Object.keys(t.tools_config?.multilingual_config?.languages ?? {}),
         call_terminate: t.task_config?.call_terminate,
-        hangup_after_silence: t.task_config?.hangup_after_silence,
+        // hangup_after_silence is set by TASK_SETTINGS since 2026-11-05, so it is checked there instead.
     };
 }
 

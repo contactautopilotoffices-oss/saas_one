@@ -114,6 +114,8 @@ These are about how the conversation feels, not about the business process.
 | Sounds different on different days | Same voice, same office background track, same greeting, every call | `VOICE`, `ambient_noise_track` |
 | Calls back when promised, sends what was promised | Does neither (Gap 1) | |
 
+**Update 2026-11-05 (in the repo, not yet live).** The first four rows are now addressed in code: backchanneling on, 3 words to interrupt, 15 s before "aawaz aa rahi hai?" and 30 s before hanging up, plus a new "# A real phone line" section in the prompt (holds, garbled replies, background talk, small pauses). Live only after `scripts/satej-sync-bolna.ts --apply --force` and a "Call me first" test.
+
 **An honest note on "acting as a real human".** The right goal is a call that is as good as a skilled human's, not a call that fools the vendor. Meera's current honesty rule (admit being an AI when asked) is the right baseline and should stay. Trying to pass as a person is a legal and reputation risk that grows with every call.
 
 ---
