@@ -133,8 +133,11 @@ export async function POST(request: NextRequest) {
             .eq('user_id', user.id)
             .maybeSingle();
 
-        // Effective company for this booking: explicitly passed (admin booking for client) or user membership
-        const effectiveCompanyId = companyId || companyMember?.company_id || null;
+        // Ensure client does not get option or ability to choose an arbitrary company:
+        // Only property/org admins may attach an external client company when booking on their behalf.
+        // For regular clients / tenants, effectiveCompanyId is strictly their own company membership.
+        const isAdminBooker = await canViewAllBookings(user.id, propertyId);
+        const effectiveCompanyId = (isAdminBooker && companyId) ? companyId : (companyMember?.company_id || null);
 
         let credit: { id: string; remaining_hours: number | null; company_id: string | null; user_id: string | null } | null = null;
 

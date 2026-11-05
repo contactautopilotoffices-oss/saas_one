@@ -59,14 +59,14 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     }, [fetchSlots, slots.length]);
 
     useEffect(() => {
-        if (!propertyId) return;
+        if (!propertyId || !canViewAll) return;
         fetch(`/api/companies?propertyId=${propertyId}`)
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) setCompanies(data);
             })
             .catch(err => console.error('Error fetching companies for booking:', err));
-    }, [propertyId]);
+    }, [propertyId, canViewAll]);
 
     const wheelRef = useRef<HTMLDivElement>(null);
     const [pendingBooking, setPendingBooking] = useState<{ room: any; slot: any } | null>(null);
@@ -289,7 +289,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                     endTime: slot.end,
                     comment: bookingComment,
                     attendeeEmail: attendeeEmail.trim() || undefined,
-                    companyId: bookingCompanyId || undefined
+                    companyId: (canViewAll && bookingCompanyId) ? bookingCompanyId : undefined
                 })
             });
             const data = await res.json();
@@ -676,7 +676,8 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                 </div>
 
                                 {/* Company Selector (for Property Admins / Staff booking for a client) */}
-                                {(canViewAll || creditFree) && companies.length > 0 && (
+                                {/* Company Selector (strictly for Property Admins booking on behalf of a client) */}
+                                {canViewAll && companies.length > 0 && (
                                     <div className="px-5 py-3 border-b border-border">
                                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block">
                                             Attach Company / Client (Optional)

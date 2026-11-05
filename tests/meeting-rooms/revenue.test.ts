@@ -270,3 +270,73 @@ test('staff booking on behalf of client with client note is attributed to client
     assert.equal(light.bookings[0].clientMatchedFromNote, true);
     assert.equal(light.bookings[0].bookedBy, 'HR Team');
 });
+
+test('notification booker parameter formatting with company name and remaining credits', () => {
+    const formatBookerDisplay = (bookerName, companyName, remainingHours) => {
+        const creditsInfo = (remainingHours !== null && remainingHours !== undefined) ? `${remainingHours} hrs left` : '';
+        const clientCompanyInfo = companyName
+            ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
+            : (creditsInfo ? `${creditsInfo}` : '');
+        return clientCompanyInfo ? `${bookerName} (${clientCompanyInfo})` : bookerName;
+    };
+
+    // Client with company and remaining credits
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', 4.5),
+        'Bhavin (Light years • 4.5 hrs left)'
+    );
+
+    // Client with 0 remaining credits
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', 0),
+        'Bhavin (Light years • 0 hrs left)'
+    );
+
+    // Client with company but no credit record
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', null),
+        'Bhavin (Light years)'
+    );
+
+    // Staff booking for client
+    assert.equal(
+        formatBookerDisplay('Meena Chavan', 'blissred', 2),
+        'Meena Chavan (blissred • 2 hrs left)'
+    );
+
+    // Internal user without company
+    assert.equal(
+        formatBookerDisplay('Nilesh Mane', null, null),
+        'Nilesh Mane'
+    );
+});
+
+test('effective company resolution enforces client lock and allows admin company attachment', () => {
+    const resolveEffectiveCompanyId = (isAdmin, payloadCompanyId, userCompanyId) => {
+        return (isAdmin && payloadCompanyId) ? payloadCompanyId : (userCompanyId || null);
+    };
+
+    // Regular client / tenant attempts to pass another company ID -> strictly ignored, locked to own company
+    assert.equal(
+        resolveEffectiveCompanyId(false, 'other-company-id', 'my-client-company-id'),
+        'my-client-company-id'
+    );
+
+    // Regular user with no company membership -> stays null even if companyId sent
+    assert.equal(
+        resolveEffectiveCompanyId(false, 'some-company-id', null),
+        null
+    );
+
+    // Property admin booking on behalf of client -> attaches requested company
+    assert.equal(
+        resolveEffectiveCompanyId(true, 'client-company-id', null),
+        'client-company-id'
+    );
+
+    // Property admin internal booking -> no company attached
+    assert.equal(
+        resolveEffectiveCompanyId(true, undefined, null),
+        null
+    );
+});
