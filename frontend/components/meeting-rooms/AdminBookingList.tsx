@@ -91,6 +91,8 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
     const [quickBookTarget, setQuickBookTarget] = useState<{ room: Room; start: string; end: string } | null>(null);
     const [quickBookComment, setQuickBookComment] = useState('');
     const [quickBookGuestEmail, setQuickBookGuestEmail] = useState('');
+    const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+    const [quickBookCompanyId, setQuickBookCompanyId] = useState<string>('');
     const [isSubmittingQuickBook, setIsSubmittingQuickBook] = useState(false);
     const [quickBookError, setQuickBookError] = useState('');
     const [expandedMobileRoomId, setExpandedMobileRoomId] = useState<string | null>(null);
@@ -140,13 +142,18 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
         if (!propertyId) return;
         setIsLoading(true);
         try {
-            const [bookingsRes, roomsRes] = await Promise.all([
+            const [bookingsRes, roomsRes, companiesRes] = await Promise.all([
                 fetch(`/api/meeting-room-bookings?propertyId=${propertyId}`),
-                fetch(`/api/meeting-rooms?propertyId=${propertyId}`)
+                fetch(`/api/meeting-rooms?propertyId=${propertyId}`),
+                fetch(`/api/companies?propertyId=${propertyId}`)
             ]);
 
             const bookingsData = await bookingsRes.json();
             const roomsData = await roomsRes.json();
+            if (companiesRes.ok) {
+                const companiesData = await companiesRes.json();
+                setCompanies(Array.isArray(companiesData) ? companiesData : []);
+            }
 
             if (bookingsRes.ok && bookingsData.bookings) {
                 setBookings(bookingsData.bookings);
@@ -282,7 +289,8 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                     startTime: quickBookTarget.start,
                     endTime: quickBookTarget.end,
                     comment: quickBookComment.trim() || undefined,
-                    attendeeEmail: quickBookGuestEmail.trim() || undefined
+                    attendeeEmail: quickBookGuestEmail.trim() || undefined,
+                    companyId: quickBookCompanyId || undefined
                 })
             });
             const data = await res.json();
@@ -294,6 +302,7 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                 setQuickBookTarget(null);
                 setQuickBookComment('');
                 setQuickBookGuestEmail('');
+                setQuickBookCompanyId('');
             } else {
                 setQuickBookError(data.error || 'Failed to create booking');
             }
@@ -1187,6 +1196,27 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
                         )}
 
                         <form onSubmit={handleQuickBookSubmit} className="space-y-3.5">
+                            <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1 block">
+                                    Attach Company / Client (Optional)
+                                </label>
+                                <select
+                                    value={quickBookCompanyId}
+                                    onChange={(e) => setQuickBookCompanyId(e.target.value)}
+                                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-bold focus:outline-none focus:border-primary"
+                                >
+                                    <option value="">-- Internal / Staff Booking (No Company) --</option>
+                                    {companies.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                                {quickBookCompanyId && (
+                                    <p className="text-[10px] text-primary font-bold mt-1">
+                                        Credits will be deducted from this company's account.
+                                    </p>
+                                )}
+                            </div>
+
                             <div>
                                 <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1 block">
                                     Meeting Purpose / Notes

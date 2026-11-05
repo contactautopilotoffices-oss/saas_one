@@ -38,6 +38,12 @@ export interface RevenueBooking {
     booking_date: string; // YYYY-MM-DD
     start_time: string; // HH:MM or HH:MM:SS
     end_time: string;
+    comment?: string | null;
+}
+
+export interface RevenueCompany {
+    id: string;
+    name: string;
 }
 
 export interface RevenueCredit {
@@ -53,6 +59,7 @@ export interface RevenueInput {
     rooms: RevenueRoom[];
     bookings: RevenueBooking[];
     credits: RevenueCredit[];
+    companies?: RevenueCompany[];
     companyNames: Record<string, string>;
     userNames: Record<string, string>;
     /** user_ids whose bookings are free by policy (HR, CRM/BD, IT, Design). */
@@ -70,6 +77,8 @@ export interface RevenueBookingLine {
     roomId: string;
     roomName: string;
     bookedBy: string;
+    comment: string | null;
+    clientMatchedFromNote?: boolean;
     hours: number;
     hourlyRate: number;
     creditHours: number;
@@ -160,12 +169,86 @@ export function monthRange(month: string): { start: string; end: string } | null
     return { start: `${month}-01`, end: `${month}-${String(lastDay).padStart(2, '0')}` };
 }
 
-/** Client or internal, for one booking. Internal-team roles win over company and tenant. */
+const GENERIC_NOTE_WORDS = new Set([
+    'test', 'demo', 'sample', 'company', 'office', 'offices', 'group', 'team',
+    'meeting', 'room', 'booked', 'for', 'the', 'and', 'with', 'via', 'client',
+    'clients', 'director', 'directors', 'staff', 'internal', 'requested', 'discussion',
+]);
+
+export function cleanNoteString(str: string): string {
+    return (str || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Matches a booking comment/note against registered property companies.
+ * Internal staff (e.g. Meena Chavan, Nilesh Mane) frequently book for clients
+ * and record the client name in the comment (e.g. "booked for light years",
+ * "Booked for Lightyear", "Bliss net", "Bhavik Onads").
+ */
+export function matchCompanyFromNote(
+    comment: string | null | undefined,
+    companies: { id: string; name: string }[],
+): { id: string; name: string } | null {
+    if (!comment || !companies || companies.length === 0) return null;
+    const cleanComment = cleanNoteString(comment);
+    if (!cleanComment) return null;
+
+    // Prefer more specific (longer) names first
+    const sorted = [...companies].sort((a, b) => cleanNoteString(b.name).length - cleanNoteString(a.name).length);
+
+    for (const comp of sorted) {
+        const cleanComp = cleanNoteString(comp.name);
+        if (!cleanComp || cleanComp.length < 3) continue;
+
+        // Skip generic "test company" matching "testing booking" unless explicitly "testcompany"
+        if (cleanComp === 'testcompany') {
+            if (cleanComment.includes('testcompany')) return comp;
+            continue;
+        }
+
+        // 1. Direct normalized substring match
+        if (cleanComment.includes(cleanComp)) {
+            return comp;
+        }
+
+        // 2. Singular / plural stem match (e.g. "lightyears" vs "lightyear")
+        if (cleanComp.endsWith('s') && cleanComp.length > 4 && cleanComment.includes(cleanComp.slice(0, -1))) {
+            return comp;
+        }
+        if (cleanComment.endsWith('s') && cleanComp.length > 4 && cleanComp.includes(cleanComment.slice(0, -1))) {
+            return comp;
+        }
+
+        // 3. Match on distinctive company words (min 4 chars)
+        const compWords = comp.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        const distinctiveCompWords = compWords.filter(w => !GENERIC_NOTE_WORDS.has(w) && w.length >= 3);
+
+        for (const w of distinctiveCompWords) {
+            if (w.length >= 4) {
+                if (cleanComment.includes(w)) return comp;
+                if (w.endsWith('s') && cleanComment.includes(w.slice(0, -1))) return comp;
+            }
+        }
+
+        // Check if distinctive words in comment match distinctive parts of company
+        const commentWords = comment.toLowerCase().split(/[^a-z0-9]+/).filter(w => !GENERIC_NOTE_WORDS.has(w) && w.length >= 4);
+        for (const cw of commentWords) {
+            if (cleanComp.includes(cw)) return comp;
+            if (cw.endsWith('s') && cleanComp.includes(cw.slice(0, -1))) return comp;
+        }
+    }
+    return null;
+}
+
+/** Client or internal, for one booking. If staff booked on behalf of a matched company, it is a client booking. */
 export function classifyBooker(
     booking: Pick<RevenueBooking, 'user_id' | 'company_id'>,
     internalUserIds: Set<string>,
     tenantUserIds: Set<string>,
+    matchedCompanyId?: string | null,
 ): RevenueCategory {
+    // If staff booked on behalf of a client and the company was resolved from notes, it counts as client revenue.
+    if (matchedCompanyId) return 'client';
     // Same rule as the booking API: an internal-team booker never draws credits, company or not.
     if (booking.user_id && internalUserIds.has(booking.user_id)) return 'internal';
     if (booking.company_id) return 'client';
@@ -206,8 +289,9 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
     for (const room of input.rooms) roomTotalsFor(room.id);
 
     const inView = input.bookings.filter(b => {
+        const matched = !b.company_id && b.comment ? matchCompanyFromNote(b.comment, input.companies || []) : null;
+        const category = classifyBooker(b, input.internalUserIds, input.tenantUserIds, matched?.id);
         if (view === 'all') return true;
-        const category = classifyBooker(b, input.internalUserIds, input.tenantUserIds);
         return view === 'clients' ? category === 'client' : category === 'internal';
     });
 
@@ -224,6 +308,9 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
         const room = roomTotalsFor(b.meeting_room_id);
         const rate = room.hourlyRate;
         const bookedBy = (b.user_id && input.userNames[b.user_id]) || 'Unknown user';
+        const matchedCompany = !b.company_id && b.comment ? matchCompanyFromNote(b.comment, input.companies || []) : null;
+        const effectiveCompanyId = b.company_id || matchedCompany?.id || null;
+        const clientMatchedFromNote = !b.company_id && !!matchedCompany;
 
         const line: RevenueBookingLine = {
             bookingId: b.id,
@@ -233,6 +320,8 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
             roomId: b.meeting_room_id,
             roomName: room.roomName,
             bookedBy,
+            comment: b.comment || null,
+            clientMatchedFromNote,
             hours: round2(hours),
             hourlyRate: rate,
             creditHours: 0, exceededHours: 0, creditValue: 0, exceededRevenue: 0, totalValue: 0,
@@ -241,7 +330,8 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
         room.bookingCount += 1;
         room.bookedHours += hours;
 
-        if (classifyBooker(b, input.internalUserIds, input.tenantUserIds) === 'internal') {
+        const category = classifyBooker(b, input.internalUserIds, input.tenantUserIds, matchedCompany?.id);
+        if (category === 'internal') {
             internal.bookingCount += 1;
             internal.hours += hours;
             internal.bookings.push(line);
@@ -266,15 +356,15 @@ export function buildRevenueReport(input: RevenueInput): RevenueReport {
             continue;
         }
 
-        const key = b.company_id ? `company:${b.company_id}` : `user:${b.user_id || 'unknown'}`;
+        const key = effectiveCompanyId ? `company:${effectiveCompanyId}` : `user:${b.user_id || 'unknown'}`;
         let client = clients.get(key);
         if (!client) {
-            const allowance = b.company_id ? companyCredit.get(b.company_id) : (b.user_id ? userCredit.get(b.user_id) : undefined);
+            const allowance = effectiveCompanyId ? companyCredit.get(effectiveCompanyId) : (b.user_id ? userCredit.get(b.user_id) : undefined);
             client = {
                 key,
                 category: 'client',
-                type: b.company_id ? 'company' : 'individual',
-                name: b.company_id ? (input.companyNames[b.company_id] || 'Unknown company') : bookedBy,
+                type: effectiveCompanyId ? 'company' : 'individual',
+                name: effectiveCompanyId ? (input.companyNames[effectiveCompanyId] || matchedCompany?.name || 'Unknown company') : bookedBy,
                 hasCreditPlan: allowance !== undefined,
                 monthlyCreditHours: allowance ?? 0,
                 bookingCount: 0, bookedHours: 0, creditHours: 0, exceededHours: 0, internalHours: 0,

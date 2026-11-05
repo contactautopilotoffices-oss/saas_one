@@ -246,6 +246,7 @@ const ClientBookings: React.FC<{ bookings: RevenueBookingLine[]; internal?: bool
                     <Th align="left">Time</Th>
                     <Th align="left">Room</Th>
                     <Th align="left">Booked by</Th>
+                    <Th align="left">Notes / Client</Th>
                     <Th>Hours</Th>
                     <Th>Credit hrs</Th>
                     <Th>Exceeded hrs</Th>
@@ -259,6 +260,20 @@ const ClientBookings: React.FC<{ bookings: RevenueBookingLine[]; internal?: bool
                         <td className="px-3 py-2.5 font-bold text-slate-500 tabular-nums whitespace-nowrap">{b.startTime}-{b.endTime}</td>
                         <td className="px-3 py-2.5 font-bold text-slate-700 whitespace-nowrap">{b.roomName}</td>
                         <td className="px-3 py-2.5 font-medium text-slate-500 whitespace-nowrap">{b.bookedBy}</td>
+                        <td className="px-3 py-2.5 text-slate-600">
+                            {b.comment ? (
+                                <div className="flex flex-col gap-0.5">
+                                    <span className="italic text-slate-700 font-medium break-words max-w-[240px]">"{b.comment}"</span>
+                                    {b.clientMatchedFromNote && (
+                                        <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded w-fit">
+                                            ✓ Matched from note
+                                        </span>
+                                    )}
+                                </div>
+                            ) : (
+                                <span className="text-slate-300">—</span>
+                            )}
+                        </td>
                         <NumCell value={b.hours} strong />
                         <NumCell value={b.creditHours} />
                         <NumCell value={b.exceededHours} />

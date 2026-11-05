@@ -113,7 +113,7 @@ export async function GET(request: NextRequest) {
         // Confirmed bookings in the month, paged so a busy property is never cut off at 1000 rows.
         const bookings = await fetchAllPages<RevenueBooking>((from, to) => supabaseAdmin
             .from('meeting_room_bookings')
-            .select('id, meeting_room_id, user_id, company_id, booking_date, start_time, end_time')
+            .select('id, meeting_room_id, user_id, company_id, booking_date, start_time, end_time, comment')
             .eq('property_id', propertyId)
             .eq('status', 'confirmed')
             .gte('booking_date', range.start)
@@ -126,15 +126,17 @@ export async function GET(request: NextRequest) {
         const userIds = Array.from(new Set(bookings.map(b => b.user_id).filter((v): v is string => !!v)));
         const orgId = property.organization_id as string | null;
 
-        const [credits, companies, users, orgMembers, propertyTenants] = await Promise.all([
+        const [credits, propertyCompaniesRes, users, orgMembers, propertyTenants] = await Promise.all([
             fetchAllPages<RevenueCredit>((from, to) => supabaseAdmin
                 .from('meeting_room_credits')
                 .select('company_id, user_id, monthly_hours')
                 .eq('property_id', propertyId)
                 .order('id', { ascending: true })
                 .range(from, to)),
-            fetchInChunks<{ id: string; name: string }>(companyIds, ids => supabaseAdmin
-                .from('companies').select('id, name').in('id', ids)),
+            supabaseAdmin
+                .from('companies')
+                .select('id, name')
+                .eq('property_id', propertyId),
             fetchInChunks<{ id: string; full_name: string | null; email: string | null }>(userIds, ids => supabaseAdmin
                 .from('users').select('id, full_name, email').in('id', ids)),
             orgId
@@ -154,8 +156,17 @@ export async function GET(request: NextRequest) {
                 .in('user_id', ids)),
         ]);
 
+        const propCompanies: { id: string; name: string }[] = propertyCompaniesRes.data || [];
+        const missingCompanyIds = companyIds.filter(id => !propCompanies.some(c => c.id === id));
+        let extraCompanies: { id: string; name: string }[] = [];
+        if (missingCompanyIds.length > 0) {
+            extraCompanies = await fetchInChunks<{ id: string; name: string }>(missingCompanyIds, ids => supabaseAdmin
+                .from('companies').select('id, name').in('id', ids));
+        }
+        const allCompanies = [...propCompanies, ...extraCompanies];
+
         const companyNames: Record<string, string> = {};
-        companies.forEach(c => { companyNames[c.id] = c.name; });
+        allCompanies.forEach(c => { companyNames[c.id] = c.name; });
         const userNames: Record<string, string> = {};
         users.forEach(u => { userNames[u.id] = u.full_name || u.email || 'User'; });
         // Same source as the booking API (isCreditExemptBooker): organization roles only.
@@ -170,6 +181,7 @@ export async function GET(request: NextRequest) {
             rooms,
             bookings,
             credits,
+            companies: allCompanies,
             companyNames,
             userNames,
             internalUserIds,
