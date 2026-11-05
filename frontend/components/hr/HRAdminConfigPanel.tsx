@@ -447,7 +447,10 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                     director_profile_ids: selectedDirectorIds,
                     flow_assignees: payloadFlowAssignees,
                     flow_levels: payloadFlowLevels,
-                    manual_escalation: customData?.manual_escalation
+                    manual_escalation: customData?.manual_escalation,
+                    // Property-wise routing (Grievance & HR Query); undefined keys are dropped, keeping the saved value
+                    flow_assignees_by_property: customData?.flow_assignees_by_property,
+                    primary_property_id: customData?.primary_property_id
                 })
             });
 

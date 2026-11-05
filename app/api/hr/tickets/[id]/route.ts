@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { getAllConfiguredAssigneeIds, getLevelAssigneeIds, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -148,16 +149,9 @@ export async function GET(
                 .maybeSingle();
 
             const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-            let flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
-            }
             const tType = ticket.ticket_type || ticket.category?.ticket_type || '';
-            const configAssigneesForType = new Set<string>();
-            const flowObj = flowAssigneesConfig[tType] || {};
-            Object.values(flowObj).forEach((val: any) => {
-                if (Array.isArray(val)) val.forEach((id: string) => configAssigneesForType.add(id));
-            });
+            // Anyone configured in this ticket type's chain (default people or any property rule) can open it
+            const configAssigneesForType = getAllConfiguredAssigneeIds(configObj, tType);
             if (reqUserId && (configAssigneesForType.has(reqUserId) || (myProfile?.id && configAssigneesForType.has(myProfile.id)))) {
                 isDesignatedAdminConfigAssignee = true;
             }
@@ -300,7 +294,7 @@ export async function GET(
         };
 
         // Build dynamic escalation flow array for any category/ticket type level count
-        let flowAssigneesConfig: any = {};
+        let escalationConfig: any = {};
         let flowLevelsConfig: any = {};
         let manualEscalationConfig: any = {};
         try {
@@ -318,10 +312,7 @@ export async function GET(
                 .maybeSingle();
 
             const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-            flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
-            }
+            escalationConfig = configObj;
             flowLevelsConfig = configObj.flow_levels || {};
             manualEscalationConfig = configObj.manual_escalation || {};
         } catch (e) {
@@ -345,7 +336,7 @@ export async function GET(
         const escalationFlow: Array<{ level: number; label: string; assignee: string }> = [];
         for (let i = 1; i <= totalLevelsCount; i++) {
             let assigneeName = '';
-            const stepAssignees = flowAssigneesConfig[tType]?.[String(i)] || flowAssigneesConfig[tType]?.[i];
+            const stepAssignees = getLevelAssigneeIds(escalationConfig, tType, i, getTicketPropertyId(ticket));
             
             // 1. Dynamic check: Are specific user(s) assigned in Admin Config for this level?
             if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
@@ -499,8 +490,7 @@ export async function GET(
         // hr_tickets.assigned_to_user_id can only hold the primary handler, so the full roster is resolved
         // here and returned as assigned_level_users for the detail view to render.
         try {
-            const curLevelAssignees = flowAssigneesConfig[tType]?.[String(ticket.current_level || 1)]
-                || flowAssigneesConfig[tType]?.[ticket.current_level || 1];
+            const curLevelAssignees = getLevelAssigneeIds(escalationConfig, tType, ticket.current_level || 1, getTicketPropertyId(ticket));
 
             const levelUsers: any[] = [];
             if (Array.isArray(curLevelAssignees) && curLevelAssignees.length > 0) {
@@ -948,13 +938,10 @@ export async function PATCH(
 
             // Resolve next level owner: Admin Config step assignees first, then the level's configured owner type
             let nextAssigneeId: string | null = null;
-            let flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
-            }
-            const levelCustomAssignees = flowAssigneesConfig[tType]?.[String(nextLevel)] || flowAssigneesConfig[tType]?.[nextLevel];
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const levelCustomAssignees = getLevelAssigneeIds(configObj, tType, nextLevel, getTicketPropertyId(existing));
 
-            if (Array.isArray(levelCustomAssignees) && levelCustomAssignees.length > 0) {
+            if (levelCustomAssignees.length > 0) {
                 const firstEmpId = levelCustomAssignees[0];
                 const { data: targetProfile } = await supabaseAdmin
                     .from('employee_profiles')

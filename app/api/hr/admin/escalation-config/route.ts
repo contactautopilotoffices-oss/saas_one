@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { PROPERTY_ROUTED_TICKET_TYPES, getPropertyRules, validatePropertyRules } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -165,6 +166,7 @@ export async function GET(request: Request) {
         let flowAssigneesRaw: any = {};
         let flowLevelsRaw: any = null;
         let manualEscalationRaw: any = {};
+        let escalationConfigRaw: Record<string, unknown> = {};
         try {
             let settingsQuery = supabaseAdmin
                 .from('organization_settings')
@@ -180,6 +182,7 @@ export async function GET(request: Request) {
 
             if (settingsData) {
                 const configObj = settingsData.notification_matrix?.hr_escalation_config || settingsData.hr_escalation_config || {};
+                escalationConfigRaw = configObj;
                 flowAssigneesRaw = configObj.flow_assignees || configObj || {};
                 while (flowAssigneesRaw && flowAssigneesRaw.flow_assignees) {
                     flowAssigneesRaw = flowAssigneesRaw.flow_assignees;
@@ -219,6 +222,36 @@ export async function GET(request: Request) {
                 }
             });
         });
+
+        // Property-wise routing rules (Grievance & HR Query only), assignee IDs mapped to employee objects
+        const formattedPropertyRules: Record<string, Record<string, { property_ids: string[]; assignees: unknown[] }[]>> = {};
+        PROPERTY_ROUTED_TICKET_TYPES.forEach(flowId => {
+            formattedPropertyRules[flowId] = {};
+            const byType = (escalationConfigRaw.flow_assignees_by_property as Record<string, Record<string, unknown>> | undefined)?.[flowId] || {};
+            Object.keys(byType).forEach(levelKey => {
+                const rules = getPropertyRules(escalationConfigRaw, flowId, levelKey);
+                if (rules.length === 0) return;
+                formattedPropertyRules[flowId][levelKey] = rules.map(rule => ({
+                    property_ids: rule.property_ids,
+                    assignees: rule.assignees.map(id => mergedEmployees.find(e => e.id === id || e.user_id === id) || { id, full_name: id })
+                }));
+            });
+        });
+
+        // Active properties of this org, for the property rule picker and primary property setting
+        let orgProperties: { id: string; name: string; code: string | null }[] = [];
+        try {
+            const { data: propRows } = await supabaseAdmin
+                .from('properties')
+                .select('id, name, code')
+                .eq('organization_id', orgId)
+                .eq('is_active', true)
+                .or('status.is.null,status.neq.crm_interest')
+                .order('name', { ascending: true });
+            orgProperties = propRows || [];
+        } catch (propErr) {
+            console.warn('Could not load properties for escalation config:', propErr);
+        }
 
         const defaultFlowLevels: Record<string, any[]> = {
             grievance: [
@@ -270,7 +303,10 @@ export async function GET(request: Request) {
                 designated_director: directors[0] || null,
                 flow_assignees: formattedFlowAssignees,
                 flow_levels: resolvedFlowLevels,
-                manual_escalation: manualEscalation
+                manual_escalation: manualEscalation,
+                flow_assignees_by_property: formattedPropertyRules,
+                primary_property_id: escalationConfigRaw.primary_property_id || null,
+                properties: orgProperties
             }
         });
     } catch (err: any) {
@@ -289,6 +325,15 @@ export async function POST(request: Request) {
             hr_head_profile_id,
             director_profile_id
         } = body;
+
+        // Property-wise routing rules: a property may appear in only one rule per level
+        const propertyRulesError = validatePropertyRules(body.flow_assignees_by_property);
+        if (propertyRulesError) {
+            return NextResponse.json({ success: false, error: propertyRulesError }, { status: 400 });
+        }
+        if (body.primary_property_id !== undefined && body.primary_property_id !== null && typeof body.primary_property_id !== 'string') {
+            return NextResponse.json({ success: false, error: 'Invalid primary property.' }, { status: 400 });
+        }
 
         const hrManagerIds: string[] = Array.isArray(hr_manager_profile_ids)
             ? hr_manager_profile_ids
@@ -425,7 +470,7 @@ export async function POST(request: Request) {
         }
 
         // 4. Save per-flow, per-level custom step assignees & flow levels into organization_settings
-        if (body.flow_assignees || body.flow_levels || body.manual_escalation) {
+        if (body.flow_assignees || body.flow_levels || body.manual_escalation || body.flow_assignees_by_property || body.primary_property_id !== undefined) {
             try {
                 // Fetch org id: prioritize request body, then query DB, then default Autopilot Offices
                 let orgId = body.organization_id;
@@ -493,6 +538,44 @@ export async function POST(request: Request) {
                         }
                     }
 
+                    // Property rules: store assignees as user IDs (same normalisation as flow_assignees)
+                    let cleanPropertyRules: Record<string, Record<string, { property_ids: string[]; assignees: string[] }[]>> | null = null;
+                    if (body.flow_assignees_by_property && typeof body.flow_assignees_by_property === 'object') {
+                        const ruleIds: string[] = [];
+                        Object.keys(body.flow_assignees_by_property).forEach(fKey => {
+                            Object.keys(body.flow_assignees_by_property[fKey] || {}).forEach(lvlKey => {
+                                getPropertyRules(body, fKey, lvlKey).forEach(rule => ruleIds.push(...rule.assignees));
+                            });
+                        });
+
+                        const ruleIdToUserId = new Map<string, string>();
+                        if (ruleIds.length > 0) {
+                            const uniqueRuleIds = Array.from(new Set(ruleIds));
+                            const { data: ruleProfs } = await supabaseAdmin
+                                .from('employee_profiles')
+                                .select('id, user_id')
+                                .or(`id.in.(${uniqueRuleIds.join(',')}),user_id.in.(${uniqueRuleIds.join(',')})`);
+                            (ruleProfs || []).forEach(p => {
+                                if (p.user_id) {
+                                    ruleIdToUserId.set(p.id, p.user_id);
+                                    ruleIdToUserId.set(p.user_id, p.user_id);
+                                }
+                            });
+                        }
+
+                        cleanPropertyRules = {};
+                        Object.keys(body.flow_assignees_by_property).forEach(fKey => {
+                            cleanPropertyRules![fKey] = {};
+                            Object.keys(body.flow_assignees_by_property[fKey] || {}).forEach(lvlKey => {
+                                const rules = getPropertyRules(body, fKey, lvlKey).map(rule => ({
+                                    property_ids: Array.from(new Set(rule.property_ids)),
+                                    assignees: Array.from(new Set(rule.assignees.map(id => ruleIdToUserId.get(id) || id)))
+                                }));
+                                if (rules.length > 0) cleanPropertyRules![fKey][lvlKey] = rules;
+                            });
+                        });
+                    }
+
                     // Deep merge flow_levels with existing config so saving one flow preserves all other flows
                     const existingFlowLevels = currentEscalationConfig.flow_levels || {};
                     const mergedFlowLevels = {
@@ -517,11 +600,21 @@ export async function POST(request: Request) {
                         });
                     }
 
+                    // Property rules replace per ticket type, like flow_assignees; other types are preserved
+                    const mergedPropertyRules = {
+                        ...(currentEscalationConfig.flow_assignees_by_property || {}),
+                        ...(cleanPropertyRules || {})
+                    };
+
                     const newEscalationConfig = {
                         ...currentEscalationConfig,
                         flow_assignees: mergedFlowAssignees,
                         flow_levels: mergedFlowLevels,
                         manual_escalation: mergedManualEscalation,
+                        flow_assignees_by_property: mergedPropertyRules,
+                        primary_property_id: body.primary_property_id !== undefined
+                            ? (body.primary_property_id || null)
+                            : (currentEscalationConfig.primary_property_id || null),
                         updated_at: new Date().toISOString()
                     };
 
