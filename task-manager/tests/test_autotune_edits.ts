@@ -58,6 +58,30 @@ async function run() {
     try { await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], { ...state, costUsd: 0 } as any, scripted as any, scripted as any, ['gemini-3.8-flash', 'glm-5.3-flash']); } catch (e: any) { reason = e.message; }
     check('the HTTP status survives in the reason (the long URL is removed)', reason.includes('[404 Not Found]') && !reason.includes('https://') && reason.includes('glm-5.3-flash: edit line out of range'), reason);
 
+    console.log('\n2c. Owner 2026-11-05: why a model failed is kept, and the size limit is stated');
+    const base = BUILTIN_PROMPT_SECTIONS.steps.concat(BUILTIN_PROMPT_SECTIONS.examples).join('\n').length;
+    const room = Math.floor(base * 1.2) - base;
+    const prompts: string[] = [];
+    const tooLong = { complete: async (req: any) => {
+        prompts.push(req.system);
+        const line = (n: number) => 'x'.repeat(n);
+        // Four allowed edits, each within the 600-character line limit, can still go over the total: the suspected Opus case.
+        if (req.model === 'anthropic:claude-opus-5-5') return { text: JSON.stringify({ edits: [0, 1, 2, 3].map(i => ({ section: 'examples', op: 'insert_after', index: i, text: line(590) })), change_summary: 'long' }), tokensIn: 100, tokensOut: 50 };
+        if (req.model === 'gemini-3.8-flash') throw new Error('[404 Not Found] model not found');
+        return { text: JSON.stringify({ edits: [{ section: 'examples', op: 'insert_after', index: -1, text: 'Example. short' }], change_summary: 'short' }), tokensIn: 100, tokensOut: 50 };
+    } };
+    const st3: any = { ...state, costUsd: 0 };
+    const viaSonnet = await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], st3, tooLong as any, tooLong as any, ['anthropic:claude-opus-5-5', 'gemini-3.8-flash', 'anthropic:claude-sonnet-5-5']);
+    check('the next model drafts when a draft is too long', viaSonnet.model === 'anthropic:claude-sonnet-5-5', viaSonnet.model);
+    check('each failed model is kept with its reason, in order', st3.draftFailures?.length === 2 && st3.draftFailures[0].startsWith('anthropic:claude-opus-5-5: sections are too large') && st3.draftFailures[1].startsWith('gemini-3.8-flash: [404 Not Found]'), st3.draftFailures);
+    check('a size failure says how far over it was', st3.draftFailures?.[0].includes(`of ${Math.floor(base * 1.2)} characters`), st3.draftFailures);
+    check('the drafter is told exactly how much it may add', prompts[0].includes(`adding at most ${room} characters in total`), prompts[0].split('\n')[5]);
+    const st4: any = { ...state, costUsd: 0 };
+    await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], st4, tooLong as any, tooLong as any, ['anthropic:claude-sonnet-5-5']);
+    check('no failures when the first model drafts', Array.isArray(st4.draftFailures) && st4.draftFailures.length === 0, st4.draftFailures);
+    const atCeiling = { steps: ['x'.repeat(11000)], examples: ['y'] };
+    check('the limit never exceeds the fixed ceiling', (await import('../brain/prompt')).promptCharLimit({ maxChars: 12000, maxBaseChars: atCeiling.steps[0].length }) === 12000);
+
     console.log('\n3. Its own nightly slot');
     const vercel = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));
     const cron = vercel.crons.find((c: any) => c.path === '/api/cron/bot-autotune');

@@ -12,6 +12,7 @@ import { BUILTIN_PROMPT_SECTIONS, promptSectionDiff, type PromptSections } from 
 type Post = (body: any, opts?: { reload?: 'all' | 'side' | 'none'; quiet?: boolean }) => Promise<any | null>;
 const STATUS_TEXT: Record<string, string> = { waiting: 'Waiting for you', active: 'In use', rejected: 'Rejected', retired: 'Retired', evaluating: 'Being tested', draft: 'Draft' };
 const STATUS_CLASS: Record<string, string> = { waiting: 'bg-indigo-100 text-indigo-800', active: 'bg-emerald-100 text-emerald-800', rejected: 'bg-rose-100 text-rose-800', retired: 'bg-slate-100 text-slate-600', evaluating: 'bg-amber-100 text-amber-900', draft: 'bg-slate-100 text-slate-600' };
+const SAFETY_TEXT: Record<string, string> = { unsafe: 'Unsafe', missedClarify: 'Should have asked', wrongProposal: 'Wrong proposal' };
 const fmt = (iso?: string | null) => iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
 /** "Fix X. [drafted by gemini-2.5-flash]" → { text: "Fix X.", by: "gemini-2.5-flash" } */
 const splitSummary = (p: any) => {
@@ -135,7 +136,10 @@ function VersionViewer({ p, base, baseName, busy, post, onClose }: { p: any; bas
   const groups = Array.from(new Set([...Object.keys(before?.byGroup || {}), ...Object.keys(after?.byGroup || {})]));
   const delta = (b?: number, a?: number) => b == null || a == null ? <span className="text-slate-400">—</span> : a > b ? <span className="text-emerald-700 font-bold">+{a - b}</span> : a < b ? <span className="text-rose-700 font-bold">−{b - a}</span> : <span className="text-slate-500">no change</span>;
   const safety = (x: any) => x ? (x.unsafe || 0) + (x.missedClarify || 0) + (x.wrongProposal || 0) : null;
-  const passed = after && safety(after) === 0 && p.status !== 'rejected';
+  const passed = after && p.status !== 'rejected';
+  const failures: any[] = Array.isArray(after?.failures) ? after.failures : [];
+  const skipped: any[] = Array.isArray(after?.skipped) ? after.skipped : [];
+  const draftFailures: string[] = Array.isArray(after?.draftFailures) ? after.draftFailures : [];
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/55 grid place-items-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -174,7 +178,7 @@ function VersionViewer({ p, base, baseName, busy, post, onClose }: { p: any; bas
           ) : (
             <>
               <p className={`text-sm rounded-xl p-3 ${passed ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`}>
-                {passed ? 'Passed the safety test: no safety failures, and no group got worse.' : `Failed the safety test${p.rejection_reason ? `: ${p.rejection_reason}` : '.'}`}
+                {passed ? 'Passed the safety test: no new safety failures, and no group got worse.' : `Failed the safety test${p.rejection_reason ? `: ${p.rejection_reason}` : '.'}`}
               </p>
               <div className="overflow-x-auto border border-slate-200 rounded-xl">
                 <table className="w-full text-sm tabular-nums">
@@ -183,11 +187,44 @@ function VersionViewer({ p, base, baseName, busy, post, onClose }: { p: any; bas
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     <tr><td className="px-3 py-2.5 font-bold">Overall passed</td><td className="text-right px-3">{before.pass} / {before.cases} ({before.passRate}%)</td><td className="text-right px-3">{after.pass} / {after.cases} ({after.passRate}%)</td><td className="text-right px-3">{delta(before.pass, after.pass)}</td></tr>
-                    <tr><td className="px-3 py-2.5 font-bold">Safety failures <span className="font-normal text-slate-500">(must be 0)</span></td><td className="text-right px-3">{safety(before)}</td><td className="text-right px-3">{safety(after)}</td><td className="text-right px-3">{safety(after) === 0 ? <span className="text-emerald-700 font-bold">0 ✓</span> : <span className="text-rose-700 font-bold">{safety(after)}</span>}</td></tr>
+                    {/* Fewer is better here, so the colours are the reverse of the "passed" rows. */}
+                    <tr><td className="px-3 py-2.5 font-bold">Safety failures <span className="font-normal text-slate-500">(must not go up)</span></td><td className="text-right px-3">{safety(before)}</td><td className="text-right px-3">{safety(after)}</td><td className="text-right px-3">{safety(after) === 0 ? <span className="text-emerald-700 font-bold">0 ✓</span> : (safety(after) ?? 0) > (safety(before) ?? 0) ? <span className="text-rose-700 font-bold">+{(safety(after) ?? 0) - (safety(before) ?? 0)}</span> : (safety(after) ?? 0) < (safety(before) ?? 0) ? <span className="text-emerald-700 font-bold">−{(safety(before) ?? 0) - (safety(after) ?? 0)}</span> : <span className="text-slate-500">no change</span>}</td></tr>
                     {groups.map(g => <tr key={g}><td className="px-3 py-2.5 capitalize">{g === 'live' ? 'Live (your approved mistakes)' : g} <span className="text-slate-400 text-xs">passed</span></td><td className="text-right px-3">{before.byGroup?.[g] ?? 0}</td><td className="text-right px-3">{after.byGroup?.[g] ?? 0}</td><td className="text-right px-3">{delta(before.byGroup?.[g] ?? 0, after.byGroup?.[g] ?? 0)}</td></tr>)}
                   </tbody>
                 </table>
               </div>
+              {failures.length > 0 && (
+                <details className="text-sm border border-slate-200 rounded-xl">
+                  <summary className="cursor-pointer px-3 py-2.5 font-bold text-slate-900">Tests this version failed ({failures.length})</summary>
+                  <ul className="divide-y divide-slate-100 border-t border-slate-200">
+                    {failures.map(f => (
+                      <li key={f.id} className="px-3 py-2.5 min-w-0">
+                        <p className="text-slate-900 break-words">{f.message || f.id}</p>
+                        <p className="text-xs text-slate-500 break-words">
+                          {f.flags?.length > 0 && <span className="font-bold text-rose-700">{f.flags.map((x: string) => SAFETY_TEXT[x] || x).join(', ')} · </span>}
+                          {(f.notes || []).join('; ') || 'Did not match the expected answer'}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {skipped.length > 0 && (
+                <details className="text-sm border border-slate-200 rounded-xl">
+                  <summary className="cursor-pointer px-3 py-2.5 font-bold text-slate-900">Tests not counted ({skipped.length})</summary>
+                  <ul className="divide-y divide-slate-100 border-t border-slate-200">
+                    {skipped.map(x => <li key={x.id} className="px-3 py-2.5 min-w-0"><p className="text-slate-900 break-words">{x.message}</p><p className="text-xs text-slate-500">{x.reason}</p></li>)}
+                  </ul>
+                </details>
+              )}
+              {draftFailures.length > 0 && (
+                <details className="text-sm border border-slate-200 rounded-xl">
+                  <summary className="cursor-pointer px-3 py-2.5 font-bold text-slate-900">Models that could not draft this ({draftFailures.length})</summary>
+                  <ul className="divide-y divide-slate-100 border-t border-slate-200">
+                    {draftFailures.map(x => <li key={x} className="px-3 py-2.5 text-xs text-slate-500 break-words">{x}</li>)}
+                  </ul>
+                </details>
+              )}
               <details className="text-xs text-slate-500"><summary className="cursor-pointer">Raw data (for developers)</summary><pre className="mt-2 bg-slate-50 p-2.5 rounded-lg overflow-x-auto text-[11px]">{JSON.stringify({ before, after }, null, 2)}</pre></details>
             </>
           )}

@@ -4,7 +4,8 @@ import { botSwitchOn } from './BotSwitches';
 import { NIGHTLY_CAP_USD, candidatePasses, istDateHour, reserveWorstCaseUsd, shouldStartNightly } from './BotAutoTune';
 import { activePromptSections, purgeReviewItems, tables } from './BotLearningService';
 import { alertWaitingPrompt, sendHealthAlerts } from './BotHealthRuntime';
-import { validatePromptSections, type PromptSections } from './brain/prompt';
+import { acceptedOutcomes, repairReviewLabel, validateReviewLabel } from './LearningLoop';
+import { promptCharLimit, validatePromptSections, type PromptSections } from './brain/prompt';
 import { engyBrainLlm, extractJson, type BrainLlm, type LlmRequest } from './brain/llm';
 import { runBrain } from './brain';
 import { scoreCase, summarize, type EvalCase } from './brain/eval/score';
@@ -28,7 +29,8 @@ const priceOf = (model: string): [number, number] | undefined => PRICE[model] ??
 const MAX_DRAFT_TOKENS = 3000, BATCH_CASES = 4;
 
 interface StoredEval { id: string; group: string; score: ReturnType<typeof scoreCase> }
-interface EvalState { index: number; before: StoredEval[]; after: StoredEval[]; attempts: Record<string, number>; costUsd: number; baselineSections: PromptSections; draftModel?: string }
+interface SkippedTest { id: string; message: string; reason: string }
+interface EvalState { index: number; before: StoredEval[]; after: StoredEval[]; attempts: Record<string, number>; costUsd: number; baselineSections: PromptSections; draftModel?: string; /** Owner 2026-11-05: why each earlier model's draft failed. */ draftFailures?: string[] }
 
 export function budgeted(base: BrainLlm, state: Pick<EvalState, 'costUsd'>): BrainLlm {
     return { async complete(req: LlmRequest) {
@@ -46,7 +48,18 @@ export function budgeted(base: BrainLlm, state: Pick<EvalState, 'costUsd'>): Bra
     } };
 }
 
-async function allCases(): Promise<Array<{ c: EvalCase; ctx: any; team: boolean }>> {
+/** One saved row as a test the scorer can judge, or why it cannot be one (kept in the results, never hidden). */
+export function liveEvalCase(row: { case_key: string; message_text: string; context_snapshot: any; expectation: any }): { ok: true; item: { c: EvalCase; ctx: any; team: boolean } } | { ok: false; skipped: SkippedTest } {
+    const skip = (reason: string) => ({ ok: false as const, skipped: { id: row.case_key, message: String(row.message_text).slice(0, 160), reason } });
+    const checked = validateReviewLabel(row.expectation);
+    if (!checked.ok) return skip(checked.error);
+    const repaired = repairReviewLabel(checked.value, row.context_snapshot);
+    if (!repaired.ok) return skip(repaired.error);
+    const l = repaired.value;
+    return { ok: true, item: { team: true, ctx: row.context_snapshot, c: { id: row.case_key, group: 'live', message: row.message_text, expect: { ...l.expect, intent: [l.intent], outcome: acceptedOutcomes(l) }, mustNotMutate: l.mustNotMutate === true, mustClarify: l.mustClarify === true } as EvalCase } };
+}
+
+async function allCases(): Promise<{ cases: Array<{ c: EvalCase; ctx: any; team: boolean }>; skipped: SkippedTest[] }> {
     const [{ EVAL_CASES }, { REAL_CASES }, { world }] = await Promise.all([import('./brain/eval/cases'), import('./brain/eval/cases_real'), import('./brain/eval/worlds')]);
     // Owner 2026-10-22: the 20-case set (15 + the 5 real chats that went wrong, with their chat lines). The Hinglish and
     // team sets were removed to keep every paid run small.
@@ -54,12 +67,18 @@ async function allCases(): Promise<Array<{ c: EvalCase; ctx: any; team: boolean 
         .map(x => ({ ...x, ctx: { ...world(x.c.world || 'default', x.c.pending ?? null), ...(x.c.conversation?.length ? { conversation: x.c.conversation } : {}) } }));
     const { data, error } = await supabaseAdmin.from(tables.CASES).select('case_key,message_text,context_snapshot,expectation').order('created_at', { ascending: true });
     if (error) throw error;
-    const live = (data || []).map((r: any) => { const l = r.expectation || {}; return { team: true, ctx: r.context_snapshot, c: { id: r.case_key, group: 'live', message: r.message_text, expect: { ...(l.expect || {}), intent: [l.intent], outcome: [l.outcome] }, mustNotMutate: l.mustNotMutate === true, mustClarify: l.mustClarify === true } as EvalCase }; });
-    return [...built, ...live];
+    const live = (data || []).map((r: any) => liveEvalCase(r));
+    return { cases: [...built, ...live.flatMap(x => x.ok ? [x.item] : [])], skipped: live.flatMap(x => x.ok ? [] : [x.skipped]) };
 }
 
 function groupPass(rows: StoredEval[]) { const out: Record<string, number> = {}; for (const r of rows) if (r.score.pass) out[r.group] = (out[r.group] || 0) + 1; return out; }
-function evalSummary(rows: StoredEval[]) { const s = summarize(rows.map(r => r.score)); return { ...s, byGroup: groupPass(rows) }; }
+const safetyFlags = (s: StoredEval['score']) => (['unsafe', 'missedClarify', 'wrongProposal'] as const).filter(k => s[k]);
+/** Owner 2026-11-05: the per-test results were thrown away after a run, so nobody could see WHICH tests failed. Now kept here. */
+function evalSummary(rows: StoredEval[], messages: Map<string, string>) {
+    const s = summarize(rows.map(r => r.score));
+    const failures = rows.filter(r => !r.score.pass || safetyFlags(r.score).length).map(r => ({ id: r.id, group: r.group, message: (messages.get(r.id) ?? '').slice(0, 160), flags: safetyFlags(r.score), notes: r.score.notes.slice(0, 3) }));
+    return { ...s, byGroup: groupPass(rows), flagged: failures.filter(f => f.flags.length).map(f => f.id), failures };
+}
 
 /**
  * Draft improved tunable sections. Tries Gemini first (a different model family from the live bot — doctrine L6; owner
@@ -102,6 +121,8 @@ export function applyPromptEdits(current: PromptSections, edits: unknown[]): Pro
 export async function draftCandidate(current: PromptSections, labels: any[], state: EvalState, llm: BrainLlm = engyBrainLlm({ thinking: 'off', timeoutMs: 90_000 }), gemini: BrainLlm | null = geminiLlm(), models?: readonly string[]): Promise<{ sections: PromptSections; changeSummary: string; model: string }> {
     // Each line carries its index: smaller models miscounted plain arrays ("edit line out of range").
     const numbered = (lines: string[]) => lines.map((l, i) => `[${i}] ${l}`);
+    const baseChars = current.steps.concat(current.examples).join('\n').length;
+    const sizeLimits = { maxChars: 12000, maxBaseChars: baseChars }, charLimit = promptCharLimit(sizeLimits);
     const user = JSON.stringify({ current: { steps: numbered(current.steps), examples: numbered(current.examples) }, labelled_cases: labels.map(x => ({ message: String(x.message_text).slice(0, 800), context: x.context_snapshot, correct: x.expectation })) });
     const system = [
         'You improve only the tunable task-understanding steps and examples.',
@@ -109,13 +130,13 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
         'Follow these steps in order. Do not skip any.',
         '1. Read the current steps and examples.',
         '2. Read the labelled cases only as evidence of desired classifications.',
-        '3. Make the smallest wording or example change that helps those cases: at most 4 edits.',
+        // Owner 2026-11-05: the limit is stated, so a good draft is not thrown away only for its length.
+        `3. Make the smallest wording or example change that helps those cases: at most 4 edits, adding at most ${Math.max(0, charLimit - baseChars)} characters in total. A longer draft is rejected, so prefer replacing a line to adding one.`,
         '4. Do not add or alter intents, schemas, permissions, confirmation rules, safety rules or execution rules.',
         '5. Return ONLY the edits, never the whole text. Each edit: {"section":"steps"|"examples","op":"replace"|"insert_after"|"delete","index":int,"text":string}. "index" is the number in [brackets] before the line in the current section; "insert_after" with index -1 inserts at the top; "text" is the new line without the [number], at most 600 characters, never empty (omit it for "delete").',
         '6. Return JSON only: {"edits":[...],"change_summary":string}.',
         'Example output: {"edits":[{"section":"examples","op":"insert_after","index":2,"text":"Example. Message: tasks → view_tasks."}],"change_summary":"Clarify short task-list requests."}',
     ].join('\n');
-    const baseChars = current.steps.concat(current.examples).join('\n').length;
     const attempts: Array<[BrainLlm, string]> = models
         ? learningAttempts(models, llm, gemini)
         : [...(gemini ? geminiDraftModels().map(m => [gemini, m] as [BrainLlm, string]) : []), [llm, 'glm-5.3-flash']];
@@ -125,9 +146,12 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
             const res = await budgeted(client, state).complete({ model, system, user, json: true, maxTokens: MAX_DRAFT_TOKENS }); const raw: any = extractJson(res.text);
             // Owner 2026-10-20: the AI sends a few edits; code applies them to the current text (a full rewrite is still accepted).
             const next = Array.isArray(raw?.edits) ? applyPromptEdits(current, raw.edits) : { steps: raw.steps, examples: raw.examples };
-            const checked = validatePromptSections(next, { maxChars: 12000, maxBaseChars: baseChars });
-            if (!checked.ok) throw new Error(checked.error);
-            state.draftModel = model;
+            const checked = validatePromptSections(next, sizeLimits);
+            if (!checked.ok) {
+                const lines = Array.isArray(next?.steps) && Array.isArray(next?.examples) ? [...next.steps, ...next.examples] : null;
+                throw new Error(lines ? `${checked.error} (${lines.join('\n').length} of ${charLimit} characters)` : checked.error);
+            }
+            state.draftModel = model; state.draftFailures = failures;
             return { sections: checked.value, changeSummary: String(raw.change_summary || 'Improve handling of newly labelled messages.').slice(0, 240), model };
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
@@ -140,7 +164,7 @@ export async function draftCandidate(current: PromptSections, labels: any[], sta
 }
 
 async function evaluateBatch(row: any, state: EvalState, current: PromptSections, llm: BrainLlm) {
-    const cases = await allCases(); const slice = cases.slice(state.index, state.index + BATCH_CASES); const wrapped = budgeted(llm, state);
+    const { cases, skipped } = await allCases(); const slice = cases.slice(state.index, state.index + BATCH_CASES); const wrapped = budgeted(llm, state);
     for (const item of slice) for (const [side, sections] of [['before', current], ['after', row.sections]] as const) {
         const key = `${side}:${item.c.id}`;
         const target = side === 'before' ? state.before : state.after;
@@ -158,7 +182,8 @@ async function evaluateBatch(row: any, state: EvalState, current: PromptSections
     }
     state.index += slice.length;
     if (state.index < cases.length) return { done: false as const };
-    const before = evalSummary(state.before), after = evalSummary(state.after); return { done: true as const, before, after, verdict: candidatePasses(before, after) };
+    const messages = new Map(cases.map(x => [x.c.id, x.c.message]));
+    const before = evalSummary(state.before, messages), after = { ...evalSummary(state.after, messages), skipped, draftFailures: state.draftFailures ?? [] }; return { done: true as const, before, after, verdict: candidatePasses(before, after) };
 }
 
 /**
@@ -187,7 +212,7 @@ export async function runNightlyAutoTune(now = new Date(), rawLlm: BrainLlm = en
             return { status: 'draft_failed' as const, calls: 1 };
         }
     }
-    const state: EvalState = { index: Number(row.evaluation_state?.index || 0), before: row.evaluation_state?.before || [], after: row.evaluation_state?.after || [], attempts: row.evaluation_state?.attempts || {}, costUsd: Number(row.evaluation_state?.costUsd || row.estimated_cost_usd || 0), baselineSections: row.evaluation_state?.baselineSections || await activePromptSections() };
+    const state: EvalState = { index: Number(row.evaluation_state?.index || 0), before: row.evaluation_state?.before || [], after: row.evaluation_state?.after || [], attempts: row.evaluation_state?.attempts || {}, costUsd: Number(row.evaluation_state?.costUsd || row.estimated_cost_usd || 0), baselineSections: row.evaluation_state?.baselineSections || await activePromptSections(), draftFailures: row.evaluation_state?.draftFailures };
     try {
         const result = await evaluateBatch(row, state, state.baselineSections, rawLlm);
         if (!result.done) { await supabaseAdmin.from(tables.PROMPTS).update({ evaluation_state: state, estimated_cost_usd: state.costUsd, updated_at: now.toISOString() }).eq('id', row.id); return { status: 'evaluating' as const, calls: BATCH_CASES * 2 }; }

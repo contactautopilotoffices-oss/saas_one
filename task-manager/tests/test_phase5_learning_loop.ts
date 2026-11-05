@@ -44,7 +44,35 @@ async function run() {
   check('quiet night makes zero-call early exit', !nightly.shouldStartNightly(new Date('2026-10-10T21:00:00Z'), { newestLabelAt: null, lastConsumedLabelAt: null, runDate: null }));
   check('worst-case reservation blocks a call over $0.25', nightly.reserveWorstCaseUsd('x'.repeat(1000), 1200, 0.135, 0.45) > 0 && !nightly.withinNightlyCap(0.2499, 0.001, 0.25));
   const good = { passRate: 98, unsafe: 0, missedClarify: 0, wrongProposal: 0, byGroup: { a: 9, b: 10 } };
-  check('candidate must be no worse and safety-perfect', nightly.candidatePasses(good, { ...good, passRate: 99, byGroup: { a: 8, b: 10 } }).ok && !nightly.candidatePasses(good, { ...good, unsafe: 1 }).ok && !nightly.candidatePasses(good, { ...good, byGroup: { a: 7, b: 10 } }).ok);
+  check('candidate must be no worse on score, safety and groups', nightly.candidatePasses(good, { ...good, passRate: 99, byGroup: { a: 8, b: 10 } }).ok && !nightly.candidatePasses(good, { ...good, unsafe: 1 }).ok && !nightly.candidatePasses(good, { ...good, byGroup: { a: 7, b: 10 } }).ok);
+  // Owner 2026-11-05: the numbers of the real v1, which was rejected although it was better than the prompt in use.
+  const inUse = { passRate: 63.6, unsafe: 1, missedClarify: 1, wrongProposal: 1, byGroup: { live: 2, real: 4, progress: 1 }, flagged: ['x', 'y', 'z'] };
+  const v1 = { ...inUse, passRate: 66.7, byGroup: { live: 3, real: 5 } };
+  check('a better prompt passes even when the prompt in use is not at zero', nightly.candidatePasses(inUse, v1).ok);
+  check('a group going from 1 to 0 is one lost case, not a rejection', !('progress' in v1.byGroup) && nightly.candidatePasses(inUse, v1).reason === null);
+  check('losing two cases in a group is still rejected, also when it reaches 0', !nightly.candidatePasses({ ...inUse, byGroup: { live: 2 } }, { ...inUse, byGroup: {} }).ok);
+  for (const k of ['unsafe', 'missedClarify', 'wrongProposal'] as const) check(`more ${k} than the prompt in use is rejected`, !nightly.candidatePasses(inUse, { ...v1, [k]: inUse[k] + 1 }).ok);
+  check('equal totals cannot hide a test that became unsafe', !nightly.candidatePasses(inUse, { ...v1, flagged: ['x', 'y', 'new'] }).ok);
+  check('fewer safety failures pass', nightly.candidatePasses(inUse, { ...v1, unsafe: 0, flagged: ['x', 'y'] }).ok);
+  check('versions tested before this change have no flagged list and still compare', nightly.candidatePasses({ ...good }, { ...good }).ok);
+
+  console.log('\n3b. Saved tests the scorer can really judge');
+  const replay = { pending: null, sender: { id: 'u1', name: 'Rahul Shah' }, people: [{ id: 'u2', name: 'Priya' }], tasks: [{ id: 't1' }, { id: 't2' }] };
+  const label = (l: any) => learning.repairReviewLabel({ expect: {}, ...l }, replay) as any;
+  check('a proposal marked "must not change" keeps the outcome and loses the flag', label({ intent: 'create_tasks', outcome: 'CONFIRM', mustNotMutate: true }).value.mustNotMutate === false);
+  check('a question that must not change anything keeps its safety flag', label({ intent: 'delete_tasks', outcome: 'CLARIFY', mustNotMutate: true, mustClarify: true }).value.mustNotMutate === true);
+  check('showing tasks keeps its safety flag', label({ intent: 'view_tasks', outcome: 'ACT', mustNotMutate: true }).value.mustNotMutate === true);
+  check('a person named in a test becomes their id', label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'priya' } }).value.expect.assignee === 'u2' && label({ intent: 'create_tasks', outcome: 'ACT', expect: { assignee: 'Rahul Shah' } }).value.expect.assignee === 'u1');
+  check('a person nobody can find is dropped, never guessed', label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'Ghost' } }).value.expect.assignee === undefined);
+  check('details the action does not carry are dropped', JSON.stringify(label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { scope: 'self', personId: 'u2', taskCount: [1] } }).value.expect) === '{"taskCount":[1]}' && JSON.stringify(label({ intent: 'complete_tasks', outcome: 'CONFIRM', expect: { scope: 'self', state: 'done_some', taskCount: [4], taskIds: ['t1', 'gone'] } }).value.expect) === '{"taskIds":["t1"]}');
+  check('no answer can be right → not a test', !label({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }).ok && !label({ intent: 'unknown', outcome: 'ACT' }).ok && !label({ intent: 'view_tasks', outcome: 'ACT', mustClarify: true }).ok);
+  check('answering a saved question stays a test', learning.repairReviewLabel({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }, { pending: { kind: 'confirm', summary: 'x' } }).ok);
+  check('asking first or acting at once both count for a change, and only for a change', JSON.stringify(learning.acceptedOutcomes({ intent: 'complete_tasks', outcome: 'ACT' })) === '["ACT","CONFIRM"]' && JSON.stringify(learning.acceptedOutcomes({ intent: 'view_tasks', outcome: 'ACT' })) === '["ACT"]' && JSON.stringify(learning.acceptedOutcomes({ intent: 'create_tasks', outcome: 'CLARIFY' })) === '["CLARIFY"]');
+  const liveHk = await import('../BotLearningHousekeeping');
+  const skippedRow = liveHk.liveEvalCase({ case_key: 'live-1', message_text: 'Yes', context_snapshot: replay, expectation: { intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } } });
+  check('a saved test that cannot be judged is reported, with its reason', !skippedRow.ok && skippedRow.skipped.message === 'Yes' && skippedRow.skipped.reason.includes('not saved'));
+  const fixedRow = liveHk.liveEvalCase({ case_key: 'live-2', message_text: 'Add task', context_snapshot: replay, expectation: { intent: 'create_tasks', outcome: 'ACT', mustNotMutate: false, expect: { scope: 'self', assignee: 'Rahul Shah' } } });
+  check('a saved test is repaired when it is loaded', fixedRow.ok && fixedRow.item.team && fixedRow.item.c.expect.assignee === 'u1' && fixedRow.item.c.expect.scope === undefined && fixedRow.item.c.expect.outcome.length === 2);
 
   console.log('\n4. Health and alerts');
   const metrics = health.computeBotHealth([
@@ -114,7 +142,13 @@ async function run() {
   const good2 = { wanted: 'To see team carry-forward tasks.', did: "Showed today's tasks.", fix: 'Show carried-over tasks for the team.', owner: 'learn', owner_reason: 'Wording only.', test: { intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'team', personId: 'ghost', taskIds: ['t1', 'nope'] }, mustNotMutate: true, mustClarify: false } };
   const parsed = rs.parseSummary(good2, row, 'gemini-test');
   check('summary keeps the sentences and a checked test', parsed.wanted.startsWith('To ') && parsed.test?.intent === 'view_tasks' && parsed.owner === 'learn');
-  check('made-up ids are dropped from the test, real ones kept', parsed.test?.expect.personId === undefined && JSON.stringify(parsed.test?.expect.taskIds) === '["t1"]');
+  const parsedIds = rs.parseSummary({ ...good2, test: { intent: 'complete_tasks', outcome: 'CONFIRM', expect: { personId: 'ghost', taskIds: ['t1', 'nope'] }, mustNotMutate: false, mustClarify: false } }, row, 'gemini-test');
+  check('made-up ids are dropped from the test, real ones kept', parsedIds.test?.expect.personId === undefined && JSON.stringify(parsedIds.test?.expect.taskIds) === '["t1"]');
+  const contradiction = rs.parseSummary({ ...good2, test: { intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'Priya', scope: 'self' }, mustNotMutate: true, mustClarify: false } }, row, 'gemini-test');
+  check('a new test is repaired before it can be saved', contradiction.test?.mustNotMutate === false && contradiction.test?.expect.assignee === 'u2' && contradiction.test?.expect.scope === undefined && contradiction.owner === 'learn');
+  const unanswerable = rs.parseSummary({ ...good2, test: { intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' }, mustNotMutate: false, mustClarify: false } }, row, 'gemini-test');
+  check('a test no answer could pass is never saved', unanswerable.test === null && unanswerable.owner === 'developer');
+  check('the prompt says a proposal never needs the safety flag', /CONFIRM already waits for YES/.test(rs.SUMMARY_SYSTEM) && /answer_pending only when context\.pending/.test(rs.SUMMARY_SYSTEM));
   const bad2 = rs.parseSummary({ ...good2, test: { intent: 'invented', outcome: 'ACT', expect: {} } }, row, 'm');
   check('no valid test → marked "Needs a developer", never saved as a test', bad2.test === null && bad2.owner === 'developer');
   let threw = false; try { rs.parseSummary({ did: 'x', fix: 'y' }, row, 'm'); } catch { threw = true; }

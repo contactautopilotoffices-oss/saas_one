@@ -33,6 +33,9 @@ export const BUILTIN_PROMPT_SECTIONS: PromptSections = {
     ],
 };
 
+/** The longest tunable text allowed: the fixed ceiling, and at most 20% more than the current text. */
+export const promptCharLimit = (limits: { maxChars: number; maxBaseChars: number }) => Math.min(limits.maxChars, Math.floor(limits.maxBaseChars * 1.2));
+
 export function validatePromptSections(value: unknown, limits: { maxChars: number; maxBaseChars: number }): { ok: true; value: PromptSections } | { ok: false; error: string } {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'sections must be an object' };
     const v = value as Record<string, unknown>; const keys = Object.keys(v);
@@ -45,7 +48,7 @@ export function validatePromptSections(value: unknown, limits: { maxChars: numbe
     const hasText = (a: unknown[]) => a.some(x => typeof x === 'string' && x.trim().length > 0);
     if (!hasText(v.steps) || !hasText(v.examples)) return { ok: false, error: 'sections contain an empty line' };
     const chars = all.join('\n').length;
-    if (chars > limits.maxChars || chars > Math.floor(limits.maxBaseChars * 1.2)) return { ok: false, error: 'sections are too large' };
+    if (chars > promptCharLimit(limits)) return { ok: false, error: 'sections are too large' };
     return { ok: true, value: { steps: v.steps as string[], examples: v.examples as string[] } };
 }
 
