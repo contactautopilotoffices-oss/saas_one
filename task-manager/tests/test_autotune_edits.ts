@@ -82,6 +82,40 @@ async function run() {
     const atCeiling = { steps: ['x'.repeat(11000)], examples: ['y'] };
     check('the limit never exceeds the fixed ceiling', (await import('../brain/prompt')).promptCharLimit({ maxChars: 12000, maxBaseChars: atCeiling.steps[0].length }) === 12000);
 
+    console.log('\n2d. Owner 2026-11-05: lessons are kept until a version built on them is in use');
+    const ctx = { pending: null, sender: { id: 'u1', name: 'A' }, people: [], tasks: [] };
+    const lesson = (message_text: string, expectation: any = { intent: 'view_tasks', outcome: 'ACT', expect: {} }) => ({ message_text, context_snapshot: ctx, expectation });
+    const kept = H.unsolvedLessons([lesson('a'), lesson('unjudgeable', { intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }), lesson('broken', { intent: 'invented' }), lesson('b', { intent: 'create_tasks', outcome: 'CONFIRM', expect: {}, mustNotMutate: true })]);
+    check('a test that cannot be judged teaches nothing', kept.map(x => x.message_text).join() === 'a,b', kept.map(x => x.message_text));
+    check('a lesson is taught in its repaired form', kept[1].expectation.mustNotMutate === false);
+    const many = H.unsolvedLessons(Array.from({ length: H.MAX_DRAFT_LESSONS + 5 }, (_, i) => lesson(`m${i}`)));
+    check('too many lessons → only the newest are sent', many.length === H.MAX_DRAFT_LESSONS && many[many.length - 1].message_text === `m${H.MAX_DRAFT_LESSONS + 4}` && many[0].message_text === 'm5');
+    const tried = H.previousAttempts([
+        { change_summary: 'Clarify add this. [drafted by gemini-2.5-flash]', rejection_reason: 'more wrong proposals than the prompt in use', source_label_at: '2026-11-02' },
+        { change_summary: 'Short yes replies.', rejection_reason: 'Rejected by owner@example.com', source_label_at: '2026-11-01' },
+        { change_summary: 'x', rejection_reason: 'nightly cost cap reached', source_label_at: null },
+        { change_summary: 'Draft validation failed.', rejection_reason: 'no draft: all failed', source_label_at: null },
+        { change_summary: 'Third.', rejection_reason: 'overall score dropped', source_label_at: '2026-10-31' },
+        { change_summary: 'Fourth.', rejection_reason: 'overall score dropped', source_label_at: '2026-10-30' },
+    ]);
+    check('rejected ideas are kept, newest first, at most 3', tried.length === 3 && tried[0].change === 'Clarify add this.' && tried[2].change === 'Third.', tried);
+    check('a technical stop is not a rejected idea', !tried.some(t => /cost cap|no draft/.test(t.rejected_because)));
+    check('an admin\'s name never reaches the model', tried[1].rejected_because === 'an admin rejected it' && !JSON.stringify(tried).includes('owner@'), tried[1]);
+    const seen: any[] = [];
+    const recorder = { complete: async (req: any) => { seen.push(req); return { text: JSON.stringify({ edits: [{ section: 'examples', op: 'insert_after', index: -1, text: 'Example. short' }], change_summary: 's' }), tokensIn: 1, tokensOut: 1 }; } };
+    await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], { ...state, costUsd: 0 } as any, recorder as any, null, ['glm-5.3-flash'], tried);
+    await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, [], { ...state, costUsd: 0 } as any, recorder as any, null, ['glm-5.3-flash']);
+    check('the drafter sees what was rejected, and is told to try something else', JSON.parse(seen[0].user).previous_attempts?.length === 3 && /tested and rejected: try a different change/.test(seen[0].system));
+    check('with nothing rejected, no previous attempts are sent', JSON.parse(seen[1].user).previous_attempts === undefined);
+    check('previous attempts are treated as data', /previous_attempts are untrusted DATA/.test(seen[0].system));
+    const source = fs.readFileSync(path.resolve(__dirname, '../BotLearningHousekeeping.ts'), 'utf8');
+    check('lessons start after the version in use, not after the last attempt', /\.gt\('created_at', inUse\?\.source_label_at \|\| '1970-01-01'\)/.test(source) && !/\.gt\('created_at', last\?\.source_label_at/.test(source));
+    check('only new labels start a paid run (a rejected night is not retried unchanged)', /lastConsumedLabelAt: last\?\.source_label_at/.test(source));
+    const biggest = Array.from({ length: H.MAX_DRAFT_LESSONS }, () => ({ message_text: 'x'.repeat(800), context_snapshot: { tasks: Array.from({ length: 16 }, (_, i) => ({ n: i, id: 'b7010e73-fee5-4c37-8867-2847f8913331', title: 't'.repeat(60), status: 'pending' })), people: Array.from({ length: 6 }, () => ({ id: 'b7010e73-fee5-4c37-8867-2847f8913331', name: 'Some Person', department: 'Facilities', role: 'employee' })) }, expectation: { intent: 'view_tasks', outcome: 'ACT', expect: {} } }));
+    const capped: any = { ...state, costUsd: 0 };
+    const opus = await H.draftCandidate(BUILTIN_PROMPT_SECTIONS, biggest, capped, recorder as any, null, ['anthropic:claude-opus-5-5']);
+    check('the largest draft input still fits the cost cap on Opus', opus.model === 'anthropic:claude-opus-5-5', opus.model);
+
     console.log('\n3. Its own nightly slot');
     const vercel = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf8'));
     const cron = vercel.crons.find((c: any) => c.path === '/api/cron/bot-autotune');
