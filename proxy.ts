@@ -144,6 +144,7 @@ export async function proxy(request: NextRequest) {
                        // org id beginning with "a".
         '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
         '/api',        // API routes handle their own auth
+        '/.well-known/oauth-protected-resource', // MCP sign-in discovery (RFC 9728); public metadata, no data
         '/kiosk',
         '/onboard',    // Public client onboarding QR route
         '/onboarding', // Has its own client-side auth check
