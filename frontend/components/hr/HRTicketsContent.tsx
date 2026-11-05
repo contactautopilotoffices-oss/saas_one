@@ -54,7 +54,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     const [properties, setProperties] = useState<any[]>(() => {
         return hrDataCache.getProperties(resolvedOrgId).data || [];
     });
-    const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
+    const [selectedPropertyId, setSelectedPropertyId] = useState<string>(() => searchParams.get('propertyId') || 'all');
     const [scopeFilter, setScopeFilter] = useState<'all' | 'my_raised' | 'assigned_to_me' | 'department' | 'my_team_assigned'>('all');
     const [departmentSubView, setDepartmentSubView] = useState<'tree' | 'table'>('tree');
     const [selectedDepartmentUserId, setSelectedDepartmentUserId] = useState<string>('all');
@@ -519,7 +519,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 setTickets(cached.data);
                 setLoading(false);
             }
-        } else if (!isBackground && tickets.length === 0) {
+        } else if (!isBackground) {
+            setTickets([]);
             setLoading(true);
         }
         try {
@@ -800,6 +801,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     // Filter tickets based on UI search, scope, type, and status filters
     const filteredTickets = tickets.filter(t => {
+        if (selectedPropertyId && selectedPropertyId !== 'all') {
+            const ticketPropId = t.employee_snapshot?.property_id;
+            if (ticketPropId && ticketPropId !== selectedPropertyId) {
+                return false;
+            }
+        }
         const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
         // Strict privacy guard: Anonymous and confidential cases are restricted to assigned reviewer or submitter
         const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential_feedback');
@@ -2001,7 +2008,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                     </div>
                                 </div>
                                 <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{totalCount}</p>
-                                <p className="text-[11px] font-medium text-slate-400 mt-0.5">{canViewOrgWide ? 'Across organization' : 'Team & Assigned Workload'}</p>
+                                <p className="text-[11px] font-medium text-slate-400 mt-0.5">{selectedPropertyId !== 'all' ? 'In Selected Property' : (canViewOrgWide ? 'Across organization' : 'Team & Assigned Workload')}</p>
                             </div>
 
                             <div
