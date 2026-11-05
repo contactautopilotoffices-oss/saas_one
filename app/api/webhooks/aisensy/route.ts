@@ -17,6 +17,7 @@ import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
 import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
+import { claimAiLayerWhatsApp } from '@/backend/lib/aiLayer/whatsappLive';
 import { claimTicketReply } from '@/backend/lib/whatsapp/ticketReply';
 
 export const runtime = 'nodejs';
@@ -119,6 +120,18 @@ export async function POST(req: NextRequest) {
     // photo, exactly as if it had just arrived, so the facility assistant handles it as before.
     if (taskImport.rewrite) { body = taskImport.rewrite; input = normalizeInbound(body); }
 
+    // AI Action Layer on WhatsApp (docs/AI_ACTION_LAYER_PLAN.md). Owner 2026-11-04: for the people an org super admin
+    // switched the AI on for, it reads the message FIRST (before Smart chat). It answers tickets / meter readings / its own
+    // conversation, and passes everything else on: messages about tasks, short replies ("yes", "2", "done 3"), anything it
+    // doesn't understand or may not do, and any error come back handled:false, so Smart chat and the old bot below answer
+    // exactly as before. For everyone else it returns at once (no lookups while no org has WhatsApp on).
+    const aiLayer = await claimAiLayerWhatsApp(input);
+    if (aiLayer.handled) {
+        await remember();
+        after(guarded(aiLayer.background));
+        return NextResponse.json({ success: true, routedTo: 'AI_LAYER' });
+    }
+
     // Smart chat (Phase 4): for people in a department with Smart chat ON, the brain answers plain-language messages. Anything it
     // does not take (rooms / tickets, the AI being down, an older conversation still open) comes back handled:false and the old
     // bot answers exactly as before. The slow part (carrying out, replying) runs after this webhook has answered.
@@ -141,6 +154,7 @@ export async function POST(req: NextRequest) {
     if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
 
     if (!input) return NextResponse.json({ ok: true, ignored: true });
+
 
     // CRM Inbound Lead Reply Ingestion:
     // When a prospective lead replies with their preferred reach-out slot,

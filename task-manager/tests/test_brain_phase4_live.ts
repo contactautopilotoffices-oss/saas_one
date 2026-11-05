@@ -125,6 +125,33 @@ async function run() {
     c = await L.claimSmartChat(body('show my tasks', 'x4'), w.io);
     check('the brain\'s OWN earlier state does not block it', c.handled === true);
 
+    console.log('\n1b. "One switch" (2026-11-04): the AI Action Layer turned on for a person on WhatsApp turns Smart chat on for them');
+    const withAi = (over: any, aiUser: (e: any) => string | null, personalOf: boolean | null = null) => {
+        const w2 = mk(over);
+        w2.io.aiLayerOnFor = async () => aiUser(w2.employee);
+        if (personalOf !== null) w2.io.personalSmartChat = async () => ({ anyOn: personalOf, of: () => personalOf });
+        return w2;
+    };
+    w = withAi({ depts: new Set() }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai1'), w.io);
+    check('no department ON, but the AI layer is ON for this person → the brain takes it', c.handled === true);
+    w = withAi({ depts: new Set() }, () => 'someone-else');
+    c = await L.claimSmartChat(body('show my tasks', 'ai2'), w.io);
+    check('the AI layer is ON for a DIFFERENT person at that number → untouched', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(['d1']) }, e => e.id, false);
+    c = await L.claimSmartChat(body('show my tasks', 'ai3'), w.io);
+    check('an explicit personal OFF in the Task Access panel still wins over the AI layer switch', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(), cfg: { enabled: true, employees: [{ name: 'x', phone: '9000000000' }] } }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai4'), w.io);
+    check('the AI layer switch does not bypass the sandbox', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(), access: { allowed: false } }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai5'), w.io);
+    check('the AI layer switch does not bypass Task Manager access', !c.handled && w.calls.understand === 0);
+    w = mk({ depts: new Set() });
+    w.io.aiLayerOnFor = async () => { throw new Error('db down'); };
+    c = await L.claimSmartChat(body('show my tasks', 'ai6'), w.io);
+    check('the AI layer check failing → exactly the old behaviour', !c.handled && w.calls.understand === 0);
+
     console.log('\n2. Looking at tasks');
     w = mk();
     c = await turn(w, 'show my tasks', 'm1');
