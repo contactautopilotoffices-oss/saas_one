@@ -717,6 +717,7 @@ export async function POST(request: Request) {
         // Property frozen on the ticket for property-wise escalation (Grievance & HR Query only)
         let routingPropertyId: string | null = null;
         let routingPropertyName: string | null = null;
+        let configObj: any = {};
 
         // Check organization_settings to see if specific Level 1 assigned users were configured in Admin Config for this ticketType
         try {
@@ -732,7 +733,7 @@ export async function POST(request: Request) {
                 .limit(1)
                 .maybeSingle();
 
-            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
 
             // Property for routing: the submitter's single active property membership, otherwise the
             // org primary property from Admin Config (org-level roles and multi-property employees).
