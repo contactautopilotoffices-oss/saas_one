@@ -88,6 +88,29 @@ export function getLevelAssigneeIds(
     return cleanIdList(levelValue(unwrapFlowAssignees(configObj)[ticketType], level));
 }
 
+// Candidates for assigning an owner: rule assignees first, then default assignees as fallback.
+export function getLevelAssigneeCandidates(
+    configObj: unknown,
+    ticketType: string,
+    level: number | string,
+    propertyId: string | null | undefined
+): string[] {
+    const defaults = cleanIdList(levelValue(unwrapFlowAssignees(configObj)[ticketType], level));
+    if (propertyId && isPropertyRoutedTicketType(ticketType)) {
+        const rule = getPropertyRules(configObj, ticketType, level)
+            .find(r => r.property_ids.includes(propertyId));
+        if (rule) {
+            return Array.from(new Set([...rule.assignees, ...defaults]));
+        }
+    }
+    return defaults;
+}
+
+export function getTicketLevelAssigneeCandidates(configObj: unknown, ticket: TicketLike | null | undefined, level: number | string): string[] {
+    const ticketType = ticket?.ticket_type || ticket?.category?.ticket_type || 'grievance';
+    return getLevelAssigneeCandidates(configObj, ticketType, level, getTicketPropertyId(ticket));
+}
+
 // Convenience wrapper reading type and property straight from a ticket row.
 export function getTicketLevelAssigneeIds(configObj: unknown, ticket: TicketLike | null | undefined, level: number | string): string[] {
     const ticketType = ticket?.ticket_type || ticket?.category?.ticket_type || 'grievance';
