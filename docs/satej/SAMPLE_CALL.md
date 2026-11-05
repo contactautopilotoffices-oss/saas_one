@@ -1,8 +1,27 @@
 # How Meera talks: one full example call
 
-This is a made-up call, written to show how Meera's current script (`backend/lib/satej/prompts/voiceAgent.ts`, including the 2026-11-05 "real phone line" rules) tells her to behave. The real AI will use her own words each time; this shows the shape, the tone and the rules in action.
+This is a made-up call, written to show how Meera's current script (`backend/lib/satej/prompts/voiceAgent.ts`, including the 2026-11-05 "real phone line" and "less pure Hindi" changes) tells her to behave. The real AI will use her own words each time; this shows the shape, the tone and the rules in action.
 
-Not yet heard on a real call. The new settings go live only after `scripts/satej-sync-bolna.ts --apply --force`.
+Not yet heard on a real call. The new script goes live only after `scripts/satej-sync-bolna.ts --apply --force`.
+
+---
+
+## Her Hinglish: before and after
+
+Mumbai office Hinglish is simple Hindi glue around English words. Formal Hindi words made her sound like a news reader, so they were swapped out.
+
+| Before (sounded bookish) | Now (how an office person says it) |
+|---|---|
+| हेलो, नमस्ते। **क्या मेरी बात** Shree Sai Aqua **से हो रही है?** | हेलो, नमस्ते। Shree Sai Aqua **से बात हो रही है?** |
+| **महीने के करीब** दो सौ jar | **around** दो सौ jar **per month** |
+| अड़तीस **के आसपास** लेते हैं। **उसके आसपास** हो पाएगा? | **around** अड़तीस में लेते हैं। **उतने में** हो पाएगा? |
+| हाँ जी, **आराम से**। | हाँ जी, **no problem**। |
+| Sorry, **आवाज़ थोड़ी कट गई**, एक बार फिर बोलेंगे? | Sorry, **थोड़ा cut हो गया**, फिर से बोलेंगे? |
+| **पूरा** address | **full** address |
+| जी, मैं AI assistant हूँ, **आगे की बात** हमारी team **खुद** करेगी। | हाँ जी, मैं AI assistant हूँ, **बाकी बात** हमारी team **directly** करेगी। |
+| **शुक्रिया** | **thank you** |
+
+The prompt now has a full swap list (rule 7) so the AI never reaches for words like जानकारी, मूल्य, मात्रा, अनुभव, भुगतान, प्रमाणपत्र, उपलब्ध. It also copies the vendor: more English if they speak English, a little more everyday Hindi if they speak Hindi.
 
 ---
 
@@ -12,7 +31,7 @@ Not yet heard on a real call. The new settings go live only after `scripts/satej
 |---|---|
 | Vendor | Shree Sai Aqua |
 | What we need | 20 litre water jars |
-| Quantity | about 200 jars a month |
+| Quantity | around 200 jars per month |
 | Where | Andheri East |
 | Kind of order | recurring |
 | By when | from next week |
@@ -35,78 +54,79 @@ She does **not** know: other vendors' names, our budget, or where 38 and 40 came
 
 **Vendor:** हेलो?
 
-**Meera:** हेलो, नमस्ते। क्या मेरी बात Shree Sai Aqua से हो रही है?
-> The fixed greeting. She checks she has the right business before saying anything else.
+**Meera:** हेलो, नमस्ते। Shree Sai Aqua से बात हो रही है?
+> The fixed greeting. Short, the way people actually open a call.
 
 **Vendor:** हाँ जी, बोलिए।
 
-**Meera:** मैं Meera, Autopilot Offices से। हमें Andheri East में twenty litre water jar चाहिए, महीने के करीब दो सौ jar। आप supply करते हैं?
-> Who she is and what she needs, in one breath. No "may I take two minutes of your time", no holding details back.
+**Meera:** मैं Meera बोल रही हूँ, Autopilot Offices से। हमें Andheri East office के लिए twenty litre water jar चाहिए, around दो सौ jar per month। आप supply करते हैं?
+> Who she is and what she needs, in one breath. "around ... per month", not "महीने के करीब".
 
 **Vendor:** हाँ करते हैं। Andheri East में कहाँ पे?
 
-**Meera:** Office है वहाँ, पूरा address WhatsApp पे भेज देती हूँ। आप Andheri side deliver करते हो ना?
-> Answers the question straight away, then one short question. She never asks two things at once.
+**Meera:** Office है वहाँ, full address WhatsApp पे भेज देती हूँ। Andheri side delivery करते हो ना?
+> Answers straight away, then one short question. Never two questions at once.
 
 **Vendor:** हाँ हाँ, Andheri, Jogeshwari, सब करते हैं... *[turns away]* भैया, वो दो jar उधर रख दो, हाँ... *[back]* हाँ, बोलिए मैडम।
 
 **Meera:** *[stays silent while he talks to his staff]*
-**Meera:** हाँ जी। Rate क्या पड़ेगा एक jar का?
-> Rule 16: the vendor talked to someone in his shop. She waited and did not talk over him. When he came back she said "हाँ जी" and carried on.
+**Meera:** हाँ जी। एक jar का rate क्या पड़ेगा?
+> Rule 16: he talked to someone in his shop. She waited and did not talk over him.
 
 **Vendor:** एक minute, देख के बताता हूँ।
 
-**Meera:** हाँ जी, आराम से।
+**Meera:** हाँ जी, no problem।
 
 **[12 seconds of silence. Office sound continues on Meera's side.]**
-> Rule 14: on a hold she says one short line and then waits. No "are you there?" at 10 seconds any more. At 15 seconds she would gently check, at 30 seconds hang up.
+> Rule 14: on a hold she says one short line and waits. At 15 seconds she would gently check, at 30 seconds hang up.
 
 **Vendor:** हाँ, पैंतालीस रुपये पड़ेगा।
 
-**Meera:** हम्म, थोड़ा ज़्यादा है, हम generally अड़तीस के आसपास लेते हैं। उसके आसपास हो पाएगा? Regular order रहेगा।
-> 45 is above her ceiling of 40, so she pushes back once. She says "we usually pay around 38", never "our budget is", and never where the number comes from. The "हम्म," before it is a small thinking pause (rule 13).
+**Meera:** हम्म, थोड़ा ज़्यादा है, हम generally around अड़तीस में लेते हैं। उतने में हो पाएगा? Regular order रहेगा।
+> 45 is above her ceiling of 40, so she pushes back once. She says "we usually pay around 38", never "our budget", never where the number comes from. He said the number in Hindi, so she says hers in Hindi too (rule 10).
 
 **Vendor:** अड़तीस तो नहीं होगा मैडम, इकतालीस कर देंगे, delivery free।
 
-**Meera:** ठीक है, मैं team को बता देती हूँ। ये GST के साथ है या अलग?
-> 41 is still above 40, but she never pushes twice and never agrees a final price. "मैं team को बता देती हूँ" keeps the decision with our team. Then she moves on.
+**Meera:** Okay, मैं team को बता देती हूँ। Rate GST included है या extra?
+> 41 is still above 40, but she never pushes twice and never agrees a final price. "included" and "extra", not सम्मिलित or अतिरिक्त.
 
 **Vendor:** GST अलग से, अठारह... *[line crackles]* ...ती है।
 
-**Meera:** Sorry, आवाज़ थोड़ी कट गई, एक बार फिर बोलेंगे?
-> Rule 15: the reply was cut. She blames the line, not him, and asks again. She would ask at most twice, then move on.
+**Meera:** Sorry, थोड़ा cut हो गया, फिर से बोलेंगे?
+> Rule 15: the reply was cut. She blames the line, not him. At most twice, then she moves on.
 
-**Vendor:** GST अलग लगेगा, अठारह percent नहीं, jar पे बारह percent लगता है।
+**Vendor:** GST extra लगेगा, अठारह नहीं, jar पे बारह percent लगता है।
 
-**Meera:** अच्छा, बारह percent। GST तो है ना आपका, registered?
-> She checks the number she was unsure of by repeating only that number. Then GST registration, asked in passing, not like a form.
+**Meera:** अच्छा, बारह percent। GST registered है ना आपका?
+> She repeats only the number she was unsure of. Then GST, asked in passing, not "क्या आपका business GST registered है?".
 
 **Vendor:** हाँ हाँ, GST है, सब बिल पक्का मिलेगा।
 
-**Meera:** बढ़िया। दो सौ jar की पहली delivery कब तक हो जाएगी?
+**Meera:** Okay. दो सौ jar की first delivery कब तक हो जाएगी?
 
 **Vendor:** आप बोलो तो दो दिन में... *[Meera starts:]*
 
 **Meera:** और हर...
-**Vendor:** ...शुरू कर देंगे, हर हफ्ते का fix कर लेंगे।
+**Vendor:** ...start कर देंगे, हर हफ्ते का fix कर लेंगे।
 
-**Meera:** Sorry, आप बोलिए। ... अच्छा, दो दिन में शुरू, हर हफ्ते। ठीक है।
+**Meera:** Sorry, आप बोलिए। ... अच्छा, got it, दो दिन में start, हर week। ठीक है।
 > Rule 11: they both started talking at once. She stopped and said "sorry, आप बोलिए". A vendor saying just "हाँ जी" no longer cuts her off; it now takes three words.
 
-**Meera:** कितने साल से ये काम कर रहे हैं आप?
+**Meera:** आप कितने साल से ये business कर रहे हैं?
+> "साल" is everyday Hindi, fine. "अनुभव" or "वर्ष" would not be.
 
 **Vendor:** आठ साल हो गए। Andheri में दो-तीन office हैं, एक hospital है, उनको देते हैं।
 
-**Meera:** अच्छा, ठीक है।
+**Meera:** Okay, got it।
 
 **Vendor:** मैडम, आप इंसान हो या computer बोल रहा है?
 
-**Meera:** जी, मैं Autopilot Offices की AI assistant हूँ, आगे की बात हमारी team खुद करेगी। आपका नाम क्या है?
+**Meera:** हाँ जी, मैं Autopilot Offices की AI assistant हूँ, बाकी बात हमारी team directly करेगी। आपका नाम क्या है?
 > She never brings it up herself, but if asked directly she answers honestly in one line, then carries on.
 
 **Vendor:** अच्छा अच्छा। नाम सुनील है।
 
-**Meera:** ठीक है सुनील जी। ये number पे WhatsApp है ना? Team details भेजेगी, आप company profile, GST certificate और rate लिख के भेज देना।
+**Meera:** ठीक है सुनील जी। इसी number पे WhatsApp है ना? Team details भेजेगी, आप company profile, GST certificate और rate लिख के भेज दीजिए।
 
 **Vendor:** हाँ, यही WhatsApp है।
 
@@ -125,8 +145,8 @@ The call analyst reads the transcript and records only what the vendor said, eac
 | GST registered | yes | "हाँ हाँ, GST है" |
 | First rate | ₹45 per jar | "पैंतालीस रुपये पड़ेगा" |
 | Final rate | ₹41 per jar, delivery free | "इकतालीस कर देंगे, delivery free" |
-| GST on rate | extra, 12% | "GST अलग लगेगा... बारह percent" |
-| Turnaround | 2 days to start, weekly | "दो दिन में शुरू कर देंगे" |
+| GST on rate | extra, 12% | "GST extra लगेगा... बारह percent" |
+| Turnaround | 2 days to start, weekly | "दो दिन में start कर देंगे" |
 | Experience | 8 years | "आठ साल हो गए" |
 | Clients | two or three offices and a hospital in Andheri (no names) | "दो-तीन office हैं, एक hospital है" |
 | Contact | Sunil | "नाम सुनील है" |
