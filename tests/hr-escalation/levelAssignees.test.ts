@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
     getAllConfiguredAssigneeIds,
     getLevelAssigneeIds,
+    getLevelAssigneeCandidates,
+    getTicketLevelAssigneeCandidates,
     getTicketLevelAssigneeIds,
     getTicketPropertyId,
     pickTicketPropertyId,
@@ -42,6 +44,21 @@ test('property rule wins at its level', () => {
     assert.deepEqual(getLevelAssigneeIds(config, 'hr_query', 1, ETPL), ['hr-a']);
     assert.deepEqual(getLevelAssigneeIds(config, 'hr_query', 1, RABALE), ['hr-a']);
     assert.deepEqual(getLevelAssigneeIds(config, 'hr_query', '1', SS_PLAZA), ['hr-b', 'hr-b2']);
+});
+
+test('candidates include property rule assignees first, then default assignees as fallback', () => {
+    assert.deepEqual(getLevelAssigneeCandidates(config, 'hr_query', 1, ETPL), ['hr-a', 'default-l1']);
+    assert.deepEqual(getLevelAssigneeCandidates(config, 'hr_query', 1, 'prop-thane'), ['default-l1']);
+    assert.deepEqual(getTicketLevelAssigneeCandidates(config, { ticket_type: 'hr_query', employee_snapshot: { property_id: ETPL } }, 1), ['hr-a', 'default-l1']);
+});
+
+test('resolving owner skips the submitter and falls through to next candidate or default', () => {
+    const candidates = getLevelAssigneeCandidates(config, 'hr_query', 1, ETPL);
+    const pickOwner = (submitterId: string) => candidates.find(id => id !== submitterId) || null;
+
+    assert.equal(pickOwner('employee-1'), 'hr-a');
+    assert.equal(pickOwner('hr-a'), 'default-l1');
+    assert.equal(candidates.filter(id => id !== 'hr-a' && id !== 'default-l1')[0] || null, null);
 });
 
 test('property without a rule, or level without rules, uses default people', () => {

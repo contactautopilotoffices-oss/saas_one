@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
-import { getAllConfiguredAssigneeIds, getLevelAssigneeIds, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
+import { getAllConfiguredAssigneeIds, getLevelAssigneeIds, getLevelAssigneeCandidates, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -502,6 +502,7 @@ export async function GET(
 
                 (levelProfiles || []).forEach((lp: any) => {
                     const resolvedId = lp.user_id || lp.id;
+                    if (resolvedId && (resolvedId === ticket.raised_by_user_id || lp.id === ticket.raised_by_user_id)) return;
                     if (levelUsers.some(lu => lu.id === resolvedId)) return;
                     levelUsers.push({
                         id: resolvedId,
@@ -750,7 +751,51 @@ export async function PATCH(
         const updates: any = { updated_at: new Date().toISOString() };
         if (status) updates.status = status;
         if (priority) updates.priority = priority;
-        if (cleanUuid(assigned_to_user_id)) updates.assigned_to_user_id = cleanUuid(assigned_to_user_id);
+        if (cleanUuid(assigned_to_user_id)) {
+            const targetUserId = cleanUuid(assigned_to_user_id)!;
+            if (targetUserId === existing.raised_by_user_id) {
+                return NextResponse.json({ success: false, error: 'Cannot assign ticket to the employee who raised it.' }, { status: 400 });
+            }
+
+            // Ticket assignment must strictly follow Admin Config
+            const tType = existing.ticket_type || 'grievance';
+            let configObj: any = {};
+            try {
+                const { data: orgSettings } = await supabaseAdmin
+                    .from('organization_settings')
+                    .select('hr_escalation_config, notification_matrix')
+                    .eq('organization_id', existing.organization_id)
+                    .maybeSingle();
+                configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+            } catch (cfgErr) {
+                console.warn('Could not read admin escalation config on PATCH ticket assignment:', cfgErr);
+            }
+
+            const configuredIds = getAllConfiguredAssigneeIds(configObj, tType);
+            let isConfigured = configuredIds.has(targetUserId);
+
+            if (!isConfigured) {
+                // Check if target user holds an Admin Config designated authority
+                const { data: targetProfile } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('is_hr_authority, is_hr_manager_authority, is_director_authority')
+                    .eq('user_id', targetUserId)
+                    .maybeSingle();
+
+                if (targetProfile?.is_hr_authority || targetProfile?.is_hr_manager_authority || targetProfile?.is_director_authority) {
+                    isConfigured = true;
+                }
+            }
+
+            if (!isConfigured) {
+                return NextResponse.json({
+                    success: false,
+                    error: 'Ticket can only be assigned to a designated handler configured in Admin Config.'
+                }, { status: 400 });
+            }
+
+            updates.assigned_to_user_id = targetUserId;
+        }
         if (resolution_note !== undefined) updates.resolution_note = resolution_note;
 
         const currentSnapshot = existing.employee_snapshot || {};
@@ -939,28 +984,31 @@ export async function PATCH(
             // Resolve next level owner: Admin Config step assignees first, then the level's configured owner type
             let nextAssigneeId: string | null = null;
             // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
-            const levelCustomAssignees = getLevelAssigneeIds(configObj, tType, nextLevel, getTicketPropertyId(existing));
+            const levelCustomAssignees = getLevelAssigneeCandidates(configObj, tType, nextLevel, getTicketPropertyId(existing));
 
             if (levelCustomAssignees.length > 0) {
-                const firstEmpId = levelCustomAssignees[0];
-                const { data: targetProfile } = await supabaseAdmin
+                const { data: matchedProfiles } = await supabaseAdmin
                     .from('employee_profiles')
-                    .select('user_id')
-                    .or(`id.eq.${firstEmpId},user_id.eq.${firstEmpId}`)
-                    .not('user_id', 'is', null)
-                    .limit(1)
-                    .maybeSingle();
+                    .select('id, user_id')
+                    .or(`id.in.(${levelCustomAssignees.join(',')}),user_id.in.(${levelCustomAssignees.join(',')})`);
 
-                if (targetProfile?.user_id) {
-                    nextAssigneeId = targetProfile.user_id;
-                } else {
-                    const { data: uRec } = await supabaseAdmin
-                        .from('users')
-                        .select('id')
-                        .eq('id', firstEmpId)
-                        .maybeSingle();
-                    if (uRec?.id) nextAssigneeId = uRec.id;
+                for (const targetId of levelCustomAssignees) {
+                    const prof = (matchedProfiles || []).find(p => p.id === targetId || p.user_id === targetId);
+                    let resolvedId = prof?.user_id;
+                    if (!resolvedId) {
+                        const { data: uRec } = await supabaseAdmin
+                            .from('users')
+                            .select('id')
+                            .eq('id', targetId)
+                            .maybeSingle();
+                        if (uRec?.id) resolvedId = uRec.id;
+                    }
+                    if (resolvedId && resolvedId !== existing.raised_by_user_id) {
+                        nextAssigneeId = resolvedId;
+                        break;
+                    }
                 }
+
             }
 
             if (!nextAssigneeId) {

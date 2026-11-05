@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
-import { getLevelAssigneeIds, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
+import { getLevelAssigneeCandidates, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -15,13 +15,12 @@ export async function runAutoSlaEscalation() {
     try {
         const { data: orgSettings } = await supabaseAdmin
             .from('organization_settings')
-            .select('hr_escalation_config')
+            .select('hr_escalation_config, notification_matrix')
             .limit(1)
             .maybeSingle();
-        if (orgSettings?.hr_escalation_config) {
-            escalationConfig = orgSettings.hr_escalation_config;
-            flowLevelsConfig = orgSettings.hr_escalation_config.flow_levels || {};
-        }
+        const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+        escalationConfig = configObj;
+        flowLevelsConfig = configObj.flow_levels || {};
     } catch (e) {
         console.warn('Could not read hr_escalation_config in slaEscalation:', e);
     }
@@ -57,7 +56,7 @@ export async function runAutoSlaEscalation() {
 
         // Check if custom step assignees are defined for this flow & level
         // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
-        const levelCustomAssignees = getLevelAssigneeIds(escalationConfig, ticketType, nextLevel, getTicketPropertyId(ticket));
+        const levelCustomAssignees = getLevelAssigneeCandidates(escalationConfig, ticketType, nextLevel, getTicketPropertyId(ticket));
         const hasExplicitCustomAssignees = levelCustomAssignees.length > 0;
 
         // Check category SLA days for next level

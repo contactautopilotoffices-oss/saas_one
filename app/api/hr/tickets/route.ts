@@ -6,6 +6,7 @@ import {
     PROPERTY_ROUTED_TICKET_TYPES,
     getAllConfiguredAssigneeIds,
     getLevelAssigneeIds,
+    getLevelAssigneeCandidates,
     getTicketPropertyId,
     isPropertyRoutedTicketType,
     pickTicketPropertyId,
@@ -761,7 +762,7 @@ export async function POST(request: Request) {
                 }
             }
 
-            const level1Assignees = getLevelAssigneeIds(configObj, ticketType, 1, routingPropertyId);
+            const level1Assignees = getLevelAssigneeCandidates(configObj, ticketType, 1, routingPropertyId);
             if (level1Assignees.length > 0) {
                 const { data: matchedProfiles } = await supabaseAdmin
                     .from('employee_profiles')
@@ -784,7 +785,11 @@ export async function POST(request: Request) {
                 }
 
                 if (resolvedUserIds.length > 0) {
-                    firstLevelOwnerId = resolvedUserIds[0];
+                    // Never assign the person who raised the ticket: pick the first eligible candidate
+                    const validOwnerId = resolvedUserIds.find(uid => uid !== raised_by_user_id && uid !== empProfile?.user_id);
+                    if (validOwnerId) {
+                        firstLevelOwnerId = validOwnerId;
+                    }
                     configuredLevel1UserIds = resolvedUserIds;
                 }
             }
@@ -792,35 +797,45 @@ export async function POST(request: Request) {
             console.warn('Could not read admin escalation config on POST ticket:', cfgErr);
         }
 
-        // Fallback: If no custom level 1 assignees were defined in Admin Config, fallback to standard role/hierarchy lookup
+        // Fallback: If no custom level 1 assignees were defined in Admin Config, resolve Level 1 role strictly from Admin Config flow_levels
         if (!firstLevelOwnerId) {
-            if (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || category.first_level_owner_type === 'director') {
+            const configuredLevel1 = configObj.flow_levels?.[ticketType]?.[0];
+            const defaultOwnerType = (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback')
+                ? 'director'
+                : (ticketType === 'hr_query' ? 'hr' : 'reporting_manager');
+            const l1OwnerType = configuredLevel1?.ownerType || defaultOwnerType;
+
+            if (l1OwnerType === 'director' || l1OwnerType === 'super_admin' || ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback') {
                 const { data: directors } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
                     .eq('is_director_authority', true)
+                    .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                     .not('user_id', 'is', null)
-                    .limit(1);
+                    .limit(5);
 
-                firstLevelOwnerId = directors?.[0]?.user_id || null;
-            } else if (category.first_level_owner_type === 'hr') {
-                firstLevelOwnerId = category.default_hr_owner_id;
-                if (!firstLevelOwnerId) {
-                    const { data: hrStaff } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user_id')
-                        .eq('is_hr_authority', true)
-                        .not('user_id', 'is', null)
-                        .limit(1);
-                    firstLevelOwnerId = hrStaff?.[0]?.user_id || null;
-                }
-            } else {
-                firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
+                const validDir = (directors || []).find(d => d.user_id && d.user_id !== raised_by_user_id);
+                firstLevelOwnerId = validDir?.user_id || null;
+            } else if (l1OwnerType === 'hr' || l1OwnerType === 'hr_head') {
+                const flagFilter = l1OwnerType === 'hr_head'
+                    ? 'is_hr_authority.eq.true'
+                    : 'is_hr_manager_authority.eq.true,is_hr_authority.eq.true';
 
-                // If reporting_manager_id is null, try resolving manager user_id by reporting_manager_code / name
-                if (!firstLevelOwnerId && empProfile?.reporting_manager_code) {
+                const { data: hrStaff } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id')
+                    .or(flagFilter)
+                    .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                    .not('user_id', 'is', null)
+                    .limit(5);
+
+                const validHr = (hrStaff || []).find(h => h.user_id && h.user_id !== raised_by_user_id);
+                firstLevelOwnerId = validHr?.user_id || null;
+            } else if (l1OwnerType === 'reporting_manager') {
+                let mgrId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
+
+                if (!mgrId && empProfile?.reporting_manager_code) {
                     const mgrCodeStr = empProfile.reporting_manager_code.trim();
-                    // 1. Try matching employee_code
                     const { data: mgrEmpByCode } = await supabaseAdmin
                         .from('employee_profiles')
                         .select('user_id')
@@ -829,49 +844,32 @@ export async function POST(request: Request) {
                         .maybeSingle();
 
                     if (mgrEmpByCode?.user_id) {
-                        firstLevelOwnerId = mgrEmpByCode.user_id;
+                        mgrId = mgrEmpByCode.user_id;
                     } else {
-                        // 2. Try matching user full_name or email
                         const { data: mgrUserByName } = await supabaseAdmin
                             .from('users')
                             .select('id')
                             .or(`full_name.ilike.%${mgrCodeStr}%,email.ilike.%${mgrCodeStr}%`)
                             .maybeSingle();
-
-                        if (mgrUserByName?.id) {
-                            firstLevelOwnerId = mgrUserByName.id;
-                        }
+                        if (mgrUserByName?.id) mgrId = mgrUserByName.id;
                     }
                 }
 
-                if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
+                if (mgrId && mgrId !== raised_by_user_id) {
+                    firstLevelOwnerId = mgrId;
+                } else {
                     isFallbackHrManager = true;
                     const { data: hrStaff } = await supabaseAdmin
                         .from('employee_profiles')
                         .select('user_id')
-                        .or('is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
+                        .or('is_hr_manager_authority.eq.true,is_hr_authority.eq.true')
+                        .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                         .not('user_id', 'is', null)
-                        .limit(1);
-                    firstLevelOwnerId = hrStaff?.[0]?.user_id || category.default_hr_owner_id || null;
+                        .limit(5);
 
-                    if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
-                        const { data: hrStaffMember } = await supabaseAdmin
-                            .from('organization_memberships')
-                            .select('user_id')
-                            .or('role.ilike.%hr%,role.eq.org_super_admin')
-                            .neq('user_id', raised_by_user_id)
-                            .eq('organization_id', effectiveOrgId)
-                            .limit(1);
-                        if (hrStaffMember?.[0]?.user_id) {
-                            firstLevelOwnerId = hrStaffMember[0].user_id;
-                        }
-                    }
+                    const validHr = (hrStaff || []).find(h => h.user_id && h.user_id !== raised_by_user_id);
+                    firstLevelOwnerId = validHr?.user_id || null;
                 }
-            }
-
-            // Final safety fallback: If still null, assign to category default owner or any HR authority
-            if (!firstLevelOwnerId && category.default_hr_owner_id) {
-                firstLevelOwnerId = category.default_hr_owner_id;
             }
         }
 
@@ -913,7 +911,7 @@ export async function POST(request: Request) {
             code: is_anonymous ? 'Hidden' : (empProfile?.employee_code || 'N/A'),
             department: is_anonymous ? 'Confidential' : (empProfile?.department || 'General'),
             designation: is_anonymous ? 'Confidential' : (empProfile?.designation || 'Staff'),
-            location: is_anonymous ? 'Hidden' : empLocation,
+            location: is_anonymous ? 'Hidden' : (routingPropertyName || empLocation),
             property_id: isPropertyRoutedTicketType(ticketType)
                 ? routingPropertyId
                 : (is_anonymous ? null : (property_id || empProfile?.property_id || null)),

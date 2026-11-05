@@ -645,6 +645,21 @@ export default function HREscalationTreeVisualizer({
             });
             return { ...prev, [flowId]: updatedAssignees };
         });
+
+        setPropertyRules(prev => {
+            const currentRules = { ...(prev[flowId] || {}) };
+            const deletedNum = deleteIndex + 1;
+            const updatedRules: Record<string, PropertyRuleDraft[]> = {};
+            Object.keys(currentRules).forEach(k => {
+                const num = parseInt(k, 10);
+                if (num < deletedNum) {
+                    updatedRules[String(num)] = currentRules[k];
+                } else if (num > deletedNum) {
+                    updatedRules[String(num - 1)] = currentRules[k];
+                }
+            });
+            return { ...prev, [flowId]: updatedRules };
+        });
     };
 
     const handleUpdateLevelField = (flowId: string, index: number, field: keyof EscalationLevel, value: any) => {
