@@ -70,6 +70,14 @@ test('catalogue: excludes a route that has no sign-in check (property vendors)',
     assert.equal(catalog.matchRoute(`/api/properties/${PROP}/vendors`), null);
 });
 
+test('catalogue: an excluded static route cannot be reached through an included {id} sibling', async () => {
+    const { catalog } = await mods();
+    for (const p of ['/api/petty-cash/wallet', '/api/petty-cash/tracker', '/api/assets/template', '/api/invoices/files', '/api/document-bank/download']) {
+        assert.equal(catalog.matchRoute(p), null, p);
+    }
+    assert.ok(catalog.matchRoute('/api/petty-cash/0b6f3b8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b'), 'a real id still matches');
+});
+
 test('catalogue: refuses traversal, query strings, encoding and odd paths', async () => {
     const { catalog } = await mods();
     for (const bad of ['/api/../cron/x', '/api/tickets?x=1', '/api/tickets%2F..', '//evil.com/api/tickets', '/api//tickets', '/api/tickets/./x', 'api/tickets', '/api/cron/sweep-outbox', '\\api\\tickets']) {

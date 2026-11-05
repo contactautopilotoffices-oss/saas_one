@@ -11,6 +11,7 @@ export type CatalogRoute = {
 type CompiledRoute = CatalogRoute & { regex: RegExp; staticSegments: number };
 
 const ROUTES: CatalogRoute[] = (catalogJson as { routes: CatalogRoute[] }).routes;
+const EXCLUDED: { path: string }[] = (catalogJson as { excluded: { path: string }[] }).excluded;
 
 // One path segment value: ids, slugs, dates. No slashes, no dots-only, no encoded characters.
 const SEGMENT_VALUE = '([A-Za-z0-9_\\-:@][A-Za-z0-9_\\-.:@]{0,127})';
@@ -29,6 +30,13 @@ function compile(route: CatalogRoute): CompiledRoute {
 
 // More specific routes first, so /api/tickets/flow wins over /api/tickets/{id}.
 const COMPILED: CompiledRoute[] = ROUTES.map(compile).sort((a, b) => b.staticSegments - a.staticSegments);
+
+// Excluded routes, compiled the same way. Next.js serves a static segment before a dynamic one, so
+// /api/petty-cash/wallet (excluded) would be served even though it also fits /api/petty-cash/{id}
+// (included). A path that fits an excluded route at least as specifically is therefore refused.
+const COMPILED_EXCLUDED = EXCLUDED.map(e =>
+    compile({ path: e.path, module: '', pathParams: [...e.path.matchAll(/\{([\w-]+)\}/g)].map(m => m[1]), queryParams: [], description: '' }),
+);
 
 export function allRoutes(): CatalogRoute[] {
     return ROUTES;
@@ -52,6 +60,7 @@ export function matchRoute(path: string): { route: CatalogRoute; params: Record<
     for (const r of COMPILED) {
         const m = clean.match(r.regex);
         if (!m) continue;
+        if (COMPILED_EXCLUDED.some(x => x.staticSegments >= r.staticSegments && x.regex.test(clean))) return null;
         const params: Record<string, string> = {};
         r.pathParams.forEach((name, i) => {
             params[name] = m[i + 1];

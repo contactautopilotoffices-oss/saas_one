@@ -84,7 +84,7 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
                         </li>
                         <li className="flex gap-2">
                             <Ban className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" />
-                            <span>It <strong>cannot</strong> create, change, approve or delete anything.</span>
+                            <span>The FMS connection only offers read tools: through it, the assistant <strong>cannot</strong> create, change, approve or delete anything.</span>
                         </li>
                     </ul>
                     <p className="mt-4 text-xs text-slate-400">
