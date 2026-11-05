@@ -9,7 +9,7 @@ import { personLabel, sendTaskAssigned, sendTaskDependency, sendTaskHandover, se
 import { shortList, taskBell } from './taskBell';
 import { notifyGiversOfCompletion } from './completionNotice';
 import { Employee, TaskAssignment, TaskStatus } from './types';
-import { NO_EXTRAS, linkTasks, loadTaskExtras, zohoTaskIds } from './TaskLinks';
+import { NO_EXTRAS, linkTasks, loadTaskExtras, zohoDeleteDetail, zohoTaskIds } from './TaskLinks';
 import { similarOpenTasks } from './taskSimilarity';
 import { aiDuplicateEnabled, aiSameTask, liveDuplicateLlm } from './aiDuplicate';
 import { TaskDue, checkDue, dueLabel, shortTime } from './dueDates';
@@ -955,7 +955,7 @@ export class WorkspaceService {
             actorId: actor.id,
             targetEmployeeId: row.employee_id,
             taskId: row.id,
-            details: { title: row.title, assignedDate: row.assigned_date, status: row.status, via: input.via ?? 'web_tasks_tab' },
+            details: { title: row.title, assignedDate: row.assigned_date, status: row.status, via: input.via ?? 'web_tasks_tab', ...zohoDeleteDetail(row) },
         });
 
         const { error: delError } = await supabaseAdmin.from('task_assignments').delete().eq('id', row.id);

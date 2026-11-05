@@ -129,6 +129,14 @@ export async function zohoTaskIds(taskIds: string[]): Promise<Set<string>> {
 }
 
 /**
+ * Audit detail for deleting a task: a Zoho task's id, so the Zoho sync does not import it again. The row is gone after
+ * a delete, so this entry is the only thing left that remembers it. Empty for a task made in this app.
+ */
+export function zohoDeleteDetail(row: { source?: string | null; external_id?: string | null }): { zohoTaskId?: string } {
+    return row.source === 'zoho' && row.external_id ? { zohoTaskId: String(row.external_id) } : {};
+}
+
+/**
  * Links new tasks to the task they follow up and/or to each other (one multi-assign group). Returns false when the
  * columns are not in the database yet; the tasks themselves are already saved either way.
  */

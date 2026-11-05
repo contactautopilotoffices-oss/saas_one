@@ -434,6 +434,28 @@ export class ZohoMailService {
         return data;
     }
 
+    /**
+     * PUT a JSON body to one Zoho Mail API path with a caller-supplied grant. Throws on a refusal, including a
+     * refusal Zoho reports in the body of an HTTP 200. Used by the Task Manager to change a task's status.
+     */
+    static async putJsonWithGrant(
+        grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string },
+        path: string,
+        body: Record<string, unknown>,
+    ): Promise<unknown> {
+        const t = await this.tokenFromGrant(grant);
+        const res = await fetch(`${t.apiDomain}${path}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Zoho-oauthtoken ${t.token}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => null) as { data?: { errorCode?: string }; status?: { code?: number; description?: string } } | null;
+        if (!res.ok || Number(data?.status?.code ?? 200) >= 400) {
+            throw new Error(`Zoho ${data?.status?.code ?? res.status}: ${data?.data?.errorCode ?? data?.status?.description ?? 'request failed'}`);
+        }
+        return data;
+    }
+
     /** Addresses reachable on a caller-supplied grant — a console connection. */
     static async listAddressesWithGrant(grant: { refreshToken: string; dc: string }): Promise<string[]> {
         const t = await this.tokenFromGrant(grant);

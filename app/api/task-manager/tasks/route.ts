@@ -9,6 +9,7 @@ import { requireActor } from '../_shared/adminGuard';
 import { TaskAssignment } from '@/task-manager/types';
 import { MAX_CARRY_DAYS, carryDaysOf } from '@/task-manager/TaskDatabaseService';
 import { addDaysIso, parseRange } from '@/task-manager/dateRange';
+import { zohoDeleteDetail } from '@/task-manager/TaskLinks';
 
 export const dynamic = 'force-dynamic';
 
@@ -344,7 +345,7 @@ export async function POST(request: NextRequest) {
                 actorId,
                 targetEmployeeId: taskRow.employee_id,
                 taskId,
-                details: { title: taskRow.title }
+                details: { title: taskRow.title, ...zohoDeleteDetail(taskRow) }
             });
 
             return NextResponse.json({ success: true, message: 'Task deleted successfully' });

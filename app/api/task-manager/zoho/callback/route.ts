@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskManagerAuth } from '../../_shared/adminGuard';
-import { ZohoTaskSync, zohoTaskCallbackUrl, getZohoTaskAppCredentials } from '@/task-manager/ZohoTaskSync';
+import { ZohoTaskSync, ZOHO_TASK_SCOPES, zohoTaskCallbackUrl, getZohoTaskAppCredentials } from '@/task-manager/ZohoTaskSync';
 
 export const dynamic = 'force-dynamic';
 
@@ -119,7 +119,8 @@ export async function GET(request: NextRequest) {
         zohoEmail: null,
         refreshToken: tok.refresh_token,
         dc: accountsServer.match(/accounts\.zoho\.([a-z.]+)$/)?.[1] ?? dc,
-        scopes: tok.scope ?? null,
+        // Zoho's token reply may leave the scope out; the consent the person just gave was for exactly these.
+        scopes: tok.scope ?? ZOHO_TASK_SCOPES,
     });
     if (!saved.ok) {
         const hint = /MAIL_TOKEN_KEY/.test(saved.error ?? '') ? ' MAIL_TOKEN_KEY must be set on the server.' : '';
@@ -133,5 +134,5 @@ export async function GET(request: NextRequest) {
         : `Connected, but the first import failed: ${esc(first.error ?? 'unknown error')}. It will retry automatically every 15 minutes.`;
 
     return page('Zoho Tasks connected', `${summary}
-      <div style="margin-top:12px">Read-only: this can see your Zoho tasks and cannot change or delete them. Disconnect any time from the Task Manager.</div>`);
+      <div style="margin-top:12px">Tasks you complete in the Task Manager or on WhatsApp are also marked completed in Zoho. Nothing else in Zoho is changed, and nothing is deleted. Disconnect any time from the Task Manager.</div>`);
 }
