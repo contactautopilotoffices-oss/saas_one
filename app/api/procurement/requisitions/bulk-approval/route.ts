@@ -8,7 +8,9 @@ import { requisitionNotes, prepareBulkApproval, approvalBatchSummary, batchWhats
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const submitterRoles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
-const eligibleStatuses = ['submitted', 'uploaded', 'acknowledged', 'pending_approval', 'rejected'];
+// Sites already pending in a batch are changed with "Replace Comparison File" (reapproval route),
+// so a second upload can never silently overwrite the file the approver is reviewing.
+const eligibleStatuses = ['submitted', 'uploaded', 'acknowledged', 'rejected'];
 
 export async function POST(request: NextRequest) {
     try {
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
             .eq('organization_id', organizationId).in('id', requisitionIds);
         if (fetchError) throw fetchError;
         if (!records || records.length !== requisitionIds.length || records.some(record => !eligibleStatuses.includes(record.status))) {
-            return NextResponse.json({ error: 'Some requisitions are unavailable or already approved/ordered. Refresh and select again.' }, { status: 409 });
+            return NextResponse.json({ error: 'Some requisitions are unavailable, already sent for approval, or approved/ordered. Use Replace Comparison File for sites already sent. Refresh and select again.' }, { status: 409 });
         }
         const batchId = crypto.randomUUID();
         const timestamp = new Date().toISOString();

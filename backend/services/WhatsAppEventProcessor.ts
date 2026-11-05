@@ -1,5 +1,5 @@
 import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
-import { requisitionNotes, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, batchWhatsAppOptions, reapprovalWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
@@ -1391,10 +1391,15 @@ export const WhatsAppEventProcessor = {
             .select('*,property:properties!property_id(id,name)').eq('organization_id', payload.organization_id)
             .in('id', payload.requisition_ids);
         if (error) throw error;
-        const saved = (records || []).filter(record =>
-            requisitionNotes(record).vendor_quotation?.batch_id === payload.batch_id);
+        // A replaced comparison file reuses the batch id; its revision_id picks out
+        // only the sites saved with that replacement.
+        const saved = (records || []).filter(record => {
+            const quote = requisitionNotes(record).vendor_quotation;
+            if (payload.revision_id) return quote?.revision_id === payload.revision_id;
+            return quote?.batch_id === payload.batch_id;
+        });
         if (!saved.length) return;
-        await this.dispatch(batchWhatsAppOptions(saved, payload));
+        await this.dispatch(payload.revision_id ? reapprovalWhatsAppOptions(saved, payload) : batchWhatsAppOptions(saved, payload));
     },
 
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
