@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildRevenueReport, bookingHours, classifyBooker, monthRange, type RevenueInput } from '../../backend/lib/meetingRooms/revenue';
+import { buildRevenueReport, bookingHours, classifyBooker, matchCompanyFromNote, monthRange, type RevenueInput } from '../../backend/lib/meetingRooms/revenue';
 
 const rooms = [
     { id: 'r-board', name: 'Boardroom', hourly_rate: 1000 },
@@ -20,8 +20,8 @@ const base = (overrides: Partial<RevenueInput> = {}): RevenueInput => ({
     ...overrides,
 });
 
-const bk = (id: string, room: string, date: string, start: string, end: string, user: string | null, company: string | null) =>
-    ({ id, meeting_room_id: room, booking_date: date, start_time: start, end_time: end, user_id: user, company_id: company });
+const bk = (id: string, room: string, date: string, start: string, end: string, user: string | null, company: string | null, comment: string | null = null) =>
+    ({ id, meeting_room_id: room, booking_date: date, start_time: start, end_time: end, user_id: user, company_id: company, comment });
 
 test('bookingHours handles HH:MM and HH:MM:SS and never goes negative', () => {
     assert.equal(bookingHours('10:00', '11:30'), 1.5);
@@ -165,6 +165,7 @@ test('classifyBooker: internal role wins, then company, then tenant, else intern
     assert.equal(classifyBooker({ user_id: 't1', company_id: null }, internal, tenants), 'client');
     assert.equal(classifyBooker({ user_id: 'admin', company_id: null }, internal, tenants), 'internal');
     assert.equal(classifyBooker({ user_id: null, company_id: null }, internal, tenants), 'internal');
+    assert.equal(classifyBooker({ user_id: 'hr', company_id: null }, internal, tenants, 'matched-comp-1'), 'client');
 });
 
 test('a non-tenant individual with no company is internal: hours only, never exceeded revenue', () => {
@@ -209,4 +210,133 @@ test('views: clients shows only clients, internal only internal, all shows both'
     assert.equal(all.totals.exceededRevenue, 1200);
     assert.equal(all.totals.internalHours, 3);
     assert.equal(all.totals.bookedHours, 6);
+});
+
+test('matchCompanyFromNote: matches client names from staff comments and ignores generic/internal words', () => {
+    const companies = [
+        { id: 'c-light', name: 'Light years' },
+        { id: 'c-bliss', name: 'blissred' },
+        { id: 'c-yang', name: 'yangpoo' },
+        { id: 'c-onads', name: 'onadsgroup' },
+        { id: 'c-test', name: 'test company' },
+    ];
+
+    // Client note matches
+    assert.equal(matchCompanyFromNote('Booked Lightyear ', companies)?.name, 'Light years');
+    assert.equal(matchCompanyFromNote('Booked for Lightyear ', companies)?.name, 'Light years');
+    assert.equal(matchCompanyFromNote('booked for light years', companies)?.name, 'Light years');
+    assert.equal(matchCompanyFromNote('Booked for Bliss Red ', companies)?.name, 'blissred');
+    assert.equal(matchCompanyFromNote('Bliss net', companies)?.name, 'blissred');
+    assert.equal(matchCompanyFromNote('Bliss Net', companies)?.name, 'blissred');
+    assert.equal(matchCompanyFromNote('booked for yangpoo', companies)?.name, 'yangpoo');
+    assert.equal(matchCompanyFromNote('Bhavik Onads', companies)?.name, 'onadsgroup');
+
+    // Generic and internal department notes should NOT match companies
+    assert.equal(matchCompanyFromNote('Booked for Marketing team', companies), null);
+    assert.equal(matchCompanyFromNote('Booked for HR', companies), null);
+    assert.equal(matchCompanyFromNote('Booked for BD', companies), null);
+    assert.equal(matchCompanyFromNote('Booked for Tech Team', companies), null);
+    assert.equal(matchCompanyFromNote('Booked for Dipti', companies), null);
+    assert.equal(matchCompanyFromNote('Booked for Shrihari', companies), null);
+    assert.equal(matchCompanyFromNote('testing booking', companies), null);
+});
+
+test('staff booking on behalf of client with client note is attributed to client revenue and preserves note', () => {
+    const companies = [{ id: 'c-light', name: 'Light years' }];
+    const report = buildRevenueReport(base({
+        companies,
+        companyNames: { 'c-light': 'Light years' },
+        credits: [{ company_id: 'c-light', user_id: null, monthly_hours: 1 }],
+        bookings: [
+            // Meena (in internalUserIds) books Boardroom (1000/hr) with note "Booked for Lightyear"
+            bk('b1', 'r-board', '2026-11-02', '10:00', '12:00', 'hr', null, 'Booked for Lightyear'),
+        ],
+        view: 'clients',
+    }));
+
+    // Should count as Light years client revenue, NOT 0 internal hours
+    assert.equal(report.clients.length, 1);
+    const light = report.clients[0];
+    assert.equal(light.name, 'Light years');
+    assert.equal(light.category, 'client');
+    assert.equal(light.bookedHours, 2);
+    assert.equal(light.creditHours, 1);
+    assert.equal(light.exceededHours, 1);
+    assert.equal(light.exceededRevenue, 1000); // 1 hr exceeded * 1000/hr
+
+    // Booking line contains note and attribution metadata
+    assert.equal(light.bookings.length, 1);
+    assert.equal(light.bookings[0].comment, 'Booked for Lightyear');
+    assert.equal(light.bookings[0].clientMatchedFromNote, true);
+    assert.equal(light.bookings[0].bookedBy, 'HR Team');
+});
+
+test('notification booker parameter formatting with company name and remaining credits', () => {
+    const formatBookerDisplay = (bookerName, companyName, remainingHours) => {
+        const creditsInfo = (remainingHours !== null && remainingHours !== undefined) ? `${remainingHours} hrs left` : '';
+        const clientCompanyInfo = companyName
+            ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
+            : (creditsInfo ? `${creditsInfo}` : '');
+        return clientCompanyInfo ? `${bookerName} (${clientCompanyInfo})` : bookerName;
+    };
+
+    // Client with company and remaining credits
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', 4.5),
+        'Bhavin (Light years • 4.5 hrs left)'
+    );
+
+    // Client with 0 remaining credits
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', 0),
+        'Bhavin (Light years • 0 hrs left)'
+    );
+
+    // Client with company but no credit record
+    assert.equal(
+        formatBookerDisplay('Bhavin', 'Light years', null),
+        'Bhavin (Light years)'
+    );
+
+    // Staff booking for client
+    assert.equal(
+        formatBookerDisplay('Meena Chavan', 'blissred', 2),
+        'Meena Chavan (blissred • 2 hrs left)'
+    );
+
+    // Internal user without company
+    assert.equal(
+        formatBookerDisplay('Nilesh Mane', null, null),
+        'Nilesh Mane'
+    );
+});
+
+test('effective company resolution enforces client lock and allows admin company attachment', () => {
+    const resolveEffectiveCompanyId = (isAdmin, payloadCompanyId, userCompanyId) => {
+        return (isAdmin && payloadCompanyId) ? payloadCompanyId : (userCompanyId || null);
+    };
+
+    // Regular client / tenant attempts to pass another company ID -> strictly ignored, locked to own company
+    assert.equal(
+        resolveEffectiveCompanyId(false, 'other-company-id', 'my-client-company-id'),
+        'my-client-company-id'
+    );
+
+    // Regular user with no company membership -> stays null even if companyId sent
+    assert.equal(
+        resolveEffectiveCompanyId(false, 'some-company-id', null),
+        null
+    );
+
+    // Property admin booking on behalf of client -> attaches requested company
+    assert.equal(
+        resolveEffectiveCompanyId(true, 'client-company-id', null),
+        'client-company-id'
+    );
+
+    // Property admin internal booking -> no company attached
+    assert.equal(
+        resolveEffectiveCompanyId(true, undefined, null),
+        null
+    );
 });

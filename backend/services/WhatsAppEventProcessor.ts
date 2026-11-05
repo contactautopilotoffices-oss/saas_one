@@ -886,6 +886,67 @@ export const WhatsAppEventProcessor = {
         const formattedStartTime = formatTimeString(payload.start_time);
         const formattedEndTime = formatTimeString(payload.end_time);
 
+        // Fetch company name and remaining credits if the booking or user is linked to a client company
+        let companyName = '';
+        let remainingHours: number | null = null;
+        let effectiveCompanyId = payload.company_id || null;
+        if (!effectiveCompanyId && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('company_id')
+                .eq('id', payload.id)
+                .maybeSingle();
+            effectiveCompanyId = bookingRow?.company_id || null;
+        }
+        if (!effectiveCompanyId && payload.user_id) {
+            const { data: member } = await supabaseAdmin
+                .from('company_members')
+                .select('company_id')
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            effectiveCompanyId = member?.company_id || null;
+        }
+
+        if (effectiveCompanyId) {
+            const { data: comp } = await supabaseAdmin
+                .from('companies')
+                .select('name')
+                .eq('id', effectiveCompanyId)
+                .maybeSingle();
+            if (comp?.name) companyName = comp.name;
+
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('company_id', effectiveCompanyId)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        } else if (payload.user_id) {
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        }
+
+        const creditsInfo = remainingHours !== null ? `${remainingHours} hrs left` : '';
+        const clientCompanyInfo = companyName
+            ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
+            : (creditsInfo ? `${creditsInfo}` : '');
+
+        // In existing Meta template (v3/v4), {{7}} is `booker`.
+        // Enrich booker string with company name and remaining credits so clients and admins see it without modifying the approved Meta template structure.
+        const bookerDisplay = clientCompanyInfo
+            ? `${booker.name} (${clientCompanyInfo})`
+            : booker.name;
+
         const paramValues: Record<string, string> = {
             user_name: 'Front Desk / Admin',
             room_name: roomName,
@@ -893,14 +954,16 @@ export const WhatsAppEventProcessor = {
             date: formattedDate,
             start_time: formattedStartTime,
             end_time: formattedEndTime,
-            booker: booker.name,
+            booker: bookerDisplay,
             booker_phone: booker.phone || 'N/A',
-            cancelled_by: booker.name
+            cancelled_by: booker.name,
+            company_name: companyName,
+            credits_left: creditsInfo
         };
 
         const summaryMessage = isCancellation
             ? `Meeting room cancelled: ${roomName} on ${formattedDate} at ${formattedStartTime}`
-            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${booker.name}`;
+            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${bookerDisplay}`;
 
         // Resolve any attendee emails into user IDs so custom invited users receive the v4 template
         let attendeeEmail = payload.attendee_email;

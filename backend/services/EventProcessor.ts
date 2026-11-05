@@ -128,6 +128,45 @@ export const EventProcessor = {
             .eq('id', userId)
             .single();
 
+        let effectiveCompanyId = payload.company_id || null;
+        if (!effectiveCompanyId && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('company_id')
+                .eq('id', payload.id)
+                .maybeSingle();
+            effectiveCompanyId = bookingRow?.company_id || null;
+        }
+        if (!effectiveCompanyId && userId) {
+            const { data: member } = await supabaseAdmin
+                .from('company_members')
+                .select('company_id')
+                .eq('user_id', userId)
+                .maybeSingle();
+            effectiveCompanyId = member?.company_id || null;
+        }
+
+        let companyName: string | null = null;
+        let remainingCredits: string | null = null;
+        if (effectiveCompanyId) {
+            const { data: comp } = await supabaseAdmin
+                .from('companies')
+                .select('name')
+                .eq('id', effectiveCompanyId)
+                .maybeSingle();
+            if (comp?.name) companyName = comp.name;
+
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('company_id', effectiveCompanyId)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingCredits = `${creditRow.remaining_hours} hrs`;
+            }
+        }
+
         const isCancellation = ['MEETING_ROOM_CANCELLED', 'ROOM_CANCELLED', 'ROOM_BOOKING_CANCELLED'].includes(eventType);
         const featureKey = isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked';
 
@@ -197,6 +236,8 @@ export const EventProcessor = {
                 propertyName: property.name || 'Your Property',
                 requesterName: userData?.full_name || 'Tenant User',
                 requesterEmail: userData?.email || 'N/A',
+                companyName,
+                remainingCredits,
                 isCancellation,
                 comment: payload.comment || null,
                 customHtml

@@ -257,6 +257,8 @@ export const EmailService = {
         propertyName,
         requesterName,
         requesterEmail,
+        companyName,
+        remainingCredits,
         isCancellation = false,
         comment,
         customHtml
@@ -269,6 +271,8 @@ export const EmailService = {
         propertyName: string;
         requesterName: string;
         requesterEmail: string;
+        companyName?: string | null;
+        remainingCredits?: string | null;
         isCancellation?: boolean;
         comment?: string | null;
         customHtml?: string | null;
@@ -320,6 +324,8 @@ export const EmailService = {
             '{{propertyName}}': propertyName,
             '{{requesterName}}': requesterName,
             '{{requesterEmail}}': requesterEmail,
+            '{{companyName}}': companyName || '',
+            '{{remainingCredits}}': remainingCredits || '',
             '{{comment}}': comment || '',
         };
 
@@ -345,8 +351,10 @@ export const EmailService = {
                 <div style="background-color: #f8fafc; padding: 20px; border-radius: 12px; margin: 24px 0; border: 1px solid #e2e8f0;">
                     <h3 style="margin-top: 0; color: #0f172a; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Requester Details</h3>
                     <table style="width: 100%; border-collapse: collapse;">
-                        <tr><td style="padding: 8px 0; font-weight: 600; width: 120px; color: #64748b;">Name:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterName}</td></tr>
+                        <tr><td style="padding: 8px 0; font-weight: 600; width: 140px; color: #64748b;">Name:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterName}</td></tr>
                         <tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Email:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterEmail}</td></tr>
+                        ${companyName ? `<tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Company:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${companyName}</td></tr>` : ''}
+                        ${remainingCredits ? `<tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Credits Remaining:</td><td style="padding: 8px 0; color: #10b981; font-weight: 600;">${remainingCredits}</td></tr>` : ''}
                     </table>
                 </div>
                 

@@ -57,18 +57,19 @@ function sheetName(raw: string, used: Set<string>): string {
 }
 
 const BOOKING_HEADERS = [
-    'Date', 'Start', 'End', 'Room', 'Booked By', 'Hours', 'Rate / Hr (₹)',
+    'Date', 'Start', 'End', 'Room', 'Booked By', 'Notes', 'Hours', 'Rate / Hr (₹)',
     'Credit Hrs', 'Exceeded Hrs', 'Credit Value (₹)', 'Exceeded Revenue (₹)', 'Total Value (₹)',
 ];
 
 function addBookingRow(ws: ExcelJS.Worksheet, b: RevenueBookingLine, clientName?: string) {
     const values = [
-        b.date, b.startTime, b.endTime, safeText(b.roomName), safeText(b.bookedBy), b.hours, b.hourlyRate,
+        b.date, b.startTime, b.endTime, safeText(b.roomName), safeText(b.bookedBy), safeText(b.comment || ''),
+        b.hours, b.hourlyRate,
         b.creditHours, b.exceededHours, b.creditValue, b.exceededRevenue, b.totalValue,
     ];
     const row = ws.addRow(clientName !== undefined ? [safeText(clientName), ...values] : values);
     const o = clientName !== undefined ? 1 : 0;
-    formatCells(row, [7 + o, 10 + o, 11 + o, 12 + o], [6 + o, 8 + o, 9 + o]);
+    formatCells(row, [8 + o, 11 + o, 12 + o, 13 + o], [7 + o, 9 + o, 10 + o]);
 }
 
 export async function buildRevenueWorkbook(report: RevenueReport, propertyName: string, month: string) {
@@ -176,8 +177,10 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
 
     // All bookings
     const detailWs = wb.addWorksheet(sheetName('All Bookings', used), { views: [{ state: 'frozen', ySplit: 1 }] });
-    detailWs.columns = [{ width: 30 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 },
-        { width: 8 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }];
+    detailWs.columns = [
+        { width: 30 }, { width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 },
+        { width: 28 }, { width: 8 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }
+    ];
     styleHeader(detailWs.addRow(['Client', ...BOOKING_HEADERS]));
     report.clients.forEach(c => c.bookings.forEach(b =>
         addBookingRow(detailWs, b, c.category === 'internal' ? `${c.name} (internal, no charge)` : c.name)));
@@ -185,8 +188,10 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
     // One sheet per client, ready to share with that client. Internal people get none.
     report.clients.filter(c => c.category === 'client').forEach(c => {
         const ws = wb.addWorksheet(sheetName(c.name, used));
-        ws.columns = [{ width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 }, { width: 8 },
-            { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }];
+        ws.columns = [
+            { width: 12 }, { width: 8 }, { width: 8 }, { width: 24 }, { width: 22 },
+            { width: 28 }, { width: 8 }, { width: 12 }, { width: 10 }, { width: 12 }, { width: 15 }, { width: 18 }, { width: 15 }
+        ];
         const head = ws.addRow([safeText(`${c.name} | Meeting Room Usage | ${label}`)]);
         head.font = { bold: true, size: 12, color: { argb: BRAND } };
         ws.addRow([
@@ -197,9 +202,9 @@ export async function buildRevenueWorkbook(report: RevenueReport, propertyName: 
         ws.addRow([]);
         styleHeader(ws.addRow(BOOKING_HEADERS));
         c.bookings.forEach(b => addBookingRow(ws, b));
-        const total = ws.addRow(['TOTAL', '', '', '', '', c.bookedHours, '', c.creditHours, c.exceededHours,
+        const total = ws.addRow(['TOTAL', '', '', '', '', '', c.bookedHours, '', c.creditHours, c.exceededHours,
             c.creditValue, c.exceededRevenue, c.totalValue]);
-        formatCells(total, [10, 11, 12], [6, 8, 9]);
+        formatCells(total, [11, 12, 13], [7, 9, 10]);
         styleTotal(total);
     });
 

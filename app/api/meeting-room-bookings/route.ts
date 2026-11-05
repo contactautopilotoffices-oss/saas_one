@@ -95,7 +95,8 @@ export async function POST(request: NextRequest) {
             startTime,
             endTime,
             comment,
-            attendeeEmail
+            attendeeEmail,
+            companyId
         } = body;
 
         if (!meetingRoomId || !propertyId || !date || !startTime || !endTime) {
@@ -122,7 +123,8 @@ export async function POST(request: NextRequest) {
             .single();
 
         // 4. Check credit balance (Check Company first, then User).
-        // HR and CRM users book for free, so they never touch a credit record.
+        // When property admins or staff attach a company to book for a client,
+        // we check and deduct that company's credits.
         const creditExempt = await isCreditExemptBooker(user.id, property?.organization_id);
 
         const { data: companyMember } = await supabaseAdmin
@@ -131,21 +133,29 @@ export async function POST(request: NextRequest) {
             .eq('user_id', user.id)
             .maybeSingle();
 
+        // Ensure client does not get option or ability to choose an arbitrary company:
+        // Only property/org admins may attach an external client company when booking on their behalf.
+        // For regular clients / tenants, effectiveCompanyId is strictly their own company membership.
+        const isAdminBooker = await canViewAllBookings(user.id, propertyId);
+        const effectiveCompanyId = (isAdminBooker && companyId) ? companyId : (companyMember?.company_id || null);
+
         let credit: { id: string; remaining_hours: number | null; company_id: string | null; user_id: string | null } | null = null;
 
-        if (!creditExempt) {
-            let creditQuery = supabaseAdmin
+        if (effectiveCompanyId) {
+            const { data } = await supabaseAdmin
                 .from('meeting_room_credits')
                 .select('id, remaining_hours, company_id, user_id')
-                .eq('property_id', propertyId);
-
-            if (companyMember?.company_id) {
-                creditQuery = creditQuery.eq('company_id', companyMember.company_id);
-            } else {
-                creditQuery = creditQuery.eq('user_id', user.id);
-            }
-
-            const { data } = await creditQuery.maybeSingle();
+                .eq('property_id', propertyId)
+                .eq('company_id', effectiveCompanyId)
+                .maybeSingle();
+            credit = data;
+        } else if (!creditExempt) {
+            const { data } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('id, remaining_hours, company_id, user_id')
+                .eq('property_id', propertyId)
+                .eq('user_id', user.id)
+                .maybeSingle();
             credit = data;
         }
 
@@ -186,7 +196,7 @@ export async function POST(request: NextRequest) {
             property_id: propertyId,
             organization_id: property?.organization_id || null,
             user_id: user.id,
-            company_id: companyMember?.company_id || null, // Link booking to company too
+            company_id: effectiveCompanyId, // Link booking to company too
             booking_date: cleanDate,
             start_time: startTime,
             end_time: endTime,
