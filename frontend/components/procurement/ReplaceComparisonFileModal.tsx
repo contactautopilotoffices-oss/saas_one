@@ -234,11 +234,11 @@ export default function ReplaceComparisonFileModal({
                                     </div>
                                     <div>
                                         <label htmlFor="replace-comparison-file" className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
-                                            Corrected comparison file * <span className="text-slate-400 font-normal normal-case">(.pdf, .xlsx, .docx, .png, .jpg)</span>
+                                            Corrected comparison file * <span className="text-slate-400 font-normal normal-case">(Excel, CSV or PDF, up to 10 MB)</span>
                                         </label>
                                         <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-amber-400 rounded-2xl p-4 transition-colors">
                                             <input id="replace-comparison-file" type="file" required
-                                                accept=".pdf,.xlsx,.xls,.doc,.docx,.csv,.png,.jpg,.jpeg"
+                                                accept=".xlsx,.xls,.csv,.pdf"
                                                 onChange={e => setFile(e.target.files?.[0] || null)}
                                                 className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100 cursor-pointer" />
                                             {file && (

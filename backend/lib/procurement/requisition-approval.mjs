@@ -158,12 +158,13 @@ export function prepareFileReplacement(record, change) {
         replaced_by_id: change.actor_id,
         replaced_by_name: change.actor_name,
         previous_files,
+        // A site replaced again before anyone decided keeps the decision from before the first replacement.
         previous_decision: decided ? {
             status: record.status,
             by_name: notes.approver_info?.name || 'Approver',
             remarks: notes.approver_info?.remarks || '',
             at: notes.approver_info?.action_at || null
-        } : null,
+        } : (quote.previous_decision || null),
         // One summary per replacement; the per-site outbox handler stays quiet.
         approval_notification_mode: 'batch_summary'
     };

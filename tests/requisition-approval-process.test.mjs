@@ -59,6 +59,7 @@ function database(records, failId = '') {
         return query;
     }, storage: { from: () => ({
         async upload(path, body, options) { (records.__uploads ||= []).push({ path, options }); return { data: { path }, error: null }; },
+        async remove(paths) { (records.__removed ||= []).push(...paths); return { data: null, error: null }; },
         getPublicUrl: path => ({ data: { publicUrl: 'https://files.test/' + path } })
     }) } };
 }
@@ -433,7 +434,7 @@ test('replacing the comparison file sends the whole batch back once, flagged as 
         assert.equal(quote.batch_id, batch, 'the batch keeps its id');
         assert.equal(quote.revision, 2);
         assert.equal(quote.is_reapproval, true);
-        assert.match(quote.file_url, /_rev2_fixed_comparison\.xlsx$/);
+        assert.match(quote.file_url, /_rev2_99999999_fixed_comparison\.xlsx$/);
         assert.deepEqual(quote.previous_files.map(file => [file.revision, file.file_url]), [[1, 'https://files.test/old.xlsx']]);
         assert.equal(quote.reapproval_note, 'Fixed Noida quantity');
         assert.equal(approval.usesBulkApprovalSummary(row), true, 'per-site outbox messages stay quiet');
@@ -446,6 +447,7 @@ test('replacing the comparison file sends the whole batch back once, flagged as 
 
     assert.equal(records.__uploads.length, 1);
     assert.equal(records.__uploads[0].options.upsert, false, 'the old file is never overwritten');
+    assert.equal(records.__uploads[0].options.contentType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'type comes from the extension, not the browser');
 
     const summary = sent.filter(message => message.featureKey === 'requisition_approval_requested');
     assert.equal(summary.length, 1, 'one WhatsApp summary to the approver');
@@ -599,4 +601,49 @@ test('a single-site quote can be replaced on its own', async () => {
     assert.equal(quote.previous_files[0].file_name, 'single.pdf');
     assert.equal(sent.filter(message => message.featureKey === 'requisition_approval_requested').length, 1);
     assert.equal(records.property_monthly_requisitions[1].status, 'submitted');
+});
+
+test('replacing twice before anyone decides still says the site was approved earlier', async () => {
+    const records = sentBatch(), sent = [];
+    const row = records.property_monthly_requisitions[0];
+    row.status = 'approved';
+    const notes = JSON.parse(row.notes);
+    notes.approver_info = { id: reviewer, name: 'Reviewer', status: 'approved', action_at: now };
+    row.notes = JSON.stringify(notes);
+    await reapprovalRoute(records, buyer).POST(replaceForm());
+    const again = await reapprovalRoute(records, buyer, sent).POST(replaceForm({ note: 'Second fix' }));
+    assert.equal(again.status, 200);
+    const result = await again.json();
+    assert.equal(result.revision, 3);
+    assert.equal(result.approved_earlier_count, 1);
+    assert.equal(JSON.parse(row.notes).vendor_quotation.previous_decision.status, 'approved');
+    assert.match(sent.find(m => m.featureKey === 'requisition_approval_requested').paramValues.notes, /1 site\(s\) approved earlier/);
+});
+
+test('only Excel, CSV or PDF files up to 10 MB are accepted', async () => {
+    const file = (name, size) => ({ name, size, type: 'text/html', arrayBuffer: async () => new ArrayBuffer(4) });
+    for (const name of ['comparison.html', 'comparison.png', 'comparison', 'comparison.xlsx.exe']) {
+        const records = sentBatch();
+        const response = await reapprovalRoute(records, buyer).POST(replaceForm({ quote_file: file(name, 10) }));
+        assert.equal(response.status, 400, name);
+        assert.equal(records.__uploads, undefined, name + ' was not uploaded');
+    }
+    const big = await reapprovalRoute(sentBatch(), buyer).POST(replaceForm({ quote_file: file('big.pdf', 10 * 1024 * 1024 + 1) }));
+    assert.equal(big.status, 400);
+    for (const name of ['ok.pdf', 'ok.CSV', 'ok.xls']) {
+        const response = await reapprovalRoute(sentBatch(), buyer).POST(replaceForm({ quote_file: file(name, 10) }));
+        assert.equal(response.status, 200, name);
+    }
+});
+
+test('when no site can be saved the uploaded file is removed and nothing is sent', async () => {
+    const records = sentBatch(), sent = [];
+    records.property_monthly_requisitions[1].status = 'ordered';
+    const response = await reapprovalRoute(records, buyer, sent, noida).POST(replaceForm());
+    assert.equal(response.status, 409);
+    assert.deepEqual(records.__removed, [records.__uploads[0].path]);
+    assert.equal(records.event_outbox[0].status, 'completed');
+    assert.equal(sent.length, 0);
+    assert.equal(records.property_monthly_requisitions[0].status, 'pending_approval');
+    assert.equal(JSON.parse(records.property_monthly_requisitions[0].notes).vendor_quotation.file_name, 'old.xlsx');
 });

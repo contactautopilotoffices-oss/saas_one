@@ -304,7 +304,7 @@ export default function ApproverRequisitionModal({
                     {/* Re-approval: procurement replaced the comparison file after sending it */}
                     {vendorQuotation?.is_reapproval && (
                         <div role="status" className="bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-2xl p-4 text-xs text-amber-900 dark:text-amber-200 space-y-1.5">
-                            <h3 className="font-black uppercase tracking-wider flex items-center gap-2">
+                            <h3 className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
                                 <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
                                 Re-approval request · Rev {fileRevision(requisition)}
                             </h3>

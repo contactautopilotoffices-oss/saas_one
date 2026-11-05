@@ -6,7 +6,7 @@ import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
 import { isMissingSchemaError } from '@/backend/lib/procurement/catalogAccess';
 import {
-    requisitionNotes, siteEstimatedAmount, siteVendorQuotation, approvalBatchSummary, fileRevision, quoteBatchId,
+    requisitionNotes, siteEstimatedAmount, siteVendorQuotation, fileRevision, quoteBatchId,
     replacementBlock, prepareFileReplacement, reapprovalWhatsAppOptions, wasApprovedBeforeReplacement
 } from '@/backend/lib/procurement/requisition-approval.mjs';
 
@@ -22,6 +22,12 @@ import {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const submitterRoles = ['procurement', 'purchase_manager', 'purchase_executive', 'org_super_admin', 'ops_super_admin', 'master_admin'];
+// The procurement_requisitions bucket only accepts Excel, CSV and PDF.
+const FILE_TYPES: Record<string, string> = {
+    pdf: 'application/pdf', csv: 'text/csv', xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+};
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -98,6 +104,11 @@ async function loadSites(admin: Admin, organizationId: string, batchId: string, 
     return records.map((record): Site => ({ record, blocked: replacementBlock(record, delivered.has(record.id)) }));
 }
 
+/** Site amount for messages; a bad stored estimate shows as 0 instead of failing after the save. */
+function amountOf(record: RequisitionRow) {
+    try { return siteEstimatedAmount(record); } catch { return 0; }
+}
+
 function siteLabel(record: RequisitionRow) {
     const floor = record.floor_tag && record.floor_tag !== 'All Floors' ? ' (' + record.floor_tag + ')' : '';
     return (record.property?.name || 'Property') + floor + ', ' + MONTHS[(record.requisition_month || 1) - 1] + ' ' + record.requisition_year;
@@ -136,9 +147,7 @@ export async function GET(request: NextRequest) {
             notes: quote.notes || '',
             approver: approver ? { id: approver.id, name: approver.name || 'Approver' } : null,
             sites: sites.map(({ record, blocked }) => {
-                let amount = 0;
-                try { amount = siteEstimatedAmount(record); } catch { amount = 0; }
-                return { id: record.id, label: siteLabel(record), status: record.status, amount,
+                return { id: record.id, label: siteLabel(record), status: record.status, amount: amountOf(record),
                     revision: fileRevision(record), eligible: !blocked, blocked_reason: blocked };
             })
         });
@@ -162,6 +171,14 @@ export async function POST(request: NextRequest) {
         const quoteFile = form.get('quote_file') as File | null;
         if (!quoteFile || !quoteFile.size) {
             return NextResponse.json({ error: 'Attach the corrected comparison file.' }, { status: 400 });
+        }
+        const extension = (quoteFile.name.split('.').pop() || '').toLowerCase();
+        const contentType = quoteFile.name.includes('.') ? FILE_TYPES[extension] : undefined;
+        if (!contentType) {
+            return NextResponse.json({ error: 'Upload the comparison file as Excel (.xlsx, .xls), CSV or PDF.' }, { status: 400 });
+        }
+        if (quoteFile.size > MAX_FILE_BYTES) {
+            return NextResponse.json({ error: 'The comparison file is larger than 10 MB.' }, { status: 400 });
         }
         const note = String(form.get('note') || '').trim().slice(0, 1000);
         const targetApproverId = String(form.get('target_approver_id') || '');
@@ -191,11 +208,11 @@ export async function POST(request: NextRequest) {
         const actorName = user.user_metadata?.full_name || 'Procurement Team';
         const previousApprover = requisitionNotes(eligible[0]).approver_info || null;
 
-        // New name per revision: the earlier file stays in storage and in the history.
+        // New name per attempt: the earlier file stays in storage and in the history, and a retry never collides.
         const safeName = quoteFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const path = organizationId + '/bulk_quotes/' + (batchId || requisitionId) + '_rev' + revision + '_' + safeName;
+        const path = organizationId + '/bulk_quotes/' + (batchId || requisitionId) + '_rev' + revision + '_' + revisionId.slice(0, 8) + '_' + safeName;
         const { data: uploaded, error: uploadError } = await admin.storage.from('procurement_requisitions')
-            .upload(path, Buffer.from(await quoteFile.arrayBuffer()), { contentType: quoteFile.type || 'application/octet-stream', upsert: false });
+            .upload(path, Buffer.from(await quoteFile.arrayBuffer()), { contentType, upsert: false });
         if (uploadError || !uploaded) throw uploadError || new Error('Comparison file upload failed');
         const fileUrl = admin.storage.from('procurement_requisitions').getPublicUrl(uploaded.path).data.publicUrl;
         const fileName = quoteFile.name;
@@ -229,11 +246,11 @@ export async function POST(request: NextRequest) {
         }
         if (!updatedRecords.length) {
             await admin.from('event_outbox').update({ status: 'completed' }).eq('id', revisionId);
+            await admin.storage.from('procurement_requisitions').remove([uploaded.path]);
             return NextResponse.json({ error: 'No requisitions were updated. Refresh and try again.', failed_ids: failedIds, locked }, { status: 409 });
         }
 
         const approvedEarlier = updatedRecords.filter(wasApprovedBeforeReplacement);
-        const summary = approvalBatchSummary(updatedRecords);
         const previousFile = siteVendorQuotation(eligible[0])?.file_url || '';
         const approvedEarlierIds = new Set(approvedEarlier.map(record => record.id));
         const notificationResults = await Promise.allSettled([
@@ -244,6 +261,7 @@ export async function POST(request: NextRequest) {
                     organizationId, featureKey: 'requisition_approval_requested', contextualEmails: [approver.email]
                 });
                 if (!resolution.enabled || !resolution.emails.length) return;
+                const total = updatedRecords.reduce((sum, record) => sum + amountOf(record), 0);
                 await EmailService.sendGenericNotificationEmail({
                     emailTo: resolution.emails.join(', '),
                     subject: '[Re-Approval] Comparison file updated for ' + updatedRecords.length + ' monthly requisition(s) · Rev ' + revision,
@@ -253,9 +271,9 @@ export async function POST(request: NextRequest) {
                         (approvedEarlier.length ? ' <b>' + approvedEarlier.length + ' site(s) you approved earlier need your approval again.</b>' : '') + '</p>' +
                         (note ? '<p><b>What was corrected:</b> ' + escapeHtml(note) + '</p>' : '') +
                         '<ul>' + updatedRecords.map(record => '<li>' + escapeHtml(siteLabel(record)) + ': ₹' +
-                            siteEstimatedAmount(record).toLocaleString('en-IN') +
+                            amountOf(record).toLocaleString('en-IN') +
                             (approvedEarlierIds.has(record.id) ? ' <i>(approved earlier, needs approval again)</i>' : '') + '</li>').join('') + '</ul>' +
-                        '<p>Combined estimated amount: ₹' + summary.total.toLocaleString('en-IN') +
+                        '<p>Combined estimated amount: ₹' + (Math.round(total * 100) / 100).toLocaleString('en-IN') +
                         '. Review and approve or reject each requisition separately in the app.</p>' +
                         '<p><a href="' + escapeHtml(fileUrl) + '">Open the new comparison file (Rev ' + revision + ')</a>' +
                         (previousFile ? ' · <a href="' + escapeHtml(previousFile) + '">Previous file</a>' : '') + '</p>'
@@ -310,8 +328,10 @@ export async function POST(request: NextRequest) {
                             (note ? '<p><b>What was corrected:</b> ' + escapeHtml(note) + '</p>' : '')
                     });
                 }
+                // One failed send must not stop the others.
+                const failures: unknown[] = [];
                 for (const record of approvedEarlier) {
-                    await WhatsAppEventProcessor.dispatch({
+                    try { await WhatsAppEventProcessor.dispatch({
                         featureKey: 'requisition_status_updated',
                         templateEventKey: 'requisition_status_updated',
                         organizationId,
@@ -325,12 +345,13 @@ export async function POST(request: NextRequest) {
                             year: String(record.requisition_year || ''),
                             status: 'PENDING RE-APPROVAL',
                             approver_name: approverInfo.name,
-                            total_amount: siteEstimatedAmount(record).toLocaleString('en-IN'),
+                            total_amount: amountOf(record).toLocaleString('en-IN'),
                             remarks: 'Comparison file updated (Rev ' + revision + '). The earlier approval is on hold until it is approved again.'
                         },
                         summaryMessage: 'Requisition for ' + siteLabel(record) + ' is back in Pending Approval: comparison file updated (Rev ' + revision + ')'
-                    });
+                    }); } catch (error) { failures.push(error); }
                 }
+                if (failures.length) throw failures[0];
             })()
         ]);
         const notificationWarning = notificationResults.some(result => result.status === 'rejected');
