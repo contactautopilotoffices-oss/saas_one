@@ -1,3 +1,4 @@
+import { CONVERSATION_LINES } from './brain/prompt';
 import { FACILITY_INTENTS, TASK_INTENTS, type BrainContext, type Intent, type Outcome } from './brain/types';
 /* eslint-disable @typescript-eslint/no-explicit-any -- replay snapshots accept legacy/context JSON and validate every retained field */
 
@@ -40,9 +41,18 @@ export function learningTriggers(input: { intent?: string | null; outcome?: stri
 /** The bot's reply as shown on the review card: phone numbers removed, length capped. */
 export const sanitizeReplyText = (text: string): string => String(text ?? '').replace(/(?:\+?\d[\s().-]*){10,15}/g, '[phone redacted]').slice(0, 3000);
 
-/** Store only facts the model/code need for replay. Contact details and conversation text outside this turn are excluded. */
+/** Owner 2026-11-05: one chat line kept with a test: long enough to follow the chat, with no phone number or email address. */
+const MAX_CHAT_LINE_CHARS = 300;
+const redactChat = (v: unknown, max: number) => String(v ?? '').replace(/(?:\+?\d[\s().-]*){10,15}/g, '[phone redacted]').replace(/[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+/g, '[email redacted]').slice(0, max);
+
+/**
+ * Store only facts the model/code need for replay. Contact details are excluded.
+ * Owner 2026-11-05: the recent chat and an unfinished request are kept too, because the live bot reads them: without them a
+ * follow-up like "add this too" was tested on less than the bot really had. See "Changes 2026-11-05" in docs/TASK_BRAIN_SPEC.md.
+ */
 export function sanitizeReplayContext(ctx: Partial<BrainContext> & Record<string, any>): Record<string, unknown> {
     const clean = (v: unknown, max = 200) => String(v ?? '').replace(/(?:\+?\d[\s().-]*){10,15}/g, '[phone redacted]').slice(0, max);
+    const conversation = Array.isArray(ctx.conversation) ? ctx.conversation.filter((x: unknown) => typeof x === 'string').slice(-CONVERSATION_LINES).map((x: unknown) => redactChat(x, MAX_CHAT_LINE_CHARS)) : [];
     const person = (p: any) => p && typeof p === 'object' ? { id: String(p.id || ''), name: clean(p.name, 100), department: p.department == null ? null : clean(p.department, 100), role: p.role ?? null } : null;
     const pending = (() => {
         const p: any = ctx.pending;
@@ -51,6 +61,7 @@ export function sanitizeReplayContext(ctx: Partial<BrainContext> & Record<string
         if (p.kind === 'pick') return { kind: 'pick', options: Array.isArray(p.options) ? p.options.slice(0, 20).map((x: unknown) => clean(x, 200)) : [] };
         if (p.kind === 'preview') return { kind: 'preview', count: Number(p.count || 0) };
         if (p.kind === 'ping_reply') return { kind: 'ping_reply', assigner: clean(p.assigner, 100), taskIds: Array.isArray(p.taskIds) ? p.taskIds.filter((x: unknown) => typeof x === 'string').slice(0, 100) : [], taskTitles: Array.isArray(p.taskTitles) ? p.taskTitles.slice(0, 100).map((x: unknown) => clean(x, 200)) : [], assigners: Array.isArray(p.assigners) ? p.assigners.slice(0, 100).map((x: unknown) => clean(x, 100)) : undefined };
+        if (p.kind === 'draft') return { kind: 'draft', request: redactChat(p.request, 500), question: p.question == null ? null : redactChat(p.question, MAX_CHAT_LINE_CHARS), at: String(p.at ?? ''), ...(p.suggested ? { suggested: redactChat(p.suggested, 200) } : {}) };
         return null;
     })();
     return {
@@ -62,6 +73,8 @@ export function sanitizeReplayContext(ctx: Partial<BrainContext> & Record<string
         departments: Array.isArray(ctx.departments) ? ctx.departments.filter((x: unknown) => typeof x === 'string').slice(0, 50).map((x: unknown) => clean(x, 100)) : [],
         pending,
         recent: Array.isArray(ctx.recent) ? ctx.recent.filter((x: unknown) => typeof x === 'string').slice(-4).map((x: unknown) => clean(x, 500)) : [],
+        // Absent when there was no chat, as in a live turn: the replay then behaves exactly as it does for older tests.
+        ...(conversation.length ? { conversation } : {}),
     };
 }
 

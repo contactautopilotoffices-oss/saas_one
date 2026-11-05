@@ -299,6 +299,38 @@ rejection reason, activation actor and alert audits are persisted. Offline fake-
 hand-written answer key plus deterministic scorer and required human activation. No paid auto-tune run has been made,
 so real cost and improvement quality remain unmeasured until the owner explicitly approves provider use.
 
+### Changes 2026-11-05: a test replays with the chat the live bot had
+
+With conversation memory on, the live bot reads the last 8 messages and rewrites short follow-ups from them, but a saved test
+kept only `recent` (4 short lines), so "add this too" was tested on less than the bot really had. An unfinished request
+(`pending.kind = 'draft'`) was dropped altogether.
+
+- **Context** `[BAA p.112]`: `sanitizeReplayContext` now keeps the last 8 chat lines and an unfinished request. Replay goes
+  through the normal path, so these tests also run the rewrite step, inside the same cost cap.
+- **Privacy (owner decision 2026-11-05):** each line is cut to 300 characters; phone numbers and email addresses are
+  removed; names and task words stay. Review items are deleted after 30 days, but a saved test keeps its chat until the row
+  is deleted, and the app has no delete for saved tests yet. Reads go through `requireControlCentre`. The chat also reaches the
+  models in the Learning loop chain: all of it for a review summary, the last 4 lines at 200 characters for a draft.
+- **Cost** `[BAA p.119]`: the draft input stays capped for that reason; the largest case is tested against the cap on Opus.
+
+Tests saved before this change keep only `recent`; they cannot get their chat back. Not yet measured with a real AI.
+
+### Changes 2026-11-05: lessons are kept until they are in use
+
+A rejected version used to mark its labelled cases as used, so its lessons never came back: v1 learned from 13 cases, v2 from
+4 and v3 from 3, each starting from the built-in prompt, so learning could not add up.
+
+- **Memory** `[BAA pp.100–103]`: a lesson counts as learned only once a version built on it is `active`. Draft input is every
+  saved test newer than the version in use, repaired, without tests that cannot be judged, capped at the newest 12
+  (`MAX_DRAFT_LESSONS`) so the input stays under the cost cap on the dearest model. Only new labels still start a paid run, so
+  a rejected night is never retried unchanged.
+- **Rejected attempts** `[BAA p.114]`: the last 3 versions rejected on their merits go to the drafter as `previous_attempts`,
+  declared untrusted data, with a rule to try a different change. Technical stops are left out, and an admin's name is never
+  sent. Step 2 of the drafter's prompt changed; the steps stay numbered with the no-skip clause.
+
+Known limit: lessons older than the newest 12 are not sent until newer ones are learned. The model has no memory or write
+tool (§6 is unchanged); this is code choosing its input. Not yet measured with a real AI.
+
 ### Changes 2026-11-05: judged against the prompt in use, and tests that can be passed
 
 All three versions so far were rejected with "safety metric was not zero". The prompt in use had never been at zero
