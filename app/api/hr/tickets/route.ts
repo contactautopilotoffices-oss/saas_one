@@ -147,19 +147,39 @@ export async function GET(request: Request) {
             query = query.eq('organization_id', orgId);
         }
         if (propertyId && propertyId !== 'all') {
-            const { data: prop } = await supabaseAdmin
-                .from('properties')
-                .select('name')
-                .eq('id', propertyId)
-                .maybeSingle();
-            
+            const [{ data: prop }, { data: memberships }] = await Promise.all([
+                supabaseAdmin
+                    .from('properties')
+                    .select('name')
+                    .eq('id', propertyId)
+                    .maybeSingle(),
+                supabaseAdmin
+                    .from('property_memberships')
+                    .select('user_id')
+                    .eq('property_id', propertyId)
+                    .eq('is_active', true)
+            ]);
+
+            const orFilters: string[] = [
+                `employee_snapshot->>property_id.eq.${propertyId}`
+            ];
+
             const propName = prop?.name;
             if (propName) {
                 const cleanPropName = propName.replace(/[,()]/g, ' ').trim();
-                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>location.ilike.*${cleanPropName}*,employee_snapshot->>property_id.is.null`);
-            } else {
-                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>property_id.is.null`);
+                if (cleanPropName) {
+                    orFilters.push(`employee_snapshot->>property_name.ilike.*${cleanPropName}*`);
+                    orFilters.push(`employee_snapshot->>location.ilike.*${cleanPropName}*`);
+                }
             }
+
+            const memberUserIds = (memberships || []).map(m => m.user_id).filter(Boolean);
+            if (memberUserIds.length > 0) {
+                const chunk = memberUserIds.slice(0, 100);
+                orFilters.push(`raised_by_user_id.in.(${chunk.join(',')})`);
+            }
+
+            query = query.or(orFilters.join(','));
         }
 
         // Granular Role Scoping: Exactly 3 Tiers
