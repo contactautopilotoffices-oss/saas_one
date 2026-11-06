@@ -2,8 +2,8 @@
   "generatedBy": "scripts/mcp/build-catalog.mjs",
   "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
   "counts": {
-    "included": 277,
-    "excluded": 164
+    "included": 278,
+    "excluded": 163
   },
   "routes": [
     {
@@ -693,7 +693,7 @@
       "queryParams": [
         "lead_id"
       ],
-      "description": "POST /api/crm/calls Multipart form: file=<audio>, lead_id=<uuid>, called_at?<iso> Uploads to Supabase Storage, inserts a crm_calls row, and runs the Whisper + Groq pipeline inline. For the MVP we run synchronously because the longest calls stay under 60s. If we ever exceed that, switch to returning { call_id, status: 'processing' } and polling. / export async function POST(request: NextRequest) { "
+      "description": "GET /api/crm/calls?lead_id=... List calls for the current lead. Lightweight projection — full transcripts are fetched via /api/crm/calls/[id]."
     },
     {
       "path": "/api/crm/campaigns/{id}",
@@ -1105,6 +1105,15 @@
       "description": "What the signed-in user may do: drives whether the floating bot (and its admin link) shows."
     },
     {
+      "path": "/api/hr/tickets/{id}",
+      "module": "hr",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/hr/tickets/{id} One HR ticket with its comments and history, if the signed-in caller may open it. Anonymous tickets stay anonymous."
+    },
+    {
       "path": "/api/hr/tickets/pending-actions",
       "module": "hr",
       "pathParams": [],
@@ -1484,7 +1493,7 @@
         "orgId"
       ],
       "queryParams": [],
-      "description": "Same people who manage the requisition item list: procurement, org super admin, master admin. */ async function canManageStockSettings(userId: string, orgId: string): Promise<boolean> { if (await isProcurementUser(userId, orgId)) return true; const { data } = await createAdminClient() .from('users') .select('is_master_admin') .eq('id', userId) .maybeSingle(); return Boolean(data?.is_master_admin);"
+      "description": "Every property of the org with the stock list it uses."
     },
     {
       "path": "/api/organizations/{orgId}/tickets-summary",
@@ -2607,7 +2616,7 @@
         "id"
       ],
       "queryParams": [],
-      "description": "POST /api/tickets/[id]/comments Add a comment to a ticket / export async function POST( request: NextRequest, { params }: { params: Promise<{ id: string }> } ) { try { const { id: ticketId } = await params; const supabase = await createClient(); Use getUser() for security, but handle it gracefully const { data: { user }, error: authError } = await supabase.auth.getUser(); if (authError || !user) {"
+      "description": "GET /api/tickets/[id]/comments Get all comments for a ticket"
     },
     {
       "path": "/api/tickets/{id}/photos",
@@ -3173,10 +3182,6 @@
     },
     {
       "path": "/api/hr/tickets/{id}/comments",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/hr/tickets/{id}",
       "reason": "no visible sign-in check"
     },
     {
