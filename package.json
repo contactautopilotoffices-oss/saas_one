@@ -28,6 +28,8 @@
     "test:ai-layer": "tsx --test \"tests/ai-layer/*.test.ts\"",
     "test:task-manager-report": "tsx --test \"tests/task-manager-report/*.test.ts\"",
     "test:meeting-rooms": "tsx --test \"tests/meeting-rooms/*.test.ts\"",
+    "test:mcp": "tsx --test \"tests/mcp/*.test.ts\"",
+    "mcp:catalog": "node scripts/mcp/build-catalog.mjs",
     "hr:ingest": "tsx --env-file=.env.local scripts/hr-assistant/ingest.ts",
     "hr:eval": "tsx --env-file=.env.local scripts/hr-assistant/evaluate.ts"
   },

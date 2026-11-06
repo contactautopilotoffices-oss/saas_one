@@ -1,0 +1,3083 @@
+{
+  "generatedBy": "scripts/mcp/build-catalog.mjs",
+  "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
+  "counts": {
+    "included": 227,
+    "excluded": 213
+  },
+  "routes": [
+    {
+      "path": "/api/accounts/payments",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "date_from",
+        "date_to",
+        "page",
+        "page_size",
+        "search",
+        "status"
+      ],
+      "description": "GET /api/accounts/payments — list payments by status (aligned | completed | all)"
+    },
+    {
+      "path": "/api/accounts/po/{id}/lines",
+      "module": "accounts",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/accounts/po/[id]/lines — what the PO orders: its line items and its terms/notes, as synced from Zoho Books. Read-only, for anyone who can see the Payment Tracker."
+    },
+    {
+      "path": "/api/accounts/po/{id}",
+      "module": "accounts",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/accounts/po/[id] — everything the PO detail page renders, in one round trip. PO + tranches + PO documents + vendor profile + vendor documents + the full activity timeline. One request, because six sequential fetches from the browser is how a detail page ends up half-rendered with three spinners. DEGRADED MODE: if the compliance migrations have not been applied, the PO header and its tranc"
+    },
+    {
+      "path": "/api/accounts/pos",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "critical_only",
+        "date_from",
+        "date_to",
+        "department",
+        "page",
+        "page_size",
+        "search",
+        "site",
+        "tab",
+        "vendor"
+      ],
+      "description": "GET /api/accounts/pos — tab=to_align (POs with pending amount) | all (paginated)"
+    },
+    {
+      "path": "/api/accounts/pos/workflow",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/accounts/pos/workflow — every po_workflow_state row for the caller's org. Exists so the Payment Tracker reads critical flags under the SAME access model as the rest of the page. Reading po_workflow_state straight from the browser put criticality behind RLS while every other read on that screen goes through this service-role layer, and the two do not agree: resolveAccountsAccess grants a m"
+    },
+    {
+      "path": "/api/accounts/settings",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/accounts/settings — fetch Payment Tracker settings and eligible approver users"
+    },
+    {
+      "path": "/api/accounts/sheets/{id}/export-cms",
+      "module": "accounts",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/accounts/sheets/[id]/export-cms — download corporate bank CMS payout file"
+    },
+    {
+      "path": "/api/accounts/sheets/{id}/export-csv",
+      "module": "accounts",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/accounts/sheets/[id]/export-csv — download complete 13-column payment sheet CSV"
+    },
+    {
+      "path": "/api/accounts/sheets/{id}",
+      "module": "accounts",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/accounts/sheets/[id] — get details and all line items of a sheet"
+    },
+    {
+      "path": "/api/accounts/sheets",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "page",
+        "page_size",
+        "search",
+        "status"
+      ],
+      "description": "GET /api/accounts/sheets — list payment batches / sheets"
+    },
+    {
+      "path": "/api/accounts/summary",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "period",
+        "to"
+      ],
+      "description": "GET /api/accounts/summary — Finance overview for the Accounts landing page. Period model mirrors the ticket dashboards ('today' | 'month' | 'all', see frontend/components/dashboard/OrgAdminDashboard.tsx:193) plus 'custom' with from/to. Buckets keep the Payment Tracker language from 20260723000003_payment_tracker.sql: To Align = PO amount not yet reserved by a payment, windowed on po_date Aligned ="
+    },
+    {
+      "path": "/api/accounts/tracker",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "awaiting_utr",
+        "critical_only",
+        "date_from",
+        "date_to",
+        "department",
+        "page",
+        "page_size",
+        "readiness",
+        "search",
+        "site",
+        "status",
+        "vendor"
+      ],
+      "description": "GET /api/accounts/tracker — the shared Payment Tracker sheet. One row per PO out of po_tracker_rows (20260805000002): PO fields, payment rollup, vendor compliance, document readiness and workflow flags already joined in SQL. PAGINATION IS EXPLICIT AND NON-NEGOTIABLE. PostgREST caps a response at 1000 rows and this org holds 5,265 POs; a query without .range() comes back silently truncated, and a t"
+    },
+    {
+      "path": "/api/accounts/vendor-profiles",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [
+        "compliance_status",
+        "include_inactive",
+        "page",
+        "page_size",
+        "search"
+      ],
+      "description": "GET /api/accounts/vendor-profiles — the compliance list. Exists so PATCH /api/accounts/vendor-profiles/[id] is reachable: without a list there is no way for the UI to learn an id. Paged explicitly — an org with hundreds of suppliers would otherwise hit PostgREST's 1000-row cap and silently show a partial roster."
+    },
+    {
+      "path": "/api/accounts/zoho-config",
+      "module": "accounts",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/accounts/zoho-config — current connection state for the org."
+    },
+    {
+      "path": "/api/admin/ai-metrics",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [
+        "days"
+      ],
+      "description": "GET /api/admin/ai-metrics Aggregates LLM usage, cost, and performance metrics"
+    },
+    {
+      "path": "/api/admin/bd-stats",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/admin/bd-stats Cross-organization Business-Development (BD) pipeline metrics for the Master Admin console. NOT scoped to a single org — this is a platform-wide view of the coworking-space lead pipeline. Master-admin only. Lead temperature mapping (counts only — the business does not track deal money): - Hot : priority High/Urgent and status not terminal - Warm : priority Medium and status"
+    },
+    {
+      "path": "/api/admin/dashboard-stats",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/admin/dashboard-stats Securely fetch global stats for the Master Admin console."
+    },
+    {
+      "path": "/api/admin/ocr-monitor",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [
+        "failed",
+        "limit",
+        "source"
+      ],
+      "description": "GET /api/admin/ocr-monitor?source=&failed=1&limit= — the OCR Monitor's snapshot. Master admin only. Read-only."
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}",
+      "module": "admin",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/admin/resolver-stats",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/admin/resolver-stats Securely fetch all resolver stats for the Master Admin dashboard. Bypasses RLS by using adminClient, but strictly verifies Master Admin session first."
+    },
+    {
+      "path": "/api/admin/users",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/admin/users Securely fetch all users for the Master Admin dashboard. Bypasses RLS by using adminClient, but strictly verifies Master Admin session first."
+    },
+    {
+      "path": "/api/admin/verify",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/admin/verify Verify if the current user is a Master Admin"
+    },
+    {
+      "path": "/api/agents/bundles",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "counts",
+        "discover",
+        "orgId"
+      ],
+      "description": "/api/agents/bundles — the containment list, and its history. A bundle is the ONLY set of tables an agent may touch. It is versioned and append-only: saving never edits a version, it creates the next one. The old versions stay readable so an operator can see exactly what an agent was allowed to see on the day it did something. GET ?orgId=&agentKey= full version history, newest first, is_active flag"
+    },
+    {
+      "path": "/api/agents/context",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "model",
+        "runsPerMonth"
+      ],
+      "description": "/api/agents/context — the operator's few-shot examples and pinned org facts. GET ?orgId=&agentKey=[&model=][&runsPerMonth=] the stored pair, the caps, the model list, the EXACT text that will be prepended to the prompt after fencing, and the estimated standing cost. POST { agent_key, response_examples, baked_context } saves both and answers with the re-estimated cost. THREE THINGS THIS ROUTE IS RE"
+    },
+    {
+      "path": "/api/agents/cost",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "orgId",
+        "org_id",
+        "organization_id"
+      ],
+      "description": "AGENT COST — what this agent actually spent, what it will spend, and on what. ============================================================================= GET /api/agents/cost?orgId=&agentKey= -> { ok, provisioned, agent, spent, estimate, models, errors } READ-ONLY. This route reads oem_agents and oem_agent_runs (+ the step trace, for one count) and writes nothing. It does not talk to a model, do"
+    },
+    {
+      "path": "/api/agents/council",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "COUNCIL PERSONAS, FROM THE AGENT CONSOLE. ----------------------------------------------------------------------------- /api/council/* is master-admin only and strips `persona` from every response. The Agent Console is an org-admin surface. So this is the org-scoped door: GET ?orgId= the org's council personas WITH their persona text, plus the latest vetting verdicts each has issued — read by any "
+    },
+    {
+      "path": "/api/agents/credentials",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "purpose"
+      ],
+      "description": "AGENT CREDENTIALS — per-agent LLM / voice / WhatsApp / telephony keys. ############################################################################ # THREAT MODEL. Read before changing anything in this file. ############################################################################ WHAT IS BEING PROTECTED Provider API keys that can spend the customer's money (LLM inference, outbound voice minute"
+    },
+    {
+      "path": "/api/agents/drafts",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "id"
+      ],
+      "description": "/api/agents/drafts — a composition in progress, kept. GET ?orgId= this user's resumable drafts, newest first GET ?orgId=&id= one draft in full, for resume POST ?orgId= upsert one draft (autosaved by the composer) DELETE ?orgId=&id= discard one WHY THIS EXISTS The composer is a one-shot form. You describe an agent, wait for a model round-trip, answer its open questions — and if you close the tab or"
+    },
+    {
+      "path": "/api/agents/feedback",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "limit"
+      ],
+      "description": "THE REINFORCEMENT LOOP. ============================================================================= An agentic employee learns from two signals, and they are NOT the same signal: 1. \"You did the job well.\" -> praise, worth Autopilot coins. 2. \"The job was done wrong.\" -> reject, costs coins. 3. \"The job was not worth -> roi_flag. This is the one people collapse doing at all.\" into (2) and lose. "
+    },
+    {
+      "path": "/api/agents/heartbeat",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "buckets",
+        "hours"
+      ],
+      "description": "--------------------------------------------------------------------------- GET — uptime, the status strip, and the incident list ---------------------------------------------------------------------------"
+    },
+    {
+      "path": "/api/agents/mail",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "CONNECTED MAILBOXES — what the console shows and removes. GET ?orgId= the mailboxes this org has connected, their aliases and their health. Never a token. DELETE ?orgId=&id= disconnect one. Org admin only."
+    },
+    {
+      "path": "/api/agents/preflight",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "orgId"
+      ],
+      "description": "GET /api/agents/preflight?orgId=&agentKey= Everything that has to be true for an agent to run, checked live. Read-only."
+    },
+    {
+      "path": "/api/agents/profile",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "orgId",
+        "org_id",
+        "organization_id"
+      ],
+      "description": "THE AGENT PROFILE — an employee record for something that is not a person. ============================================================================= GET /api/agents/profile?orgId=&agentKey= A human employee's file holds what they did, how reliable they were, and what they cost. This is the same file for an agent, and it deliberately shows the real machine underneath rather than a friendly abst"
+    },
+    {
+      "path": "/api/agents/pulse",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "module",
+        "orgId",
+        "org_id",
+        "organization_id"
+      ],
+      "description": "AGENT PROVIDENCE — the one endpoint every module calls to prove the agentic employees are moving. ============================================================================= GET /api/agents/pulse?orgId=&module=procurement -> that module's agents, what they did today, when they last moved. GET /api/agents/pulse?orgId= -> the same, keyed by module, for every module at once, so the Command Center c"
+    },
+    {
+      "path": "/api/agents/runs/{runId}",
+      "module": "agents",
+      "pathParams": [
+        "runId"
+      ],
+      "queryParams": [],
+      "description": "--------------------------------------------------------------------------- GET — run + ordered step trace + where-the-time-went rollup ---------------------------------------------------------------------------"
+    },
+    {
+      "path": "/api/agents/runs",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [
+        "agentKey",
+        "agent_key",
+        "from",
+        "limit",
+        "module",
+        "offset",
+        "status",
+        "to"
+      ],
+      "description": "--------------------------------------------------------------------------- GET — the runs table ---------------------------------------------------------------------------"
+    },
+    {
+      "path": "/api/agents/summary",
+      "module": "agents",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/agents/summary?org_id=… — what each agentic employee actually did today. WHY THIS FILE WAS REWRITTEN ============================================================================= It used to return `getDailyTasks()` from backend/lib/ira/tasks.ts — a HARDCODED 26-row seed, identical for every organization — under an agent named Ira marked `configured: true`. The Command Center then rendered"
+    },
+    {
+      "path": "/api/ai-layer/activity",
+      "module": "ai-layer",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "The AI activity view for an org super admin: the latest 200 turns of their own org. Rows with visibility = 'hr' (anonymous / confidential HR items) are never returned here, whatever the caller's role."
+    },
+    {
+      "path": "/api/ai-layer/settings",
+      "module": "ai-layer",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/amc/contracts",
+      "module": "amc",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id",
+        "property_id"
+      ],
+      "description": "GET /api/amc/contracts?organization_id=&property_id="
+    },
+    {
+      "path": "/api/analytics/feature-usage",
+      "module": "analytics",
+      "pathParams": [],
+      "queryParams": [
+        "end_date",
+        "organization_id",
+        "start_date"
+      ],
+      "description": "GET /api/analytics/feature-usage Get feature usage analytics (Master Admin only) Query params: organization_id (optional), start_date, end_date"
+    },
+    {
+      "path": "/api/aop/bounties",
+      "module": "aop",
+      "pathParams": [],
+      "queryParams": [
+        "month",
+        "refresh",
+        "view"
+      ],
+      "description": "The AOP Bounty. GET ?org_id=&month=YYYY-MM-01&view=open|mine|all&refresh=1 Lists the month's bounties grouped for the inbox. refresh=1 regenerates first (cheap, idempotent). POST {org_id, action, bounty_id, ...} ping ask the owner now answer {answer, note} no_spend | coming_on (expected_day) | note — the owner replies expected {expected_day, cadence_months, cadence_anchor, vendor_name} remembered "
+    },
+    {
+      "path": "/api/aop/matrix",
+      "module": "aop",
+      "pathParams": [],
+      "queryParams": [
+        "month",
+        "site_id",
+        "view"
+      ],
+      "description": "GET /api/aop/matrix The grid payload behind the AOP workspace — the whole \"Site wise\" sheet, as data. ?org_id= required when the caller belongs to more than one organisation ?month= YYYY-MM; defaults to the latest month holding data ?view=summary sites x line items for that one month (default) ?view=site one site, all line items, every month, for the drill-down ?site_id= required by view=site Both"
+    },
+    {
+      "path": "/api/aop/summary",
+      "module": "aop",
+      "pathParams": [],
+      "queryParams": [
+        "month"
+      ],
+      "description": "GET /api/aop/summary \"Are we on budget this month, and where are we bleeding?\" Backs the AOP Budget-vs-Actual widget — the MIS spend hub. Returns the latest month's pan-India position, the month before it for comparison, the sites that are over budget, and the cost categories driving the overspend. Query params: org_id — required when the caller belongs to more than one organization month — YYYY-M"
+    },
+    {
+      "path": "/api/aop/trend",
+      "module": "aop",
+      "pathParams": [],
+      "queryParams": [
+        "line_item_code",
+        "site_id"
+      ],
+      "description": "GET /api/aop/trend Budget vs actual over time for whichever slice the caller drilled into. One endpoint covers all four because the shape is identical and the client should not have to know which of them it is asking for: site_id + line_item_code one cell's history (clicked a grid cell) site_id that site's ops roll-up (clicked a column header) line_item_code that category, pan-India (clicked a row"
+    },
+    {
+      "path": "/api/aop/warnings",
+      "module": "aop",
+      "pathParams": [],
+      "queryParams": [
+        "include_acknowledged"
+      ],
+      "description": "GET /api/aop/warnings?org_id=&include_acknowledged= Everything the importer could not resolve on its own — stale column headers, sites whose figures contradict between sheets. These are surfaced rather than swallowed because the failure mode they guard against is silent: May's numbers filed as June look completely normal on screen."
+    },
+    {
+      "path": "/api/assets/{id}",
+      "module": "assets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/assets/[id] — full detail: asset, computed health, AMC, and its event timeline."
+    },
+    {
+      "path": "/api/assets/categories",
+      "module": "assets",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/assets/categories — org-specific rows plus the global defaults, merged so an org override wins."
+    },
+    {
+      "path": "/api/assets/reports",
+      "module": "assets",
+      "pathParams": [],
+      "queryParams": [
+        "property_id"
+      ],
+      "description": "GET /api/assets/reports — org (or property-scoped) rollup for the reporting tab: performance grade distribution, warranty/AMC expiry watchlist, PPM overdue count, and R&M spend by property for the current month and YTD."
+    },
+    {
+      "path": "/api/assets",
+      "module": "assets",
+      "pathParams": [],
+      "queryParams": [
+        "category_id",
+        "floor",
+        "grade",
+        "page",
+        "page_size",
+        "property_id",
+        "search",
+        "status"
+      ],
+      "description": "GET /api/assets — list/search the asset register. Query: organization_id (required unless single-org), property_id, category_id, floor, status, grade (P1|P2|P3), search, page, page_size."
+    },
+    {
+      "path": "/api/candidates/{id}",
+      "module": "candidates",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "Edit a record. Person fields apply to every record of the same person."
+    },
+    {
+      "path": "/api/candidates",
+      "module": "candidates",
+      "pathParams": [],
+      "queryParams": [
+        "deleted",
+        "orgId",
+        "page",
+        "pageSize",
+        "q",
+        "sheetId",
+        "status"
+      ],
+      "description": "Records, newest change first. Query: orgId, q, status, sheetId (an id or \"manual\"), deleted=1, page, pageSize."
+    },
+    {
+      "path": "/api/candidates/sheets/{id}/issues",
+      "module": "candidates",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "Rows with data-quality problems from the sheet's latest upload."
+    },
+    {
+      "path": "/api/candidates/sheets",
+      "module": "candidates",
+      "pathParams": [],
+      "queryParams": [
+        "deleted",
+        "orgId"
+      ],
+      "description": "Sheets: live ones, or deleted ones with ?deleted=1."
+    },
+    {
+      "path": "/api/command-center/kpis",
+      "module": "command-center",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/command-center/kpis Figures for the Command Center \"At a glance\" KPI tiles that no existing feed provides (docs/COMMAND_CENTER_KPI_PLAN.md). Tiles whose figures already exist (Agents, Visitors, Attendance) read those feeds instead, so they match the cards that already show them. Read-only. Every section stands alone: a missing table returns `{ provisioned: false }` and an error returns `{"
+    },
+    {
+      "path": "/api/command-center/portfolio",
+      "module": "command-center",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/command-center/portfolio Per-building health, for the Portfolio Overview card. Every signal is fetched ONCE for the whole org and bucketed by property in memory, rather than issuing a query per property. With 13 properties the per-property version would be 52 round trips for a card that renders five rows. On the sparkline: it is the 7-day trend of that property's OPEN TICKET COUNT, not of"
+    },
+    {
+      "path": "/api/command-center/ticket-alerts",
+      "module": "command-center",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/command-center/ticket-alerts Per-building ticket counts for the Command Center Alerts card (frontend/components/dashboard/command-center/ alertRules.ts turns them into alerts; the thresholds live there, not here). Read-only. tickets-summary has no per-building SLA, deadline or waiting-for-tenant figures, so this route supplies them. \"Past SLA\" counts only tickets the team is still working"
+    },
+    {
+      "path": "/api/command-center/water",
+      "module": "command-center",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/command-center/water Water Intelligence card. water_readings is logged once PER DAY per source (a jar/tanker delivery count, not a flow meter) — there is no intraday signal, so every figure below is daily, and the leak-probability field is always null (see the comment further down). A single 14-day window ending on the latest reading date (as_of) covers everything the card needs: the 14 b"
+    },
+    {
+      "path": "/api/companies",
+      "module": "companies",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/council/agents",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/council/agents — the org's active council agents (the 8 founding personas once seeded; built-in fallback before the migration lands)."
+    },
+    {
+      "path": "/api/council/assignments",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [
+        "session",
+        "status"
+      ],
+      "description": "The council work queue — who owns which finding, and who is drowning. GET /api/council/assignments?status=open&session=<id> → { assignments, workload, counts } POST /api/council/assignments {session_id} → dispatch (or re-dispatch) that session's open findings. Idempotent. Per-assignment status changes live in ./[id]/route.ts. Master-admin only; the council is still the master-admin playground (REQ"
+    },
+    {
+      "path": "/api/council/context",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Business context intake — how a human teaches the council the business. GET /api/council/context everything on file, plus a coverage report POST /api/council/context {entries} upsert a batch (idempotent per kind+subject+title, so a corrected sheet can be re-sent without duplicating) Designed for BATCH import because the people who hold this knowledge (Dipti, Naresh) will produce it as a sheet, not"
+    },
+    {
+      "path": "/api/council/findings",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [
+        "status"
+      ],
+      "description": "GET /api/council/findings?status=open — org findings, newest first. `status` is optional; omit it for every finding regardless of state."
+    },
+    {
+      "path": "/api/council/inbox",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [
+        "agent"
+      ],
+      "description": "Agent Council inbox — one virtual mailbox per council agent. GET /api/council/inbox?agent=ops that agent's messages, newest first POST /api/council/inbox { agent_key, to, subject, html, send } send:true → send via the council mailer, row recorded 'sent' (or 'draft' when SMTP fails — degrade, don't lose) send:false → record a 'draft' row only Master-admin only, guard copied from app/api/master-admi"
+    },
+    {
+      "path": "/api/council/sessions/{id}",
+      "module": "council",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/council/sessions/[id] — one session with its full transcript (opinions, reviews, synthesis) and its findings."
+    },
+    {
+      "path": "/api/council/sessions",
+      "module": "council",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "POST /api/council/sessions {question?} Creates a session and runs the full 3-stage council inline (MVP — Groq is fast enough; per docs/COUNCIL_SPEC.md the completed session is returned). GET /api/council/sessions Recent sessions, newest first."
+    },
+    {
+      "path": "/api/crm/accounts",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "limit"
+      ],
+      "description": "GET /api/crm/accounts — real account-based (ABM) aggregation. Groups the org's leads by company and returns the top accounts with REAL signals: people engaged, pipeline (sum of deal_value), hot-lead count, activity count, dominant city, and the most-advanced status. No placeholders."
+    },
+    {
+      "path": "/api/crm/activities",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "lead_id",
+        "page",
+        "page_size"
+      ],
+      "description": "GET /api/crm/activities?lead_id="
+    },
+    {
+      "path": "/api/crm/calls/{id}",
+      "module": "crm",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/crm/calls/[id] Returns the full call row (transcript + coaching report + signed playback URL). The signed URL is regenerated on every request so a leaked URL expires fast."
+    },
+    {
+      "path": "/api/crm/calls",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "lead_id"
+      ],
+      "description": "POST /api/crm/calls Multipart form: file=<audio>, lead_id=<uuid>, called_at?<iso> Uploads to Supabase Storage, inserts a crm_calls row, and runs the Whisper + Groq pipeline inline. For the MVP we run synchronously because the longest calls stay under 60s. If we ever exceed that, switch to returning { call_id, status: 'processing' } and polling. / export async function POST(request: NextRequest) { "
+    },
+    {
+      "path": "/api/crm/campaigns/{id}",
+      "module": "crm",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/crm/campaigns/[id] - campaign + recipient breakdown"
+    },
+    {
+      "path": "/api/crm/campaigns/performance",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "channel",
+        "from",
+        "to"
+      ],
+      "description": "GET /api/crm/campaigns/performance Performance Marketing dashboard data — single comprehensive payload the PerformanceMarketingDashboard component renders without further client-side aggregation. Combines: - crm_campaigns (campaign metadata, channel, budget, dates) - crm_campaign_spend (daily manual + meta_api spend rows) - crm_campaign_metrics (impressions / clicks / CTR / CPC / CPM) - crm_leads "
+    },
+    {
+      "path": "/api/crm/campaigns/spend",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "campaign_id",
+        "from",
+        "to"
+      ],
+      "description": "GET /api/crm/campaigns/spend?campaign_id=...&from=YYYY-MM-DD&to=YYYY-MM-DD Returns spend rows for the org, optionally filtered to one campaign and a date range."
+    },
+    {
+      "path": "/api/crm/coaching/overview",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "rep_id",
+        "window"
+      ],
+      "description": "GET /api/crm/coaching/overview Admin-only: per-rep leaderboard + trend. Query params: - window=20 how many recent calls to consider per rep (default 20) - rep_id=... restrict to a single rep"
+    },
+    {
+      "path": "/api/crm/coaching/reps/{repId}",
+      "module": "crm",
+      "pathParams": [
+        "repId"
+      ],
+      "queryParams": [
+        "window"
+      ],
+      "description": "GET /api/crm/coaching/reps/[repId] Per-rep trend: list of call points + computed direction + layer averages. Admin-only."
+    },
+    {
+      "path": "/api/crm/distribution",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/crm/distribution — list distribution rules for the org"
+    },
+    {
+      "path": "/api/crm/events",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "end_date",
+        "event_type",
+        "lead_id",
+        "start_date"
+      ],
+      "description": "GET /api/crm/events - calendar feed (org + ownership/market scoped)"
+    },
+    {
+      "path": "/api/crm/leads/{id}",
+      "module": "crm",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/crm/leads/[id]"
+    },
+    {
+      "path": "/api/crm/leads",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "date_from",
+        "date_to",
+        "is_archived",
+        "page",
+        "page_size",
+        "search",
+        "seats_range",
+        "sort_by",
+        "sort_order"
+      ],
+      "description": "GET /api/crm/leads - List leads (org + market scoped)"
+    },
+    {
+      "path": "/api/crm/linkedin/ad-library",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "advertiser",
+        "count",
+        "country",
+        "keyword",
+        "start"
+      ],
+      "description": "GET /api/crm/linkedin/ad-library?keyword=...&advertiser=...&country=... Competitor Ad Watch — queries LinkedIn's public Ad Library (`/rest/adLibrary`, finder `criteria`). Returns normalized public ad records for competitive research (advertiser, creative text, run dates, and — for EEA ads — the DSA targeting disclosure). Uses the org's stored OAuth token. Read-only, public data; admin-gated."
+    },
+    {
+      "path": "/api/crm/notes",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "lead_id"
+      ],
+      "description": "GET /api/crm/notes?lead_id="
+    },
+    {
+      "path": "/api/crm/outreach/campaigns",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/crm/outreach/campaigns — list all campaign outreach settings & eligible advisors"
+    },
+    {
+      "path": "/api/crm/reports/impact",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "group_by",
+        "target_win_rate",
+        "to",
+        "user_id"
+      ],
+      "description": "GET /api/crm/reports/impact Decision-maker funnel report. Returns a single comprehensive payload the CRM Reports page renders without further client-side aggregation. Query params: from=YYYY-MM-DD (required) to=YYYY-MM-DD (required) campaign_id=... (optional, repeatable) property_id=... (optional, repeatable) user_id=... (optional, single rep filter; admins only) group_by=month|week (default month"
+    },
+    {
+      "path": "/api/crm/reports",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "channel",
+        "from",
+        "property_id",
+        "to",
+        "type",
+        "user_id"
+      ],
+      "description": "GET /api/crm/reports?type=monthly|quarterly|user|property|source|status|revenue"
+    },
+    {
+      "path": "/api/crm/settings",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "scope",
+        "type"
+      ],
+      "description": "GET /api/crm/settings?type=statuses|sources|properties|meta|all"
+    },
+    {
+      "path": "/api/crm/stats",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "city",
+        "period",
+        "property_id",
+        "type",
+        "user_id"
+      ],
+      "description": "GET /api/crm/stats?type=rep|admin"
+    },
+    {
+      "path": "/api/crm/statuses",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "scope"
+      ],
+      "description": "GET /api/crm/statuses — returns all status definitions for this org"
+    },
+    {
+      "path": "/api/crm/territories",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [
+        "user_id"
+      ],
+      "description": "GET /api/crm/territories - admins see the whole team's markets; reps see their own"
+    },
+    {
+      "path": "/api/crm/tours",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/crm/views",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/crm/views — the current user's saved views for this org, in tab order."
+    },
+    {
+      "path": "/api/crm/wallpaper",
+      "module": "crm",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET — read the caller's wallpaper preference (authoritative, RLS-proof)."
+    },
+    {
+      "path": "/api/dashboard/layout",
+      "module": "dashboard",
+      "pathParams": [],
+      "queryParams": [
+        "board",
+        "org_id",
+        "organization_id"
+      ],
+      "description": "Per-user dashboard layout. GET /api/dashboard/layout?org_id=&board=ops -> { provisioned, items, ranking } PUT /api/dashboard/layout -> persist the board POST /api/dashboard/layout -> record a widget open (usage ranking) A layout is private to its owner, so authentication is the only check needed — there is no org-role gate here. What a user may actually SEE is enforced by each widget's own API, wh"
+    },
+    {
+      "path": "/api/document-bank/{id}",
+      "module": "document-bank",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "OCR field key -> document_bank column it can be applied into."
+    },
+    {
+      "path": "/api/document-bank",
+      "module": "document-bank",
+      "pathParams": [],
+      "queryParams": [
+        "category",
+        "equipment",
+        "linked_master_item_id",
+        "organization_id",
+        "property_id",
+        "q",
+        "status"
+      ],
+      "description": "GET /api/document-bank?organization_id=...&property_id=...&category=...&equipment=... &status=valid|expiring|expired&q=search+term&linked_master_item_id=... Search is a plain ILIKE across title/vendor_name/doc_number/ocr_text/equipment — matches this repo's existing search convention (app/api/search/route.ts), no tsvector."
+    },
+    {
+      "path": "/api/electricity/bills/{billId}/trail",
+      "module": "electricity",
+      "pathParams": [
+        "billId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/electricity/bills/<billId>/trail?org_id=… The immutable audit trail for one bill (SPEC-ELECTRICITY.md REQ-E-11): every workflow and payment transition, who made it, and when. Answers \"six months from now, can I prove who checked and who approved?\" Read-only by construction — electricity_bill_events revokes UPDATE/DELETE and raises on any attempt, so there is deliberately no write verb on "
+    },
+    {
+      "path": "/api/electricity/bills",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/electricity/bills \"Which electricity bills are about to cost us money by sitting still?\" Most boards on this portfolio discount an early payment and penalise a late one. Across the seven months already on file that discount is worth about Rs 1.7 lakh, of which only Rs 16,497 can be proven captured and Rs 48,150 was demonstrably paid after the date. The rest was never tracked closely enoug"
+    },
+    {
+      "path": "/api/electricity/cycle",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/electricity/cycle?org_id=… The race against the clock, plus the savings target it is being run against — one payload because the two are read together on one screen and must agree. Serves the \"Cycle\" view of the Electricity Tracker. Audience: the tracker audience (procurement, accounts, ops/org/master super admins). Read-only; no side effects."
+    },
+    {
+      "path": "/api/electricity/disputes",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id"
+      ],
+      "description": "GET /api/electricity/disputes Two audiences, one route (per the Phase 3 plan): - ELECTRICITY_ROLES (super admins, ops_super_admin, accounts, procurement) see every dispute in their org. - A property admin — deliberately NOT in ELECTRICITY_ROLES — sees only disputes assigned to them, so their response form can load its thread without exposing the rest of the spend data. Scoped branch, resolved afte"
+    },
+    {
+      "path": "/api/electricity/documents",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/electricity/documents — the Inbox review queue. Documents that need a human: parse failures (ocr_status='failed') and parsed PDFs that matched no billing account (account_id IS NULL). Matched-and-parsed documents are visible through the bills register instead. PATCH /api/electricity/documents — link a document to a billing account by hand. Re-runs the bill upsert from the stored ocr_paylo"
+    },
+    {
+      "path": "/api/electricity/pace",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "property_id"
+      ],
+      "description": "GET /api/electricity/pace \"Are we burning more power this month than last, and is anything on fire?\" Replaces the old tile that rendered a bare \"0 kWh\", which told nobody anything. Two things make that number meaningless on its own and both are handled here. 1. PARTIAL-MONTH COMPARISON. On the 2nd of the month, this month's total will always look tiny next to last month's. The only fair comparison"
+    },
+    {
+      "path": "/api/electricity/payment-runs",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "month",
+        "run_id"
+      ],
+      "description": "GET /api/electricity/payment-runs Lists payment runs for the org (?month=YYYY-MM-01 to filter), and — when ?month= is given — the month's scenario form: every 'verified' bill with its three amounts and any selection already made. Audience: all ELECTRICITY_ROLES; the *actions* on a run are gated more tightly in [id]/route.ts. POST /api/electricity/payment-runs { period_month } Creates a draft run f"
+    },
+    {
+      "path": "/api/electricity/report",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "month"
+      ],
+      "description": "GET /api/electricity/report?month=YYYY-MM On-demand download of the monthly electricity pack (Phase 5 of docs/ELECTRICITY_AUTOMATION_PLAN.md) — the same artifact the cron emails to ops_super_admins on the 5th, rendered for the month the tracker tab is looking at."
+    },
+    {
+      "path": "/api/electricity/targets",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Savings target the electricity council member runs with. GET /api/electricity/targets?org_id=… — targets + live progress POST /api/electricity/targets — set/replace the target for a period WHO MAY SET A TARGET: super admins only. A target is a commitment made of someone, so procurement and accounts (who are measured by it) can read it but cannot move the number on themselves. Enforced here, server"
+    },
+    {
+      "path": "/api/electricity/tracker",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "account_id",
+        "month",
+        "status",
+        "urgency"
+      ],
+      "description": "GET /api/electricity/tracker The Excel replacement's data source: one payload backing all four sub-views (deadlines, register, discount performance, reconciliation) plus the seasonality trend. One request rather than four so the figures are guaranteed to agree with each other on screen — the register total and the reconciliation's billed total, for instance, come from the same fetch of electricity"
+    },
+    {
+      "path": "/api/electricity/validations",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "/api/electricity/validations — the checker's review queue (Phase 2). GET bills awaiting review, each joined with its LATEST validation run (one row per run, latest wins). This is the workbench: billed vs logged units, variance badge inputs, missing-date chips. POST { billId } — re-run the validation engine for a bill (method 'manual'). PATCH { billId, note? } — checker sign-off: stamps the latest "
+    },
+    {
+      "path": "/api/electricity/variance",
+      "module": "electricity",
+      "pathParams": [],
+      "queryParams": [
+        "billId",
+        "month"
+      ],
+      "description": "/api/electricity/variance — billed-vs-logger variance, and the ticket it earns. GET ?billId=<uuid> or ?month=YYYY-MM Read-only. Returns the variance numbers off the latest stored validation run, re-judged against the meter/site tolerance. It writes nothing: no validation row, no workflow_status change, no ticket. A bill that has never been validated comes back verdict 'undetermined' / reason 'not_"
+    },
+    {
+      "path": "/api/escalation/employees",
+      "module": "escalation",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId"
+      ],
+      "description": "GET /api/escalation/employees Returns the employee pool for a given org/property. Visibility Logic: - If requester is an Org Super Admin: Sees all Org Admins + ALL property members in the organization. - If requester is NOT an Org Super Admin (e.g. Property Admin): Sees all Org Admins + ONLY members in the specified property."
+    },
+    {
+      "path": "/api/escalation/hierarchies/{id}",
+      "module": "escalation",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/escalation/hierarchies/[id]"
+    },
+    {
+      "path": "/api/escalation/hierarchies",
+      "module": "escalation",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId"
+      ],
+      "description": "GET /api/escalation/hierarchies List escalation hierarchies for an org or property Query params: organizationId, propertyId (optional)"
+    },
+    {
+      "path": "/api/feedback",
+      "module": "feedback",
+      "pathParams": [],
+      "queryParams": [
+        "limit",
+        "org_id",
+        "property_id",
+        "status",
+        "type"
+      ],
+      "description": "GET /api/feedback — List feedback tickets"
+    },
+    {
+      "path": "/api/hr-assistant/policies",
+      "module": "hr-assistant",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "All policies with their version history."
+    },
+    {
+      "path": "/api/hr-assistant",
+      "module": "hr-assistant",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "What the signed-in user may do: drives whether the floating bot (and its admin link) shows."
+    },
+    {
+      "path": "/api/hr/tickets/pending-actions",
+      "module": "hr",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/invoices/{id}",
+      "module": "invoices",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "One invoice, everything a reviewer needs side by side: the original file (signed, 10 minutes), what was read, the PO and its lines, every rule outcome (current and retired), and the audit trail."
+    },
+    {
+      "path": "/api/invoices/fast-track/{id}",
+      "module": "invoices",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "One fast-track request in full (GET), and the asker's own moves (PATCH {action: resubmit|cancel}). Evidence files come back as 10-minute signed URLs, only to people who can see the request."
+    },
+    {
+      "path": "/api/invoices/fast-track",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [
+        "view"
+      ],
+      "description": "Fast-track payment exceptions. GET ?org_id=&view=pending|to_align|invoice_pending|mine|all&page= POST {org_id, po_id, requested_amount, urgency_reason, evidence:[{upload_id, filename, purpose}]} Header Idempotency-Key: the same key never creates a second request."
+    },
+    {
+      "path": "/api/invoices/links",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [
+        "po_id"
+      ],
+      "description": "Invoice upload links (internal). GET ?org_id=&po_id= links for one PO (never the token: it is not stored) POST {org_id, po_id, expires_in_hours?} issue a link. The raw token is in THIS response and nowhere else, ever. The vendor is derived from the PO, not from the request."
+    },
+    {
+      "path": "/api/invoices/po-status",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [
+        "filter",
+        "search"
+      ],
+      "description": "\"PO Invoice Status\" — POs with whatever invoice activity each has. GET ?org_id=&page=&page_size=&search=&filter=all|has_invoice|attention|fast_track|awaiting_invoice Reads the existing PO table; nothing is copied. Links are returned WITHOUT tokens (the token is not stored, only its hash)."
+    },
+    {
+      "path": "/api/invoices/queue",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [
+        "po_id",
+        "search",
+        "view"
+      ],
+      "description": "Invoice queues. GET ?org_id=&view=review|ready|all|accepted&page=&page_size=&search= review mismatched, needs review or suspected duplicate, still open (Purchase) ready matched and waiting for Accounts to accept (Accounts) accepted reconciled all everything Scope is applied here, on the server. Hiding rows in the UI is not a control."
+    },
+    {
+      "path": "/api/invoices/settings",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Invoice Control policy. Everyone with access can read it; only org super admins and master admins can change it. Each save bumps policy_version, and every decision stores the version it was made under."
+    },
+    {
+      "path": "/api/invoices/summary",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Invoice Control — what the signed-in person may do, plus the tiles. The UI reads capabilities from here; it never works out permissions itself, and every action route re-checks them server-side regardless."
+    },
+    {
+      "path": "/api/invoices/verdict",
+      "module": "invoices",
+      "pathParams": [],
+      "queryParams": [
+        "po_id"
+      ],
+      "description": "GET /api/invoices/verdict?org_id=&po_id= What the invoice check says about one PO, for the Align screen to show BEFORE the person fills the form — the same verdict the align route enforces, so the screen and the server can never disagree. Read-only. It changes nothing and blocks nothing."
+    },
+    {
+      "path": "/api/mail-archive",
+      "module": "mail-archive",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "MAIL ARCHIVE — the roster and its health. SUPER ADMINS ONLY. GET ?org_id= each rostered mailbox: connected or not, how far back history has been read, how many emails and texts are held, last run. Counts and health only — never a message. POST ?org_id= { address, action } action: add | pause | resume. The archive holds personal work mailboxes, so this is narrower than the purchase digest: procurem"
+    },
+    {
+      "path": "/api/meeting-room-bookings",
+      "module": "meeting-room-bookings",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId",
+        "status",
+        "tenantId"
+      ],
+      "description": "GET /api/meeting-room-bookings Fetch bookings (filtered by tenant or all for admin)"
+    },
+    {
+      "path": "/api/meeting-room-credits/history",
+      "module": "meeting-room-credits",
+      "pathParams": [],
+      "queryParams": [
+        "companyId",
+        "propertyId",
+        "userId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/meeting-room-credits/refill-requests",
+      "module": "meeting-room-credits",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId",
+        "status"
+      ],
+      "description": "GET /api/meeting-room-credits/refill-requests?propertyId=&status= Admin: see all requests for property Tenant: see own requests"
+    },
+    {
+      "path": "/api/meeting-room-credits",
+      "module": "meeting-room-credits",
+      "pathParams": [],
+      "queryParams": [
+        "companyId",
+        "propertyId",
+        "userId"
+      ],
+      "description": "GET /api/meeting-room-credits?propertyId=&userId= - Tenant: get their own credits for a property - Admin: get all tenant credits for a property"
+    },
+    {
+      "path": "/api/meeting-room-slots",
+      "module": "meeting-room-slots",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/meeting-room-slots Fetch all predefined meeting room slots"
+    },
+    {
+      "path": "/api/meeting-rooms/available",
+      "module": "meeting-rooms",
+      "pathParams": [],
+      "queryParams": [
+        "capacity",
+        "date",
+        "endTime",
+        "propertyId",
+        "startTime"
+      ],
+      "description": "GET /api/meeting-rooms/available Search for available meeting rooms based on filters"
+    },
+    {
+      "path": "/api/meeting-rooms/bookable-properties",
+      "module": "meeting-rooms",
+      "pathParams": [],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "GET /api/meeting-rooms/bookable-properties?orgId= Properties in the organization that have at least one active meeting room. For HR and CRM users, who hold an org-level role and no property membership, so RLS on `properties` would hide every property from a client-side query."
+    },
+    {
+      "path": "/api/meeting-rooms/revenue",
+      "module": "meeting-rooms",
+      "pathParams": [],
+      "queryParams": [
+        "format",
+        "month",
+        "propertyId",
+        "view"
+      ],
+      "description": "GET /api/meeting-rooms/revenue?propertyId=&month=YYYY-MM[&view=clients|internal|all][&format=xlsx] Meeting room revenue for one property and one month: per client (credit hours vs exceeded hours) and per room. JSON by default, an Excel workbook with format=xlsx. The split rules live in backend/lib/meetingRooms/revenue.ts. Access: the same people who can see every booking at the property (property "
+    },
+    {
+      "path": "/api/meeting-rooms",
+      "module": "meeting-rooms",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId",
+        "property_id",
+        "status"
+      ],
+      "description": "GET /api/meeting-rooms Fetch meeting rooms for a property"
+    },
+    {
+      "path": "/api/mst/shift",
+      "module": "mst",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/organizations/{orgId}/material-requests-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "property_id"
+      ],
+      "description": "GET /api/organizations/[orgId]/material-requests-summary \"How many material requests are stuck, and how long have they been stuck.\" WHY THIS EXISTS rather than reusing GET /api/procurement/requests: that route returns every raw row with five nested joins AND awaits canUserSeePrices() once per request inside a Promise.all map — an N+1 against organization/property memberships. It is built for the p"
+    },
+    {
+      "path": "/api/organizations/{orgId}/ppm-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/organizations/[orgId]/ppm-summary Org-level preventive-maintenance compliance for the Command Center \"PPM Compliance\" card. Reads ppm_schedules directly through the Command Center access guard (cookie session or bearer token, then org/property admin membership — same pattern as /api/command-center/portfolio, which is the guard this dashboard standardised on). deliberately NOT /api/ppm/aud"
+    },
+    {
+      "path": "/api/organizations/{orgId}/roster-coverage",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/organizations/[orgId]/roster-coverage Org-level workforce coverage for the Command Center \"Workforce Coverage\" card. Guarded by the Command Center access rule (session/bearer + org or property admin membership), same as /api/command-center/portfolio. Sources — all honest, all already in the schema: scheduled staff_rosters rows for today whose shift is a working shift (shift_configurations"
+    },
+    {
+      "path": "/api/organizations/{orgId}/stock/settings",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "Same people who manage the requisition item list: procurement, org super admin, master admin. */ async function canManageStockSettings(userId: string, orgId: string): Promise<boolean> { if (await isProcurementUser(userId, orgId)) return true; const { data } = await createAdminClient() .from('users') .select('is_master_admin') .eq('id', userId) .maybeSingle(); return Boolean(data?.is_master_admin);"
+    },
+    {
+      "path": "/api/pending-actions",
+      "module": "pending-actions",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/pending-actions — the calling user's open pending actions, newest first. Powers the PendingActionsBell header badge; the realtime badge itself subscribes to the pending_actions table (RLS: recipient_id = auth.uid()) and uses this only for the initial load. PATCH — act on one of your own rows: { id, action, status? }. `action` is recorded as resolved_action (the verb the user picked, e.g. "
+    },
+    {
+      "path": "/api/petty-cash/{id}",
+      "module": "petty-cash",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/assignments",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/candidates",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [
+        "property_id",
+        "search"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/notification-deliveries",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/pending-actions",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/vision-usage",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/po-approval/settings",
+      "module": "po-approval",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Approved-PO WhatsApp settings. GET -> { has_phone, last4, auto_mode, auto_since, last_run_at, last_run_summary, can_edit } (the full number is never returned) PUT {org_id, test_phone?, auto_mode?} super admins only auto_mode: off | test | live. Turning it on from off records auto_since: only POs created after that, or seen waiting for approval by the 10-minute job, can ever be messaged."
+    },
+    {
+      "path": "/api/po-approver/po/{id}",
+      "module": "po-approver",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/po-approver/po/[id]?org_id= — what the approver needs to judge one PO: its lines with the vendor's rate on their previous PO beside each, the terms, and the raiser's note. Read-only."
+    },
+    {
+      "path": "/api/po-approver/queue",
+      "module": "po-approver",
+      "pathParams": [],
+      "queryParams": [
+        "page",
+        "search"
+      ],
+      "description": "GET /api/po-approver/queue?org_id=&page=&search= — POs waiting for approval, oldest first, plus whether THIS approver has linked their Zoho account. Org super admin only. Read-only."
+    },
+    {
+      "path": "/api/po-schedule/due",
+      "module": "po-schedule",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Milestones Purchase has marked due, across the org: what Accounts needs to raise and align. GET ?org_id="
+    },
+    {
+      "path": "/api/po-schedule",
+      "module": "po-schedule",
+      "pathParams": [],
+      "queryParams": [
+        "po_id"
+      ],
+      "description": "A PO's payment schedule. GET ?org_id=&po_id= the saved schedule, or (when none is saved) the reader's PROPOSAL from the PO's terms text. Nothing is written by a GET. PUT {org_id, po_id, milestones[], confirm, source} save it as a draft, or confirm it. The percentages must add to 100. A confirmed schedule is Purchase vouching for it. It never creates a payment."
+    },
+    {
+      "path": "/api/ppm/reports",
+      "module": "ppm",
+      "pathParams": [],
+      "queryParams": [
+        "from_date",
+        "organization_id",
+        "property_id",
+        "to_date"
+      ],
+      "description": "GET /api/ppm/reports?organization_id=&property_id=&from_date=YYYY-MM-DD&to_date=YYYY-MM-DD"
+    },
+    {
+      "path": "/api/ppm/schedules",
+      "module": "ppm",
+      "pathParams": [],
+      "queryParams": [
+        "month",
+        "organization_id",
+        "property_id",
+        "year"
+      ],
+      "description": "GET /api/ppm/schedules?organization_id=&property_id=&month=3&year=2026 Returns all PPM schedules for a given month."
+    },
+    {
+      "path": "/api/procurement/activity",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/budgets",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/catalog",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId"
+      ],
+      "description": "─── GET — list catalog items ───────────────────────────────────────────────── Price is returned as null for non-procurement users"
+    },
+    {
+      "path": "/api/procurement/feedback",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "hasIssues",
+        "has_issues",
+        "month",
+        "organizationId",
+        "organization_id",
+        "propertyId",
+        "property_id",
+        "year"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/mailbox/summary",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "limit"
+      ],
+      "description": "GET /api/procurement/mailbox/summary \"Who is waiting on the purchase team, and how long have they been waiting.\" Reads through the service role behind resolveMailboxAccess rather than letting the browser query mailbox_threads directly, so the procurement/super-admin restriction is enforced in one place regardless of what the RLS policy happens to allow. ?from=<substring> filters to one counterpart"
+    },
+    {
+      "path": "/api/procurement/requests",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "floor",
+        "floorNumber",
+        "floor_number",
+        "organizationId",
+        "propertyId",
+        "ticketId"
+      ],
+      "description": "Note: Email to Assignee is handled asynchronously via the Event Outbox (Supabase Database Trigger on material_requests -> event_outbox -> webhook -> EventProcessor)"
+    },
+    {
+      "path": "/api/procurement/requisitions/{id}/deliveries",
+      "module": "procurement",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "Delivery challans for an approved monthly requisition. GET - what was ordered, what has arrived so far, and every challan uploaded. POST - a property admin uploads a challan and the received quantity per item; confirm_requisition_delivery() adds it to stock in one transaction. Items are matched to stock by the catalog item id each requisition line was created from (row id 'cat-<catalog id>'), neve"
+    },
+    {
+      "path": "/api/procurement/requisitions/approvers",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/requisitions/drafts",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/requisitions/reapproval",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Replace the comparison file procurement attached when sending requisitions for approval. GET ?organization_id&batch_id | requisition_id - the sites the new file would apply to. POST form: organization_id, batch_id | requisition_id, quote_file (required), note, target_approver_id - every Pending / Rejected / Approved site in the batch gets the new file and goes back to Pending Approval. PO issued s"
+    },
+    {
+      "path": "/api/procurement/settings",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/tickets",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/users",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/checklist-settings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/facility-meters",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/facility-readings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "categoryId",
+        "month"
+      ],
+      "description": "GET readings for a specific month and meter group"
+    },
+    {
+      "path": "/api/properties/{propertyId}/features",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/properties/[propertyId]/features Fetch all feature flags for a specific property"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/report",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "date",
+        "templateId"
+      ],
+      "description": "GET /api/properties/[propertyId]/sop/report?templateId=...&date=YYYY-MM-DD Generates a CSV report in the matrix format: Items × Time Slots. Each cell shows ✓ (done by whom) or ✗ (missed)."
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/templates/{templateId}/cad/areas",
+      "module": "properties",
+      "pathParams": [
+        "propertyId",
+        "templateId"
+      ],
+      "queryParams": [],
+      "description": "PUT /api/properties/[propertyId]/sop/templates/[templateId]/cad/areas Save CAD areas with step linkages for a template."
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/settings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "Which stock list this property uses, and whether it has an old list worth showing. Read with the caller's client, so RLS decides who may see it."
+    },
+    {
+      "path": "/api/properties/{propertyId}/tenants",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/properties/[propertyId]/tenants Returns all users with 'tenant' role in the property. Only accessible by admins/staff of that property."
+    },
+    {
+      "path": "/api/properties/{propertyId}/vendor-summary",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET /api/properties/[propertyId]/vendor-summary Property-level vendor revenue summary. Uses supabaseAdmin to bypass RLS. Query params: period = 'today' | 'month' | 'all'"
+    },
+    {
+      "path": "/api/properties/{propertyId}/vms-summary",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET /api/properties/[propertyId]/vms-summary Property-level visitor summary. Uses supabaseAdmin to bypass visitor_logs RLS. Query params: period = 'today' | 'month' | 'all'"
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/import-template",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/reliability/contests",
+      "module": "reliability",
+      "pathParams": [],
+      "queryParams": [
+        "org_id",
+        "scope"
+      ],
+      "description": "Contesting a reliability strike (SPEC-ELECTRICITY.md REQ-E-06, condition 2). GET /api/reliability/contests — mine, or the org's open queue for reviewers POST /api/reliability/contests — the employee contests one strike PATCH /api/reliability/contests — a super admin upholds or overturns it WHY THIS ROUTE IS NOT UNDER /api/electricity The strike is written by the electricity chase today, but a reli"
+    },
+    {
+      "path": "/api/reports/app-usage",
+      "module": "reports",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "to"
+      ],
+      "description": "── Date helpers (IST calendar days, YYYY-MM-DD strings) ─────────────────────"
+    },
+    {
+      "path": "/api/reports/requests-report",
+      "module": "reports",
+      "pathParams": [],
+      "queryParams": [
+        "endDate",
+        "month",
+        "propertyId",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/reports/snag-report/{importId}",
+      "module": "reports",
+      "pathParams": [
+        "importId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/reports/task-manager-usage",
+      "module": "reports",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "to"
+      ],
+      "description": "GET /api/reports/task-manager-usage?orgId=<uuid>&from=YYYY-MM-DD&to=YYYY-MM-DD The numbers behind the Task Manager Usage Report, for the preview in the Report tab. Org super admins only."
+    },
+    {
+      "path": "/api/reports/task-manager-usage/saved/{id}",
+      "module": "reports",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/reports/task-manager-usage/saved/<id>?orgId=<uuid> A 10-minute download link for a saved report in the caller's organisation. Org super admins only."
+    },
+    {
+      "path": "/api/reports/task-manager-usage/saved",
+      "module": "reports",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/reports/task-manager-usage/saved?orgId=<uuid> Past reports for the Saved reports list, newest first. Org super admins only."
+    },
+    {
+      "path": "/api/reports/task-manager-usage/schedule",
+      "module": "reports",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET /api/reports/task-manager-usage/schedule?orgId=<uuid> PUT /api/reports/task-manager-usage/schedule { organization_id, schedule } The report schedule set in the Report tab. Org super admins only. `provisioned: false` means the migration has not been run yet."
+    },
+    {
+      "path": "/api/satej/faq",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "The FAQ page in the Meera console: the answers Meera may give vendors. GET ?organizationId= → entries, the section as Meera will read it, canPublish POST { organizationId, action:'create', entry } → new draft POST { organizationId, action:'update', id, entry } → edit; approving or archiving needs publish rights POST { organizationId, action:'publish' } → write the approved answers into Meera's liv"
+    },
+    {
+      "path": "/api/satej/inbox",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "Quote requests from the purchase@ inbox, for Meera. GET ?organizationId= → colleagues' asks for vendor quotes, last 30 days POST { organizationId, action:'draft', threadId } → a pre-filled requirement form from that email Nothing is started from here: the person reviews the draft and submits it."
+    },
+    {
+      "path": "/api/satej/requirements/{id}/messages",
+      "module": "satej",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "The conversation with Meera on one requirement. GET ?organizationId= → every message, oldest first POST { organizationId, text } → the person's message and Meera's reply (with any proposal)"
+    },
+    {
+      "path": "/api/satej/requirements/{id}",
+      "module": "satej",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "format",
+        "organizationId"
+      ],
+      "description": "One Meera requirement. GET ?organizationId= → requirement, vendors, calls and the copyable summary GET ?organizationId=&format=csv → the exact CSV Bolna receives POST { organizationId, action, answers?, changes?, vendorId? } → answer | edit | exclude_vendor | approve_calls | resend_whatsapp | reanalyze | again | retry | cancel"
+    },
+    {
+      "path": "/api/satej/requirements",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "Meera requirements. GET ?organizationId= → the organisation's requirements, newest first POST { organizationId, ...form } → raise a requirement; Meera starts on it straight after the response"
+    },
+    {
+      "path": "/api/satej/setup",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "GET ?organizationId= → is Meera ready to run end to end on this server? The Meera page shows this, so a missing key or an unmapped webhook is named on screen instead of surfacing as a requirement that silently never moves. Names only — no value of any setting is ever returned."
+    },
+    {
+      "path": "/api/satej/stats",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "GET ?organizationId= → headline numbers for the Meera overview. Read-only. Everything here is counted from what actually happened: · calls made / connected / quotes, from satej_calls (real call rows, rehearsal/test calls left out so the desk sees vendor outreach only); · qualified vendors and the campaign counts, from satej_requirements. Week-on-week deltas compare the last 7 days with the 7 befor"
+    },
+    {
+      "path": "/api/satej/voice",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "Meera's caller script in the Meera console. GET ?organizationId= → live script, greeting preview, versions, last 7 days of calls POST { organizationId, action:'suggest', welcome, prompt, feedback, transcripts? } → a revision to review POST { organizationId, action:'publish', welcome, prompt, note? } → push to Bolna (admins)"
+    },
+    {
+      "path": "/api/shared-files",
+      "module": "shared-files",
+      "pathParams": [],
+      "queryParams": [
+        "parent_id"
+      ],
+      "description": "Owner 2026-10-29: the \"Files\" tab of the Design and Tech consoles — one shared drive per organisation. `?organization_id=...&team=design|tech`: the signed-in person must hold that role in that organisation. GET &parent_id=... what is in a folder (none = top level) + the path to it POST { action, ... } create_folder { name, parentId } new folder upload_url { name, size, mimeType, parentId } one-tim"
+    },
+    {
+      "path": "/api/staff/check-in",
+      "module": "staff",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/super-tenant",
+      "module": "super-tenant",
+      "pathParams": [],
+      "queryParams": [
+        "user_id"
+      ],
+      "description": "GET /api/super-tenant?user_id=<uuid> Returns the list of properties assigned to a super tenant. Master admins can query any user; super tenants can only query themselves."
+    },
+    {
+      "path": "/api/task-manager/access",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "Step 3 — Task Manager access control. GET /api/task-manager/access?orgId= → departments (ON/OFF) with each member's onboarding status POST /api/task-manager/access?orgId= → { action: 'set_department' | 'record_kickoff' | 'remove_kickoff', ... } 'record_kickoff' is the MANUAL record (\"I sent the kickoff outside the system\"). It sends NOTHING. Requires a signed-in organisation admin (or master admin"
+    },
+    {
+      "path": "/api/task-manager/ai-models",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "Owner 2026-10-28 — Control Center → \"AI models\" (Tech team only, like every Control Center action). GET ?orgId= each Task Manager job with today's / saved / effective models, every model with its status for each job, which API keys are set (names only), and the read-only list of every AI model in the project. POST ?orgId= { action: 'save', job, models: string[] | null } (null = back to today's mod"
+    },
+    {
+      "path": "/api/task-manager/attachments",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "requestId",
+        "taskId"
+      ],
+      "description": "Owner 2026-10-26: files on a task. GET /api/task-manager/attachments?taskId=… the task's files, each with a link that works for 10 minutes POST /api/task-manager/attachments (form: file, taskId — repeat taskId to list one file on several tasks) GET ?requestId=… / POST (form: file, requestId) owner 2026-10-26: files sent with a support request DELETE ?id=… owner 2026-10-27: remove a file attached b"
+    },
+    {
+      "path": "/api/task-manager/bot-learning",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "before",
+        "limit",
+        "orgId"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/collaboration",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Owner 2026-10-26: cross-department collaboration (the Send tab's \"Other departments\"). GET /api/task-manager/collaboration people in other departments + what I sent + what was asked of me POST { action: 'send' | 'respond' | 'remind' | 'clear_sent' | 'check_duplicate', ... } WHO is acting always comes from the signed-in session; the request body can never name the actor."
+    },
+    {
+      "path": "/api/task-manager/dashboard",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "date",
+        "department",
+        "search",
+        "status"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/department-rules",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "department"
+      ],
+      "description": "Step 6 — a team manages its own Task Manager notifications. GET /api/task-manager/department-rules[?department=Procurement] POST /api/task-manager/department-rules { action: 'save' | 'delete' | 'preview', ... } WHO is acting always comes from the signed-in session; the body can never name the actor or the department (only a superuser may name a department by label). A person can only ever reach ru"
+    },
+    {
+      "path": "/api/task-manager/manager-role",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/meetings/{id}",
+      "module": "task-manager",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "Owner 2026-10-29: one meeting of the Meeting Assistant. `?space=` (one of MEETING_SPACES): the person needs that space's role, and the meeting must belong to that space. A confidential meeting is only for the person who started it. GET the meeting, its transcript, notes and task list. While it is processing, each GET also moves it forward one step (the review screen polls this). POST { action, ..."
+    },
+    {
+      "path": "/api/task-manager/meetings",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "Owner 2026-10-29: the Meeting Assistant. `?space=` = which dashboard (one of MEETING_SPACES); each has its own meetings and only its own roles get in (requireMeetingSpace). GET meetings in this space I can see + everyone in the Task Manager (for \"who was present\") POST { title, attendeeIds, extraNames, confidential } start a new meeting in this space → { id } WHO is acting always comes from the si"
+    },
+    {
+      "path": "/api/task-manager/personal-rules",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "A superuser's own Task Manager notifications (sent only to them). GET /api/task-manager/personal-rules POST /api/task-manager/personal-rules { action: 'save' | 'delete' | 'preview', ... } WHO is acting always comes from the signed-in session; the body can never name the person. Superusers only. Nothing here sends a message: 'preview' is a simulation that writes nothing."
+    },
+    {
+      "path": "/api/task-manager/progress",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "actorId",
+        "carry",
+        "departmentId",
+        "employeeId",
+        "level"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/superuser-pings",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "recipientId"
+      ],
+      "description": "Working with a superuser — the Tasks tab's \"superuser\" view. GET /api/task-manager/superuser-pings[?recipientId=] → his tasks from this team, my open tasks, pings, the team's reminder POST /api/task-manager/superuser-pings { action: 'send' | 'cancel' | 'save_reminder', ... } WHO is acting always comes from the signed-in session; the body can never name the actor. Every rule (the team's switch, whi"
+    },
+    {
+      "path": "/api/task-manager/tasks",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "actorId",
+        "departmentId",
+        "employeeId",
+        "status"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/testing-config",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "eventType",
+        "limit"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/task-manager/voice",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "LiveVoice ID (owner 2026-11-02): \"My voice\" in Settings. ANY signed-in person may set up, replace or delete their OWN voice; nobody can do it for someone else (the person always comes from the session, never from the request). GET my voice (set up or not), the voice server's state, and whether meetings I start use voices POST { clips: [base64 audio x 3], consent: true, consentVersion } make my voi"
+    },
+    {
+      "path": "/api/task-manager/workspace",
+      "module": "task-manager",
+      "pathParams": [],
+      "queryParams": [
+        "date",
+        "department",
+        "from",
+        "scope",
+        "to"
+      ],
+      "description": "Step 5 — the Procurement \"Tasks\" tab. GET /api/task-manager/workspace?date=YYYY-MM-DD[&department=Procurement] GET /api/task-manager/workspace?scope=console (superusers: my tasks + tasks I gave, all departments) GET /api/task-manager/workspace?scope=assigned&from=&to= (\"Assigned by me\") POST /api/task-manager/workspace { action: 'assign' | 'assign_many' | 'check_duplicates' | 'set_status' | 'hand_"
+    },
+    {
+      "path": "/api/tickets/{id}/assets",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/tickets/[id]/assets — assets logged against this ticket (for the \"Asset worked on\" card in the ticket detail view — every role can read it)."
+    },
+    {
+      "path": "/api/tickets/{id}/attachments",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "Owner 2026-11-03: files on a request (ticket). GET /api/tickets/[id]/attachments the request's files, each with a link that works for 10 minutes POST /api/tickets/[id]/attachments (form: file) attach one file (PDF, Word, Excel, PNG/JPG/WEBP; 10 MB; 5 per request) DELETE /api/tickets/[id]/attachments?attachmentId=… remove a file (only whoever attached it) WHO is acting always comes from the signed-"
+    },
+    {
+      "path": "/api/tickets/{id}/comments",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "POST /api/tickets/[id]/comments Add a comment to a ticket / export async function POST( request: NextRequest, { params }: { params: Promise<{ id: string }> } ) { try { const { id: ticketId } = await params; const supabase = await createClient(); Use getUser() for security, but handle it gracefully const { data: { user }, error: authError } = await supabase.auth.getUser(); if (authError || !user) {"
+    },
+    {
+      "path": "/api/tickets/{id}/photos",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/tickets/[id]/photos Returns the current before/after photo URLs for a ticket"
+    },
+    {
+      "path": "/api/tickets/{id}/videos",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/tickets/[id]/videos Returns the current before/after video URLs for a ticket"
+    },
+    {
+      "path": "/api/tickets/filter-options",
+      "module": "tickets",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "organization_id",
+        "propertyId",
+        "property_id"
+      ],
+      "description": "GET /api/tickets/filter-options Returns distinct creators and assignees for a given property or org. Uses LIMIT to avoid scanning unbounded ticket tables."
+    },
+    {
+      "path": "/api/tickets/flow",
+      "module": "tickets",
+      "pathParams": [],
+      "queryParams": [
+        "date",
+        "organization_id",
+        "property_id"
+      ],
+      "description": "GET /api/tickets/flow Returns tickets grouped by state and MST identity for operational flow visualization (V2)"
+    },
+    {
+      "path": "/api/tickets/mention-users",
+      "module": "tickets",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId",
+        "search"
+      ],
+      "description": "GET /api/tickets/mention-users?propertyId=xxx&organizationId=yyy&search=zzz Returns active users available for @mention and assignment in a ticket. Uses admin client to bypass client RLS restrictions while ensuring caller is authenticated."
+    },
+    {
+      "path": "/api/tickets/mst",
+      "module": "tickets",
+      "pathParams": [],
+      "queryParams": [
+        "department",
+        "dept",
+        "propertyId",
+        "property_id",
+        "view"
+      ],
+      "description": "GET /api/tickets/mst MST-specific ticket views: - view=my_active: Current user's active ticket (in_progress, not paused) - view=department: Tickets by department (technical, soft_services, vendor) - view=all: All property tickets (read-only) - view=load: MST workload data for the property"
+    },
+    {
+      "path": "/api/tickets",
+      "module": "tickets",
+      "pathParams": [],
+      "queryParams": [
+        "assignedTo",
+        "dateFrom",
+        "dateTo",
+        "floor",
+        "floorNumber",
+        "floor_number",
+        "isInternal",
+        "limit",
+        "materialsRequired",
+        "offset",
+        "organizationId",
+        "organization_id",
+        "period",
+        "propertyId",
+        "property_id",
+        "raisedBy",
+        "raisedByRole",
+        "raised_by",
+        "search",
+        "skillGroup",
+        "slaBreached",
+        "status"
+      ],
+      "description": "GET /api/tickets Fetch tickets with filters. Supports both cookie-based auth (web) and Bearer token auth (mobile)."
+    },
+    {
+      "path": "/api/users/list",
+      "module": "users",
+      "pathParams": [],
+      "queryParams": [
+        "orgId",
+        "propertyId"
+      ],
+      "description": "GET /api/users/list?orgId=xxx&propertyId=yyy Fetch all users for an organization or property. Uses admin client to bypass RLS so org_super_admins can see all users."
+    },
+    {
+      "path": "/api/vendors/maintenance",
+      "module": "vendors",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id",
+        "property_id",
+        "user_id"
+      ],
+      "description": "GET /api/vendors/maintenance?organization_id=X[&property_id=Y]"
+    },
+    {
+      "path": "/api/vms-face/{propertyId}/hosts",
+      "module": "vms-face",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "limit",
+        "q"
+      ],
+      "description": "GET /api/vms-face/[propertyId]/hosts Searchable list of hosts (active property members) for the VMS Face (testing) check-in form."
+    },
+    {
+      "path": "/api/vms-face/{propertyId}",
+      "module": "vms-face",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "date",
+        "search",
+        "status"
+      ],
+      "description": "GET: List visitors for a property"
+    },
+    {
+      "path": "/api/whatsapp-assistant/settings",
+      "module": "whatsapp-assistant",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "view"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/workflows/spoc",
+      "module": "workflows",
+      "pathParams": [],
+      "queryParams": [
+        "domain",
+        "level",
+        "propertyId",
+        "property_id",
+        "resolve",
+        "stage"
+      ],
+      "description": "GET /api/workflows/spoc — list rules for a scope. ?domain=…&property_id=… (property_id=none limits to org-wide rules) ?resolve=1&domain=&stage=[&level=] additionally returns the resolved notify list."
+    }
+  ],
+  "excluded": [
+    {
+      "path": "/api/accounts/po/{id}/pdf",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/admin/issue-config",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/issue-config/seed",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/metrics",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/modules",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/properties",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/storage",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/admin/usage-dashboard",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/admin/usage-metrics",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/admin/whatsapp/analytics",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/agents/mail/callback",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/agents/mail/connect",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/agents/prompt",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/agents/registry",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/aop/export",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/assets/scan/{token}",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/assets/template",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/attendance/essl/raw",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/audit/master",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/audit/submissions",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/auth/callback",
+      "reason": "blocked area \"auth\""
+    },
+    {
+      "path": "/api/auth/property-access",
+      "reason": "blocked area \"auth\""
+    },
+    {
+      "path": "/api/auth/zoho/callback",
+      "reason": "blocked area \"auth\""
+    },
+    {
+      "path": "/api/auth/zoho",
+      "reason": "blocked area \"auth\""
+    },
+    {
+      "path": "/api/council/export",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/crm/campaigns",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/crm/import",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/crm/oauth/linkedin/callback",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/crm/oauth/linkedin",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/crm/outreach/test",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/crm/webhooks/meta",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/cron/agent-heartbeat",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/amc-expiry-alerts",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/aop-bounty",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/asset-alerts",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/bot-autotune",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/candidate-indexing",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-diesel",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-escalation",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-sla",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-sop-missed",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-sop-reminders",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/check-vendor-revenue-reminders",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/cleanup-whatsapp-sessions",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/council-convene",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/crm/lead-sla-check",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/daily-whatsapp-report",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/electricity-chase",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/electricity-monthly-report",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/electricity-validate",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/enrich-vendor-compliance",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/generate-sop-slots",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/generate-stock-reports",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/hr-sla-check",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/hr-sla-escalation",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/ira-digest",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/mail-archive",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/meeting-room-reminders",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/ocr-heartbeat",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/po-approval-watch",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/po-status-refresh",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/ppm-reminders",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/process-petty-cash-deliveries",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/process-whatsapp-queue",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/reset-meeting-credits",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/satej-benchmark",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/satej-worker",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sweep-outbox",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-electricity-mailbox",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-ira-replies",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-linkedin",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-meta-insights",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-meta-leads",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-po-line-items",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-purchase-mailbox",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-vendor-compliance",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/sync-zoho-books",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/task-manager-report",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/task-manager",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/vms-face-retention",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/voice-id-keepalive",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/whatsapp-assistant",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/whatsapp-reminders",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/whatsapp-watchdog",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/cron/wiki-compile",
+      "reason": "blocked area \"cron\""
+    },
+    {
+      "path": "/api/diag",
+      "reason": "blocked area \"diag\""
+    },
+    {
+      "path": "/api/document-bank/{id}/download",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/document-bank/download",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/electricity/files",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/email-actions/{token}",
+      "reason": "blocked area \"email-actions\""
+    },
+    {
+      "path": "/api/hr-assistant/versions/{id}/download",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/hr/admin/categories",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/admin/employees",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/admin/escalation-config",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/admin/reconcile",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/notes",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/tickets/{id}/comments",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/tickets/{id}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/hr/tickets",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/internal/cleanup-empty-sheets",
+      "reason": "blocked area \"internal\""
+    },
+    {
+      "path": "/api/internal/heal-meters",
+      "reason": "blocked area \"internal\""
+    },
+    {
+      "path": "/api/internal/inspect-meters",
+      "reason": "blocked area \"internal\""
+    },
+    {
+      "path": "/api/internal/issue-logs/{id}",
+      "reason": "blocked area \"internal\""
+    },
+    {
+      "path": "/api/internal/issue-logs",
+      "reason": "blocked area \"internal\""
+    },
+    {
+      "path": "/api/invite-links/generate",
+      "reason": "blocked area \"invite-links\""
+    },
+    {
+      "path": "/api/invoice-upload/{token}",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/invoices/files",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/ira/daily-digest",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/ira/procurement-digest",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/ira/vendor-outreach",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/meetings/{id}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/meetings/agent",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/meetings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/org-efficiency/agents",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/org-efficiency/goals",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/org-efficiency/measurements",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/org-efficiency/meter",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/org-efficiency/tasks",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/diesel-readings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/diesel-summary",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/electricity-meters",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/electricity-readings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/generators",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/stock/reports",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/tickets-summary",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/vendor-summary",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/organizations/{orgId}/vms-summary",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/petty-cash/context",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/petty-cash/documents/{docId}/download",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/petty-cash/expenses",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/petty-cash",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/petty-cash/tracker",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/petty-cash/wallet",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/po-approver/callback",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/po-approver/connect",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/ppm/audit",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/ppm/debug",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/proctor/attempts/{id}/evidence/{file}",
+      "reason": "blocked area \"proctor\""
+    },
+    {
+      "path": "/api/proctor/attempts/{id}/report",
+      "reason": "blocked area \"proctor\""
+    },
+    {
+      "path": "/api/proctor/tests/{id}",
+      "reason": "blocked area \"proctor\""
+    },
+    {
+      "path": "/api/proctor/tests",
+      "reason": "blocked area \"proctor\""
+    },
+    {
+      "path": "/api/procurement/aliases",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/procurement/catalog/template",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/procurement/pricing",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/procurement/requisitions/{id}/export",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/procurement/requisitions/{id}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/procurement/requisitions/budgets",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/procurement/requisitions/export-all",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/procurement/requisitions",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/approvers",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/dg-tariffs",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/diesel-export",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/diesel-readings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-export",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-meters",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-readings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/generators",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/grid-tariffs",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/meter-multipliers",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/completions/{completionId}",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/completions",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/templates/{templateId}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/templates",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items/{itemId}/barcode",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items/{itemId}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/movements",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/reports",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/ticket-config",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/utilities-analytics",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/vendor-export",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/properties/{propertyId}/vendor-revenue",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/vendors",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/export",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/readings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/sources",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/properties",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/public/proctor/{token}",
+      "reason": "blocked area \"public\""
+    },
+    {
+      "path": "/api/public/zone-info",
+      "reason": "blocked area \"public\""
+    },
+    {
+      "path": "/api/resolvers/workload",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/roster/config",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/roster/export",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/roster",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/satej/rates",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/satej/voice/recording",
+      "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/search",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/shared-files/{id}/download",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/storage/{path}",
+      "reason": "blocked area \"storage\""
+    },
+    {
+      "path": "/api/task-manager/cron/daily-tasks",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/task-manager/cron/morning-notifications",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/task-manager/zoho/callback",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/task-manager/zoho/connect",
+      "reason": "file, OAuth or public-token route"
+    },
+    {
+      "path": "/api/task-manager/zoho",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/test-mcp",
+      "reason": "blocked area \"test-mcp\""
+    },
+    {
+      "path": "/api/tickets/{id}/activity",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/tickets/{id}",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/users/profile",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/users/reset-password",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vendors/{vendorId}/commission-cycles",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vendors/maintenance/{vendorId}",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/vendors/maintenance/me",
+      "reason": "GET path may write data"
+    },
+    {
+      "path": "/api/vms-face/org/{orgId}/profiles",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vms-face/org/{orgId}/settings",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vms/{propertyId}/hosts",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vms/{propertyId}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/vms/org/{orgId}",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/voice/analytics",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/voice/download-audio",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/voice/logs",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/voice/plivo-answer",
+      "reason": "no visible sign-in check"
+    },
+    {
+      "path": "/api/webhooks/aisensy",
+      "reason": "blocked area \"webhooks\""
+    },
+    {
+      "path": "/api/wiki",
+      "reason": "GET path may write data"
+    }
+  ]
+}
