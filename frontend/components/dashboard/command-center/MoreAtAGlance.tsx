@@ -6,6 +6,7 @@ import { Zap, UserCheck, Store } from 'lucide-react';
 import { useWidgetData, inr } from '@/frontend/lib/dashboard/useWidgetData';
 import { buildNavMap } from './navMap';
 import OrgProgressCard from './OrgProgressCard';
+import TaskOrgProgressCard from './TaskOrgProgressCard';
 import SourceTag from './SourceTag';
 import { CardSkeleton, CardEmpty, fetchErrorReason } from './CardStates';
 
@@ -29,6 +30,9 @@ import { CardSkeleton, CardEmpty, fetchErrorReason } from './CardStates';
  * which is why these cards cannot repeat the Row-1 race where a card rendered a fetch
  * error for a request that was never issued.
  */
+
+// Organization Progress shows the Task Manager gauge; false = the old goals-based (Org Efficiency Meter) card.
+const USE_TASK_ORG_PROGRESS = true;
 
 const figure: React.CSSProperties = {
   fontFamily: 'var(--font-display)',
@@ -76,12 +80,14 @@ function GlanceCard({
     <section className="cc-card" style={{ padding: '14px 16px' }}>
       <div className="cc-card-head" style={{ marginBottom: 10, gap: 8 }}>
         <span className={`cc-chip ${chipClass}`}>{icon}</span>
-        <span className="cc-title" style={{ whiteSpace: 'nowrap' }}>{title}</span>
+        <span className="cc-title" title={title} style={{ whiteSpace: 'nowrap', minWidth: 0 }}>{title}</span>
         <span className="cc-head-meta">{tag}</span>
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>{children}</div>
       {footer ? (
         <div
+          // cc-foot: wraps the button under the label instead of past the card edge.
+          className="cc-foot"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -351,15 +357,17 @@ export default function MoreAtAGlance({ orgId }: { orgId: string | null }) {
   return (
     <section>
       <div
+        // Columns come from .cc-band-glance (container query on .cc-board); it also
+        // gives the first card (Org Progress) its double width.
+        className="cc-band-glance"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
           gap: 'var(--cc-gap, 16px)',
           alignItems: 'stretch',
         }}
       >
         {/* Two columns: it carries a dial and a five-row legend, the rest carry one figure. */}
-        <OrgProgressCard orgId={orgId} />
+        {USE_TASK_ORG_PROGRESS ? <TaskOrgProgressCard orgId={orgId} /> : <OrgProgressCard orgId={orgId} />}
         <ElectricityBillsCard orgId={orgId} />
         <VisitorsCard orgId={orgId} />
         <VendorRevenueCard orgId={orgId} />

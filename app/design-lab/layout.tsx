@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { Inter, Geist, Manrope, Plus_Jakarta_Sans, Playfair_Display, Sora } from 'next/font/google';
 
 /**
  * Design Lab: a side-by-side preview of six candidate UI directions for the FMS web app.
@@ -7,22 +6,21 @@ import { Inter, Geist, Manrope, Plus_Jakarta_Sans, Playfair_Display, Sora } from
  * waits on a font request.
  */
 
-const inter = Inter({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-lab-inter', display: 'swap' });
-const geist = Geist({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-lab-geist', display: 'swap' });
-const manrope = Manrope({ subsets: ['latin'], weight: ['500', '600', '700', '800'], variable: '--font-lab-manrope', display: 'swap' });
-const jakarta = Plus_Jakarta_Sans({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800'], variable: '--font-lab-jakarta', display: 'swap' });
-const playfair = Playfair_Display({ subsets: ['latin'], weight: ['500', '600', '700'], variable: '--font-lab-playfair', display: 'swap' });
-const sora = Sora({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-lab-sora', display: 'swap' });
-
 export const metadata: Metadata = {
     title: 'Design Lab | Autopilot',
     description: 'Compare six UI design directions for the facility management web app.',
 };
 
+/** Font stacks by family name; next/font is not used here (see the build fix on main). */
+const FONT_VARS = {
+    '--font-lab-inter': '"Inter", system-ui, sans-serif',
+    '--font-lab-geist': '"Geist", system-ui, sans-serif',
+    '--font-lab-manrope': '"Manrope", system-ui, sans-serif',
+    '--font-lab-jakarta': '"Plus Jakarta Sans", system-ui, sans-serif',
+    '--font-lab-playfair': '"Playfair Display", Georgia, "Times New Roman", serif',
+    '--font-lab-sora': '"Sora", system-ui, sans-serif',
+} as React.CSSProperties;
+
 export default function DesignLabLayout({ children }: { children: React.ReactNode }) {
-    return (
-        <div className={`${inter.variable} ${geist.variable} ${manrope.variable} ${jakarta.variable} ${playfair.variable} ${sora.variable}`}>
-            {children}
-        </div>
-    );
+    return <div style={FONT_VARS}>{children}</div>;
 }

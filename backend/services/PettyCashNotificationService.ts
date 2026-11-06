@@ -3,11 +3,13 @@ import { pcEventDefinition,pcNotificationPayload } from '@/backend/lib/pettyCash
 import { effectivePcRule,type PcChannel } from '@/backend/lib/pettyCash/notificationRules';
 import { pcNotificationVariables,renderPcNotification } from '@/backend/lib/pettyCash/notificationRendering';
 import { EmailService } from './EmailService';
+import { NotificationService } from './NotificationService';
 import { AiSensyService } from './AiSensyService';
 type PcOutboxEvent={id:string;entity_id:string;event_type:string;payload:unknown};
 type Recipient={id:string;full_name:string|null;email:string|null;phone:string|null};
 type Delivery={id:string;event_id:string;organization_id:string;request_id:string;recipient_id:string;channel:PcChannel;destination:string;attempt_count:number;lease_token:string};
 const normalizeDestination=(user:Recipient,channel:PcChannel)=>{
+    if(channel==='push')return user.id;
     if(channel==='email'){const email=user.email?.trim().toLowerCase()||'';return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:null;}
     let phone=user.phone?.replace(/\D/g,'')||'';if(phone.length===10)phone='91'+phone;return /^\d{11,15}$/.test(phone)?phone:null;
 };
@@ -60,7 +62,7 @@ export const PettyCashNotificationService={
                 if(row.channel==='whatsapp'&&!rendered.campaign){await finish('skipped','Campaign parameter signature does not match approved template');continue;}
                 const claim=checked(await supabaseAdmin.from('petty_cash_notification_deliveries').update({status:'sending',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','processing').eq('lease_token',row.lease_token).select('id').maybeSingle());if(!claim)continue;
                 providerStarted=true;
-                const result=row.channel==='email'?await EmailService.sendTransactionalEmail({to:row.destination,subject:rendered.subject,html:rendered.html,text:rendered.text,idempotencyKey:row.id}):await AiSensyService.sendTemplate({phone:row.destination,campaignName:rendered.campaign!,templateParams:rendered.params,userName:user.full_name||'User'});
+                const result=row.channel==='push'?await NotificationService.sendOutboxPush({deliveryId:row.id,userId:user.id,organizationId:current.p.organization_id,propertyId:current.p.property_id,type:event.event_type,title:current.definition.name,message:`${current.p.request_no} · ${property.name}: ${current.definition.nextAction}`,deepLink:vars.request_url}):row.channel==='email'?await EmailService.sendTransactionalEmail({to:row.destination,subject:rendered.subject,html:rendered.html,text:rendered.text,idempotencyKey:row.id}):await AiSensyService.sendTemplate({phone:row.destination,campaignName:rendered.campaign!,templateParams:rendered.params,userName:user.full_name||'User'});
                 await finish(result.success?'sent':result.ambiguous?'ambiguous':'failed',result.error||null,result.providerReference);
             }catch(reason){await finish(providerStarted?'ambiguous':'failed',reason instanceof Error?reason.message:'Notification processing failed');}
         }

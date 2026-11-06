@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { getLevelAssigneeCandidates, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -9,28 +10,27 @@ export async function runAutoSlaEscalation() {
     const nowIso = new Date().toISOString();
 
     // Fetch org escalation config for dynamic level assignees & levels
-    let flowAssigneesConfig: any = {};
+    let escalationConfig: any = {};
     let flowLevelsConfig: any = {};
     try {
         const { data: orgSettings } = await supabaseAdmin
             .from('organization_settings')
-            .select('hr_escalation_config')
+            .select('hr_escalation_config, notification_matrix')
             .limit(1)
             .maybeSingle();
-        if (orgSettings?.hr_escalation_config) {
-            flowAssigneesConfig = orgSettings.hr_escalation_config.flow_assignees || {};
-            flowLevelsConfig = orgSettings.hr_escalation_config.flow_levels || {};
-        }
+        const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+        escalationConfig = configObj;
+        flowLevelsConfig = configObj.flow_levels || {};
     } catch (e) {
         console.warn('Could not read hr_escalation_config in slaEscalation:', e);
     }
 
-    // 1. Fetch all open tickets where SLA has expired and status is not resolved/closed/cancelled
+    // 1. Fetch all open tickets where SLA has expired and status is not resolved/closed/cancelled/pending_acknowledgement
     const { data: breachedTickets, error } = await supabaseAdmin
         .from('hr_tickets')
         .select('*, category:hr_ticket_categories(*)')
         .lt('sla_due_at', nowIso)
-        .not('status', 'in', '("resolved","closed","cancelled")');
+        .not('status', 'in', '("resolved","closed","cancelled","pending_acknowledgement")');
 
     if (error) throw error;
 
@@ -46,73 +46,125 @@ export async function runAutoSlaEscalation() {
         }
 
         const nextLevel = ticket.current_level + 1;
-        let nextAssigneeId: string | null = null;
+        const isConfidentialOrAnon =
+            Boolean(ticket.is_confidential) ||
+            Boolean(ticket.is_anonymous) ||
+            ticketType === 'confidential_feedback' ||
+            ticketType === 'anonymous_feedback' ||
+            Boolean(ticket.category?.is_confidential) ||
+            Boolean(ticket.category?.is_anonymous);
 
         // Check if custom step assignees are defined for this flow & level
-        const levelCustomAssignees = flowAssigneesConfig[ticketType]?.[String(nextLevel)] || flowAssigneesConfig[ticketType]?.[nextLevel];
+        // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+        const levelCustomAssignees = getLevelAssigneeCandidates(escalationConfig, ticketType, nextLevel, getTicketPropertyId(ticket));
+        const hasExplicitCustomAssignees = levelCustomAssignees.length > 0;
 
-        if (Array.isArray(levelCustomAssignees) && levelCustomAssignees.length > 0) {
-            const firstEmpId = levelCustomAssignees[0];
-            // Resolve profile or user_id
-            const { data: targetProfile } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('user_id')
-                .or(`id.eq.${firstEmpId},user_id.eq.${firstEmpId}`)
-                .maybeSingle();
+        // Check category SLA days for next level
+        const nextLevelCategorySla = ticket.category ? (ticket.category as any)[`l${nextLevel}_sla_days`] : undefined;
+        const hasCategoryNextSla = nextLevelCategorySla !== undefined && nextLevelCategorySla !== null && Number(nextLevelCategorySla) > 0;
 
-            if (targetProfile?.user_id) {
-                nextAssigneeId = targetProfile.user_id;
-            } else {
-                nextAssigneeId = firstEmpId;
+        // If category explicitly has null for this level and no custom assignees exist, this level is unconfigured (terminal)
+        if (ticket.category && nextLevelCategorySla === null && !hasExplicitCustomAssignees) {
+            continue;
+        }
+
+        // For confidential / anonymous tickets: only escalate if level is explicitly configured with assignees or SLA
+        if (isConfidentialOrAnon && !hasExplicitCustomAssignees && !hasCategoryNextSla) {
+            continue;
+        }
+
+        let nextAssigneeId: string | null = null;
+
+        if (hasExplicitCustomAssignees) {
+            for (const empId of levelCustomAssignees) {
+                const { data: targetProfile } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id')
+                    .or(`id.eq.${empId},user_id.eq.${empId}`)
+                    .maybeSingle();
+
+                const resolvedUserId = targetProfile?.user_id || empId;
+                // Never assign ticket to the submitter who raised it
+                if (resolvedUserId && resolvedUserId !== ticket.raised_by_user_id) {
+                    nextAssigneeId = resolvedUserId;
+                    break;
+                }
             }
         }
 
         // Fallback to role-based lookup if no custom assignee was configured for this level
         if (!nextAssigneeId) {
-            if (nextLevel === 2) {
-                const { data: hrMgrs } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('is_hr_manager_authority', true)
-                    .not('user_id', 'is', null)
-                    .limit(1);
-                if (hrMgrs?.[0]?.user_id) {
-                    nextAssigneeId = hrMgrs[0].user_id;
-                } else {
-                    const { data: hrStaff } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user_id')
-                        .eq('is_hr_authority', true)
-                        .not('user_id', 'is', null)
-                        .limit(1);
-                    if (hrStaff?.[0]?.user_id) nextAssigneeId = hrStaff[0].user_id;
-                }
-            } else if (nextLevel === 3) {
-                const { data: hrHeads } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('user_id')
-                    .eq('is_hr_authority', true)
-                    .not('user_id', 'is', null)
-                    .limit(1);
-                if (hrHeads?.[0]?.user_id) nextAssigneeId = hrHeads[0].user_id;
-            } else if (nextLevel >= 4) {
+            if (isConfidentialOrAnon) {
+                // Confidential/Anonymous tickets MUST ONLY be handled by Directors
                 const { data: directors } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
                     .eq('is_director_authority', true)
+                    .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                     .not('user_id', 'is', null)
-                    .limit(1);
-                if (directors?.[0]?.user_id) nextAssigneeId = directors[0].user_id;
+                    .limit(5);
+
+                const validDirector = (directors || []).find(d => d.user_id !== ticket.assigned_to_user_id && d.user_id !== ticket.raised_by_user_id);
+                if (validDirector?.user_id) {
+                    nextAssigneeId = validDirector.user_id;
+                } else {
+                    continue; // No other director available; do not escalate
+                }
+            } else {
+                if (nextLevel === 2) {
+                    const { data: hrMgrs } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .eq('is_hr_manager_authority', true)
+                        .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                        .not('user_id', 'is', null)
+                        .limit(5);
+                    const validHr = (hrMgrs || []).find(h => h.user_id !== ticket.assigned_to_user_id);
+                    if (validHr?.user_id) {
+                        nextAssigneeId = validHr.user_id;
+                    } else {
+                        const { data: hrStaff } = await supabaseAdmin
+                            .from('employee_profiles')
+                            .select('user_id')
+                            .eq('is_hr_authority', true)
+                            .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                            .not('user_id', 'is', null)
+                            .limit(5);
+                        const validStaff = (hrStaff || []).find(h => h.user_id !== ticket.assigned_to_user_id);
+                        if (validStaff?.user_id) nextAssigneeId = validStaff.user_id;
+                    }
+                } else if (nextLevel === 3) {
+                    const { data: hrHeads } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .eq('is_hr_authority', true)
+                        .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                        .not('user_id', 'is', null)
+                        .limit(5);
+                    const validHead = (hrHeads || []).find(h => h.user_id !== ticket.assigned_to_user_id);
+                    if (validHead?.user_id) nextAssigneeId = validHead.user_id;
+                } else if (nextLevel >= 4) {
+                    const { data: directors } = await supabaseAdmin
+                        .from('employee_profiles')
+                        .select('user_id')
+                        .eq('is_director_authority', true)
+                        .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                        .not('user_id', 'is', null)
+                        .limit(5);
+                    const validDir = (directors || []).find(d => d.user_id !== ticket.assigned_to_user_id);
+                    if (validDir?.user_id) nextAssigneeId = validDir.user_id;
+                }
             }
         }
 
-        // Fallback: ONLY if no authority was found for the next level, fallback to any available authority or Org Super Admin
-        if (!nextAssigneeId) {
+        // Fallback: ONLY for standard tickets if no authority was found for the next level
+        if (!nextAssigneeId && !isConfidentialOrAnon) {
             const { data: fallbackAuth } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('user_id')
                 .or('is_director_authority.eq.true,is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
                 .neq('user_id', ticket.assigned_to_user_id || '00000000-0000-0000-0000-000000000000')
+                .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                 .not('user_id', 'is', null)
                 .limit(1);
 
@@ -124,6 +176,7 @@ export async function runAutoSlaEscalation() {
                     .from('organization_memberships')
                     .select('user_id')
                     .or('role.eq.org_super_admin,role.eq.ops_super_admin')
+                    .neq('user_id', ticket.raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                     .limit(1);
                 if (orgAdminMem?.[0]?.user_id) {
                     nextAssigneeId = orgAdminMem[0].user_id;
@@ -131,6 +184,11 @@ export async function runAutoSlaEscalation() {
                     nextAssigneeId = ticket.assigned_to_user_id;
                 }
             }
+        }
+
+        // Never escalate if no next assignee or if assignee is the submitter
+        if (!nextAssigneeId || nextAssigneeId === ticket.raised_by_user_id) {
+            continue;
         }
 
         // Calculate SLA/TAT for next level using custom flow level config or category's configured TAT days

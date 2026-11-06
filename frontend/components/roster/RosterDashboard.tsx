@@ -58,10 +58,12 @@ export function RosterDashboard({ propertyId }: Props) {
             // Fetch Configs
             const configRes = await fetch(`/api/roster/config?propertyId=${propertyId}`);
             const configData = await configRes.json();
+            if (!configRes.ok) throw new Error(configData.error || 'Failed to load shift configs');
             
             // Fetch Data
             const dataRes = await fetch(`/api/roster?propertyId=${propertyId}&month=${monthStr}`);
             const dataData = await dataRes.json();
+            if (!dataRes.ok) throw new Error(dataData.error || 'Failed to load roster data');
             
             setConfigs(configData.data || []);
             setStaff(dataData.staff || []);

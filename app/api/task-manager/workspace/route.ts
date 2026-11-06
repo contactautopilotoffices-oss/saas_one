@@ -8,7 +8,9 @@ export const dynamic = 'force-dynamic';
 /**
  * Step 5 — the Procurement "Tasks" tab.
  *   GET  /api/task-manager/workspace?date=YYYY-MM-DD[&department=Procurement]
- *   POST /api/task-manager/workspace   { action: 'assign' | 'set_status', ... }
+ *   GET  /api/task-manager/workspace?scope=console   (superusers: my tasks + tasks I gave, all departments)
+ *   GET  /api/task-manager/workspace?scope=assigned&from=&to=   ("Assigned by me")
+ *   POST /api/task-manager/workspace   { action: 'assign' | 'assign_many' | 'check_duplicates' | 'set_status' | 'hand_over' | 'delete_task' | 'set_locked' | 'edit_task' | 'flag_dependency' | 'remind_tasks' | 'add_note', ... }
  *
  * WHO is acting always comes from the signed-in session. The request body can never name the actor,
  * so nobody can act as someone else (unlike the older /tasks route that trusts an actorId).
@@ -35,8 +37,26 @@ export async function GET(request: NextRequest) {
         const userId = await sessionUserId();
         if (!userId) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
+        // The superuser's cross-department view (the console "My tasks" sub-tab). Superusers only; the service checks.
+        if (request.nextUrl.searchParams.get('scope') === 'console') {
+            const from = request.nextUrl.searchParams.get('from'), to = request.nextUrl.searchParams.get('to');
+            const consoleView = await WorkspaceService.loadConsole(userId, from && to ? { from, to } : undefined);
+            return NextResponse.json({ success: true, console: consoleView });
+        }
+
+        // Owner 2026-10-19: "Assigned by me" (tasks I gave; tasks given by people below me, view only).
+        if (request.nextUrl.searchParams.get('scope') === 'assigned') {
+            const result = await WorkspaceService.loadAssigned(userId, {
+                from: request.nextUrl.searchParams.get('from') || undefined,
+                to: request.nextUrl.searchParams.get('to') || undefined,
+            });
+            return NextResponse.json({ success: true, assigned: result.tasks });
+        }
+
         const workspace = await WorkspaceService.load(userId, {
-            date: request.nextUrl.searchParams.get('date') || undefined,
+            // Owner 2026-10-15: a date range (from / to); the old single `date` still works.
+            date: request.nextUrl.searchParams.get('from') || request.nextUrl.searchParams.get('date') || undefined,
+            to: request.nextUrl.searchParams.get('to') || undefined,
             departmentName: request.nextUrl.searchParams.get('department') || undefined,
         });
         return NextResponse.json({ success: true, workspace });
@@ -58,12 +78,86 @@ export async function POST(request: NextRequest) {
                 title: body.title,
                 description: body.description,
                 date: body.date,
+                note: body.note,
+                dueDate: body.dueDate,
+                dueTime: body.dueTime,
             });
             return NextResponse.json({ success: true, task });
         }
 
+        // Owner 2026-10-26: one task for several people (own copy each), optionally a follow-up of another task
+        if (body.action === 'assign_many') {
+            const result = await WorkspaceService.assignMany(userId, {
+                targetUserIds: body.targetUserIds,
+                title: body.title,
+                description: body.description,
+                date: body.date,
+                followUpOf: body.followUpOf,
+                dueDate: body.dueDate,
+                dueTime: body.dueTime,
+            });
+            return NextResponse.json({ success: true, ...result });
+        }
+
+        // Owner 2026-10-26: "Duplicate task alert" — read only, asked before saving
+        if (body.action === 'check_duplicates') {
+            const result = await WorkspaceService.findDuplicates(userId, { targetUserIds: body.targetUserIds, title: body.title });
+            return NextResponse.json({ success: true, ...result });
+        }
+
+        if (body.action === 'hand_over') {
+            const result = await WorkspaceService.handOver(userId, { taskId: body.taskId, targetUserId: body.targetUserId, note: body.note, dueDate: body.dueDate, dueTime: body.dueTime });
+            return NextResponse.json({ success: true, task: result.task, toName: result.toName });
+        }
+
+        if (body.action === 'set_locked') {
+            const result = await WorkspaceService.setLocked(userId, { taskId: body.taskId, locked: body.locked });
+            return NextResponse.json({ success: true, locked: result.locked });
+        }
+
+        if (body.action === 'delete_task') {
+            const result = await WorkspaceService.deleteTask(userId, { taskId: body.taskId });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        if (body.action === 'edit_task') {
+            const result = await WorkspaceService.editTask(userId, {
+                taskId: body.taskId, title: body.title, description: body.description,
+                date: body.date || undefined, targetUserId: body.targetUserId || undefined,
+                dueDate: body.dueDate, dueTime: body.dueTime,
+            });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        if (body.action === 'flag_dependency') {
+            const result = await WorkspaceService.flagDependency(userId, { taskId: body.taskId, targetUserId: body.targetUserId });
+            return NextResponse.json({ success: true, toName: result.toName });
+        }
+
+        // Owner 2026-10-28: the completion remark of a task I already finished
+        if (body.action === 'set_completion_remark') {
+            const result = await WorkspaceService.setCompletionRemark(userId, { taskId: body.taskId, remark: body.remark });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        if (body.action === 'add_note') {
+            const result = await WorkspaceService.addNote(userId, { taskId: body.taskId, note: body.note, tellGiver: body.tellGiver === true });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        // Owner 2026-10-27: edit or delete one note of my own personal task
+        if (body.action === 'edit_note' || body.action === 'delete_note') {
+            const result = await WorkspaceService.changeNote(userId, { taskId: body.taskId, index: body.index, expected: body.expected, text: body.action === 'delete_note' ? null : body.text });
+            return NextResponse.json({ success: true, id: result.id });
+        }
+
+        if (body.action === 'remind_tasks') {
+            const result = await WorkspaceService.remindTasks(userId, { taskIds: body.taskIds });
+            return NextResponse.json({ success: true, ...result });
+        }
+
         if (body.action === 'set_status') {
-            const task = await WorkspaceService.setStatus(userId, { taskId: body.taskId, status: body.status });
+            const task = await WorkspaceService.setStatus(userId, { taskId: body.taskId, status: body.status, remark: body.remark });
             return NextResponse.json({ success: true, task });
         }
 

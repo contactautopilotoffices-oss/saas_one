@@ -104,8 +104,10 @@ async function run() {
     db.getSendControls = async () => ({ killSwitches: db.getDefaultKillSwitches(), pretendMode: true });
     db.getDailyAssignments = async () => [{ id: 't', title: 'Task', status: 'pending', assigned_date: '2026-10-07' }];
     db.getFilteredAssignments = db.getDailyAssignments;
+    db.getNumberedList = db.getDailyAssignments;
     access.getSnapshot = async () => snap();
     access.isPeerAssignEnabled = async () => false; // Step 5 team sharing is not what this test is about
+    access.isTeamAssignEnabled = async () => false; // owner 2026-10-19 "assign to anyone in team": not what this test is about
 
     reset();
     const n = await TaskNotificationService.sendMorningNotifications({ date: '2026-10-07', departmentId: 'dA', dryRun: false });

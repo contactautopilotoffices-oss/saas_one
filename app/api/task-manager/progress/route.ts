@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PermissionService, PermissionDeniedError } from '@/task-manager/PermissionService';
 import { TaskProgressService } from '@/task-manager/TaskProgressService';
 import { requireActor } from '../_shared/adminGuard';
+import { parseRange } from '@/task-manager/dateRange';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,11 @@ export async function GET(request: NextRequest) {
         if (!auth.ok) return auth.response;
         const actorId = auth.userId; // always the logged-in person
         const level = parseInt(searchParams.get('level') || '0', 10);
-        const date = searchParams.get('date') || new Date().toISOString().slice(0, 10);
+        // Owner 2026-10-15: a date range (from / to, at most 31 days); carry=1 also counts unfinished carried-in tasks.
+        const range = parseRange(searchParams);
+        if (!range.ok) return NextResponse.json({ success: false, error: range.error }, { status: 400 });
+        const date = range.from;
+        const opts = { to: range.to, includeCarried: searchParams.get('carry') === '1' };
         const departmentId = searchParams.get('departmentId');
         const employeeId = searchParams.get('employeeId');
 
@@ -36,7 +41,7 @@ export async function GET(request: NextRequest) {
                 }
             }
 
-            const data = await TaskProgressService.getEmployeeProgress(targetEmpId, date);
+            const data = await TaskProgressService.getEmployeeProgress(targetEmpId, date, opts);
             return NextResponse.json({ success: true, level: 1, data });
         }
 
@@ -51,7 +56,7 @@ export async function GET(request: NextRequest) {
                 return NextResponse.json({ success: false, error: 'Cannot view other department progress' }, { status: 403 });
             }
 
-            const data = await TaskProgressService.getDepartmentProgress(targetDeptId, date);
+            const data = await TaskProgressService.getDepartmentProgress(targetDeptId, date, opts);
             return NextResponse.json({ success: true, level: 2, data });
         }
 
@@ -61,12 +66,12 @@ export async function GET(request: NextRequest) {
                 return NextResponse.json({ success: false, error: 'Only superusers can view organization-wide progress' }, { status: 403 });
             }
 
-            const data = await TaskProgressService.getOrganisationProgress(date);
+            const data = await TaskProgressService.getOrganisationProgress(date, opts);
             return NextResponse.json({ success: true, level: 3, data });
         }
 
         // Fallback for employee
-        const defaultData = await TaskProgressService.getEmployeeProgress(actor.id, date);
+        const defaultData = await TaskProgressService.getEmployeeProgress(actor.id, date, opts);
         return NextResponse.json({ success: true, level: 1, data: defaultData });
 
     } catch (err: any) {

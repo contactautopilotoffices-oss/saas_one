@@ -90,3 +90,15 @@ docs/design-references/
 
 # A 4 MB PDF committed to the repository root by accident.
 Tech - Flipkart options  (1).pdf
+
+# Audio test samples and voice recordings (not needed for Vercel build, keep private)
+*.ogg
+*.opus
+tests/voice_samples/
+task-manager/voice/eval/results/
+
+
+
+
+PROJECT_PERFORMANCE_AUDIT_2026-10-11.md
+VERCEL_BUILD_AUDIT_2026-10-12.md

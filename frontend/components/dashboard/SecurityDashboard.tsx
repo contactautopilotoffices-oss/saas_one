@@ -39,7 +39,7 @@ interface Property {
 
 const SecurityDashboard = () => {
     const { dashboardContent, dashboardPropertyId, navigateDashboard } = useDashboardContent();
-    const { user, signOut } = useAuth();
+    const { user, signOut, membership } = useAuth();
     const params = useParams();
     const router = useRouter();
     const propertyId = (params?.propertyId as string) || dashboardPropertyId;
@@ -594,7 +594,7 @@ const SecurityDashboard = () => {
                                 </div>
                             )}
                             {activeTab === 'grievance' && (
-                                <HRTicketsContent orgId={property?.organization_id || 'org'} />
+                                <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'profile' && (

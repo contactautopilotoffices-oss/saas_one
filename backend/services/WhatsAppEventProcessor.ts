@@ -1,9 +1,14 @@
+import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, batchWhatsAppOptions, reapprovalWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
+import { sanitizeWhatsAppParam, sanitizeWhatsAppParams } from '@/backend/lib/whatsapp/sanitize';
+import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 interface DispatchOptions {
+    durableBatch?: boolean;
     featureKey: string;
     templateEventKey: string;
     organizationId: string;
@@ -104,6 +109,9 @@ export const WhatsAppEventProcessor = {
             case 'TICKET_RESOLVED':
                 await this.handleTicketCompleted(payload);
                 break;
+            case 'TICKET_REPLY':
+                await this.handleTicketReply(payload);
+                break;
             case 'TICKET_UPDATED':
                 // Only dispatch reassignment if assigned_to actually changed to a new user
                 if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
@@ -133,6 +141,12 @@ export const WhatsAppEventProcessor = {
             case 'ROOM_BOOKING_CANCELLED':
                 await this.handleMeetingRoomEvent(payload, true);
                 break;
+            case 'MEETING_ROOM_START_REMINDER':
+                await this.handleMeetingRoomReminderEvent(payload, 'start', payload.remaining_minutes || 10);
+                break;
+            case 'MEETING_ROOM_END_REMINDER':
+                await this.handleMeetingRoomReminderEvent(payload, 'end', payload.remaining_minutes || 10);
+                break;
 
             // Procurement & Materials
             case 'MATERIAL_REQUEST_CREATED':
@@ -153,6 +167,9 @@ export const WhatsAppEventProcessor = {
             case 'REQUISITION_UPLOADED':
             case 'MONTHLY_REQUISITION_UPLOADED':
                 await this.handleRequisitionUploaded(payload);
+                break;
+            case 'REQUISITION_APPROVAL_BATCH_REQUESTED':
+                await this.handleRequisitionApprovalBatchRequested(payload);
                 break;
             case 'REQUISITION_APPROVAL_REQUESTED':
                 await this.handleRequisitionApprovalRequested(payload);
@@ -278,6 +295,7 @@ export const WhatsAppEventProcessor = {
             organizationId,
             propertyId,
             featureKey,
+            strictReads: options.durableBatch,
             contextualUsers: contextualUserIds ? {
                 assigneeId: contextualUserIds.assigneeId,
                 requesterId: contextualUserIds.requesterId,
@@ -303,15 +321,37 @@ export const WhatsAppEventProcessor = {
 
         const missingIds = contextualIds.filter(id => !userMap.has(id));
         if (missingIds.length > 0) {
-            const { data: contextualUsers } = await supabaseAdmin
+            const { data: contextualUsers, error: contextualError } = await supabaseAdmin
                 .from('users')
                 .select('id, phone, full_name')
                 .in('id', missingIds);
-            (contextualUsers || [])
-                .filter((u: any) => u?.phone && String(u.phone).trim())
-                .forEach((u: any) => {
-                    userMap.set(u.id, { id: u.id, phone: String(u.phone).trim(), name: u.full_name || null });
+
+            if (contextualError && options.durableBatch) throw contextualError;
+
+            const needEmpPhone = (contextualUsers || []).filter((u: any) => !u?.phone || !String(u.phone).trim() || String(u.phone).trim().toLowerCase() === 'n/a');
+            const empPhoneMap = new Map<string, string>();
+            if (needEmpPhone.length > 0) {
+                const { data: emps } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id, phone')
+                    .in('user_id', needEmpPhone.map((u: any) => u.id))
+                    .not('phone', 'is', null);
+                (emps || []).forEach((e: any) => {
+                    if (e.phone && String(e.phone).trim() && String(e.phone).trim().toLowerCase() !== 'n/a') {
+                        empPhoneMap.set(e.user_id, String(e.phone).trim());
+                        supabaseAdmin.from('users').update({ phone: String(e.phone).trim() }).eq('id', e.user_id).then();
+                    }
                 });
+            }
+
+            (contextualUsers || []).forEach((u: any) => {
+                const phone = (u?.phone && String(u.phone).trim() && String(u.phone).trim().toLowerCase() !== 'n/a')
+                    ? String(u.phone).trim()
+                    : empPhoneMap.get(u.id);
+                if (phone) {
+                    userMap.set(u.id, { id: u.id, phone, name: u.full_name || null });
+                }
+            });
         }
 
         // Strictly deduplicate by cleaned 10+ digit phone number so 1 phone number never receives multiple copies of the same alert
@@ -333,12 +373,13 @@ export const WhatsAppEventProcessor = {
         }
 
         // Read the org's template map
-        const { data: orgData } = await supabaseAdmin
+        const { data: orgData, error: templateError } = await supabaseAdmin
             .from('organization_settings')
             .select('whatsapp_templates')
             .eq('organization_id', organizationId)
             .maybeSingle();
 
+        if (templateError && options.durableBatch) throw templateError;
         const templatesMap = (orgData as any)?.whatsapp_templates || {};
 
         const DEFAULT_TEMPLATES: Record<string, { campaign_name: string; params: string[] }> = {
@@ -348,32 +389,37 @@ export const WhatsAppEventProcessor = {
             requisition_status_updated: { campaign_name: 'requisition_status_updated_v1', params: ['user_name', 'property', 'month', 'year', 'status', 'approver_name', 'total_amount', 'remarks'] },
             requisition_po_issued: { campaign_name: 'requisition_po_issued_v1', params: ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'] },
             meeting_room_booked: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+            meeting_room_booked_v4: { campaign_name: 'meeting_room_booked_v4', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
+            meeting_room_booked_v3: { campaign_name: 'meeting_room_booked_v3', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'] },
             meeting_room_cancelled: { campaign_name: 'meeting_room_cancelled_v2', params: ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'] },
+            meeting_room_start_reminder: { campaign_name: 'meeting_room_start_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'] },
+            meeting_room_end_reminder: { campaign_name: 'meeting_room_end_reminder_v1', params: ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'] },
             lead_created: { campaign_name: 'crm_lead_created_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'] },
             crm_lead_created: { campaign_name: 'crm_lead_created_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'] },
             lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
             ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
-            ticket_assigned: { campaign_name: 'ticket_assigned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
+            ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
+            ticket_reply: { campaign_name: 'ticket_reply_v1', params: ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             ai_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
-            material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'] },
-            comparative_uploaded: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'] },
-            comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'] },
-            comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'] },
-            comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'] },
-            comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'] },
-            material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by'] },
-            procurement_vendor_tag: { campaign_name: 'procurement_vendor_tag_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'] },
-            procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'] },
+            material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
+            comparative_uploaded: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'] },
+            comparative_approval_requested: { campaign_name: 'comparative_approval_requested_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'] },
+            comparative_uploaded_info: { campaign_name: 'comparative_uploaded_info_v1', params: ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'] },
+            comparative_approved: { campaign_name: 'comparative_approved_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'] },
+            comparative_rejected: { campaign_name: 'comparative_rejected_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'] },
+            material_delivered: { campaign_name: 'material_delivered_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'] },
+            procurement_vendor_tag: { campaign_name: 'procurement_vendor_tag_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'] },
+            procurement_vendor_aligned: { campaign_name: 'procurement_vendor_aligned_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'] },
             reminder_ppm: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             ppm_reminder: { campaign_name: 'reminder_ppm_v2', params: ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'] },
             reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'sla_time'] },
             reminder_lead_followup: { campaign_name: 'reminder_lead_followup_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'followup_time', 'lead_id'] },
-            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time'] },
+            checklist_slot_reminder: { campaign_name: 'checklist_slot_reminder_v2', params: ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'] },
             checklist_started: { campaign_name: 'checklist_started_v1', params: ['user_name', 'checklist_name', 'property', 'start_time'] },
             checklist_completed: { campaign_name: 'checklist_completed_v1', params: ['user_name', 'checklist_name', 'property', 'completed_by', 'time'] },
             checklist_overdue_alert: { campaign_name: 'checklist_overdue_alert_v2', params: ['checklist_name', 'property', 'slot_time'] },
@@ -430,11 +476,17 @@ export const WhatsAppEventProcessor = {
             'requisition_po_issued_v1': ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'],
             'requisition_po_issued': ['user_name', 'month', 'year', 'property', 'vendor_name', 'po_number', 'total_amount'],
 
+            'meeting_room_booked_v4': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
             'meeting_room_booked_v3': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
             'meeting_room_booked': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker', 'booker_phone'],
 
             'meeting_room_cancelled_v2': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
             'meeting_room_cancelled': ['user_name', 'room_name', 'property', 'date', 'start_time', 'end_time', 'booker'],
+
+            'meeting_room_start_reminder_v1': ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'],
+            'meeting_room_start_reminder': ['user_name', 'room_name', 'property', 'remaining_minutes', 'start_time'],
+            'meeting_room_end_reminder_v1': ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'],
+            'meeting_room_end_reminder': ['user_name', 'room_name', 'property', 'remaining_minutes', 'end_time'],
 
             'crm_lead_created_v1': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
             'lead_created': ['user_name', 'company_name', 'contact_person', 'phone', 'source', 'property_interest'],
@@ -447,6 +499,10 @@ export const WhatsAppEventProcessor = {
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
 
+            'ticket_reply_v1': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
+            'ticket_reply': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
+
+            'ticket_assigned_v2': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
 
@@ -458,23 +514,23 @@ export const WhatsAppEventProcessor = {
             'ai_property_report_v1': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],
             'daily_property_report': ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'],
 
-            'material_request_created_v4': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
-            'material_request_created_v3': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
-            'material_request_created': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary'],
+            'material_request_created_v4': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
+            'material_request_created_v3': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
+            'material_request_created': ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'],
 
-            'comparative_approval_requested_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_approval_requested': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_uploaded_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
-            'comparative_uploaded': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes'],
+            'comparative_approval_requested_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_approval_requested': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_uploaded_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
+            'comparative_uploaded': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'notes', 'ticket_id'],
 
-            'comparative_uploaded_info_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'],
-            'comparative_uploaded_info': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes'],
+            'comparative_uploaded_info_v1': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'],
+            'comparative_uploaded_info': ['user_name', 'uploaded_by', 'ticket_number', 'title', 'property', 'total_cost', 'approver_name', 'notes', 'ticket_id'],
 
-            'comparative_approved_v1': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'],
-            'comparative_approved': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment'],
+            'comparative_approved_v1': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'],
+            'comparative_approved': ['user_name', 'ticket_number', 'title', 'property', 'approved_by', 'total_cost', 'approver_comment', 'ticket_id'],
 
-            'comparative_rejected_v1': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'],
-            'comparative_rejected': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason'],
+            'comparative_rejected_v1': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'],
+            'comparative_rejected': ['user_name', 'ticket_number', 'title', 'property', 'total_cost', 'action_by', 'rejection_reason', 'ticket_id'],
 
             'vendor_revenue_recorded_v1': ['user_name', 'shop_name', 'property_name', 'date', 'revenue_amount', 'commission_rate', 'commission_due', 'property_id'],
             'vendor_revenue_recorded': ['user_name', 'shop_name', 'property_name', 'date', 'revenue_amount', 'commission_rate', 'commission_due', 'property_id'],
@@ -487,11 +543,11 @@ export const WhatsAppEventProcessor = {
             'material_delivered_v': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
             'material_delivered': ['user_name', 'ticket_number', 'title', 'property', 'delivered_items', 'verified_by', 'ticket_id'],
 
-            'procurement_vendor_tag_v1': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
-            'procurement_vendor_tag': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement'],
+            'procurement_vendor_tag_v1': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'],
+            'procurement_vendor_tag': ['user_name', 'ticket_number', 'title', 'property', 'tagged_by', 'note', 'assigned_procurement', 'ticket_id'],
 
-            'procurement_vendor_aligned_v1': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
-            'procurement_vendor_aligned': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by'],
+            'procurement_vendor_aligned_v1': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'],
+            'procurement_vendor_aligned': ['user_name', 'ticket_number', 'title', 'property', 'vendor_details', 'arranged_by', 'ticket_id'],
 
             'reminder_ppm_v2': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
             'reminder_ppm': ['user_name', 'system_name', 'property', 'due_date', 'vendor_name', 'location'],
@@ -505,9 +561,9 @@ export const WhatsAppEventProcessor = {
 
             'fms_welcome_onboarding_v1': ['user_name', 'helpdesk_contact'],
 
-            'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time'],
-            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time'],
-            'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time'],
+            'checklist_slot_reminder_v1': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
+            'checklist_slot_reminder_v2': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
+            'checklist_slot_reminder': ['user_name', 'checklist_name', 'property', 'due_time', 'property_id'],
 
             'checklist_started_v1': ['user_name', 'checklist_name', 'property', 'start_time'],
             'checklist_started': ['user_name', 'checklist_name', 'property', 'start_time'],
@@ -561,8 +617,31 @@ export const WhatsAppEventProcessor = {
         const effectiveMediaUrl = isMediaTemplate ? (options.mediaUrl || undefined) : undefined;
         const effectiveMediaType = isMediaTemplate ? options.mediaType : undefined;
 
+        // For meeting room bookings:
+        // - Booker / Requester receives v4 template (hospitality notice without staff refreshment directive)
+        // - Staff roles AND specific added users (+ Add user...) receive v3 template (staff operational directive: "Please ensure facilities and refreshments are arranged")
+        const isMeetingRoomBooked = templateEventKey === 'meeting_room_booked';
+        const requesterId = (isMeetingRoomBooked && contextualUserIds?.requesterId)
+            ? String(contextualUserIds.requesterId).trim()
+            : null;
+
         // Dispatch per recipient to personalize `user_name` / `approver_name` with recipient's actual name
         for (const recipient of recipients) {
+            let recipientTemplateName = template.campaign_name;
+            let currentParamKeys = paramKeys;
+
+            if (isMeetingRoomBooked) {
+                const isRequester = Boolean(requesterId && recipient.id === requesterId);
+                if (isRequester) {
+                    // Only the actual booker/requester receives v4
+                    recipientTemplateName = templatesMap['meeting_room_booked_v4']?.campaign_name || 'meeting_room_booked_v4';
+                } else {
+                    // Staff, property admins, and specific added users (+ Add user...) receive v3
+                    recipientTemplateName = templatesMap['meeting_room_booked_v3']?.campaign_name || templatesMap['meeting_room_booked']?.campaign_name || 'meeting_room_booked_v3';
+                }
+                currentParamKeys = CANONICAL_CAMPAIGN_PARAMS[recipientTemplateName] || paramKeys;
+            }
+
             const recipientName = recipient.name?.trim() || paramValues['user_name'] || 'Team';
 
             const recipientParamValues: Record<string, string> = {
@@ -571,10 +650,10 @@ export const WhatsAppEventProcessor = {
                 approver_name: recipient.name?.trim() || paramValues['approver_name'] || 'Approver'
             };
 
-            const orderedParams: string[] = paramKeys.map((key: string) => {
+            const orderedParams: string[] = currentParamKeys.map((key: string) => {
                 let value = recipientParamValues[key];
                 // Resolve aliases if direct key is empty
-                if (value === undefined || value === null || value === '') {
+                if (value === undefined || value === null || String(value).trim() === '') {
                     if (key === 'approver_name') value = recipientParamValues['user_name'] || recipientParamValues['action_by'] || 'Approver';
                     else if (key === 'user_name') value = recipientParamValues['approver_name'] || recipientParamValues['requested_by'] || recipientParamValues['uploaded_by'] || 'Procurement Team';
                     else if (key === 'requested_by') value = recipientParamValues['uploaded_by'] || recipientParamValues['user_name'] || 'Site Admin';
@@ -583,7 +662,7 @@ export const WhatsAppEventProcessor = {
                     else if (key === 'total_amount') value = recipientParamValues['total_cost'] || recipientParamValues['total_po_amount'] || recipientParamValues['amount'] || '0';
                     else if (key === 'vendor_name') value = recipientParamValues['vendor'] || recipientParamValues['selected_vendor'] || 'Selected Vendor';
                 }
-                return value !== undefined && value !== null && value !== '' ? String(value) : 'N/A';
+                return sanitizeWhatsAppParam(value, key);
             });
 
             await WhatsAppQueueService.enqueue({
@@ -592,11 +671,12 @@ export const WhatsAppEventProcessor = {
                 eventType: templateEventKey.toUpperCase(),
                 organizationId,
                 propertyId: propertyId || undefined,
-                templateName: template.campaign_name,
+                templateName: recipientTemplateName,
                 templateParams: orderedParams,
                 entityId: entityId || undefined,
                 mediaUrl: effectiveMediaUrl,
-                mediaType: effectiveMediaType
+                mediaType: effectiveMediaType,
+                durableBatch: options.durableBatch
             });
         }
     },
@@ -614,13 +694,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const assignee = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(payload.assigned_to);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(payload.assigned_to || ticket?.assigned_to, ticket?.assigned_to_user);
 
         const assigneeId = ticket?.assigned_to || payload.assigned_to;
         const photoBeforeUrl = ticket?.photo_before_url || payload.photo_before_url || null;
@@ -672,13 +747,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const assignee = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(assignedToId);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(assignedToId, ticket?.assigned_to_user);
 
         await this.dispatch({
             featureKey: 'ticket_assigned',
@@ -700,7 +770,7 @@ export const WhatsAppEventProcessor = {
                 ticket_id: ticketId || ''
             },
             summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) assigned to ${assignee.name}`,
-            contextualUserIds: { assigneeId: assignedToId, requesterId: ticket?.raised_by || payload.raised_by }
+            contextualUserIds: { assigneeId: assignedToId }
         });
     },
 
@@ -716,13 +786,8 @@ export const WhatsAppEventProcessor = {
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
 
-        const raiser = ticket?.raised_by_user?.full_name
-            ? { name: ticket.raised_by_user.full_name, phone: ticket.raised_by_user.phone }
-            : await this.getUserDetails(payload.raised_by);
-
-        const completer = ticket?.assigned_to_user?.full_name
-            ? { name: ticket.assigned_to_user.full_name, phone: ticket.assigned_to_user.phone }
-            : await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by);
+        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
+        const completer = await this.getUserDetails(payload.assigned_to || payload.updated_by || payload.action_by || ticket?.assigned_to, ticket?.assigned_to_user);
 
         const photoAfterUrl = ticket?.photo_after_url || payload.photo_after_url || null;
 
@@ -745,6 +810,47 @@ export const WhatsAppEventProcessor = {
             },
             summaryMessage: `Ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) resolved at ${propertyName} by ${completer.name}`,
             contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by }
+        });
+    },
+
+    /**
+     * A reply on a ticket. Who gets it was already decided by the DB trigger on ticket_comments (fn_ticket_comments_outbox),
+     * so the rules live in one place for web, mobile and WhatsApp replies.
+     * entityId is the COMMENT id: with the ticket id a second quick reply would be dropped by the queue's 2-minute dedup.
+     * durableBatch stops a retried outbox event from sending the same comment again, however late the retry runs.
+     */
+    async handleTicketReply(payload: any): Promise<void> {
+        if (!payload.comment_id || !payload.recipient_id) return;
+
+        const { data: sender } = await supabaseAdmin
+            .from('users')
+            .select('full_name')
+            .eq('id', payload.sender_id)
+            .maybeSingle();
+
+        const repliedBy = sender?.full_name || 'Team Member';
+        const ticketNumber = payload.ticket_number || 'N/A';
+        const reply = sanitizeWhatsAppParam(payload.message, 'reply_text');
+
+        await this.dispatch({
+            featureKey: 'ticket_reply',
+            templateEventKey: 'ticket_reply',
+            organizationId: payload.organization_id,
+            propertyId: payload.property_id,
+            entityId: payload.comment_id,
+            durableBatch: true,
+            paramValues: {
+                user_name: 'Team',
+                replied_by: repliedBy,
+                ticket_number: ticketNumber,
+                title: payload.title || 'Support Request',
+                reply_text: reply.length > 300 ? `${reply.slice(0, 297)}...` : reply
+            },
+            summaryMessage: `${repliedBy} replied on ticket #${ticketNumber}`,
+            contextualUserIds: payload.recipient_role === 'requester'
+                ? { requesterId: payload.recipient_id }
+                : { assigneeId: payload.recipient_id },
+            excludeUserIds: [payload.sender_id]
         });
     },
 
@@ -780,6 +886,67 @@ export const WhatsAppEventProcessor = {
         const formattedStartTime = formatTimeString(payload.start_time);
         const formattedEndTime = formatTimeString(payload.end_time);
 
+        // Fetch company name and remaining credits if the booking or user is linked to a client company
+        let companyName = '';
+        let remainingHours: number | null = null;
+        let effectiveCompanyId = payload.company_id || null;
+        if (!effectiveCompanyId && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('company_id')
+                .eq('id', payload.id)
+                .maybeSingle();
+            effectiveCompanyId = bookingRow?.company_id || null;
+        }
+        if (!effectiveCompanyId && payload.user_id) {
+            const { data: member } = await supabaseAdmin
+                .from('company_members')
+                .select('company_id')
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            effectiveCompanyId = member?.company_id || null;
+        }
+
+        if (effectiveCompanyId) {
+            const { data: comp } = await supabaseAdmin
+                .from('companies')
+                .select('name')
+                .eq('id', effectiveCompanyId)
+                .maybeSingle();
+            if (comp?.name) companyName = comp.name;
+
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('company_id', effectiveCompanyId)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        } else if (payload.user_id) {
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        }
+
+        const creditsInfo = remainingHours !== null ? `${remainingHours} hrs left` : '';
+        const clientCompanyInfo = companyName
+            ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
+            : (creditsInfo ? `${creditsInfo}` : '');
+
+        // In existing Meta template (v3/v4), {{7}} is `booker`.
+        // Enrich booker string with company name and remaining credits so clients and admins see it without modifying the approved Meta template structure.
+        const bookerDisplay = clientCompanyInfo
+            ? `${booker.name} (${clientCompanyInfo})`
+            : booker.name;
+
         const paramValues: Record<string, string> = {
             user_name: 'Front Desk / Admin',
             room_name: roomName,
@@ -787,14 +954,46 @@ export const WhatsAppEventProcessor = {
             date: formattedDate,
             start_time: formattedStartTime,
             end_time: formattedEndTime,
-            booker: booker.name,
+            booker: bookerDisplay,
             booker_phone: booker.phone || 'N/A',
-            cancelled_by: booker.name
+            cancelled_by: booker.name,
+            company_name: companyName,
+            credits_left: creditsInfo
         };
 
         const summaryMessage = isCancellation
             ? `Meeting room cancelled: ${roomName} on ${formattedDate} at ${formattedStartTime}`
-            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${booker.name}`;
+            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${bookerDisplay}`;
+
+        // Resolve any attendee emails into user IDs so custom invited users receive the v4 template
+        let attendeeEmail = payload.attendee_email;
+        if (!attendeeEmail && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('attendee_email')
+                .eq('id', payload.id)
+                .maybeSingle();
+            if (bookingRow?.attendee_email) {
+                attendeeEmail = bookingRow.attendee_email;
+            }
+        }
+
+        const extraUserIds: string[] = [];
+        if (attendeeEmail) {
+            const emails = String(attendeeEmail)
+                .split(/[,;]+/)
+                .map(e => e.trim().toLowerCase())
+                .filter(e => e.includes('@'));
+            if (emails.length > 0) {
+                const { data: attendeeUsers } = await supabaseAdmin
+                    .from('users')
+                    .select('id')
+                    .in('email', emails);
+                if (attendeeUsers && attendeeUsers.length > 0) {
+                    extraUserIds.push(...attendeeUsers.map((u: any) => u.id));
+                }
+            }
+        }
 
         await this.dispatch({
             featureKey: isCancellation ? 'meeting_room_cancelled' : 'meeting_room_booked',
@@ -802,6 +1001,75 @@ export const WhatsAppEventProcessor = {
             organizationId: property.organization_id,
             propertyId,
             entityId: payload.id,
+            contextualUserIds: { requesterId: payload.user_id, extraUserIds },
+            paramValues,
+            summaryMessage
+        });
+    },
+
+    async handleMeetingRoomReminderEvent(payload: any, reminderType: 'start' | 'end', remainingMinutes: number): Promise<void> {
+        const bookingId = payload.id;
+        const meetingRoomId = payload.meeting_room_id;
+        const propertyId = payload.property_id;
+
+        const { data: property } = await supabaseAdmin
+            .from('properties')
+            .select('id, name, organization_id')
+            .eq('id', propertyId)
+            .maybeSingle();
+
+        if (!property?.organization_id) return;
+
+        const { data: room } = await supabaseAdmin
+            .from('meeting_rooms')
+            .select('name')
+            .eq('id', meetingRoomId)
+            .maybeSingle();
+
+        const roomName = room?.name || 'Meeting Room';
+        const booker = await this.getUserDetails(payload.user_id);
+
+        const formatTime = (timeStr: string) => {
+            if (!timeStr) return '';
+            const [hours, minutes] = timeStr.split(':');
+            let h = parseInt(hours, 10);
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12;
+            h = h ? h : 12;
+            return `${h.toString().padStart(2, '0')}:${minutes} ${ampm}`;
+        };
+
+        const formattedDate = payload.booking_date
+            ? payload.booking_date.split('-').reverse().join('/')
+            : '';
+        const formattedStartTime = formatTime(payload.start_time);
+        const formattedEndTime = formatTime(payload.end_time);
+
+        const isEnd = reminderType === 'end';
+        const featureKey = isEnd ? 'meeting_room_end_reminder' : 'meeting_room_start_reminder';
+
+        const paramValues: Record<string, string> = {
+            user_name: '', // Injected per recipient
+            room_name: roomName,
+            property: property.name || 'Property',
+            remaining_minutes: String(remainingMinutes || 10),
+            start_time: formattedStartTime,
+            end_time: formattedEndTime,
+            date: formattedDate,
+            booker: booker.name,
+            booker_phone: booker.phone || 'N/A'
+        };
+
+        const summaryMessage = isEnd
+            ? `Meeting room ending soon: ${roomName} in ${remainingMinutes} mins (ends at ${formattedEndTime})`
+            : `Upcoming meeting reminder: ${roomName} begins in ${remainingMinutes} mins (starts at ${formattedStartTime})`;
+
+        await this.dispatch({
+            featureKey,
+            templateEventKey: featureKey,
+            organizationId: property.organization_id,
+            propertyId,
+            entityId: bookingId,
             contextualUserIds: { requesterId: payload.user_id },
             paramValues,
             summaryMessage
@@ -1182,21 +1450,40 @@ export const WhatsAppEventProcessor = {
         });
     },
 
+    async handleRequisitionApprovalBatchRequested(payload: any) {
+        const { data: records, error } = await supabaseAdmin.from('property_monthly_requisitions')
+            .select('*,property:properties!property_id(id,name)').eq('organization_id', payload.organization_id)
+            .in('id', payload.requisition_ids);
+        if (error) throw error;
+        // A replaced comparison file reuses the batch id; its revision_id picks out
+        // only the sites saved with that replacement.
+        const saved = (records || []).filter(record => {
+            const quote = requisitionNotes(record).vendor_quotation;
+            if (payload.revision_id) return quote?.revision_id === payload.revision_id;
+            return quote?.batch_id === payload.batch_id;
+        });
+        if (!saved.length) return;
+        await this.dispatch(payload.revision_id ? reapprovalWhatsAppOptions(saved, payload) : batchWhatsAppOptions(saved, payload));
+    },
+
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
         let { organization_id, property_id, requisition_month, requisition_year, target_approver_id, vendor_name, total_final_amount, vendor_notes } = payload;
         let isOverBudget = !!payload.is_over_budget;
         let overBudgetAmount = Number(payload.over_budget_amount) || 0;
         let budgetLimit = Number(payload.budget_limit) || 0;
 
+        if (usesBulkApprovalSummary({ notes: payload.notes })) return;
         if (payload.requisition_id) {
             try {
-                const { data: req } = await supabaseAdmin
+                const { data: req, error: hydrateError } = await supabaseAdmin
                     .from('property_monthly_requisitions')
-                    .select('notes, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
+                    .select('notes, total_estimated_amount, floor_tag, property_id, organization_id, requisition_month, requisition_year, is_over_budget, budget_limit, over_budget_amount')
                     .eq('id', payload.requisition_id)
                     .maybeSingle();
 
+                if (hydrateError) throw hydrateError;
                 if (req) {
+                    if (usesBulkApprovalSummary(req)) return;
                     if (!organization_id) organization_id = req.organization_id;
                     if (!property_id) property_id = req.property_id;
                     if (!requisition_month) requisition_month = req.requisition_month;
@@ -1214,10 +1501,11 @@ export const WhatsAppEventProcessor = {
                         } catch {}
                     }
 
-                    if (parsedNotes?.vendor_quotation) {
-                        if (!vendor_name) vendor_name = parsedNotes.vendor_quotation.vendor_name;
-                        if (!total_final_amount) total_final_amount = parsedNotes.vendor_quotation.total_quoted_amount;
-                        if (!vendor_notes) vendor_notes = parsedNotes.vendor_quotation.notes;
+                    const siteQuote = siteVendorQuotation(req);
+                    if (siteQuote) {
+                        if (!vendor_name) vendor_name = siteQuote.vendor_name;
+                        if (siteQuote.is_bulk || !total_final_amount) total_final_amount = siteQuote.total_quoted_amount;
+                        if (!vendor_notes) vendor_notes = siteQuote.notes;
                     }
                     if (parsedNotes?.approver_info && !target_approver_id) {
                         target_approver_id = parsedNotes.approver_info.id;
@@ -1227,6 +1515,7 @@ export const WhatsAppEventProcessor = {
                 }
             } catch (err) {
                 console.warn('[Requisition Approval Hydrate Error]:', err);
+                throw err;
             }
         }
 
@@ -1362,7 +1651,8 @@ export const WhatsAppEventProcessor = {
                 property: propertyName,
                 tagged_by: tagger.name,
                 note: payload.note || 'Vendor arrangement requested',
-                assigned_procurement: procurement.name || 'Procurement Team'
+                assigned_procurement: procurement.name || 'Procurement Team',
+                ticket_id: payload.ticket_id || ''
             },
             summaryMessage: `Vendor procurement tagged on Ticket #${payload.ticket_number} at ${propertyName}`,
             contextualUserIds: { assigneeId: payload.assigned_procurement_user_id }
@@ -1386,7 +1676,8 @@ export const WhatsAppEventProcessor = {
                 title: payload.title || 'Site Issue',
                 property: propertyName,
                 vendor_details: payload.details || 'Vendor visit aligned',
-                arranged_by: arranger.name || 'Procurement Team'
+                arranged_by: arranger.name || 'Procurement Team',
+                ticket_id: payload.ticket_id || ''
             },
             summaryMessage: `Vendor arranged for Ticket #${payload.ticket_number} at ${propertyName}`,
             contextualUserIds: { requesterId, assigneeId: payload.assigned_to },
@@ -1406,6 +1697,19 @@ export const WhatsAppEventProcessor = {
         if (!organizationId) return;
 
         const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const sourceName = lead?.source_info?.name || leadData.lead_source || await this.getLeadSourceName(payload.lead_source);
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
@@ -1478,12 +1782,24 @@ export const WhatsAppEventProcessor = {
         const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
+        const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp assignment broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const assigneeId = lead?.assigned_to || payload.assigned_to;
         const assignee = lead?.assignee?.full_name 
             ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
             : await this.getUserDetails(assigneeId);
-
-        const leadData = lead || payload;
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
         // Resolve location, campaign, and market for clear tracking in WhatsApp
@@ -1560,7 +1876,8 @@ export const WhatsAppEventProcessor = {
                 user_name: assignedUser.name || 'Technician',
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
-                due_time: payload.due_time || '30 mins'
+                due_time: payload.due_time || '30 mins',
+                property_id: payload.property_id || ''
             },
             summaryMessage: `Checklist "${payload.template_title}" at ${propertyName} is due at ${payload.due_time || 'soon'}`,
             contextualUserIds: { assigneeId: payload.assigned_to }
@@ -1592,6 +1909,34 @@ export const WhatsAppEventProcessor = {
         const propertyName = await this.getPropertyName(payload.property_id);
         const completedBy = await this.getUserDetails(payload.completed_by);
 
+        // Resolve assigned approver for this property/completion if configured
+        let approverId = payload.approver_id;
+        if (!approverId && payload.property_id) {
+            const { data: propSettings } = await supabaseAdmin
+                .from('checklist_property_settings')
+                .select('approver_user_id')
+                .eq('property_id', payload.property_id)
+                .maybeSingle();
+            if (propSettings?.approver_user_id) {
+                approverId = propSettings.approver_user_id;
+            }
+        }
+
+        // Resolve completion timestamp in local timezone (Asia/Kolkata)
+        let completedAt = payload.completed_at;
+        if (!completedAt && payload.completion_id) {
+            const { data: comp } = await supabaseAdmin
+                .from('sop_completions')
+                .select('completed_at')
+                .eq('id', payload.completion_id)
+                .maybeSingle();
+            if (comp?.completed_at) {
+                completedAt = comp.completed_at;
+            }
+        }
+
+        const completionTime = formatWhatsAppTime(completedAt || new Date());
+
         await this.dispatch({
             featureKey: 'checklist_completed',
             templateEventKey: 'checklist_completed',
@@ -1603,10 +1948,10 @@ export const WhatsAppEventProcessor = {
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
                 completed_by: completedBy.name,
-                time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+                time: completionTime
             },
             summaryMessage: `Checklist "${payload.template_title}" completed at ${propertyName} by ${completedBy.name}`,
-            contextualUserIds: { requesterId: payload.completed_by }
+            contextualUserIds: { requesterId: payload.completed_by, approverId }
         });
     },
 
@@ -1687,17 +2032,55 @@ export const WhatsAppEventProcessor = {
         return property?.name || 'N/A';
     },
 
-    async getUserDetails(userId?: string | string[] | null): Promise<{ name: string; phone: string | null }> {
+    async getUserDetails(
+        userId?: string | string[] | null,
+        prefetched?: { full_name?: string | null; phone?: string | null } | null
+    ): Promise<{ name: string; phone: string | null }> {
         const cleanId = Array.isArray(userId) ? userId[0] : userId;
-        if (!cleanId || typeof cleanId !== 'string' || !cleanId.trim()) return { name: 'Staff', phone: null };
-        const { data: user } = await supabaseAdmin
-            .from('users')
-            .select('full_name, phone')
-            .eq('id', cleanId.trim())
-            .maybeSingle();
+        let name = prefetched?.full_name || null;
+        let phone = prefetched?.phone ? String(prefetched.phone).trim() : null;
+
+        // If already has a valid phone (not empty, not 'n/a')
+        if (phone && phone.toLowerCase() !== 'n/a') {
+            return { name: name || 'Staff', phone };
+        }
+
+        if (!cleanId || typeof cleanId !== 'string' || !cleanId.trim()) {
+            return { name: name || 'Staff', phone: null };
+        }
+
+        const trimmedId = cleanId.trim();
+
+        // If name or phone is missing, fetch from users table
+        if (!name || !phone) {
+            const { data: user } = await supabaseAdmin
+                .from('users')
+                .select('full_name, phone')
+                .eq('id', trimmedId)
+                .maybeSingle();
+            if (user) {
+                if (!name && user.full_name) name = user.full_name;
+                if (!phone && user.phone) phone = String(user.phone).trim();
+            }
+        }
+
+        // If phone is still missing or 'n/a', fallback to employee_profiles table
+        if (!phone || phone.toLowerCase() === 'n/a') {
+            const { data: emp } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('phone')
+                .eq('user_id', trimmedId)
+                .maybeSingle();
+            if (emp?.phone && String(emp.phone).trim()) {
+                phone = String(emp.phone).trim();
+                // Opportunistically backfill users table so subsequent lookups are instant
+                supabaseAdmin.from('users').update({ phone }).eq('id', trimmedId).then();
+            }
+        }
+
         return {
-            name: user?.full_name || 'Staff',
-            phone: user?.phone || null
+            name: name || 'Staff',
+            phone: (phone && phone.toLowerCase() !== 'n/a') ? phone : null
         };
     },
 
@@ -2008,6 +2391,81 @@ export const WhatsAppEventProcessor = {
     // ============================================================================
     // HR Tickets & Grievances Handlers
     // ============================================================================
+    /**
+     * Resolves every user configured as an owner at a given HR ticket escalation level.
+     * Checks organization_settings hr_escalation_config / flow_assignees and maps them to users.
+     */
+    async resolveHrLevelOwners(ticket: any, level: number): Promise<{ id: string; email: string | null; phone: string | null; full_name: string | null }[]> {
+        const ownersMap = new Map<string, { id: string; email: string | null; phone: string | null; full_name: string | null }>();
+
+        if (ticket.assigned_to_user_id) {
+            ownersMap.set(ticket.assigned_to_user_id, {
+                id: ticket.assigned_to_user_id,
+                email: ticket.assigned_to?.email || null,
+                phone: ticket.assigned_to?.phone || null,
+                full_name: ticket.assigned_to?.full_name || null
+            });
+        }
+
+        try {
+            const orgId = ticket.organization_id;
+            if (!orgId) return Array.from(ownersMap.values());
+
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', orgId)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const candidateIds: string[] = getTicketLevelAssigneeIds(configObj, ticket, level);
+
+            if (candidateIds.length > 0) {
+                const { data: profiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, email, phone, first_name, last_name')
+                    .or(`id.in.(${candidateIds.join(',')}),user_id.in.(${candidateIds.join(',')})`);
+
+                const userIdsToFetch = new Set<string>();
+                (profiles || []).forEach((p: any) => {
+                    if (p.user_id) userIdsToFetch.add(p.user_id);
+                });
+                candidateIds.forEach(cid => {
+                    userIdsToFetch.add(cid);
+                });
+
+                if (userIdsToFetch.size > 0) {
+                    const { data: matchedUsers } = await supabaseAdmin
+                        .from('users')
+                        .select('id, email, phone, full_name')
+                        .in('id', Array.from(userIdsToFetch));
+
+                    (matchedUsers || []).forEach((u: any) => {
+                        const prof = (profiles || []).find((p: any) => p.user_id === u.id || p.id === u.id);
+                        ownersMap.set(u.id, {
+                            id: u.id,
+                            email: u.email || prof?.email || null,
+                            phone: u.phone || prof?.phone || null,
+                            full_name: u.full_name || (prof ? `${prof.first_name || ''} ${prof.last_name || ''}`.trim() : null)
+                        });
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('[WhatsAppEventProcessor] resolveHrLevelOwners error:', err);
+        }
+
+        // Submitter should never receive handler assignment notifications for their own ticket
+        if (ticket.raised_by_user_id) {
+            ownersMap.delete(ticket.raised_by_user_id);
+        }
+
+        return Array.from(ownersMap.values());
+    },
+
     async handleHrTicketCreated(payload: any): Promise<void> {
         const ticketId = payload.id;
         const { data: ticket } = await supabaseAdmin
@@ -2016,16 +2474,23 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || payload.employee_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number || 'HR-0000';
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
-        const assignedName = ticket?.assigned_to?.full_name || 'Reporting Manager / HR';
-        const createdDate = formatWhatsAppDate(ticket?.created_at || payload.created_at || new Date());
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || payload.employee_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number || 'HR-0000';
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const createdDate = formatWhatsAppDate(effectiveTicket?.created_at || payload.created_at || new Date());
+
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Reporting Manager / HR';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         // 1. Notify Employee (Confirmation) - ONLY if NOT anonymous
-        if (!isAnonymous && (ticket?.raised_by_user_id || payload.raised_by_user_id)) {
+        if (!isAnonymous && (effectiveTicket?.raised_by_user_id || payload.raised_by_user_id)) {
             await this.dispatch({
                 featureKey: 'hr_ticket_created_submitter_v2',
                 templateEventKey: 'hr_ticket_created_submitter_v2',
@@ -2039,13 +2504,12 @@ export const WhatsAppEventProcessor = {
                     assigned_owner: assignedName
                 },
                 summaryMessage: `HR Ticket #${ticketNo} created by ${empName}`,
-                contextualUserIds: { requesterId: ticket?.raised_by_user_id || payload.raised_by_user_id }
+                contextualUserIds: { requesterId: effectiveTicket?.raised_by_user_id || payload.raised_by_user_id }
             });
         }
 
-        // 2. Notify Assigned Handler (New Ticket Assignment)
-        const assigneeId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
-        if (assigneeId) {
+        // 2. Notify Assigned Handler(s) (New Ticket Assignment) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 templateEventKey: 'hr_ticket_assigned_handler_v2',
@@ -2054,14 +2518,17 @@ export const WhatsAppEventProcessor = {
                 paramValues: {
                     user_name: assignedName,
                     ticket_number: ticketNo,
-                    level: String(ticket?.current_level || 1),
+                    level: String(level),
                     category: categoryName,
                     submitter: empName,
-                    subject: ticket?.subject || payload.subject || 'HR Request',
-                    sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                    subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
                 },
                 summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-                contextualUserIds: { assigneeId }
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
             });
         }
 
@@ -2071,13 +2538,13 @@ export const WhatsAppEventProcessor = {
             const { EmailService } = await import('./EmailService');
 
             // 3a. Submitter Email (Ticket Submitted)
-            if (!isAnonymous && ticket?.raised_by?.email) {
+            if (!isAnonymous && effectiveTicket?.raised_by?.email) {
                 const submitterEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_created_submitter_v2',
                     contextualRecipients: {
-                        requesterEmail: ticket.raised_by.email
+                        requesterEmail: effectiveTicket.raised_by.email
                     }
                 });
 
@@ -2085,7 +2552,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of submitterEmailResult.emails) {
                         EmailService.sendHrTicketCreatedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             submitterName: empName,
                             assignedOwnerName: assignedName,
                             categoryName
@@ -2094,14 +2561,18 @@ export const WhatsAppEventProcessor = {
                 }
             }
 
-            // 3b. Handler Email (New Ticket Assignment)
-            if (ticket?.assigned_to?.email) {
+            // 3b. Handler Email (New Ticket Assignment) - to all level owners & omnichannel recipients
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+            if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
                 const handlerEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: ticket.assigned_to.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2109,7 +2580,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of handlerEmailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: empName,
                             categoryName
@@ -2130,12 +2601,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedName = ticket?.assigned_to?.full_name || 'Manager';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Manager';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_assigned_handler_v2',
@@ -2145,24 +2623,31 @@ export const WhatsAppEventProcessor = {
             paramValues: {
                 user_name: assignedName,
                 ticket_number: ticketNo,
-                level: String(ticket?.current_level || payload.current_level || 1),
+                level: String(level),
                 category: categoryName,
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
             },
             summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2171,7 +2656,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketAssignedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: assignedName,
                         submitterName: empName,
                         categoryName
@@ -2191,13 +2676,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const level = ticket?.current_level || payload.current_level || 2;
-        const ownerName = ticket?.assigned_to?.full_name || 'Escalation Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const level = effectiveTicket?.current_level || payload.current_level || payload.to_level || 2;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
         const reason = payload.reason || (payload.is_sla_breach ? 'due to SLA timeout' : 'by handler escalation');
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Escalation Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_escalated_handler',
@@ -2209,23 +2700,30 @@ export const WhatsAppEventProcessor = {
                 ticket_number: ticketNo,
                 level: String(level),
                 reason,
-                category: ticket?.category?.category_name || 'HR Request',
+                category: effectiveTicket?.category?.category_name || 'HR Request',
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
                 previous_level: String(Math.max(level - 1, 1))
             },
             summaryMessage: `HR Ticket #${ticketNo} escalated to Level ${level} (${ownerName})`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_escalated_handler',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2234,7 +2732,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketEscalatedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: ownerName,
                         level,
                         reason,
@@ -2255,9 +2753,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ownerName = ticket?.assigned_to?.full_name || 'Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2268,12 +2772,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: payload.remaining_hours || '4 hours',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `SLA warning for HR Ticket #${ticketNo}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2285,9 +2792,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const ownerName = ticket?.assigned_to?.full_name || 'Unassigned';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Unassigned';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2298,12 +2811,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: '0 hours (BREACHED)',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `CRITICAL: HR Ticket #${ticketNo} SLA Breached`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2315,46 +2831,60 @@ export const WhatsAppEventProcessor = {
         // Fetch full ticket details with assigned handler
         const { data: ticket } = await supabaseAdmin
             .from('hr_tickets')
-            .select('*, assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
+            .select('*, category:hr_ticket_categories(*), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
             .eq('id', ticketId)
             .maybeSingle();
 
-        const isAnon = Boolean(payload.is_anonymous || ticket?.is_anonymous) || payload.ticket_type === 'anonymous_feedback' || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedUser = ticket?.assigned_to;
-        const assignedName = assignedUser?.full_name || assignedUser?.email || 'Authority';
-        const assignedId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const effectiveTicket = ticket || payload;
+        const isAnon = Boolean(effectiveTicket.is_anonymous) || effectiveTicket.ticket_type === 'anonymous_feedback';
         const categoryLabel = isAnon ? 'Anonymous Feedback' : 'Confidential Grievance';
         const submitterLabel = isAnon ? 'Anonymous Employee' : 'Confidential Submitter';
+        const level = effectiveTicket.current_level || 1;
 
-        // 1. WhatsApp Alert to Assigned Handler
-        await this.dispatch({
-            featureKey: 'hr_ticket_assigned_handler_v2',
-            templateEventKey: 'hr_ticket_assigned_handler_v2',
-            organizationId: orgId,
-            entityId: ticketId,
-            paramValues: {
-                user_name: assignedName,
-                ticket_number: ticketNo,
-                level: '1',
-                category: categoryLabel,
-                submitter: submitterLabel,
-                subject: ticket?.subject || payload.subject || 'Confidential Submission',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
-            },
-            summaryMessage: `Confidential HR alert received: #${ticketNo}`,
-            contextualUserIds: { assigneeId: assignedId }
-        });
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Authority';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
-        // 2. Email Alert to Assigned Handler - strictly respecting Omnichannel Matrix
-        if (assignedUser?.email) {
+        // 1. WhatsApp Alert to Assigned Handler(s) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
+            await this.dispatch({
+                featureKey: 'hr_ticket_assigned_handler_v2',
+                templateEventKey: 'hr_ticket_assigned_handler_v2',
+                organizationId: orgId,
+                entityId: ticketId,
+                paramValues: {
+                    user_name: assignedName,
+                    ticket_number: ticketNo,
+                    level: String(level),
+                    category: categoryLabel,
+                    submitter: submitterLabel,
+                    subject: effectiveTicket.subject || payload.subject || 'Confidential Submission',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket.sla_due_at || payload.sla_due_at)
+                },
+                summaryMessage: `Confidential HR alert received: #${ticketNo}`,
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
+            });
+        }
+
+        // 2. Email Alert to Assigned Handler(s) - strictly respecting Omnichannel Matrix
+        const primaryHandlerEmail = primaryOwner?.email || effectiveTicket.assigned_to?.email;
+        const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+        if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: assignedUser.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2363,7 +2893,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: submitterLabel,
                             categoryName: categoryLabel
@@ -2459,26 +2989,30 @@ export const WhatsAppEventProcessor = {
             .eq('id', payload.sender_user_id)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const isSenderEmployee = payload.sender_user_id === ticket?.raised_by_user_id;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const isSenderEmployee = payload.sender_user_id === effectiveTicket?.raised_by_user_id;
 
         const senderName = (isAnonymous && isSenderEmployee) ? 'Anonymous Employee' : (sender?.full_name || 'Team Member');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
         const msgSnippet = (payload.message || payload.content || '').slice(0, 100);
 
-        const targetUser = isSenderEmployee ? ticket?.assigned_to : ticket?.raised_by;
-        const targetUserId = targetUser?.id || (isSenderEmployee ? ticket?.assigned_to_user_id : ticket?.raised_by_user_id);
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = isSenderEmployee ? await this.resolveHrLevelOwners(effectiveTicket, level) : [];
+        const primaryTarget = isSenderEmployee ? (levelOwners[0] || effectiveTicket?.assigned_to) : effectiveTicket?.raised_by;
+        const primaryTargetId = primaryTarget?.id || (isSenderEmployee ? effectiveTicket?.assigned_to_user_id : effectiveTicket?.raised_by_user_id);
+        const extraTargetIds = isSenderEmployee ? levelOwners.slice(1).map(o => o.id).filter(Boolean) : [];
         const targetName = isSenderEmployee
-            ? (ticket?.assigned_to?.full_name || 'Handler')
-            : (isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee'));
+            ? (primaryTarget?.full_name || primaryTarget?.email || 'Handler')
+            : (isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee'));
 
         // If target is anonymous submitter, suppress WhatsApp since anonymous submitters have no registered phone
         if (!isSenderEmployee && isAnonymous) {
             return;
         }
 
-        if (targetUserId) {
+        if (primaryTargetId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_comment_added',
                 templateEventKey: 'hr_ticket_comment_added',
@@ -2492,20 +3026,28 @@ export const WhatsAppEventProcessor = {
                     date: formatWhatsAppDate(new Date())
                 },
                 summaryMessage: `New comment on HR Ticket #${ticketNo} from ${senderName}`,
-                contextualUserIds: { assigneeId: targetUserId }
+                contextualUserIds: {
+                    assigneeId: isSenderEmployee ? primaryTargetId : undefined,
+                    requesterId: !isSenderEmployee ? primaryTargetId : undefined,
+                    extraUserIds: extraTargetIds
+                }
             });
         }
 
-        if (targetUser?.email && (!isAnonymous || isSenderEmployee)) {
+        const primaryTargetEmail = primaryTarget?.email;
+        const extraTargetEmails = isSenderEmployee ? levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[] : [];
+
+        if ((primaryTargetEmail || extraTargetEmails.length > 0) && (!isAnonymous || isSenderEmployee)) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_comment_added',
                     contextualRecipients: {
-                        assigneeEmail: isSenderEmployee ? targetUser.email : undefined,
-                        requesterEmail: !isSenderEmployee ? targetUser.email : undefined
+                        assigneeEmail: isSenderEmployee ? primaryTargetEmail : undefined,
+                        extraEmails: isSenderEmployee ? extraTargetEmails : undefined,
+                        requesterEmail: !isSenderEmployee ? primaryTargetEmail : undefined
                     }
                 });
 
@@ -2514,7 +3056,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketCommentAddedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             recipientName: targetName,
                             senderName,
                             commentSnippet: msgSnippet

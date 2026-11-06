@@ -44,13 +44,11 @@ export async function POST(request: Request) {
             return NextResponse.json({ success: false, error: uploadError.message }, { status: 500 });
         }
 
-        const { data: publicUrlData } = supabaseAdmin.storage
-            .from(bucketName)
-            .getPublicUrl(filePath);
+        const proxyUrl = `/api/storage/${bucketName}/${filePath}`;
 
         return NextResponse.json({
             success: true,
-            url: publicUrlData.publicUrl,
+            url: proxyUrl,
             fileName: file.name
         });
     } catch (err: any) {

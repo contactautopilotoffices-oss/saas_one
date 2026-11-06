@@ -47,15 +47,29 @@ export async function resolvePettyCashAccessForUser(user: { id: string; email?: 
         if (error) return NextResponse.json({ error: 'Could not verify and audit selected-organization support access' }, { status: 503 });
     }
     const roles = [...new Set(memberships.filter(m => m.organization_id === organizationId).map(m => m.role as string))];
-    const propertyIds = [...new Set((pm.data || []).filter(m => m.organization_id === organizationId && isInternalPettyCashRole(m.role)).map(m => m.property_id))];
+    const canManageRouting = roles.some(r => r === 'org_super_admin' || r === 'ops_super_admin');
+    const isAdmin = master || canManageRouting;
+
+    let propertyIds: string[];
+    if (isAdmin) {
+        const { data: allProps } = await supabaseAdmin
+            .from('properties')
+            .select('id')
+            .eq('organization_id', organizationId)
+            .is('deleted_at', null)
+            .eq('is_active', true);
+        propertyIds = (allProps || []).map(p => p.id);
+    } else {
+        propertyIds = [...new Set((pm.data || []).filter(m => m.organization_id === organizationId && isInternalPettyCashRole(m.role)).map(m => m.property_id))];
+    }
+
     const [assignments, assigned] = await Promise.all([
         supabaseAdmin.from('petty_cash_property_assignments').select('kind').eq('organization_id', organizationId).eq('user_id', user.id).eq('is_active', true),
         supabaseAdmin.from('petty_cash_requests').select('assigned_allocator_id,assigned_approver_id').eq('organization_id', organizationId).or(`assigned_allocator_id.eq.${user.id},assigned_approver_id.eq.${user.id}`).limit(1),
     ]);
     if (assignments.error || assigned.error) return NextResponse.json({ error: 'Petty cash workflow migration must be applied before using this module' }, { status: 503 });
-    const canManageRouting = roles.some(r => r === 'org_super_admin' || r === 'ops_super_admin');
     return {
-        user, organizationId, roles, propertyIds, isMasterAdmin: master, isAdmin: master || canManageRouting, canManageRouting,
+        user, organizationId, roles, propertyIds, isMasterAdmin: master, isAdmin, canManageRouting,
         canAllocate: Boolean(assignments.data?.some(a => a.kind === 'allocator') || assigned.data?.some(a => a.assigned_allocator_id === user.id)),
         canApprove: Boolean(assignments.data?.some(a => a.kind === 'approver') || assigned.data?.some(a => a.assigned_approver_id === user.id)),
         canDisburse: roles.includes('accounts'),

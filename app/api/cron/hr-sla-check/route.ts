@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
+import { runAutoSlaEscalation } from '@/backend/lib/hr/slaEscalation';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -10,7 +11,7 @@ export async function GET(request: Request) {
     try {
         const now = new Date();
 
-        // Fetch open tickets with valid SLA due dates
+        // Fetch open tickets with valid SLA due dates (exclude resolved, closed, cancelled, pending_acknowledgement)
         const { data: tickets, error } = await supabaseAdmin
             .from('hr_tickets')
             .select(`
@@ -19,14 +20,13 @@ export async function GET(request: Request) {
                 raised_by:users!raised_by_user_id(id, full_name, email),
                 assigned_to:users!assigned_to_user_id(id, full_name, email)
             `)
-            .not('status', 'in', '("resolved","closed")')
+            .not('status', 'in', '("resolved","closed","cancelled","pending_acknowledgement")')
             .not('sla_due_at', 'is', null);
 
         if (error) throw error;
 
         let processedWarnings = 0;
         let processedBreaches = 0;
-        let autoEscalated = 0;
 
         for (const ticket of (tickets || [])) {
             const slaDueAt = new Date(ticket.sla_due_at);
@@ -47,31 +47,6 @@ export async function GET(request: Request) {
                     }
                 }).catch(err => console.error('[HR SLA Cron] Breach alert error:', err));
                 processedBreaches++;
-
-                // Auto-Escalate Level if eligible (L1 -> L2 -> L3 -> L4)
-                const currentLevel = ticket.current_level || 1;
-                if (currentLevel < 4) {
-                    const nextLevel = currentLevel + 1;
-                    const { error: updateErr } = await supabaseAdmin
-                        .from('hr_tickets')
-                        .update({
-                            current_level: nextLevel,
-                            updated_at: new Date().toISOString()
-                        })
-                        .eq('id', ticket.id);
-
-                    if (!updateErr) {
-                        autoEscalated++;
-                        await WhatsAppEventProcessor.processEvent({
-                            event_type: 'HR_TICKET_LEVEL_ESCALATED',
-                            payload: {
-                                ...ticket,
-                                old_level: currentLevel,
-                                current_level: nextLevel
-                            }
-                        }).catch(err => console.error('[HR SLA Cron] Escalation alert error:', err));
-                    }
-                }
             }
             // 2. SLA Warning (Due within 24 hours)
             else if (diffHours > 0 && diffHours <= 24) {
@@ -86,6 +61,25 @@ export async function GET(request: Request) {
                 }).catch(err => console.error('[HR SLA Cron] Warning alert error:', err));
                 processedWarnings++;
             }
+        }
+
+        // Run auto-escalation engine safely for eligible open tickets
+        let autoEscalated = 0;
+        try {
+            const escRes = await runAutoSlaEscalation();
+            autoEscalated = escRes?.escalated_tickets?.length || 0;
+            for (const esc of (escRes?.escalated_tickets || [])) {
+                await WhatsAppEventProcessor.processEvent({
+                    event_type: 'HR_TICKET_LEVEL_ESCALATED',
+                    payload: {
+                        id: esc.id,
+                        ticket_number: esc.ticket_number,
+                        current_level: esc.newLevel
+                    }
+                }).catch(err => console.error('[HR SLA Cron] Escalation alert error:', err));
+            }
+        } catch (escErr) {
+            console.error('[HR SLA Cron] Error during runAutoSlaEscalation:', escErr);
         }
 
         return NextResponse.json({

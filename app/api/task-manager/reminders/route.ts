@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { TaskNotificationService } from '@/task-manager/TaskNotificationService';
 import { TaskDailyGeneratorService } from '@/task-manager/TaskDailyGeneratorService';
-import { TaskMessagingService } from '@/task-manager/TaskMessagingService';
 import { requireTaskManagerAdmin } from '../_shared/adminGuard';
 
 export const dynamic = 'force-dynamic';
@@ -16,22 +15,7 @@ export async function POST(request: NextRequest) {
         if (!guard.ok) return guard.response;
 
         const body = await request.json().catch(() => ({}));
-        const { action = 'morning_digest', dryRun = false, phone, name } = body;
-
-        if (action === 'nudge_member') {
-            if (!phone) {
-                return NextResponse.json({ ok: false, error: 'Phone number is required' }, { status: 400 });
-            }
-            const message = `Hello ${name || 'there'}! 👋 This is a quick friendly reminder from your Task Manager. Please review and update your pending tasks for today. Reply "tasks" anytime to see your list.`;
-            if (!dryRun) {
-                await TaskMessagingService.sendMessage(phone, message);
-            }
-            return NextResponse.json({
-                ok: true,
-                message: `Sent WhatsApp nudge to ${name || phone}`,
-                details: { phone, dryRun }
-            });
-        }
+        const { action = 'morning_digest', dryRun = false } = body;
 
         if (action === 'morning_digest') {
             await TaskDailyGeneratorService.generateDailyFixedTasks();

@@ -288,6 +288,8 @@ export interface CRMLead {
     location?: string;
     requirement?: string;
     seats?: number;
+    /** Seat requirement as typed, e.g. "70 workstations and 4 cabins" (seats holds the number). */
+    seats_detail?: string | null;
     property_interest?: string;
     lead_source?: string;
     deal_value: number;
@@ -310,6 +312,9 @@ export interface CRMLead {
     city?: string | null;
     campaign?: string | null;
     cohort?: string | null;
+    outreach_button_tapped?: string | null;
+    first_call_at?: string | null;
+    call_sla_breached?: boolean;
     // Joined data
     status_info?: LeadStatusConfig;
     source_info?: LeadSource;
@@ -414,6 +419,7 @@ export interface CreateLeadInput {
     location?: string;
     requirement?: string;
     seats?: number | null;
+    seats_detail?: string | null;
     move_in_timeline?: string | null;
     property_interest?: string;
     lead_source?: string;

@@ -8,16 +8,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     User, Mail, Phone, Camera, Save, Loader2,
     Shield, Building, CheckCircle2, AlertCircle, Home, Store,
-    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase
+    Bell, Video, ExternalLink, Info, X, MessageSquare, UserCheck, Hash, Briefcase, Mic, Sparkles
 } from 'lucide-react';
 import Image from 'next/image';
 import imageCompression from 'browser-image-compression';
 import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings';
+import ChangePasswordSection from '@/frontend/components/dashboard/ChangePasswordSection';
 
 import EmailServiceSettings from '@/frontend/components/admin/EmailServiceSettings';
 import WhatsAppServiceSettings from '@/frontend/components/admin/WhatsAppServiceSettings';
 import OmnichannelNotificationSettings from '@/frontend/components/admin/OmnichannelNotificationSettings';
 import AssistantSettings from '@/frontend/components/whatsapp/AssistantSettings';
+import AiAccessSettings from '@/frontend/components/ai-layer/AiAccessSettings';
+import VoiceSetup from '@/frontend/components/task-manager/voice/VoiceSetup';
 
 interface RoleInfo {
     role: string;
@@ -58,7 +61,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
             const employeeRoles = [
                 'staff', 'mst', 'property_admin', 'soft_service_manager', 
                 'soft_service_supervisor', 'soft_service_staff', 'org_admin', 
-                'org_super_admin', 'ops_super_admin', 'master_admin', 'hr', 'hr_head'
+                'org_super_admin', 'ops_super_admin', 'master_admin', 'hr', 'hr_head', 'it', 'design'
             ];
             const hasEmployeeRole = userRoles.some(r => employeeRoles.includes((r.role || '').toLowerCase()));
             if (!hasEmployeeRole) return true;
@@ -71,7 +74,7 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
     const [cameraPerm, setCameraPerm] = useState<'granted' | 'denied' | 'prompt' | 'unsupported'>('prompt');
     const [revokeHint, setRevokeHint] = useState<'notif' | 'camera' | null>(null);
 
-    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'appearance'>('profile');
+    const [activeTab, setActiveTab] = useState<'profile' | 'omnichannel_notifications' | 'email_service' | 'whatsapp_service' | 'ai_access' | 'appearance' | 'voice'>('profile');
 
     useEffect(() => {
         // Notification permission
@@ -445,6 +448,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                     </button>
                 )}
 
+                {superAdminOrgId && (
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab('ai_access')}
+                        className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                            activeTab === 'ai_access'
+                                ? 'bg-primary text-white shadow-sm'
+                                : 'text-slate-600 hover:bg-slate-100'
+                        }`}
+                    >
+                        <Sparkles className="w-4 h-4" /> AI Assistant
+                    </button>
+                )}
+
                 <button
                     type="button"
                     onClick={() => setActiveTab('appearance')}
@@ -455,6 +472,19 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                     }`}
                 >
                     <Video className="w-4 h-4" /> Appearance & Wallpaper
+                </button>
+
+                {/* LiveVoice ID (owner 2026-11-02): anyone can set up their own voice for the Meeting Assistant */}
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('voice')}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+                        activeTab === 'voice'
+                            ? 'bg-primary text-white shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                >
+                    <Mic className="w-4 h-4" /> My voice
                 </button>
             </div>
 
@@ -938,6 +968,13 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 </form>
             )}
 
+            {/* Owner 2026-11-03: every role can change (or set) its password here */}
+            {activeTab === 'profile' && (
+                <div className="mt-6 md:mt-8">
+                    <ChangePasswordSection />
+                </div>
+            )}
+
             {/* Omnichannel Notification & Communication Center Tab */}
             {activeTab === 'omnichannel_notifications' && superAdminOrgId && (
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
@@ -957,6 +994,20 @@ export default function SettingsView({ onUpdate }: SettingsViewProps) {
                 <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
                     <WhatsAppServiceSettings organizationId={superAdminOrgId} />
                     <AssistantSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
+            {/* AI Assistant access (org super admin; the API enforces it) */}
+            {activeTab === 'ai_access' && superAdminOrgId && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <AiAccessSettings organizationId={superAdminOrgId} />
+                </section>
+            )}
+
+            {/* My voice Tab */}
+            {activeTab === 'voice' && (
+                <section className="bg-white rounded-2xl border border-slate-200 p-4 md:p-8 shadow-sm">
+                    <VoiceSetup />
                 </section>
             )}
 

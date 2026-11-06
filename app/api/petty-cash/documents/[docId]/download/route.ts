@@ -8,7 +8,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (isPettyCashAccessError(access)) return access;
     const { docId } = await params;
     if (!isUuid(docId)) return NextResponse.json({ error: 'Invalid document' }, { status: 400 });
-    const { data: doc, error } = await supabaseAdmin.from('petty_cash_documents').select('request_id,storage_path,file_url').eq('id', docId).eq('organization_id', access.organizationId).maybeSingle();
+    const { data: doc, error } = await supabaseAdmin.from('petty_cash_documents').select('request_id,storage_path,file_url,file_name,file_type').eq('id', docId).eq('organization_id', access.organizationId).maybeSingle();
     if (error) return pcError(error);
     if (!doc || !await pcRequest(access, doc.request_id)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     let path = doc.storage_path;
@@ -23,6 +23,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         } catch { return NextResponse.json({ error: 'Historical evidence needs storage reconciliation' }, { status: 409 }); }
     }
     if (!path.startsWith(`${access.organizationId}/`) || path.includes('..')) return NextResponse.json({ error: 'Invalid evidence path' }, { status: 403 });
-    const { data, error: signError } = await supabaseAdmin.storage.from(bucket).createSignedUrl(path, 60);
-    return signError ? pcError(signError) : NextResponse.redirect(data.signedUrl);
+
+    // Stream file directly through Next.js proxy so Supabase backend URLs are never exposed in address bar or shared links
+    const { data: fileBlob, error: downloadError } = await supabaseAdmin.storage.from(bucket).download(path);
+    if (downloadError || !fileBlob) {
+        return pcError(downloadError || { message: 'Could not retrieve document file' });
+    }
+
+    const buffer = Buffer.from(await fileBlob.arrayBuffer());
+    const contentType = doc.file_type || fileBlob.type || 'application/octet-stream';
+    const isAttachment = request.nextUrl.searchParams.get('download') === 'true';
+    const filename = encodeURIComponent(doc.file_name || 'receipt');
+
+    return new NextResponse(buffer, {
+        status: 200,
+        headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': `${isAttachment ? 'attachment' : 'inline'}; filename="${filename}"; filename*=UTF-8''${filename}`,
+            'Cache-Control': 'private, max-age=3600',
+            'Content-Length': String(buffer.length)
+        }
+    });
 }

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { getStockSourcesByProperty } from '@/backend/lib/stock/propertyStock';
+import { liveItems as liveItemsFor, movementsForItems } from '@/frontend/lib/stock/itemSource';
 
 export async function GET(request: NextRequest) {
     const supabase = await createClient();
@@ -31,6 +33,9 @@ export async function GET(request: NextRequest) {
         let processedCount = 0;
         const errors: string[] = [];
 
+        // Count only the stock list each property is using (old list or requisition items)
+        const stockSources = await getStockSourcesByProperty(properties.map(p => p.id));
+
         // Process each property
         for (const property of properties) {
             try {
@@ -48,7 +53,7 @@ export async function GET(request: NextRequest) {
                 }
 
                 // Get all stock items for this property
-                const { data: items, error: itemsError } = await supabase
+                const { data: allItems, error: itemsError } = await supabase
                     .from('stock_items')
                     .select('*')
                     .eq('property_id', property.id);
@@ -59,7 +64,7 @@ export async function GET(request: NextRequest) {
                 }
 
                 // Get movements for today
-                const { data: movements, error: movError } = await supabase
+                const { data: allMovements, error: movError } = await supabase
                     .from('stock_movements')
                     .select('*')
                     .eq('property_id', property.id)
@@ -70,6 +75,10 @@ export async function GET(request: NextRequest) {
                     errors.push(`Property ${property.id}: Failed to fetch movements - ${movError.message}`);
                     continue;
                 }
+
+                const source = stockSources.get(property.id) || 'legacy';
+                const items = liveItemsFor(allItems || [], source);
+                const movements = movementsForItems(allMovements || [], new Set(items.map(i => i.id)), source);
 
                 // Calculate report data
                 const totalItems = items?.length || 0;

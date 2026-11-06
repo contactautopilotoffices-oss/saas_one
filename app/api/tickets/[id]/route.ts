@@ -34,6 +34,31 @@ export async function GET(
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
         }
 
+        const adminSupabase = createAdminClient();
+
+        // Check caller roles for data isolation (Tenants and Vendors must NEVER see internal operational notes or procurement financials)
+        let isTenantOrVendor = false;
+        if (user) {
+            const [orgMemsRes, propMemsRes] = await Promise.all([
+                adminSupabase.from('organization_memberships').select('role, organization_id').eq('user_id', user.id),
+                adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
+            ]);
+            const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+            const propRoles = (propMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+            const isStaffOrAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r)) ||
+                propRoles.some(r => ['property_admin', 'ops_super_admin', 'mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r)) ||
+                // Owner 2026-11-02: the org-level IT team works the tickets assigned to them like staff do
+                (orgRoles.includes('it') && ticket.assigned_to === user.id) ||
+                // Owner 2026-11-03: the org-level Tech team (internal staff) tracks its own organisation's tickets
+                (orgMemsRes.data || []).some(m => (m.role || '').toLowerCase().trim() === 'tech' && m.organization_id === ticket.organization_id);
+            isTenantOrVendor = !isStaffOrAdmin;
+        }
+
+        // 1. If ticket is internal, tenants and external vendors cannot access it
+        if (ticket.internal && isTenantOrVendor) {
+            return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
         // Get comments
         const { data: comments } = await supabase
             .from('ticket_comments')
@@ -41,7 +66,11 @@ export async function GET(
             .eq('ticket_id', ticketId)
             .order('created_at', { ascending: true });
 
-        const adminSupabase = createAdminClient();
+        // 2. Filter internal comments for non-staff
+        let filteredComments = comments || [];
+        if (isTenantOrVendor) {
+            filteredComments = filteredComments.filter((c: any) => !c.is_internal);
+        }
 
         // Get activity log (use admin client to bypass RLS so all users' upload activities are visible)
         const { data: activities } = await adminSupabase
@@ -58,25 +87,28 @@ export async function GET(
             .eq('ticket_id', ticketId)
             .order('escalated_at', { ascending: true });
 
-        // Get material requests (Procurement) with comparative quotes
-        const { data: procurementRequests } = await adminSupabase
-            .from('material_requests')
-            .select(`
-                *,
-                line_items:material_request_items(
-                    *
-                ),
-                comparatives:material_request_comparatives(
+        // Get material requests (Procurement) with comparative quotes - STRICTLY restricted to staff/admins
+        let formattedProcurementRequests: any[] = [];
+        if (!isTenantOrVendor) {
+            const { data: procurementRequests } = await adminSupabase
+                .from('material_requests')
+                .select(`
                     *,
-                    created_by_user:users!material_request_comparatives_created_by_fkey(full_name, email),
-                    action_by_user:users!material_request_comparatives_action_by_fkey(full_name, email)
-                ),
-                requester:users!material_requests_requested_by_fkey(full_name)
-            `)
-            .eq('ticket_id', ticketId)
-            .order('created_at', { ascending: false });
+                    line_items:material_request_items(
+                        *
+                    ),
+                    comparatives:material_request_comparatives(
+                        *,
+                        created_by_user:users!material_request_comparatives_created_by_fkey(full_name, email),
+                        action_by_user:users!material_request_comparatives_action_by_fkey(full_name, email)
+                    ),
+                    requester:users!material_requests_requested_by_fkey(full_name)
+                `)
+                .eq('ticket_id', ticketId)
+                .order('created_at', { ascending: false });
 
-        const formattedProcurementRequests = procurementRequests || [];
+            formattedProcurementRequests = procurementRequests || [];
+        }
 
         // Hydrate approver_user for comparatives if approver_uid is set
         const allComparatives = formattedProcurementRequests.flatMap((r: any) => r.comparatives || []);
@@ -86,7 +118,7 @@ export async function GET(
                 .from('users')
                 .select('id, full_name, email')
                 .in('id', approverUids);
-            
+
             const userMap = new Map(approverUsers?.map((u: any) => [u.id, u]) || []);
             allComparatives.forEach((c: any) => {
                 if (c.approver_uid) {
@@ -102,7 +134,7 @@ export async function GET(
                 .from('users')
                 .select('id, full_name')
                 .in('id', deliveredUids);
-            
+
             const deliveredMap = new Map(deliveredUsers?.map((u: any) => [u.id, u]) || []);
             formattedProcurementRequests.forEach((r: any) => {
                 if (r.delivered_by) {
@@ -155,14 +187,14 @@ export async function GET(
             { step: 'Completed', completed: ticket.status === 'resolved' || ticket.status === 'closed', time: ticket.resolved_at },
         ];
 
-        return NextResponse.json({ 
-            ticket, 
-            comments: comments || [], 
-            activities: activities || [], 
-            escalationLogs: escalationLogs || [], 
+        return NextResponse.json({
+            ticket,
+            comments: filteredComments,
+            activities: activities || [],
+            escalationLogs: escalationLogs || [],
             procurementRequests: formattedProcurementRequests,
-            timeline, 
-            validationEnabled 
+            timeline,
+            validationEnabled
         });
     } catch (error) {
         console.error('Ticket detail error:', error);
@@ -566,6 +598,17 @@ export async function PATCH(
 
                     if (om) canEditContent = true;
                 }
+
+                // Owner 2026-11-03: the org-level Tech team has the Super Admin console's Requests tab, with its actions,
+                // for its own organisation
+                if (!canEditContent && currentTicket.organization_id) {
+                    const { data: techRows } = await adminSupabase
+                        .from('organization_memberships')
+                        .select('role, is_active')
+                        .eq('user_id', user.id)
+                        .eq('organization_id', currentTicket.organization_id);
+                    if ((techRows || []).some(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)) canEditContent = true;
+                }
             }
 
             if (!canEditContent) {
@@ -735,7 +778,10 @@ export async function DELETE(
             const validOm = omList?.find(m =>
                 adminRoles.includes(m.role) ||
                 adminRoles.includes(m.role?.toLowerCase()) ||
-                adminRoles.includes(m.role?.toUpperCase())
+                adminRoles.includes(m.role?.toUpperCase()) ||
+                // Owner 2026-11-03: the org-level Tech team deletes like the Super Admin console (own organisation only;
+                // a property-level 'tech' membership is not enough)
+                ((m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false)
             );
 
             if (validOm) {

@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -27,7 +30,8 @@ export async function GET(
             .select(`
                 *,
                 template:sop_templates(title, frequency),
-                user:users(id, full_name),
+                user:users!completed_by(id, full_name),
+                approver:users!approver_id(id, full_name),
                 items:sop_completion_items(*)
             `)
             .eq('property_id', propertyId)
@@ -70,6 +74,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -91,7 +97,7 @@ export async function POST(
             .maybeSingle();
         
         const userRole = (membership?.role || '').toLowerCase();
-        const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole);
+        const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole);
 
         if (!templateId) {
             return NextResponse.json({ error: 'templateId is required' }, { status: 400 });
@@ -229,17 +235,31 @@ export async function POST(
         } 
         
         // If we still don't have an existing completion, do a final fallback search 
-        // based on the template and date (prevents duplicates for non-hourly templates)
+        // prioritizing any active pending/in-progress completion for today so in-flight work is never lost
         if (!existingCompletion) {
-            const { data } = await supabaseAdmin
+            const { data: pendingData } = await supabaseAdmin
                 .from('sop_completions')
                 .select('*, items:sop_completion_items(*)')
                 .eq('template_id', templateId)
                 .eq('property_id', propertyId)
                 .eq('completion_date', finalCompletionDate)
+                .in('status', ['pending', 'in_progress'])
                 .order('created_at', { ascending: false })
                 .limit(1);
-            existingCompletion = data?.[0] ?? null;
+
+            if (pendingData && pendingData.length > 0) {
+                existingCompletion = pendingData[0];
+            } else {
+                const { data } = await supabaseAdmin
+                    .from('sop_completions')
+                    .select('*, items:sop_completion_items(*)')
+                    .eq('template_id', templateId)
+                    .eq('property_id', propertyId)
+                    .eq('completion_date', finalCompletionDate)
+                    .order('created_at', { ascending: false })
+                    .limit(1);
+                existingCompletion = data?.[0] ?? null;
+            }
         }
 
         // ── Check if we should allow on-demand generation ───────────────────

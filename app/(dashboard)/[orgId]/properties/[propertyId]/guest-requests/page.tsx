@@ -373,7 +373,7 @@ export default function GuestRequestsPage(props: any = {}) {
                             ticketNumber={req.ticket_number || `GR-${req.id.substring(0, 6).toUpperCase()}`}
                             createdAt={req.created_at}
                             raisedBy={req.guest_name || 'Guest'}
-                            photoUrl={req.photo_urls?.[0] ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/guest-photos/${req.photo_urls[0]}` : undefined}
+                            photoUrl={req.photo_urls?.[0] ? `/api/storage/guest-photos/${req.photo_urls[0]}` : undefined}
                             onClick={() => setSelectedRequest(req)}
                         />
                     ))}
@@ -452,7 +452,7 @@ export default function GuestRequestsPage(props: any = {}) {
                                         <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-3">Attached Photos</h4>
                                         <div className="flex flex-wrap gap-3">
                                             {selectedRequest.photo_urls.map((url: string, idx: number) => {
-                                                const fullUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/guest-photos/${url}`;
+                                                const fullUrl = url.startsWith('/api/storage/') ? url : `/api/storage/guest-photos/${url}`;
                                                 return (
                                                     <a href={fullUrl} target="_blank" rel="noreferrer" key={idx} className="block shrink-0">
                                                         <div className="w-24 h-24 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden hover:ring-2 hover:ring-primary transition-all">

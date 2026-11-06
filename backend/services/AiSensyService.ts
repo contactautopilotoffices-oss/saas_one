@@ -1,5 +1,6 @@
 import { campaignOptions } from '../lib/whatsapp/assistant/templates.mjs';
 import { providerIds } from '../lib/whatsapp/interpreter/delivery.mjs';
+import { sanitizeWhatsAppParam } from '../lib/whatsapp/sanitize';
 
 const AISENSY_API_URL = 'https://backend.aisensy.com/campaign/t1/api/v2';
 
@@ -10,6 +11,8 @@ export interface AiSensyTemplateOptions {
     userName?: string;
     mediaUrl?: string;
     mediaFilename?: string;
+    /** Value for an authentication template's copy-code button (the OTP itself). */
+    copyCode?: string;
 }
 
 export interface AiSensySendResult {
@@ -65,12 +68,15 @@ export class AiSensyService {
         }
 
         try {
-            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string } } = {
+            const sanitizedParams = (options.templateParams || []).map(p => sanitizeWhatsAppParam(p));
+            const userName = sanitizeWhatsAppParam(options.userName ?? 'User');
+
+            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string }; buttons?: unknown[] } = {
                 apiKey,
                 campaignName: options.campaignName,
                 destination,
-                userName: options.userName ?? 'User',
-                templateParams: options.templateParams,
+                userName,
+                templateParams: sanitizedParams,
                 source: 'autopilot-fms',
             };
 
@@ -79,6 +85,16 @@ export class AiSensyService {
                     url: options.mediaUrl,
                     filename: options.mediaFilename || 'ticket_attachment.jpg'
                 };
+            }
+
+            if (options.copyCode) {
+                // Meta sends the copy-code button of an authentication template as a URL-type button parameter.
+                bodyPayload.buttons = [{
+                    type: 'button',
+                    sub_type: 'url',
+                    index: 0,
+                    parameters: [{ type: 'text', text: options.copyCode }],
+                }];
             }
 
             console.info('[AiSensy] Sending campaign', {

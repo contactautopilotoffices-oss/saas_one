@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { pickActiveTariffs } from '@/frontend/lib/diesel/activeTariffs';
+import React,{ useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Save, Calendar, Fuel, Zap, Clock, Download, Upload, X,
     FileSpreadsheet, ClipboardPaste, AlertTriangle, Layers, Filter, Check, Copy, Scissors, Trash2, Plus, Activity
@@ -136,6 +137,12 @@ export default function DieselSpreadsheetLogger({
         return cols;
     }, [generators, editableFields]);
 
+    // The parent hands over a new generators array after every refresh, even when nothing in it changed. Tariffs and the
+    // month are re-read only when the generator data really changes (same content → same array), so a save no longer
+    // triggers a second identical reload on top of the one handleSave already does (performance plan Phase 5.3).
+    const generatorsKey = JSON.stringify(generators);
+    const stableGenerators = useMemo(() => generators, [generatorsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Fetch Generators if not provided via props
     const fetchGenerators = useCallback(async () => {
         try {
@@ -149,22 +156,21 @@ export default function DieselSpreadsheetLogger({
         }
     }, [propertyId]);
 
-    // Fetch Tariffs
+    // Fetch Tariffs: ONE request for the property; each generator's active tariff is picked with the same rule as
+    // get_active_dg_tariff (performance plan Phase 5.1). Errors: no tariff, as before.
     const fetchTariffs = useCallback(async (gens: Generator[]) => {
         if (!gens || gens.length === 0) return;
         const today = new Date().toISOString().split('T')[0];
         const tariffsMap: Record<string, DGTariff> = {};
-        await Promise.all(gens.map(async (gen) => {
-            try {
-                const res = await fetch(`/api/properties/${propertyId}/dg-tariffs?generatorId=${gen.id}&date=${today}`);
-                if (res.ok) {
-                    const t = await res.json();
-                    if (t && t.id) tariffsMap[gen.id] = t;
-                }
-            } catch (e) {
-                // silent
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/dg-tariffs`);
+            if (res.ok) {
+                const active = pickActiveTariffs(await res.json(), today);
+                gens.forEach(gen => { if (active[gen.id]) tariffsMap[gen.id] = active[gen.id] as DGTariff; });
             }
-        }));
+        } catch (e) {
+            // silent
+        }
         setActiveTariffs(tariffsMap);
     }, [propertyId]);
 
@@ -177,14 +183,14 @@ export default function DieselSpreadsheetLogger({
     }, [propertyId, initialGenerators, fetchGenerators]);
 
     useEffect(() => {
-        if (generators.length > 0 && (!initialTariffs || Object.keys(initialTariffs).length === 0)) {
-            fetchTariffs(generators);
+        if (stableGenerators.length > 0 && (!initialTariffs || Object.keys(initialTariffs).length === 0)) {
+            fetchTariffs(stableGenerators);
         }
-    }, [generators, initialTariffs, fetchTariffs]);
+    }, [stableGenerators, initialTariffs, fetchTariffs]);
 
     // Fetch monthly readings & carry-forward
     const fetchMonthlyReadings = useCallback(async () => {
-        if (!generators || generators.length === 0) {
+        if (!stableGenerators || stableGenerators.length === 0) {
             setIsLoading(false);
             return;
         }
@@ -196,11 +202,17 @@ export default function DieselSpreadsheetLogger({
             const lastDay = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10), 0).getDate();
             const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
 
-            const res = await fetch(`/api/properties/${propertyId}/diesel-readings?startDate=${startDate}&endDate=${endDate}`);
+            // The two reads don't depend on each other: start both now, read the answers in the original order
+            // (performance plan Phase 4).
+            const monthAgoDate = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 2, 1).toISOString().split('T')[0];
+            const monthRequest = fetch(`/api/properties/${propertyId}/diesel-readings?startDate=${startDate}&endDate=${endDate}`);
+            const prevRequest = fetch(`/api/properties/${propertyId}/diesel-readings?startDate=${monthAgoDate}&endDate=${startDate}`);
+            prevRequest.catch(() => { /* handled when awaited below */ });
+
+            const res = await monthRequest;
             const fetchedData: DieselReading[] = res.ok ? await res.json() : [];
 
-            const monthAgoDate = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 2, 1).toISOString().split('T')[0];
-            const prevRes = await fetch(`/api/properties/${propertyId}/diesel-readings?startDate=${monthAgoDate}&endDate=${startDate}`);
+            const prevRes = await prevRequest;
             const prevData: DieselReading[] = prevRes.ok ? await prevRes.json() : [];
 
             const rawReadings: Record<string, Record<string, DieselReading>> = {};
@@ -212,7 +224,7 @@ export default function DieselSpreadsheetLogger({
             });
 
             const lastKnownState: Record<string, { hours: number; kwh: number; diesel: number }> = {};
-            generators.forEach(gen => {
+            stableGenerators.forEach(gen => {
                 lastKnownState[gen.id] = {
                     hours: gen.initial_run_hours || 0,
                     kwh: gen.initial_kwh_reading || 0,
@@ -240,7 +252,7 @@ export default function DieselSpreadsheetLogger({
                 processedReadings[day.dateStr] = {};
                 const isFutureDay = day.dateStr > todayStr;
 
-                generators.forEach(gen => {
+                stableGenerators.forEach(gen => {
                     const existing = rawReadings[day.dateStr]?.[gen.id];
 
                     // For Day 1 of the month, preserve saved initial opening readings if present
@@ -305,7 +317,7 @@ export default function DieselSpreadsheetLogger({
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, month, generators, daysInMonth]);
+    }, [propertyId, month, stableGenerators, daysInMonth]);
 
     useEffect(() => {
         fetchMonthlyReadings();

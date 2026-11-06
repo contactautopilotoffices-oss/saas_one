@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withOcrActivity } from '@/backend/lib/ocr/activity';
 import { createClient } from '@/frontend/utils/supabase/server';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -9,7 +10,7 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // both free-text transcription and response_format:json_object.
 const MODEL = 'qwen/qwen3.8-27b';
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
     try {
         const { imageUrl, meterId, propertyId } = await req.json();
 
@@ -217,4 +218,13 @@ CRITICAL INSTRUCTIONS:
             details: error.message 
         }, { status: 500 });
     }
+}
+
+/** The route, inside an OCR activity record. A response with an error status counts as a failed read. */
+export async function POST(request: NextRequest) {
+    return withOcrActivity(
+        { source: 'meter' },
+        () => handlePost(request),
+        (res) => ({ ok: res.status < 400, error: res.status >= 400 ? `HTTP ${res.status}` : null }),
+    );
 }

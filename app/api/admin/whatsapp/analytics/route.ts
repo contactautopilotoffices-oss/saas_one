@@ -63,37 +63,37 @@ const APPROVED_META_TEMPLATES_REGISTRY: MetaTemplateSpec[] = [
         eventKey: 'ticket_assigned',
         paramCount: 7,
         description: 'Ticket assignment alert to designated technician / MST.',
-        suggestedFix: 'Requires exactly 7 parameters (user_name, ticket_number, title, property, priority, raised_by, raised_by_phone).'
+        suggestedFix: 'Requires approved Meta campaign "ticket_assigned_v1" (7 parameters: user_name, ticket_number, title, property, priority, raised_by, raised_by_phone).'
     },
     {
         campaignName: 'ticket_completed_v1',
         eventKey: 'ticket_completed',
         paramCount: 5,
         description: 'Ticket resolution notification (text only).',
-        suggestedFix: 'Requires exactly 5 parameters (user_name, ticket_number, title, property, resolved_by).'
+        suggestedFix: 'Requires approved Meta campaign "ticket_completed_v1" (5 parameters: user_name, ticket_number, title, property, resolved_by).'
     },
     {
         campaignName: 'ticket_completed_v1_media',
         eventKey: 'ticket_completed_media',
         paramCount: 5,
         description: 'Ticket resolution with after-work completion photo.',
-        suggestedFix: 'Requires approved Meta campaign "ticket_completed_v1_media" with 5 body parameters.'
+        suggestedFix: 'Requires approved Meta campaign "ticket_completed_v1_media" with 5 parameters (user_name, ticket_number, title, property, resolved_by).'
     },
     {
         campaignName: 'reminder_ticket_sla_v1',
         eventKey: 'reminder_ticket_sla',
-        paramCount: 6,
+        paramCount: 7,
         description: 'Urgent reminder before ticket SLA breach.',
-        suggestedFix: 'Requires approved Meta campaign "reminder_ticket_sla_v1" (6 parameters: user_name, ticket_number, title, property, priority, sla_time).'
+        suggestedFix: 'Requires approved Meta campaign "reminder_ticket_sla_v1" (7 parameters: user_name, ticket_number, title, property, sla_deadline, priority, assignee_name).'
     },
 
     // 2. SOP Checklists & Compliance
     {
         campaignName: 'checklist_slot_reminder_v2',
         eventKey: 'checklist_slot_reminder',
-        paramCount: 4,
+        paramCount: 5,
         description: 'Upcoming checklist slot reminder.',
-        suggestedFix: 'Requires approved Meta campaign "checklist_slot_reminder_v2" (4 parameters: user_name, checklist_name, property, due_time).'
+        suggestedFix: 'Requires approved Meta campaign "checklist_slot_reminder_v2" (5 parameters: 4 body parameters + property_id dynamic CTA button).'
     },
     {
         campaignName: 'checklist_started_v1',
@@ -137,44 +137,44 @@ const APPROVED_META_TEMPLATES_REGISTRY: MetaTemplateSpec[] = [
     {
         campaignName: 'material_request_created_v3',
         eventKey: 'material_request_created',
-        paramCount: 6,
+        paramCount: 7,
         description: 'New material request alert to procurement & property admin.',
-        suggestedFix: 'Requires exactly 6 parameters (user_name, ticket_number, property, requested_by, requester_phone, items_summary).'
+        suggestedFix: 'Requires approved Meta campaign "material_request_created_v3" (7 parameters: 6 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'comparative_approval_requested_v1',
         eventKey: 'comparative_approval_requested',
-        paramCount: 7,
+        paramCount: 8,
         description: 'Comparative quote upload pending org super admin approval.',
-        suggestedFix: 'Requires exactly 7 parameters (user_name, uploaded_by, ticket_number, title, property, total_cost, notes).'
+        suggestedFix: 'Requires approved Meta campaign "comparative_approval_requested_v1" (8 parameters: 7 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'comparative_uploaded_info_v1',
         eventKey: 'comparative_uploaded_info',
-        paramCount: 8,
+        paramCount: 9,
         description: 'Informational broadcast of comparative quote submission.',
-        suggestedFix: 'Requires exactly 8 parameters (user_name, uploaded_by, ticket_number, title, property, total_cost, approver_name, notes).'
+        suggestedFix: 'Requires approved Meta campaign "comparative_uploaded_info_v1" (9 parameters: 8 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'comparative_approved_v1',
         eventKey: 'comparative_approved',
-        paramCount: 7,
+        paramCount: 8,
         description: 'Approval confirmation of vendor comparative statement.',
-        suggestedFix: 'Requires exactly 7 parameters (user_name, ticket_number, title, property, approved_by, total_cost, approver_comment).'
+        suggestedFix: 'Requires approved Meta campaign "comparative_approved_v1" (8 parameters: 7 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'comparative_rejected_v1',
         eventKey: 'comparative_rejected',
-        paramCount: 7,
+        paramCount: 8,
         description: 'Rejection notification with reason.',
-        suggestedFix: 'Requires exactly 7 parameters (user_name, ticket_number, title, property, total_cost, action_by, rejection_reason).'
+        suggestedFix: 'Requires approved Meta campaign "comparative_rejected_v1" (8 parameters: 7 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'material_delivered_v1',
         eventKey: 'material_delivered',
-        paramCount: 6,
+        paramCount: 7,
         description: 'Goods arrival & physical delivery verification at site.',
-        suggestedFix: 'Requires approved Meta campaign "material_delivered_v1" (6 parameters: user_name, ticket_number, title, property, delivered_items, verified_by).'
+        suggestedFix: 'Requires approved Meta campaign "material_delivered_v1" (7 parameters: 6 body parameters + ticket_id dynamic CTA button).'
     },
 
     // 5. Monthly Site Requisitions
@@ -211,16 +211,16 @@ const APPROVED_META_TEMPLATES_REGISTRY: MetaTemplateSpec[] = [
     {
         campaignName: 'procurement_vendor_tag_v1',
         eventKey: 'procurement_vendor_tag',
-        paramCount: 7,
+        paramCount: 8,
         description: 'Vendor tagged for quotation by site team.',
-        suggestedFix: 'Requires approved Meta campaign "procurement_vendor_tag_v1" (7 parameters).'
+        suggestedFix: 'Requires approved Meta campaign "procurement_vendor_tag_v1" (8 parameters: 7 body parameters + ticket_id dynamic CTA button).'
     },
     {
         campaignName: 'procurement_vendor_aligned_v1',
         eventKey: 'procurement_vendor_aligned',
-        paramCount: 6,
+        paramCount: 7,
         description: 'Vendor aligned and confirmed by procurement team.',
-        suggestedFix: 'Requires approved Meta campaign "procurement_vendor_aligned_v1" (6 parameters).'
+        suggestedFix: 'Requires approved Meta campaign "procurement_vendor_aligned_v1" (7 parameters: 6 body parameters + ticket_id dynamic CTA button).'
     },
 
     // 7. Preventive Maintenance (PPM)

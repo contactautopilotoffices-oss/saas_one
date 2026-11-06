@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
         // 2. Fetch Staff (registered and offline) to map names to IDs
         const { data: registeredStaff } = await supabase
             .from('property_memberships')
-            .select(`user_id, users(full_name)`)
+            .select(`user_id, users:users!property_memberships_user_id_fkey(full_name)`)
             .eq('property_id', propertyId)
             .eq('is_active', true);
 

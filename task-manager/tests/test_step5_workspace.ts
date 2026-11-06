@@ -129,7 +129,7 @@ async function run() {
     await WorkspaceService.assign('a', { targetUserId: 'b', title: 'Send quotation', date: '2026-10-07' });
     check('assign to a teammate works and is created for them', created.length === 1 && created[0].employee_id === 'b');
     await new Promise(r => setTimeout(r, 10));
-    check('the teammate is told through the safety gate (message handed to the gate, not to WhatsApp)', sent.length === 1 && /New Task Assigned/.test(sent[0]));
+    check('the teammate is told through the safety gate (message handed to the gate, not to WhatsApp)', sent.length === 1 && /A new task has been assigned to you/.test(sent[0]));
     sent = [];
     await WorkspaceService.assign('a', { targetUserId: 'a', title: 'My own item' });
     await new Promise(r => setTimeout(r, 10));

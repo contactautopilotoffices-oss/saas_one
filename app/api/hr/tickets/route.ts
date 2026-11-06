@@ -2,6 +2,17 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { runAutoSlaEscalation } from '@/backend/lib/hr/slaEscalation';
+import {
+    PROPERTY_ROUTED_TICKET_TYPES,
+    getAllConfiguredAssigneeIds,
+    getLevelAssigneeIds,
+    getLevelAssigneeCandidates,
+    getTicketPropertyId,
+    isPropertyRoutedTicketType,
+    pickTicketPropertyId,
+    unwrapFlowAssignees
+} from '@/backend/lib/hr/levelAssignees';
+import { resolveCaller, isCallerError, forbidden, belongsToOrg } from '@/backend/lib/auth/callerAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -82,16 +93,47 @@ function getReporteesRecursive(
     return all;
 }
 
+let lastSlaCheckTimestamp = 0;
+const SLA_THROTTLE_MS = 5 * 60 * 1000; // Check at most once every 5 minutes in background
+
+interface OrgConfigCacheEntry {
+    escalationConfig: unknown;
+    flowAssigneesConfig: any;
+    flowLevelsConfig: any;
+    manualEscalationConfig: any;
+    profileNameMap: Map<string, string>;
+    profileDetailMap: Map<string, any>;
+    timestamp: number;
+}
+const orgConfigCache = new Map<string, OrgConfigCacheEntry>();
+const CONFIG_CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL
+interface OrgEmpsCacheEntry {
+    data: any[];
+    timestamp: number;
+}
+const orgEmpsCache = new Map<string, OrgEmpsCacheEntry>();
+const ORG_EMPS_CACHE_TTL_MS = 60 * 1000;
+
 export async function GET(request: Request) {
     try {
-        // Run SLA breach auto-escalation check in real-time on ticket fetch
-        await runAutoSlaEscalation().catch(err => console.error('[HR SLA Auto Check Error]:', err));
+        // Run SLA breach auto-escalation check throttled in background without blocking GET response
+        const nowMs = Date.now();
+        if (nowMs - lastSlaCheckTimestamp > SLA_THROTTLE_MS) {
+            lastSlaCheckTimestamp = nowMs;
+            runAutoSlaEscalation().catch(err => console.error('[HR SLA Auto Check Error]:', err));
+        }
 
         const { searchParams } = new URL(request.url);
 
+        // Signed-in callers only, and only for an organisation they belong to. Who the caller is and
+        // what they may see come from their account, never from the URL: the old ?userId= and ?role=
+        // parameters are ignored, so nobody can read HR tickets by claiming to be HR.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const orgId = searchParams.get('orgId');
-        const userId = searchParams.get('userId');
-        const role = searchParams.get('role') || 'employee';
+        if (!orgId) return NextResponse.json({ success: false, error: 'orgId is required' }, { status: 400 });
+        const userId = caller.userId;
+        if (!(await belongsToOrg(caller, orgId))) return forbidden('Forbidden: no access to this organization');
         const type = searchParams.get('type');
         const status = searchParams.get('status');
 
@@ -103,7 +145,8 @@ export async function GET(request: Request) {
                 *,
                 category:hr_ticket_categories(*),
                 raised_by:users!raised_by_user_id(id, email, full_name, user_photo_url),
-                assigned_to:users!assigned_to_user_id(id, email, full_name, user_photo_url)
+                assigned_to:users!assigned_to_user_id(id, email, full_name, user_photo_url),
+                resolved_by:users!resolved_by_user_id(id, email, full_name, user_photo_url)
             `)
             .order('created_at', { ascending: false });
 
@@ -111,61 +154,75 @@ export async function GET(request: Request) {
             query = query.eq('organization_id', orgId);
         }
         if (propertyId && propertyId !== 'all') {
-            const { data: prop } = await supabaseAdmin
-                .from('properties')
-                .select('name')
-                .eq('id', propertyId)
-                .maybeSingle();
-            
+            const [{ data: prop }, { data: memberships }] = await Promise.all([
+                supabaseAdmin
+                    .from('properties')
+                    .select('name')
+                    .eq('id', propertyId)
+                    .maybeSingle(),
+                supabaseAdmin
+                    .from('property_memberships')
+                    .select('user_id')
+                    .eq('property_id', propertyId)
+                    .eq('is_active', true)
+            ]);
+
+            const orFilters: string[] = [
+                `employee_snapshot->>property_id.eq.${propertyId}`
+            ];
+
             const propName = prop?.name;
             if (propName) {
                 const cleanPropName = propName.replace(/[,()]/g, ' ').trim();
-                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>location.ilike.*${cleanPropName}*,employee_snapshot->>property_id.is.null`);
-            } else {
-                query = query.or(`employee_snapshot->>property_id.eq.${propertyId},employee_snapshot->>property_id.is.null`);
+                if (cleanPropName) {
+                    orFilters.push(`employee_snapshot->>property_name.ilike.*${cleanPropName}*`);
+                    orFilters.push(`employee_snapshot->>location.ilike.*${cleanPropName}*`);
+                }
             }
+
+            const memberUserIds = (memberships || []).map(m => m.user_id).filter(Boolean);
+            if (memberUserIds.length > 0) {
+                const chunk = memberUserIds.slice(0, 100);
+                orFilters.push(`raised_by_user_id.in.(${chunk.join(',')})`);
+            }
+
+            query = query.or(orFilters.join(','));
         }
 
         // Granular Role Scoping: Exactly 3 Tiers
         // 1. Org Super Admin: Sees ALL types of tickets across entire organization (grievance, hr_query, confidential, anonymous)
-        // 2. HR & HR-related roles: Sees ALL tickets across org EXCEPT anonymous tickets
+        // 2. HR & HR-related roles: Sees ALL tickets across org EXCEPT anonymous tickets (unless raised by or assigned to them)
         // 3. Property Admin, Ops Super Admin, and all other roles: Sees ONLY tickets assigned to them,
         //    assigned to their direct & indirect sub-reportees, or raised by them.
         //
         // Boolean guards use `not.is.true`, never `neq.true`: is_anonymous / is_confidential can be NULL
         // on older rows, and `NULL <> true` evaluates to NULL in SQL, which silently drops the ticket.
-        const normalizedRole = (role || '').toLowerCase();
         const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
         const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
-        
-        let isOrgSuperAdmin = orgSuperAdminRoles.includes(normalizedRole);
-        let isHrRole = hrRoles.includes(normalizedRole);
+
+        // Tier comes from the caller's own memberships in this organisation (both levels) and the
+        // master-admin flag; the employee-profile HR flags are checked below.
+        const callerRolesInOrg = [
+            ...caller.orgMemberships.filter(m => m.organization_id === orgId).map(m => m.role),
+            ...caller.propertyMemberships.filter(m => m.organization_id === orgId).map(m => m.role),
+        ];
+        const isOrgSuperAdmin = caller.isMasterAdmin || callerRolesInOrg.some(r => orgSuperAdminRoles.includes(r));
+        let isHrRole = !isOrgSuperAdmin && callerRolesInOrg.some(r => hrRoles.includes(r));
         let myProfile: any = null;
 
         if (userId) {
-            // Check organization_memberships for authoritative org role
-            const { data: mems } = await supabaseAdmin
-                .from('organization_memberships')
-                .select('role')
+            // Caller's employee profile (memberships were read above, active ones only).
+            const profileRes = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code, is_hr_authority, is_hr_manager_authority, designation, department, location')
                 .eq('user_id', userId)
-                .eq('organization_id', orgId);
+                .maybeSingle();
 
-            if (mems && mems.some(m => orgSuperAdminRoles.includes((m.role || '').toLowerCase()))) {
-                isOrgSuperAdmin = true;
-            }
-            if (!isOrgSuperAdmin && mems && mems.some(m => hrRoles.includes((m.role || '').toLowerCase()))) {
-                isHrRole = true;
-            }
+            myProfile = profileRes.data;
 
             // Check employee_profiles for HR authority flags
-            if (!isOrgSuperAdmin && !isHrRole) {
-                const { data: hrEmps } = await supabaseAdmin
-                    .from('employee_profiles')
-                    .select('is_hr_authority, is_hr_manager_authority')
-                    .eq('user_id', userId)
-                    .eq('organization_id', orgId);
-
-                if (hrEmps && hrEmps.some(e => e.is_hr_authority || e.is_hr_manager_authority)) {
+            if (!isOrgSuperAdmin && !isHrRole && myProfile) {
+                if (myProfile.is_hr_authority || myProfile.is_hr_manager_authority) {
                     isHrRole = true;
                 }
             }
@@ -176,48 +233,62 @@ export async function GET(request: Request) {
             // (grievance, hr_query, confidential_feedback, anonymous_feedback)
         } else if (isHrRole) {
             // TIER 2: HR and HR-related roles view standard tickets across the org.
-            // Anonymous tickets are NEVER visible to HR.
-            // Confidential tickets are strictly hidden from HR unless explicitly assigned to that HR user as per admin config.
+            // Anonymous & confidential tickets across the org are hidden unless raised by or assigned to this HR user.
             const hrConditions = [
                 'and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential))'
             ];
             if (userId) {
                 hrConditions.push(`assigned_to_user_id.eq.${userId}`);
                 hrConditions.push(`assigned_history.cs.["${userId}"]`);
-                hrConditions.push(`and(is_anonymous.not.is.true,raised_by_user_id.eq.${userId})`);
+                // Crucial: The submitter can ALWAYS view their own tickets (including anonymous & confidential) in My Raised
+                hrConditions.push(`raised_by_user_id.eq.${userId}`);
+                if (myProfile?.id) {
+                    hrConditions.push(`raised_by_user_id.eq.${myProfile.id}`);
+                }
             }
             query = query.or(hrConditions.join(','));
         } else if (userId) {
             // TIER 3: Property Admin, Ops Super Admin, Procurement, BD, MST, Soft Service, Staff, and all other internal roles.
-            // Fetch all employee profiles in the organization to recursively compute direct & indirect sub-reportees
-            let empQuery = supabaseAdmin
-                .from('employee_profiles')
-                .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code');
-            if (orgId) {
-                empQuery = empQuery.or(`organization_id.eq.${orgId},organization_id.is.null`);
+            const targetOrgKey = orgId || 'all';
+            const cachedEmps = orgEmpsCache.get(targetOrgKey);
+            const isEmpsFresh = cachedEmps && (Date.now() - cachedEmps.timestamp < ORG_EMPS_CACHE_TTL_MS);
+
+            let empQueryPromise: Promise<any>;
+            if (isEmpsFresh && cachedEmps?.data) {
+                empQueryPromise = Promise.resolve({ data: cachedEmps.data, error: null });
+            } else {
+                let empQuery = supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code');
+                if (orgId) {
+                    empQuery = empQuery.or(`organization_id.eq.${orgId},organization_id.is.null`);
+                }
+                empQueryPromise = empQuery as any;
             }
-            const { data: allEmps, error: empErr } = await empQuery;
-            if (empErr) console.error('[HR Tickets API] employee_profiles lookup failed; team scope will be empty:', empErr.message);
 
-            const { data: uProfile } = await supabaseAdmin
-                .from('users')
-                .select('full_name, email')
-                .eq('id', userId)
-                .maybeSingle();
+            // Run team scope resolution queries in parallel
+            const [allEmpsRes, uProfileRes, propMemsRes, auditLogsRes] = await Promise.all([
+                empQueryPromise,
+                supabaseAdmin.from('users').select('full_name, email').eq('id', userId).maybeSingle(),
+                supabaseAdmin.from('property_memberships').select('property_id, property:properties(name)').eq('user_id', userId),
+                supabaseAdmin.from('hr_ticket_audit_logs').select('ticket_id').or(`actor_user_id.eq.${userId},old_values->>assigned_to.eq.${userId},new_values->>assigned_to.eq.${userId}`).limit(100)
+            ]);
 
-            myProfile = (allEmps || []).find(e => e.user_id === userId || (uProfile?.email && e.email && e.email.toLowerCase() === uProfile.email.toLowerCase()));
+            const allEmps = allEmpsRes.data;
+            if (allEmps && !isEmpsFresh) {
+                orgEmpsCache.set(targetOrgKey, { data: allEmps, timestamp: Date.now() });
+            }
+            if (allEmpsRes.error) console.error('[HR Tickets API] employee_profiles lookup failed; team scope will be empty:', allEmpsRes.error.message);
+
+            const uProfile = uProfileRes.data;
+            myProfile = (allEmps || []).find((e: any) => e.user_id === userId || (uProfile?.email && e.email && e.email.toLowerCase() === uProfile.email.toLowerCase()));
 
             const profileName = `${myProfile?.first_name || ''} ${myProfile?.last_name || ''}`.trim();
             const userFullName = (uProfile?.full_name || '').trim();
             const myName = userFullName || profileName;
             const myEmail = uProfile?.email || myProfile?.email;
 
-            // Fetch property memberships for this user (if any) to also include property-level tickets
-            const { data: propMems } = await supabaseAdmin
-                .from('property_memberships')
-                .select('property_id, property:properties(name)')
-                .eq('user_id', userId);
-
+            const propMems = propMemsRes.data;
             const propIds = (propMems || []).map(p => p.property_id).filter(Boolean);
             const propNames = (propMems || []).map(p => (p.property as any)?.name).filter(Boolean);
 
@@ -235,12 +306,7 @@ export async function GET(request: Request) {
             const teamCodes = Array.from(new Set(recursiveReportees.map(r => r.employee_code).filter(Boolean)));
             const allTeamIds = Array.from(new Set([...teamUserIds, ...teamProfileIds]));
 
-            // Fetch any tickets where this user was involved via audit logs
-            const { data: auditLogs } = await supabaseAdmin
-                .from('hr_ticket_audit_logs')
-                .select('ticket_id')
-                .or(`actor_user_id.eq.${userId},old_values->>assigned_to.eq.${userId},new_values->>assigned_to.eq.${userId}`);
-
+            const auditLogs = auditLogsRes.data;
             const auditTicketIds = (auditLogs || []).map(a => a.ticket_id).filter(Boolean);
 
             const filterConditions: string[] = [
@@ -286,15 +352,8 @@ export async function GET(request: Request) {
                 filterConditions.push(`and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential),employee_snapshot->>code.in.(${teamCodes.slice(0, 80).join(',')}))`);
             }
 
-            if (propIds.length > 0) {
-                filterConditions.push(`and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential),employee_snapshot->>property_id.in.(${propIds.join(',')}))`);
-            }
-            for (const pName of propNames) {
-                if (pName && pName.trim()) {
-                    const cleanName = pName.replace(/[,()]/g, ' ').trim();
-                    filterConditions.push(`and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential),employee_snapshot->>location.ilike.*${cleanName}*)`);
-                }
-            }
+            // Note: Grievances are scoped strictly to the employee and reporting line, not to Property Admins.
+            // Property Admins cannot view organization grievances simply because they manage a property site.
 
             if (auditTicketIds.length > 0) {
                 filterConditions.push(`and(is_anonymous.not.is.true,is_confidential.not.is.true,ticket_type.not.in.(anonymous_feedback,confidential_feedback,confidential),id.in.(${Array.from(new Set(auditTicketIds)).join(',')}))`);
@@ -312,59 +371,100 @@ export async function GET(request: Request) {
         const { data, error } = await query;
         if (error) throw error;
 
-        // Load organization escalation config to dynamically attach current level owners for tickets
+        // Load organization escalation config with server-side in-memory caching (60s TTL)
+        const targetOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
+        let escalationConfig: unknown = {};
         let flowAssigneesConfig: any = {};
+        let flowLevelsConfig: any = {};
         let manualEscalationConfig: any = {};
-        try {
-            const targetOrgId = orgId || '211e1330-ad83-446d-941f-dcea48396798';
-            let orgSettingsQuery = supabaseAdmin
-                .from('organization_settings')
-                .select('hr_escalation_config, notification_matrix');
+        let profileNameMap = new Map<string, string>();
+        let profileDetailMap = new Map<string, any>();
 
-            if (targetOrgId) {
-                orgSettingsQuery = orgSettingsQuery.eq('organization_id', targetOrgId);
-            }
+        const cachedConfig = orgConfigCache.get(targetOrgId);
+        if (cachedConfig && (Date.now() - cachedConfig.timestamp < CONFIG_CACHE_TTL_MS)) {
+            escalationConfig = cachedConfig.escalationConfig || {};
+            flowAssigneesConfig = cachedConfig.flowAssigneesConfig;
+            flowLevelsConfig = cachedConfig.flowLevelsConfig || {};
+            manualEscalationConfig = cachedConfig.manualEscalationConfig;
+            profileNameMap = cachedConfig.profileNameMap;
+            profileDetailMap = cachedConfig.profileDetailMap || new Map<string, any>();
+        } else {
+            try {
+                let orgSettingsQuery = supabaseAdmin
+                    .from('organization_settings')
+                    .select('hr_escalation_config, notification_matrix');
 
-            const { data: orgSettings } = await orgSettingsQuery
-                .limit(1)
-                .maybeSingle();
-
-            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-            flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
-            }
-            manualEscalationConfig = configObj.manual_escalation || {};
-        } catch (e) {
-            console.warn('Could not read hr_escalation_config in tickets list:', e);
-        }
-
-        // Collect all custom assignee IDs from flowAssigneesConfig to resolve names
-        const allCustomIds = new Set<string>();
-        Object.keys(flowAssigneesConfig).forEach(flowType => {
-            const flowObj = flowAssigneesConfig[flowType] || {};
-            Object.keys(flowObj).forEach(lvl => {
-                const arr = flowObj[lvl];
-                if (Array.isArray(arr)) {
-                    arr.forEach((id: string) => allCustomIds.add(id));
+                if (targetOrgId) {
+                    orgSettingsQuery = orgSettingsQuery.eq('organization_id', targetOrgId);
                 }
+
+                const { data: orgSettings } = await orgSettingsQuery
+                    .limit(1)
+                    .maybeSingle();
+
+                const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+                escalationConfig = configObj;
+                flowAssigneesConfig = unwrapFlowAssignees(configObj);
+                flowLevelsConfig = configObj.flow_levels || {};
+                manualEscalationConfig = configObj.manual_escalation || {};
+            } catch (e) {
+                console.warn('Could not read hr_escalation_config in tickets list:', e);
+            }
+
+            // Collect all custom assignee IDs (default people + property rules) to resolve names
+            const allCustomIds = new Set<string>();
+            Object.keys(flowAssigneesConfig).forEach(flowType => {
+                const flowObj = flowAssigneesConfig[flowType] || {};
+                Object.keys(flowObj).forEach(lvl => {
+                    const arr = flowObj[lvl];
+                    if (Array.isArray(arr)) {
+                        arr.forEach((id: string) => allCustomIds.add(id));
+                    }
+                });
             });
-        });
+            PROPERTY_ROUTED_TICKET_TYPES.forEach(flowType => {
+                getAllConfiguredAssigneeIds(escalationConfig, flowType).forEach(id => allCustomIds.add(id));
+            });
 
-        const profileNameMap = new Map<string, string>();
-        if (allCustomIds.size > 0) {
-            const filterOr = Array.from(allCustomIds).map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
-            const { data: profs } = await supabaseAdmin
-                .from('employee_profiles')
-                .select('id, user_id, user:users!employee_profiles_user_id_fkey(full_name, email), first_name, last_name')
-                .or(filterOr);
+            if (allCustomIds.size > 0) {
+                const filterOr = Array.from(allCustomIds).map(id => `id.eq.${id},user_id.eq.${id}`).join(',');
+                const { data: profs } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, user:users!employee_profiles_user_id_fkey(full_name, email, user_photo_url), first_name, last_name, email, phone, employee_code, department, designation, location')
+                    .or(filterOr);
 
-            (profs || []).forEach(p => {
-                const name = (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim();
-                if (name) {
-                    if (p.id) profileNameMap.set(p.id, name);
-                    if (p.user_id) profileNameMap.set(p.user_id, name);
-                }
+                (profs || []).forEach(p => {
+                    const name = (p.user as any)?.full_name || (p.user as any)?.email || `${p.first_name || ''} ${p.last_name || ''}`.trim();
+                    const detail = {
+                        id: p.user_id || p.id,
+                        profile_id: p.id,
+                        full_name: name,
+                        email: (p.user as any)?.email || p.email || '',
+                        phone: p.phone || '',
+                        photo_url: (p.user as any)?.user_photo_url || null,
+                        employee_code: p.employee_code || 'N/A',
+                        department: p.department || 'Operations',
+                        designation: p.designation || 'Level Owner',
+                        location: p.location && p.location.toLowerCase() !== 'hidden' ? p.location : 'Head Office'
+                    };
+                    if (name) {
+                        if (p.id) profileNameMap.set(p.id, name);
+                        if (p.user_id) profileNameMap.set(p.user_id, name);
+                    }
+                    if (p.id) profileDetailMap.set(p.id, detail);
+                    if (p.user_id) profileDetailMap.set(p.user_id, detail);
+                });
+            }
+
+            // Store in in-memory server cache
+            orgConfigCache.set(targetOrgId, {
+                escalationConfig,
+                flowAssigneesConfig,
+                flowLevelsConfig,
+                manualEscalationConfig,
+                profileNameMap,
+                profileDetailMap,
+                timestamp: Date.now()
             });
         }
 
@@ -379,8 +479,8 @@ export async function GET(request: Request) {
 
         // Enforce strict confidentiality & anonymity rules:
         // 1. Org Super Admin sees all tickets (including anonymous and confidential)
-        // 2. Anonymous tickets are strictly visible ONLY to Org Super Admin and explicitly assigned user(s), or the submitter. Never to HR, never to manager.
-        // 3. Confidential tickets are strictly visible ONLY to Org Super Admin, explicitly assigned user(s), or the submitter. Never to manager.
+        // 2. Anonymous tickets are strictly visible ONLY to Org Super Admin, explicitly assigned user(s), designated HR Admin Config assignees, or the submitter.
+        // 3. Confidential tickets are strictly visible ONLY to Org Super Admin, explicitly assigned user(s), designated HR Admin Config assignees, or the submitter. Never to manager.
         const accessibleData = (data || []).filter(t => {
             if (isOrgSuperAdmin) return true;
 
@@ -391,44 +491,84 @@ export async function GET(request: Request) {
                                (userId && Array.isArray(t.assigned_history) && t.assigned_history.includes(userId) && userId !== t.manager_user_id && userId !== t.employee_snapshot?.manager_user_id);
             const isSubmitter = Boolean(userId && (t.raised_by_user_id === userId || (myProfile?.id && t.raised_by_user_id === myProfile.id)));
 
+            // Designated assignee in HR Admin Config flow assignees for this ticket type
+            const tType = t.ticket_type || t.category?.ticket_type || '';
+            const configAssigneesForType = getAllConfiguredAssigneeIds(escalationConfig, tType);
+            const isDesignatedAdminConfigAssignee = Boolean(userId && (configAssigneesForType.has(userId) || (myProfile?.id && configAssigneesForType.has(myProfile.id))));
+
             if (isAnonTicket) {
-                return Boolean(isAssigned || isSubmitter);
+                return Boolean(isAssigned || isSubmitter || isDesignatedAdminConfigAssignee);
             }
 
             if (isConfidentialTicket) {
-                return Boolean(isAssigned || isSubmitter);
+                return Boolean(isAssigned || isSubmitter || isDesignatedAdminConfigAssignee);
             }
 
             return true;
         });
 
-        // Map assigned_to user IDs to their actual employee_profiles record
+        // Map assigned_to user IDs to their actual employee_profiles record.
+        // Matched on user_id OR email so handlers whose profile is not yet linked to a users row
+        // (reconciliation_status = 'unlinked') still resolve their employee code & department.
         const assignedUserIds = Array.from(new Set(accessibleData.map(t => t.assigned_to_user_id).filter(Boolean)));
+        const assignedEmails = Array.from(new Set(
+            accessibleData.map(t => (t.assigned_to?.email || '').toLowerCase().trim()).filter(Boolean)
+        ));
         const assignedProfileMap = new Map<string, any>();
-        if (assignedUserIds.length > 0) {
+        const assignedProfileByEmail = new Map<string, any>();
+        if (assignedUserIds.length > 0 || assignedEmails.length > 0) {
+            const orParts: string[] = [];
+            if (assignedUserIds.length > 0) orParts.push(`user_id.in.(${assignedUserIds.join(',')})`);
+            if (assignedEmails.length > 0) orParts.push(`email.in.(${assignedEmails.map(e => `"${e}"`).join(',')})`);
             const { data: assignedProfiles } = await supabaseAdmin
                 .from('employee_profiles')
                 .select('id, user_id, employee_code, first_name, last_name, email, phone, department, designation, location')
-                .in('user_id', assignedUserIds);
+                .or(orParts.join(','));
             (assignedProfiles || []).forEach(ap => {
-                if (ap.user_id) assignedProfileMap.set(ap.user_id, ap);
+                if (ap.user_id && !assignedProfileMap.has(ap.user_id)) assignedProfileMap.set(ap.user_id, ap);
+                const em = (ap.email || '').toLowerCase().trim();
+                if (em && !assignedProfileByEmail.has(em)) assignedProfileByEmail.set(em, ap);
             });
         }
+
+        const defaultLevelCounts: Record<string, number> = {
+            grievance: 4,
+            hr_query: 4,
+            confidential_feedback: 2,
+            anonymous_feedback: 2
+        };
 
         // Mask identity for anonymous tickets & attach dynamic current_level_owner & manual_escalation_enabled
         const sanitized = accessibleData.map(t => {
             const tType = t.ticket_type || t.category?.ticket_type || 'grievance';
             const curLvl = t.current_level || 1;
-            const stepAssignees = flowAssigneesConfig[tType]?.[String(curLvl)] || flowAssigneesConfig[tType]?.[curLvl];
+            // Property-aware: Grievance / HR Query tickets use their property's people when a rule exists
+            const stepAssignees = getLevelAssigneeIds(escalationConfig, tType, curLvl, getTicketPropertyId(t));
             let currentLevelOwner = '';
             if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
-                const names = stepAssignees.map(id => profileNameMap.get(id)).filter(Boolean);
+                const names = Array.from(new Set(stepAssignees.map(id => profileNameMap.get(id)).filter(Boolean)));
                 if (names.length > 0) {
                     currentLevelOwner = names.join(' & ');
                 }
             }
 
-            const assignedEmp = t.assigned_to_user_id ? assignedProfileMap.get(t.assigned_to_user_id) : null;
+            const handlerEmail = (t.assigned_to?.email || '').toLowerCase().trim();
+            const assignedEmp = (t.assigned_to_user_id ? assignedProfileMap.get(t.assigned_to_user_id) : null)
+                || (handlerEmail ? assignedProfileByEmail.get(handlerEmail) : null);
+
+            // Every user configured at this level in HR Admin Config owns the ticket, not only the primary assignee
+            const levelUsers: any[] = [];
+            if (Array.isArray(stepAssignees)) {
+                stepAssignees.forEach((cfgId: string) => {
+                    const detail = profileDetailMap.get(cfgId);
+                    if (detail && !levelUsers.some(lu => lu.id === detail.id)) levelUsers.push(detail);
+                });
+            }
+
+            // How many levels this flow actually has — drives whether a further escalation (and so a TAT) exists
+            const configuredLevels = Array.isArray(flowLevelsConfig?.[tType]) ? flowLevelsConfig[tType] : [];
+            const maxLevel = configuredLevels.length > 0 ? configuredLevels.length : (defaultLevelCounts[tType] || 4);
+
             const normType = tType.includes('query') ? 'hr_query' : tType.includes('grievance') ? 'grievance' : tType;
             const isManualEscalationOn = Boolean(
                 manualEscalationConfig?.[normType] === true ||
@@ -440,6 +580,8 @@ export async function GET(request: Request) {
             const item = {
                 ...t,
                 manual_escalation_enabled: isManualEscalationOn,
+                max_level: maxLevel,
+                has_next_level: curLvl < maxLevel,
                 current_level_owner: currentLevelOwner || t.assigned_to?.full_name || 'Manager / HR',
                 assigned_to_details: t.assigned_to ? {
                     id: t.assigned_to_user_id,
@@ -449,10 +591,24 @@ export async function GET(request: Request) {
                     photo_url: t.assigned_to.user_photo_url || null,
                     location: assignedEmp?.location || 'Head Office',
                     department: assignedEmp?.department || 'Operations',
+                    designation: assignedEmp?.designation || (assignedEmp as any)?.job_title || 'Level Owner',
                     employee_role: assignedEmp?.designation || 'Level Owner',
                     app_role: assignedEmp?.designation || 'Level Owner',
                     employee_code: assignedEmp?.employee_code || 'N/A'
-                } : null
+                } : null,
+                assigned_level_users: levelUsers.length > 0
+                    ? levelUsers
+                    : (t.assigned_to ? [{
+                        id: t.assigned_to_user_id,
+                        full_name: t.assigned_to.full_name || (assignedEmp ? `${assignedEmp.first_name || ''} ${assignedEmp.last_name || ''}`.trim() : t.assigned_to.email),
+                        email: t.assigned_to.email || assignedEmp?.email || '',
+                        phone: assignedEmp?.phone || '',
+                        photo_url: t.assigned_to.user_photo_url || null,
+                        employee_code: assignedEmp?.employee_code || 'N/A',
+                        department: assignedEmp?.department || 'Operations',
+                        designation: assignedEmp?.designation || 'Level Owner',
+                        location: assignedEmp?.location || 'Head Office'
+                    }] : [])
             };
 
             if (t.is_anonymous) {
@@ -477,7 +633,10 @@ export async function GET(request: Request) {
             return item;
         });
 
-        return NextResponse.json({ success: true, data: sanitized });
+        return NextResponse.json(
+            { success: true, data: sanitized },
+            { headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } }
+        );
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
     }
@@ -485,12 +644,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        // Signed-in callers only, and a ticket is always raised as the caller (never as someone else).
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const body = await request.json();
+        if (body.organization_id && !(await belongsToOrg(caller, String(body.organization_id)))) {
+            return forbidden('Forbidden: no access to this organization');
+        }
+        const raised_by_user_id = caller.userId;
         const {
             organization_id,
             property_id,
             category_id,
-            raised_by_user_id,
             subject,
             description,
             attachment_urls = [],
@@ -572,6 +737,10 @@ export async function POST(request: Request) {
         let firstLevelOwnerId: string | null = null;
         let isFallbackHrManager = false;
         let configuredLevel1UserIds: string[] = [];
+        // Property frozen on the ticket for property-wise escalation (Grievance & HR Query only)
+        let routingPropertyId: string | null = null;
+        let routingPropertyName: string | null = null;
+        let configObj: any = {};
 
         // Check organization_settings to see if specific Level 1 assigned users were configured in Admin Config for this ticketType
         try {
@@ -587,14 +756,38 @@ export async function POST(request: Request) {
                 .limit(1)
                 .maybeSingle();
 
-            const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
-            let flowAssigneesConfig = configObj.flow_assignees || {};
-            while (flowAssigneesConfig && flowAssigneesConfig.flow_assignees) {
-                flowAssigneesConfig = flowAssigneesConfig.flow_assignees;
+            configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+
+            // Property for routing: the submitter's single active property membership, otherwise the
+            // org primary property from Admin Config (org-level roles and multi-property employees).
+            if (isPropertyRoutedTicketType(ticketType) && raised_by_user_id) {
+                try {
+                    const { data: memberships } = await supabaseAdmin
+                        .from('property_memberships')
+                        .select('property_id, property:properties(organization_id)')
+                        .eq('user_id', raised_by_user_id)
+                        .eq('is_active', true);
+                    type MembershipRow = { property_id: string; property?: { organization_id?: string | null } | null };
+                    const orgPropertyIds = ((memberships || []) as unknown as MembershipRow[])
+                        .filter(m => !m.property?.organization_id || m.property.organization_id === effectiveOrgId)
+                        .map(m => m.property_id);
+                    routingPropertyId = pickTicketPropertyId(orgPropertyIds, configObj.primary_property_id || null);
+
+                    if (routingPropertyId) {
+                        const { data: routingProp } = await supabaseAdmin
+                            .from('properties')
+                            .select('name')
+                            .eq('id', routingPropertyId)
+                            .maybeSingle();
+                        routingPropertyName = routingProp?.name || null;
+                    }
+                } catch (propErr) {
+                    console.warn('Could not resolve routing property on POST ticket:', propErr);
+                }
             }
 
-            const level1Assignees = flowAssigneesConfig[ticketType]?.[1] || flowAssigneesConfig[ticketType]?.['1'];
-            if (Array.isArray(level1Assignees) && level1Assignees.length > 0) {
+            const level1Assignees = getLevelAssigneeCandidates(configObj, ticketType, 1, routingPropertyId);
+            if (level1Assignees.length > 0) {
                 const { data: matchedProfiles } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('id, user_id')
@@ -616,7 +809,11 @@ export async function POST(request: Request) {
                 }
 
                 if (resolvedUserIds.length > 0) {
-                    firstLevelOwnerId = resolvedUserIds[0];
+                    // Never assign the person who raised the ticket: pick the first eligible candidate
+                    const validOwnerId = resolvedUserIds.find(uid => uid !== raised_by_user_id && uid !== empProfile?.user_id);
+                    if (validOwnerId) {
+                        firstLevelOwnerId = validOwnerId;
+                    }
                     configuredLevel1UserIds = resolvedUserIds;
                 }
             }
@@ -624,35 +821,45 @@ export async function POST(request: Request) {
             console.warn('Could not read admin escalation config on POST ticket:', cfgErr);
         }
 
-        // Fallback: If no custom level 1 assignees were defined in Admin Config, fallback to standard role/hierarchy lookup
+        // Fallback: If no custom level 1 assignees were defined in Admin Config, resolve Level 1 role strictly from Admin Config flow_levels
         if (!firstLevelOwnerId) {
-            if (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || category.first_level_owner_type === 'director') {
+            const configuredLevel1 = configObj.flow_levels?.[ticketType]?.[0];
+            const defaultOwnerType = (ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback')
+                ? 'director'
+                : (ticketType === 'hr_query' ? 'hr' : 'reporting_manager');
+            const l1OwnerType = configuredLevel1?.ownerType || defaultOwnerType;
+
+            if (l1OwnerType === 'director' || l1OwnerType === 'super_admin' || ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback') {
                 const { data: directors } = await supabaseAdmin
                     .from('employee_profiles')
                     .select('user_id')
                     .eq('is_director_authority', true)
+                    .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                     .not('user_id', 'is', null)
-                    .limit(1);
+                    .limit(5);
 
-                firstLevelOwnerId = directors?.[0]?.user_id || null;
-            } else if (category.first_level_owner_type === 'hr') {
-                firstLevelOwnerId = category.default_hr_owner_id;
-                if (!firstLevelOwnerId) {
-                    const { data: hrStaff } = await supabaseAdmin
-                        .from('employee_profiles')
-                        .select('user_id')
-                        .eq('is_hr_authority', true)
-                        .not('user_id', 'is', null)
-                        .limit(1);
-                    firstLevelOwnerId = hrStaff?.[0]?.user_id || null;
-                }
-            } else {
-                firstLevelOwnerId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
+                const validDir = (directors || []).find(d => d.user_id && d.user_id !== raised_by_user_id);
+                firstLevelOwnerId = validDir?.user_id || null;
+            } else if (l1OwnerType === 'hr' || l1OwnerType === 'hr_head') {
+                const flagFilter = l1OwnerType === 'hr_head'
+                    ? 'is_hr_authority.eq.true'
+                    : 'is_hr_manager_authority.eq.true,is_hr_authority.eq.true';
 
-                // If reporting_manager_id is null, try resolving manager user_id by reporting_manager_code / name
-                if (!firstLevelOwnerId && empProfile?.reporting_manager_code) {
+                const { data: hrStaff } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('user_id')
+                    .or(flagFilter)
+                    .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
+                    .not('user_id', 'is', null)
+                    .limit(5);
+
+                const validHr = (hrStaff || []).find(h => h.user_id && h.user_id !== raised_by_user_id);
+                firstLevelOwnerId = validHr?.user_id || null;
+            } else if (l1OwnerType === 'reporting_manager') {
+                let mgrId = empProfile?.reporting_manager_id || empProfile?.alternate_manager_id;
+
+                if (!mgrId && empProfile?.reporting_manager_code) {
                     const mgrCodeStr = empProfile.reporting_manager_code.trim();
-                    // 1. Try matching employee_code
                     const { data: mgrEmpByCode } = await supabaseAdmin
                         .from('employee_profiles')
                         .select('user_id')
@@ -661,36 +868,32 @@ export async function POST(request: Request) {
                         .maybeSingle();
 
                     if (mgrEmpByCode?.user_id) {
-                        firstLevelOwnerId = mgrEmpByCode.user_id;
+                        mgrId = mgrEmpByCode.user_id;
                     } else {
-                        // 2. Try matching user full_name or email
                         const { data: mgrUserByName } = await supabaseAdmin
                             .from('users')
                             .select('id')
                             .or(`full_name.ilike.%${mgrCodeStr}%,email.ilike.%${mgrCodeStr}%`)
                             .maybeSingle();
-
-                        if (mgrUserByName?.id) {
-                            firstLevelOwnerId = mgrUserByName.id;
-                        }
+                        if (mgrUserByName?.id) mgrId = mgrUserByName.id;
                     }
                 }
 
-                if (!firstLevelOwnerId || firstLevelOwnerId === raised_by_user_id) {
+                if (mgrId && mgrId !== raised_by_user_id) {
+                    firstLevelOwnerId = mgrId;
+                } else {
                     isFallbackHrManager = true;
                     const { data: hrStaff } = await supabaseAdmin
                         .from('employee_profiles')
                         .select('user_id')
-                        .or('is_hr_authority.eq.true,is_hr_manager_authority.eq.true')
+                        .or('is_hr_manager_authority.eq.true,is_hr_authority.eq.true')
+                        .neq('user_id', raised_by_user_id || '00000000-0000-0000-0000-000000000000')
                         .not('user_id', 'is', null)
-                        .limit(1);
-                    firstLevelOwnerId = hrStaff?.[0]?.user_id || category.default_hr_owner_id || null;
-                }
-            }
+                        .limit(5);
 
-            // Final safety fallback: If still null, assign to category default owner or any HR authority
-            if (!firstLevelOwnerId && category.default_hr_owner_id) {
-                firstLevelOwnerId = category.default_hr_owner_id;
+                    const validHr = (hrStaff || []).find(h => h.user_id && h.user_id !== raised_by_user_id);
+                    firstLevelOwnerId = validHr?.user_id || null;
+                }
             }
         }
 
@@ -721,15 +924,22 @@ export async function POST(request: Request) {
         const isConfidentialOrAnonymous = Boolean(is_confidential || category.is_confidential || is_anonymous || category.is_anonymous || ticketType === 'confidential_feedback' || ticketType === 'anonymous_feedback' || ticketType === 'confidential');
         const effectiveManagerUserId = isConfidentialOrAnonymous ? null : managerUserId;
 
-        const assignedHistory = Array.from(new Set([firstLevelOwnerId, ...configuredLevel1UserIds, effectiveManagerUserId].filter(Boolean)));
+        const assignedHistory = Array.from(new Set([
+            firstLevelOwnerId,
+            ...configuredLevel1UserIds,
+            (ticketType === 'grievance' && !isConfidentialOrAnonymous && firstLevelOwnerId === effectiveManagerUserId ? effectiveManagerUserId : null)
+        ].filter(Boolean)));
 
         const snapshot = {
             name: is_anonymous ? 'Anonymous Employee' : submitterName,
             code: is_anonymous ? 'Hidden' : (empProfile?.employee_code || 'N/A'),
             department: is_anonymous ? 'Confidential' : (empProfile?.department || 'General'),
             designation: is_anonymous ? 'Confidential' : (empProfile?.designation || 'Staff'),
-            location: is_anonymous ? 'Hidden' : empLocation,
-            property_id: is_anonymous ? null : (property_id || empProfile?.property_id || null),
+            location: is_anonymous ? 'Hidden' : (routingPropertyName || empLocation),
+            property_id: isPropertyRoutedTicketType(ticketType)
+                ? routingPropertyId
+                : (is_anonymous ? null : (property_id || empProfile?.property_id || null)),
+            ...(isPropertyRoutedTicketType(ticketType) && routingPropertyName ? { property_name: routingPropertyName } : {}),
             manager_name: isConfidentialOrAnonymous ? 'Hidden' : submitterManagerName,
             manager_code: isConfidentialOrAnonymous ? null : (empProfile?.reporting_manager_code || null),
             manager_user_id: effectiveManagerUserId,
@@ -762,7 +972,12 @@ export async function POST(request: Request) {
                 is_confidential: Boolean(is_confidential || category.is_confidential),
                 is_anonymous: Boolean(is_anonymous || category.is_anonymous)
             })
-            .select()
+            .select(`
+                *,
+                category:hr_ticket_categories(*),
+                raised_by:users!raised_by_user_id(id, email, full_name, user_photo_url),
+                assigned_to:users!assigned_to_user_id(id, email, full_name, user_photo_url)
+            `)
             .single();
 
         if (createErr) throw createErr;

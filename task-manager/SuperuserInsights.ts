@@ -2,6 +2,7 @@ import { TaskDatabaseService } from './TaskDatabaseService';
 import { ControlledTaskTools } from './ControlledTaskTools';
 import { SuperuserAIAssistant } from './SuperuserAIAssistant';
 import { InsightDecision, matchByName } from './TaskGateway';
+import { PermissionService } from './PermissionService';
 import { Employee } from './types';
 
 /**
@@ -75,7 +76,8 @@ export class SuperuserInsights {
             if (!subject) return { kind: 'reply', tool: 'none', text: `Which department or person do you mean?` };
 
             const departments = await TaskDatabaseService.getDepartments();
-            const people = await TaskDatabaseService.getAllEmployees();
+            // Owner 2026-10-22: another superuser is never offered (their tasks stay private)
+            const people = (await TaskDatabaseService.getAllEmployees()).filter(e => !PermissionService.hiddenFrom(actor, e));
             const deptMatches = matchByName(subject, departments);
             const peopleMatches = matchByName(subject, people);
             const exactDept = deptMatches.filter(d => d.name.toLowerCase() === subject.toLowerCase());

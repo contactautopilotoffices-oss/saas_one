@@ -183,10 +183,7 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
                             </div>
                         ))}
 
-                    <div className="mb-6" data-navigation-section="management-hub">
-                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
-                        <PettyCashNavLink />
-                    </div>
+                    <PettyCashNavLink />
 </nav>
                 </div>
 

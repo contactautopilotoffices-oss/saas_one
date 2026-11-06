@@ -16,6 +16,99 @@ export interface WTask {
     assignedDate: string;
     isCarriedForward: boolean;
     canChange: boolean;
+    /** Server decision: I hold this task and it is not finished, so I may give it to a teammate. */
+    canHandOver?: boolean;
+    /** A personal fixed task: comes back every working day, and cannot be deleted until unlocked. */
+    locked?: boolean;
+    /** The holder may lock or unlock it. */
+    canLock?: boolean;
+    /** Console view only: who gave it and from which department */
+    meta?: { from: string; department: string };
+    /** Who gave it (someone other than the holder), and who handed it over. Shown as a differently coloured card. */
+    assignedByName?: string | null;
+    handedOverByName?: string | null;
+    /** When it was given, and when it was finished. ISO timestamps. */
+    createdAt?: string;
+    completedAt?: string | null;
+    /** Server decision. A task given by someone else can only be deleted by them. Missing = old behaviour (allowed). */
+    canDelete?: boolean;
+    /** Owner 2026-10-26: the person who gave it (or a superuser) may edit its name, details, date and person. */
+    canEdit?: boolean;
+    /** Owner 2026-10-26: the task this one follows up. */
+    followUpOf?: { id: string; title: string } | null;
+    /** Owner 2026-10-26: the other people given the same task at once (each finishes their own copy). */
+    alsoWith?: Array<{ name: string; status: Status }>;
+    /** Owner 2026-10-26: how many files are attached. */
+    attachmentCount?: number;
+    /** Owner 2026-10-26: made by accepting a support request from another department. */
+    supportRequest?: boolean;
+    /** Owner 2026-10-27: the deadline (time optional, IST). Missing = due on its start date, no countdown. */
+    due?: { date: string; time: string | null } | null;
+    /** Owner 2026-10-27: my own personal task — I may edit or delete its notes. */
+    canEditNotes?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
+}
+
+/** Owner 2026-10-26: a file on a task, with a download link that works for 10 minutes. */
+export interface WAttachment {
+    id: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    uploadedByName: string;
+    createdAt: string;
+    url: string | null;
+    /** Owner 2026-10-27: the server says I may remove it (I attached it, or I am a superuser). */
+    canDelete?: boolean;
+}
+
+/** Owner 2026-10-26: an open task that looks like the one about to be given. `title` is null when it may not be shown. */
+export interface WDuplicate {
+    userId: string;
+    name: string;
+    title: string | null;
+    assignedDate: string;
+    status: Status;
+}
+
+/** Files that can be attached (checked again on the server, by content). */
+export const ATTACH_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,application/pdf,image/png,image/jpeg,image/webp';
+export const ATTACH_MAX_BYTES = 10 * 1024 * 1024;
+
+export function fileSizeLabel(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** One row of "Assigned by me". `mine` = I gave it, so I may edit and delete it; otherwise view only (given by my team). */
+export interface AssignedTask {
+    id: string;
+    title: string;
+    description: string | null;
+    status: Status;
+    assignedDate: string;
+    createdAt: string;
+    completedAt: string | null;
+    holderId: string;
+    holderName: string;
+    assignerId: string;
+    assignerName: string;
+    mine: boolean;
+    isCarriedForward: boolean;
+    /** Owner 2026-10-28: for the task window opened from "Assigned by me". */
+    followUpOf?: { id: string; title: string } | null;
+    alsoWith?: Array<{ name: string; status: Status }>;
+    attachmentCount?: number;
+    supportRequest?: boolean;
+    due?: { date: string; time: string | null } | null;
+    /** I gave it: I may edit and delete its notes. */
+    canEditNotes?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
 }
 
 export interface WMember {
@@ -40,6 +133,13 @@ export interface WorkspaceOk {
     members: WMember[];
     tasks: WTask[];
     assignable: WAssignable[];
+    /** Working with a superuser: present when the server has it (shown only for a team whose switch is ON). */
+    superuserCollab?: { enabled: boolean; superusers: Array<{ userId: string; name: string }> };
+    /** Colleagues I can tell "this task of mine is pending on you". */
+    dependencyPeople?: Array<{ userId: string; name: string }>;
+    /** Per-team switches from the Control Center. */
+    /** Owner 2026-10-28: completionRemark — the comment box when I mark one of my tasks done. */
+    features?: { assignedTab: boolean; pendingOn: boolean; dueDates?: boolean; completionRemark?: 'off' | 'ask' | 'required' };
 }
 
 export type Workspace =
@@ -114,6 +214,14 @@ export function shiftDate(date: string, days: number): string {
 
 export function shortDate(date: string): string {
     return new Date(`${date}T12:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+/** An ISO timestamp as "19 Oct, 11:30 AM" in India time. */
+export function shortDateTime(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 export function longDate(date: string): string {

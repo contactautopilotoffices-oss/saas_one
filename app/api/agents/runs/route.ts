@@ -98,8 +98,10 @@ const SCORED_STATUSES = new Set(['succeeded', 'failed', 'timeout']);
 const UNSCORED_TRIGGER = 'shadow';
 /** Backoff between seq-collision retries. Length + 1 = attempts. */
 const SEQ_RETRY_DELAYS_MS = [30, 90];
-/** How many exact step-count queries to have in flight at once. */
-const COUNT_CONCURRENCY = 8;
+/** How many exact step-count queries to have in flight at once. 12 = the Command Center card's page size, so its
+ *  fallback is one wave instead of two (performance plan Phase 5b); still small enough that a 200-row page cannot
+ *  open 200 sockets. */
+const COUNT_CONCURRENCY = 12;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -209,11 +211,21 @@ export async function GET(request: NextRequest) {
             return q.order('started_at', { ascending: false });
         };
 
-        const [pageRes, aggRes] = await Promise.all([
-            build(RUN_COLUMNS).range(offset, offset + limit - 1),
-            build('status, trigger, duration_ms, tokens_in, tokens_out, cached_tokens, cost_inr, cost_usd')
-                .limit(AGGREGATE_CAP),
-        ]);
+        // The agent names don't depend on the page, and the step counts only need the page's run ids: start both early so
+        // they run while the (larger) totals query is still going, instead of after it. Their answers are used below
+        // exactly as before (performance plan Phase 5b). (.then(r => r) starts a Supabase query now.)
+        const pageRequest = build(RUN_COLUMNS).range(offset, offset + limit - 1).then(result => result);
+        const aggRequest = build('status, trigger, duration_ms, tokens_in, tokens_out, cached_tokens, cost_inr, cost_usd')
+            .limit(AGGREGATE_CAP)
+            .then(result => result);
+        const namesRequest = loadAgentNames(db, orgId);
+        namesRequest.catch(() => { /* handled where it is awaited below */ });
+        const stepsRequest = Promise.resolve(pageRequest).then((pageRes) => (pageRes.error
+            ? null
+            : loadStepCounts(db, orgId, ((pageRes.data ?? []) as unknown as Array<{ id: string }>).map((r) => r.id))));
+        stepsRequest.catch(() => { /* handled where it is awaited below */ });
+
+        const [pageRes, aggRes] = await Promise.all([pageRequest, aggRequest]);
 
         if (isUnprovisioned(pageRes.error) || isUnprovisioned(aggRes.error)) {
             return NextResponse.json({
@@ -238,10 +250,9 @@ export async function GET(request: NextRequest) {
 
         // Two cheap enrichments the table needs and the UI should not have to fetch itself:
         // the agent's human name, and how many steps the trace drawer will have to show.
-        const [nameMap, stepCounts] = await Promise.all([
-            loadAgentNames(db, orgId),
-            loadStepCounts(db, orgId, rows.map((r) => r.id)),
-        ]);
+        // (Both started above; the page succeeded here, so the step counts were requested for exactly these rows.)
+        const [nameMap, stepCountsOrNull] = await Promise.all([namesRequest, stepsRequest]);
+        const stepCounts = stepCountsOrNull ?? await loadStepCounts(db, orgId, rows.map((r) => r.id));
 
         const runs = rows.map((r) => ({
             ...r,

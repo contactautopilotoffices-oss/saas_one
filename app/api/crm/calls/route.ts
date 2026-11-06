@@ -7,6 +7,7 @@ import {
     canAccessLead,
 } from '@/backend/lib/crm/access';
 import { runAnalysisPipeline } from '@/backend/lib/coaching/pipeline';
+import { LeadSlaEscalationService } from '@/backend/services/LeadSlaEscalationService';
 
 const BUCKET = 'crm-call-recordings';
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB — matches bucket limit
@@ -116,6 +117,9 @@ export async function POST(request: NextRequest) {
             { status: 500 }
         );
     }
+
+    // Resolve any pending Call Me Now SLAs
+    await LeadSlaEscalationService.markCallCompleted(leadId);
 
     // 6. Run the analysis pipeline. We do this inline so the UI can render
     //    the report on the next request without polling. For very long files

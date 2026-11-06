@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 // Default Skill Groups
 const DEFAULT_SKILL_GROUPS = [
@@ -43,6 +44,8 @@ export async function POST(
 ) {
     try {
         const { propertyId } = await params;
+        const denied = await guardProperty(request, propertyId);
+        if (denied) return denied;
         const supabase = createAdminClient();
 
         // 1. Insert Skill Groups
@@ -113,6 +116,8 @@ export async function GET(
 ) {
     try {
         const { propertyId } = await params;
+        const denied = await guardProperty(request, propertyId);
+        if (denied) return denied;
         const supabase = createAdminClient();
 
         // Get skill groups

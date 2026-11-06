@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
                     created_at,
                     assigned_to,
                     floor_number,
+                    organization_id,
+                    property_id,
                     assignee:users!tickets_assigned_to_fkey ( full_name )
                 ),
                 property:properties(id, name),

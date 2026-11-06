@@ -10,7 +10,7 @@ import {
     Key, Eye, EyeOff, Globe, Copy, X, Ticket, Link as LinkIcon, LogOut,
     UserCircle, FileDown, Brain, Wrench, MessageCircle,
     TrendingUp, MapPin, Radio, Flame, Phone, Gauge,
-  MessageSquarePlus, Mail, Sparkles, Menu
+  MessageSquarePlus, Mail, Sparkles, Menu, ScanText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -30,6 +30,7 @@ import AIInsightsDashboard from './AIInsightsDashboard';
 import IssueCategoryKanban from '@/frontend/components/admin/IssueCategoryKanban';
 import AnalyticsTab from './AnalyticsTab';
 import UsageDashboardTab from './UsageDashboardTab';
+import OcrMonitor from './OcrMonitor';
 import MasterAdminChatbot from './MasterAdminChatbot';
 import ResolverStatsList from '@/frontend/components/mst/ResolverStatsList';
 import { MessageSquareCode } from 'lucide-react';
@@ -40,7 +41,7 @@ import DailyProgressDashboard from './DailyProgressDashboard';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 import CouncilChamber from '@/frontend/components/master-council/CouncilChamber';
 
-type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'council' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues' | 'email-config';
+type Tab = 'overview' | 'bd-pipeline' | 'analytics' | 'daily-progress' | 'usage' | 'organizations' | 'tickets' | 'users' | 'visitors' | 'invite-links' | 'ai-insights' | 'ai-assistant' | 'council' | 'issue-config' | 'modules' | 'settings' | 'resolvers' | 'super-tenants' | 'whatsapp-templates' | 'issues' | 'email-config' | 'ocr-monitor';
 
 // Shape returned by GET /api/admin/bd-stats (cross-org BD pipeline metrics).
 interface BDStats {
@@ -188,7 +189,7 @@ const MasterAdminDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'council', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues', 'email-config'].includes(tab)) {
+        if (tab && ['overview', 'bd-pipeline', 'analytics', 'daily-progress', 'usage', 'organizations', 'tickets', 'users', 'visitors', 'invite-links', 'ai-insights', 'ai-assistant', 'council', 'issue-config', 'modules', 'settings', 'resolvers', 'super-tenants', 'whatsapp-templates', 'issues', 'email-config', 'ocr-monitor'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -470,6 +471,7 @@ const MasterAdminDashboard = () => {
         { id: 'analytics', label: 'Engagement', icon: Activity },
         { id: 'daily-progress', label: 'Daily Progress', icon: LayoutGrid },
         { id: 'usage', label: 'Usage Overview', icon: Gauge, section: 'Reports' },
+        { id: 'ocr-monitor', label: 'OCR Monitor', icon: ScanText },
         { id: 'resolvers', label: 'Resolvers', icon: Wrench },
         { id: 'organizations', label: 'Organizations', icon: Building2 },
         { id: 'tickets', label: 'Support Tickets', icon: Ticket },
@@ -522,10 +524,7 @@ const MasterAdminDashboard = () => {
                         </React.Fragment>
                     ))}
 
-                    <div className="mb-6" data-navigation-section="management-hub">
-                        <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
-                        <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
-                    </div>
+                    <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
 </nav>
 
                 <div className="pt-6 pb-12 border-t border-border flex-shrink-0">
@@ -640,6 +639,7 @@ const MasterAdminDashboard = () => {
                         {activeTab === 'analytics' && <AnalyticsTab />}
                         {activeTab === 'daily-progress' && <DailyProgressDashboard isDark={theme === 'dark'} />}
                         {activeTab === 'usage' && <UsageDashboardTab />}
+                        {activeTab === 'ocr-monitor' && <OcrMonitor />}
                         {activeTab === 'organizations' && (
                             selectedOrg ? (
                                 <OrgPropertyDashboard
@@ -782,8 +782,12 @@ const MasterAdminDashboard = () => {
                         isAdminMode={true}
                         showInternalToggle={true}
                         organizations={organizations}
-                        onSuccess={() => {
+                        onSuccess={(ticket) => {
                             showToast('Request created successfully', 'success');
+                            if (typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                            }
                         }}
                     />
                 )}

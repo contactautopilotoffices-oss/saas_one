@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveAopAccess, isAopAccessError, readOrgId } from '@/backend/lib/aop/access';
 import {
-    loadDimensions, loadCells, rollUpSite, UNPROVISIONED,
+    loadTrendData, rollUpSite, UNPROVISIONED,
     type AopCell, type AopLineItem,
 } from '@/backend/lib/aop/matrix';
 
@@ -40,18 +40,20 @@ export async function GET(request: NextRequest) {
     const siteId = sp.get('site_id');
     const lineCode = sp.get('line_item_code');
 
+    // Sites, line items and every entry in ONE round (performance plan Phase 5b). Same answers as the previous
+    // loadDimensions + loadCells pair, and the same responses in the same order of checks.
     let dims;
     try {
-        dims = await loadDimensions(access.organizationId);
+        dims = await loadTrendData(access.organizationId);
     } catch (e) {
-        console.error('[aop trend] dimensions', e instanceof Error ? e.message : e);
+        console.error('[aop trend] load', e instanceof Error ? e.message : e);
         return NextResponse.json({ error: 'Could not load the trend' }, { status: 500 });
     }
     if (dims === UNPROVISIONED) {
         return NextResponse.json({ provisioned: false, points: [], scope: null });
     }
 
-    const { sites, lineItems, months } = dims;
+    const { sites, lineItems, months, byMonth } = dims;
     if (!months.length) return NextResponse.json({ provisioned: true, points: [], scope: null });
 
     const lineItem = lineCode ? lineItems.find(li => li.code === lineCode) : null;
@@ -60,17 +62,6 @@ export async function GET(request: NextRequest) {
     }
     const site = siteId ? sites.find(s => s.id === siteId) : null;
     if (siteId && !site) return NextResponse.json({ error: 'Site not found' }, { status: 404 });
-
-    let byMonth;
-    try {
-        byMonth = await loadCells(access.organizationId, months);
-    } catch (e) {
-        console.error('[aop trend] cells', e instanceof Error ? e.message : e);
-        return NextResponse.json({ error: 'Could not load the trend' }, { status: 500 });
-    }
-    if (byMonth === UNPROVISIONED) {
-        return NextResponse.json({ provisioned: false, points: [], scope: null });
-    }
 
     const lineById = new Map<string, AopLineItem>(lineItems.map(li => [li.id, li]));
 

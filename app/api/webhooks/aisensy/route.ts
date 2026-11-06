@@ -4,11 +4,21 @@ import { enqueueAssistantMessage, drainWhatsAppPhone } from '@/backend/lib/whats
 import { processIncomingMessage } from '@/backend/lib/whatsapp/processMessage';
 import { isGreetingMessage } from '@/backend/lib/whatsapp/greeting';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { LeadOutreachService } from '@/backend/services/LeadOutreachService';
 import { handleFreeformTest } from '@/whatsapp-test/freeformTest';
 import { TaskMessageRouter } from '@/task-manager/TaskMessageRouter';
 import { TaskIdempotencyService } from '@/task-manager/TaskIdempotencyService';
+import { claimTaskImport } from '@/task-manager/TaskImportInbound';
+import { scheduleShadow } from '@/task-manager/brain/shadow';
+import { claimSmartChat } from '@/task-manager/brain/live';
+import { claimVoiceNote } from '@/task-manager/voice/VoiceIntake';
+import { markRoute, markReplied, recordInbound } from '@/task-manager/InboundLedger';
+import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
+import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
+import { claimAiLayerWhatsApp } from '@/backend/lib/aiLayer/whatsappLive';
+import { claimTicketReply } from '@/backend/lib/whatsapp/ticketReply';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -24,6 +34,11 @@ function payloadShape(value: unknown, depth = 0): unknown {
         .map(([key, item]) => [key, payloadShape(item, depth + 1)]));
 }
 
+/** The kind of message for the ledger — never its content: "text", "audio", "button", … plus "+reply" when it quotes one. */
+function messageKind(input: { mediaType?: string; quotedIds?: string[] }): string {
+    return `${input.mediaType || 'text'}${input.quotedIds?.length ? '+reply' : ''}`;
+}
+
 export async function GET() {
     return NextResponse.json({ status: 'ok', service: 'AiSensy inbound webhook',
         assistantEnabled: process.env.AISENSY_ASSISTANT_ENABLED === 'true',
@@ -31,12 +46,44 @@ export async function GET() {
         routingVersion: 'ticket-photo-submit-v1' });
 }
 
+const STALE_INBOUND_MS = 15 * 60_000;
+
 export async function POST(req: NextRequest) {
+    const receivedAt = new Date().toISOString(); // conversation memory orders the person's message by when it ARRIVED
     const enabled = process.env.AISENSY_ASSISTANT_ENABLED === 'true';
     let body: unknown;
     try { body = await req.json(); }
     catch { return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 }); }
-    const input = normalizeInbound(body);
+    // "Never silent" ledger (switch OFF → returns 'unknown' at once, nothing written): note the message BEFORE any route
+    // runs, so a reply sent while routing is matched to it. No message text is stored. Never throws.
+    // The same write spots a RE-DELIVERY of a message already received (same WhatsApp id, even hours later): it is
+    // dropped here, before voice / routing, so nobody gets a second reply or a repeated action.
+    const arrived = normalizeInbound(body);
+    // A message SENT more than 15 minutes ago is a late re-delivery (2026-10-15: two of Saturday's messages arrived again
+    // five days later and were answered as new). Ignored before the ledger, so the watchdog never apologises for it.
+    // No send time in the payload → handled as before. The age is logged, never the content.
+    const ageMs = arrived?.inboundAt ? Date.now() - Date.parse(arrived.inboundAt) : NaN;
+    if (ageMs > STALE_INBOUND_MS) {
+        console.info('[AiSensyWebhook] Stale delivery ignored', JSON.stringify({ ageMinutes: Math.round(ageMs / 60_000), type: messageKind(arrived!) }));
+        return NextResponse.json({ success: true, ignored: 'stale' });
+    }
+    const seen = await recordInbound(arrived?.messageId, arrived?.phone, arrived && messageKind(arrived));
+    if (seen === 'duplicate') {
+        console.info('[AiSensyWebhook] Duplicate delivery ignored', JSON.stringify({ type: arrived && messageKind(arrived) }));
+        return NextResponse.json({ success: true, ignored: 'duplicate' });
+    }
+    // Ticket replies: a swipe-reply to a ticket notification belongs to that ticket, so it is taken before any bot can read
+    // it as a new ticket or a task. Anything that is not a swipe on one of those messages carries on below exactly as before.
+    if ((await claimTicketReply(body)).handled) return NextResponse.json({ success: true, routedTo: 'TICKET_REPLY' });
+    // Voice notes (switch VOICE_NOTES_ENABLED, OFF by default → returns at once, nothing loaded). A voice note is turned into
+    // tidy text in the background. A YES to "🎙️ I heard …" carries on below as that text, exactly as if it had been typed.
+    const voice = await claimVoiceNote(body);
+    if (voice.kind === 'handled') {
+        if (voice.background) after(async () => { await voice.background!(); });
+        return NextResponse.json({ success: true, routedTo: 'VOICE_NOTE' });
+    }
+    if (voice.kind === 'rewrite') body = voice.body;
+    let input = normalizeInbound(body);
     console.info('[AiSensyWebhook] Payload inspected', JSON.stringify({
         assistantEnabled: enabled,
         normalized: !!input,
@@ -45,7 +92,96 @@ export async function POST(req: NextRequest) {
         hasMedia: !!input?.mediaUrl,
         shape: payloadShape(body),
     }));
+    // Conversation memory (WHATSAPP_MEMORY_ENABLED, OFF by default → returns at once): the person's message is stored only once a
+    // Task Manager route has taken it — for Smart chat AFTER the AI has read the memory, so it never sees this message twice.
+    // 2026-11-02 batching: several messages answered as one turn are remembered as that one turn (their words, one per line).
+    const remember = (text?: string) => appendTurn(input?.phone, 'person', text ?? input?.text, receivedAt);
+    // A Task Manager background job that crashes gets an immediate apology instead of silence (no-op while the switch is OFF).
+    const guarded = (job: () => Promise<void>) => async () => {
+        try { await job(); }
+        catch (error) {
+            console.error('[AiSensyWebhook] Task Manager background job failed', error instanceof Error ? error.message : error);
+            await apologiseAfterCrash(input?.messageId, input?.phone);
+        }
+    };
+
+    // Task Import: a task list sent as an Excel file / image / text. Anything that is not an import (or while the
+    // switch is OFF) comes back handled:false and the code below runs exactly as before.
+    const taskImport = await claimTaskImport(body);
+    if (taskImport.handled) {
+        if (taskImport.background) {
+            await markRoute(input?.messageId, 'task_import', input?.phone, input?.text);
+            await remember();
+            after(guarded(taskImport.background));
+        }
+        return NextResponse.json({ success: true, routedTo: 'TASK_IMPORT' });
+    }
+    // Group 3 (2026-10-13): a caption-less photo the person said is for a facility issue ("ticket") → carry on with THAT
+    // photo, exactly as if it had just arrived, so the facility assistant handles it as before.
+    if (taskImport.rewrite) { body = taskImport.rewrite; input = normalizeInbound(body); }
+
+    // AI Action Layer on WhatsApp (docs/AI_ACTION_LAYER_PLAN.md). Owner 2026-11-04: for the people an org super admin
+    // switched the AI on for, it reads the message FIRST (before Smart chat). It answers tickets / meter readings / its own
+    // conversation, and passes everything else on: messages about tasks, short replies ("yes", "2", "done 3"), anything it
+    // doesn't understand or may not do, and any error come back handled:false, so Smart chat and the old bot below answer
+    // exactly as before. For everyone else it returns at once (no lookups while no org has WhatsApp on).
+    const aiLayer = await claimAiLayerWhatsApp(input);
+    if (aiLayer.handled) {
+        await remember();
+        after(guarded(aiLayer.background));
+        return NextResponse.json({ success: true, routedTo: 'AI_LAYER' });
+    }
+
+    // Smart chat (Phase 4): for people in a department with Smart chat ON, the brain answers plain-language messages. Anything it
+    // does not take (rooms / tickets, the AI being down, an older conversation still open) comes back handled:false and the old
+    // bot answers exactly as before. The slow part (carrying out, replying) runs after this webhook has answered.
+    // Batching (2026-11-02): several messages sent back to back are answered ONCE, by the newest message's webhook; the earlier
+    // ones come back handled with nothing to do. A batch that is not Smart chat's (only greetings, a ticket request) comes
+    // back with `rewrite` = their words, and the code below carries on with that, as for a confirmed voice note.
+    const smartChat = await claimSmartChat(body);
+    if (smartChat.handled) {
+        if (smartChat.background) {
+            await markRoute(input?.messageId, 'smart_chat', input?.phone, input?.text);
+            await remember(smartChat.text);
+            after(guarded(smartChat.background));
+        }
+        return NextResponse.json({ success: true, routedTo: 'SMART_CHAT' });
+    }
+    if (smartChat.rewrite) { body = smartChat.rewrite; input = normalizeInbound(body); }
+
+    // Task Brain shadow mode (Phase 3): beside the old bot, for the sandbox numbers only, the brain reads the message and only
+    // LOGS what it would have done. It never replies and never changes anything; any failure is swallowed.
+    if (input?.text) scheduleShadow({ phone: input.phone, text: input.text, messageId: input.messageId });
+
     if (!input) return NextResponse.json({ ok: true, ignored: true });
+
+
+    // CRM Inbound Lead Reply Ingestion:
+    // When a prospective lead replies with their preferred reach-out slot,
+    // update crm_leads followup date/notes, log the activity, and alert the assigned rep.
+    if (input.phone && input.text && !input.mediaUrl) {
+        try {
+            const isLead = await LeadOutreachService.isLeadPhone(input.phone);
+            if (isLead) {
+                const leadReply = await LeadOutreachService.handleInboundLeadReply({
+                    phone: input.phone,
+                    text: input.text,
+                    messageId: input.messageId || undefined,
+                });
+                if (leadReply.handled) {
+                    await markRoute(input.messageId, 'crm_lead_reply', input.phone, input.text);
+                    await markReplied(input.phone);
+                    console.info('[AiSensyWebhook] Inbound routed to CRM_LEAD_REPLY', {
+                        phone: input.phone,
+                        leadId: leadReply.leadId,
+                    });
+                    return NextResponse.json({ success: true, routedTo: 'CRM_LEAD_REPLY', leadId: leadReply.leadId });
+                }
+            }
+        } catch (leadReplyError) {
+            console.error('[AiSensyWebhook] Error processing lead reply:', leadReplyError);
+        }
+    }
 
     let interpreter = false;
     try { interpreter = await isInterpreterPilot(input); }
@@ -122,6 +258,8 @@ export async function POST(req: NextRequest) {
             });
 
             if (routeResult.handledByTaskManager) {
+                await markRoute(input.messageId, 'task_router', input.phone, input.text); // "never silent": the reply (already sent above) is matched to it
+                await remember(); // ordered by arrival time, so it still sits BEFORE the reply that was already sent
                 if (interpreter && input.messageId) TaskIdempotencyService.recordProcessedWebhook(input.messageId);
                 console.info('[AiSensyWebhook] Inbound routed to TASK_MANAGER', {
                     phoneMasked: input.phone.replace(/(\d{4})\d+(\d{2})/, '$1****$2'),

@@ -7,14 +7,15 @@ import {notificationAdapter} from './notification-adapter.mjs';
 async function fixture(){
  const db=await setup();await db.exec(`ALTER TABLE users ADD COLUMN phone text;UPDATE users SET email='fixture'||right(id::text,2)||'@example.test',phone='9190000000'||right(id::text,2);CREATE TABLE event_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),event_type text,entity_id uuid,payload jsonb,status text DEFAULT 'pending',retry_count int DEFAULT 0,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());CREATE TABLE organization_settings(organization_id uuid PRIMARY KEY,notification_matrix jsonb,whatsapp_templates jsonb,email_templates jsonb,timezone text);CREATE TABLE system_config(key text,value jsonb);INSERT INTO organization_settings(organization_id)VALUES('${id(1)}');`);
  await db.exec(await readFile(new URL('../../supabase/migrations/20261007000001_petty_cash_omnichannel.sql',import.meta.url),'utf8'));
- const email=[],whatsapp=[];let waResult={success:true};
- const mocks={'@/backend/lib/supabase/admin':{supabaseAdmin:notificationAdapter(db)},'./EmailService':{EmailService:{sendTransactionalEmail:async args=>{email.push(args);return {success:true};}}},'./AiSensyService':{AiSensyService:{sendTemplate:async args=>{whatsapp.push(args);return waResult;}}}};
+ await db.exec(await readFile(new URL('../../supabase/migrations/20261007000002_petty_cash_push_notifications.sql',import.meta.url),'utf8'));
+ const email=[],whatsapp=[],push=[];let waResult={success:true};
+ const mocks={'./NotificationService':{NotificationService:{sendOutboxPush:async args=>{push.push(args);return {success:true};}}},'@/backend/lib/supabase/admin':{supabaseAdmin:notificationAdapter(db)},'./EmailService':{EmailService:{sendTransactionalEmail:async args=>{email.push(args);return {success:true};}}},'./AiSensyService':{AiSensyService:{sendTemplate:async args=>{whatsapp.push(args);return waResult;}}}};
  const service=loadTs('backend/services/PettyCashNotificationService.ts',mocks).PettyCashNotificationService;
  const catalog=loadTs('frontend/lib/notifications/pettyCashTemplates.ts');
  const configure=async(feature,rule)=>{const event=catalog.PC_NOTIFICATION_EVENTS.find(e=>e.key===feature);const template=catalog.PC_NOTIFICATION_TEMPLATES.find(t=>t.name===event.templateName);await db.query('update organization_settings set notification_matrix=$1,whatsapp_templates=$2 where organization_id=$3',[{petty_cash:{[feature]:rule}},{[feature]:{campaign_name:template.name,params:template.params,confirmed_live:true}},id(1)]);};
  const event=async type=>(await db.query('select * from event_outbox where event_type=$1 order by created_at desc,id desc limit 1',[type])).rows[0];
  let r=await call(db,'pc_create_request',[id(11),id(1),{amount_requested:150,purpose:'Delivery fixture'}]);
- return {db,service,email,whatsapp,configure,event,request:r,setWa:result=>waResult=result};
+ return {db,service,email,whatsapp,push,configure,event,request:r,setWa:result=>waResult=result};
 }
 const both={enabled:true,channels:{email:true,whatsapp:true},roles:[],user_ids:[id(12)],notify_assignee:false};
 test('Omnichannel selects explicit users; disabled and empty property overrides suppress delivery',async()=>{
@@ -64,5 +65,16 @@ test('a resubmission suppresses old allocation alerts even when the assigned all
   r=await call(f.db,'pc_action',[id(11),r.id,'resubmit',{expected_version:r.version,amount_requested:100,purpose:'Corrected amount'}]);
   await f.service.processDue(old.id,'email');assert.equal(f.email.length,0);assert.equal((await f.db.query('select status from petty_cash_notification_deliveries where event_id=$1',[old.id])).rows[0].status,'skipped');
   const current=(await f.db.query("select * from event_outbox where event_type='PETTY_CASH_SUBMITTED' and payload->>'request_version'=$1",[String(r.version)])).rows[0];await f.service.dispatch(current,'email');assert.equal(f.email.length,1);assert.match(f.email[0].text,/Amount: INR 100.00/);
+ }finally{await f.db.close();}
+});
+
+test('Push follows explicit Omnichannel recipients, is independently deduplicated and obeys overrides',async()=>{
+ const f=await fixture();try{
+  await f.db.query('update users set email=null,phone=null where id=$1',[id(12)]);
+  const event=await f.event('PETTY_CASH_SUBMITTED');await f.service.dispatch(event,'push');assert.equal(f.push.length,0);
+  await f.configure('petty_cash_submitted',{...both,channels:{email:false,whatsapp:false,push:true}});
+  await f.service.dispatch(event,'push');await f.service.dispatch(event,'push');assert.equal(f.push.length,1);assert.equal(f.push[0].userId,id(12));assert.equal(f.email.length,0);assert.equal(f.whatsapp.length,0);assert.match(f.push[0].deepLink,new RegExp(`petty-cash\\?request_id=${f.request.id}`));
+  assert.equal((await f.db.query('select channel,status from petty_cash_notification_deliveries')).rows[0].channel,'push');
+  await f.configure('petty_cash_submitted',{...both,channels:{push:true},property_overrides:{[id(3)]:{channels:{push:false}}}});await f.service.dispatch(event,'push');assert.equal(f.push.length,1);
  }finally{await f.db.close();}
 });

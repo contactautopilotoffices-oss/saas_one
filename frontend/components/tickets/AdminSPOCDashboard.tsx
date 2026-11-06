@@ -93,7 +93,7 @@ export default function AdminSPOCDashboard({
         setNotification({ message, type });
     };
 
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKey = `spoc-dashboard-${propertyId}-${statusFilter}-${floorFilter}`;
 
     const [tickets, setTickets] = useState<Ticket[]>(() => getCachedData(cacheKey)?.tickets || []);
@@ -208,6 +208,24 @@ export default function AdminSPOCDashboard({
         const interval = setInterval(fetchData, 10000);
         return () => clearInterval(interval);
     }, [fetchData]);
+
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            if (newTicket && newTicket.id) {
+                setTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
+            }
+            invalidateCache('spoc-dashboard-');
+            fetchData();
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [fetchData, invalidateCache]);
 
     const getSLAStatus = (deadline: string | null, breached: boolean) => {
         if (breached) return { text: 'LATE', color: 'text-red-400 bg-red-500/20', urgent: true };

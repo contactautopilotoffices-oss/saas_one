@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import {
     FolderLock, Search, Upload, FileText, Image as ImageIcon, X, Loader2,
     CheckCircle2, AlertTriangle, AlertCircle, ShieldCheck, Sparkles, Trash2,
@@ -108,11 +109,16 @@ const emptyForm = {
 };
 
 export default function DocumentBank({ organizationId, propertyId }: Props) {
-    const [documents, setDocuments] = useState<DocumentRow[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // Coming back to the tab: the unfiltered list is shown at once from memory (per user), then refreshed quietly.
+    const { getCachedData, setCachedData } = useDataCache();
+    const cacheKey = `tab-documents-${organizationId}-${propertyId ?? 'all'}`;
+    const initialCached = useMemo(() => getCachedData(cacheKey), []); // eslint-disable-line react-hooks/exhaustive-deps
+    const quietFirstLoad = useRef(!!initialCached);
+    const [documents, setDocuments] = useState<DocumentRow[]>(initialCached?.documents ?? []);
+    const [isLoading, setIsLoading] = useState(!initialCached);
     // Distinguishes "the table has no matching rows" from "the table does not exist yet".
     // An empty grid means the same thing on screen, and only one of the two is true.
-    const [unprovisioned, setUnprovisioned] = useState<string | null>(null);
+    const [unprovisioned, setUnprovisioned] = useState<string | null>(initialCached?.unprovisioned ?? null);
     const [searchTerm, setSearchTerm] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -127,7 +133,8 @@ export default function DocumentBank({ organizationId, propertyId }: Props) {
     const [isBusy, setIsBusy] = useState(false);
 
     const fetchDocuments = useCallback(async () => {
-        setIsLoading(true);
+        if (quietFirstLoad.current) quietFirstLoad.current = false; else setIsLoading(true);
+        const unfiltered = categoryFilter === 'all' && statusFilter === 'all' && !searchTerm.trim();
         try {
             const params = new URLSearchParams({ organization_id: organizationId });
             if (propertyId) params.set('property_id', propertyId);
@@ -136,14 +143,16 @@ export default function DocumentBank({ organizationId, propertyId }: Props) {
             if (searchTerm.trim()) params.set('q', searchTerm.trim());
             const res = await fetch(`/api/document-bank?${params}`);
             const data = await res.json();
-            setUnprovisioned(data.provisioned === false ? (data.reason || 'Document Bank is not set up yet.') : null);
+            const notReady = data.provisioned === false ? (data.reason || 'Document Bank is not set up yet.') : null;
+            setUnprovisioned(notReady);
             if (data.documents) setDocuments(data.documents);
+            if (res.ok && unfiltered) setCachedData(cacheKey, { documents: data.documents ?? [], unprovisioned: notReady });
         } catch (err) {
             console.error('Failed to fetch document bank:', err);
         } finally {
             setIsLoading(false);
         }
-    }, [organizationId, propertyId, categoryFilter, statusFilter, searchTerm]);
+    }, [organizationId, propertyId, categoryFilter, statusFilter, searchTerm, cacheKey, setCachedData]);
 
     useEffect(() => {
         const t = setTimeout(fetchDocuments, 250); // debounce search

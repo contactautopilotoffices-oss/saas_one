@@ -17,7 +17,8 @@
  * glm-5.3-flash, kimi-k3 and qwen3.8-27b.
  */
 
-import { resolveProvider } from '@/backend/lib/council/llm';
+import { resolveProvider, priceOf } from '@/backend/lib/council/llm';
+import { ocrStep } from '@/backend/lib/ocr/activity';
 import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
@@ -25,7 +26,7 @@ export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'qwen3.8-27b'] as
 
 /** Default: best extraction quality per rupee in testing. */
 export const DEFAULT_VISION_MODEL =
-    process.env.OCR_VISION_MODEL || 'glm-5.3-flash';
+    process.env.OCR_VISION_MODEL || 'qwen3.8-27b';
 
 const TIMEOUT_MS = Number(process.env.OCR_VISION_TIMEOUT_MS || 60_000);
 
@@ -36,6 +37,8 @@ export interface VisionExtractInput {
     instruction: string;
     model?: string;
     maxTokens?: number;
+    /** Engy only: skip the model's hidden reasoning. Right for plain reading; wrong for judgement. */
+    thinkingOff?: boolean;
     /** When true, ask for response_format json_object. */
     json?: boolean;
 }
@@ -57,16 +60,22 @@ export interface VisionExtractResult {
  * Never throws: every failure comes back as { ok: false, error }, matching the
  * convention in documentBank/ocr.ts so a caller's control flow is unchanged.
  */
-export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
+async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtractResult> {
     const model = input.model || DEFAULT_VISION_MODEL;
-    const { provider, spec, apiKey } = resolveProvider();
+
+    // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
+    const engyKey = (process.env.ENGY_API_KEY || process.env.engy || '').trim();
+    const resolved = resolveProvider();
+    const apiKey = engyKey || resolved.apiKey;
+    const baseUrl = engyKey ? (process.env.ENGY_BASE_URL || 'https://api.engy.ai/v1') : resolved.spec.baseUrl;
+    const provider = engyKey ? 'engy' : resolved.provider;
 
     const base: Omit<VisionExtractResult, 'ok'> = {
         data: null, text: null, model, provider, usage: null,
     };
 
     if (!apiKey) {
-        return { ...base, ok: false, error: 'No LLM key configured (COUNCIL_API_KEY / GROQ_API_KEY / OPENAI_API_KEY).' };
+        return { ...base, ok: false, error: 'No LLM key configured (ENGY_API_KEY / engy / COUNCIL_API_KEY / GROQ_API_KEY / OPENAI_API_KEY).' };
     }
     if (!input.pages.length) {
         return { ...base, ok: false, error: 'No page images supplied.' };
@@ -87,12 +96,14 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
         messages: [{ role: 'user', content }],
     };
     if (input.json) body.response_format = { type: 'json_object' };
+    // Reading a page is not a puzzle: do not let the model spend its budget "thinking" (Engy only).
+    if (input.thinkingOff && /engy\./i.test(baseUrl)) body.thinking = { type: 'disabled' };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-        const res = await fetch(`${spec.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -143,4 +154,18 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
     } finally {
         clearTimeout(timer);
     }
+}
+
+/** The public entry point: the read itself, plus one step in the OCR activity log (tokens and cost included). */
+export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
+    const t0 = Date.now();
+    const r = await visionExtractRaw(input);
+    const rate = priceOf(r.model);
+    ocrStep({
+        step: 'vision_model', ms: Date.now() - t0, ok: r.ok, model: r.model, provider: r.provider,
+        tokens_in: r.usage?.prompt, tokens_out: r.usage?.completion,
+        cost_usd: r.usage ? (r.usage.prompt * rate.input + r.usage.completion * rate.output) / 1e6 : undefined,
+        note: `${input.pages.length} page image${input.pages.length === 1 ? '' : 's'}${r.ok ? '' : `: ${r.error ?? 'failed'}`}`,
+    });
+    return r;
 }

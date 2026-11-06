@@ -25,9 +25,14 @@ const COMPLIANCE_META: Record<ComplianceStatus, { label: string; cls: string; Ic
     expired: { label: 'Expired', cls: 'text-error bg-error/10', Icon: ShieldAlert },
 };
 
-interface Props { orgId?: string; }
+interface Props {
+    orgId?: string;
+    /** Supplied by AccountsDashboard to open the PO in a drawer instead of navigating to
+     *  /{orgId}/accounts/po/{poId}, which is wrapped in the Finance shell. */
+    onOpenPo?: (poId: string) => void;
+}
 
-export default function PaymentTrackerTable({ orgId }: Props) {
+export default function PaymentTrackerTable({ orgId, onOpenPo }: Props) {
     const router = useRouter();
     const [supabase] = useState(() => createClient());
 
@@ -40,6 +45,10 @@ export default function PaymentTrackerTable({ orgId }: Props) {
     const [vendor, setVendor] = useState('');
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    // The API pages at 50; without this the sheet silently stopped at the first 50 POs.
+    const [page, setPage] = useState(1);
+    const [total, setTotal] = useState(0);
+    const PAGE = 50;
 
     // po_id -> who just touched it, so a change reads as "Priya aligned this" rather than
     // merely "a row changed". Cleared 5s after arrival.
@@ -49,9 +58,12 @@ export default function PaymentTrackerTable({ orgId }: Props) {
         if (!orgId) return;
         setLoading(true);
         try {
-            const p = new URLSearchParams({ org_id: orgId });
+            const p = new URLSearchParams({ org_id: orgId, page: String(page), page_size: String(PAGE) });
             if (status) p.set('status', status);
-            if (vendor) p.set('vendor', vendor);
+            // The box says "Vendor / PO#", but the API's `vendor` param is an EXACT vendor-name
+            // match, so a PO number or half a name never found anything. `search` is the
+            // partial match over PO number, vendor name and UTR.
+            if (vendor.trim()) p.set('search', vendor.trim());
             if (dateFrom) p.set('date_from', dateFrom);
             if (dateTo) p.set('date_to', dateTo);
             const res = await fetch(`/api/accounts/tracker?${p}`);
@@ -61,14 +73,17 @@ export default function PaymentTrackerTable({ orgId }: Props) {
             if (d.provisioned === false) { setSetup(true); setRows([]); setError(null); return; }
             setSetup(false); setError(null);
             setRows(d.rows || []);
+            setTotal((d as { pagination?: { total?: number } }).pagination?.total ?? (d.rows || []).length);
         } catch {
             setError('Could not reach the payment tracker service.');
         } finally {
             setLoading(false);
         }
-    }, [orgId, status, vendor, dateFrom, dateTo]);
+    }, [orgId, status, vendor, dateFrom, dateTo, page]);
 
     useEffect(() => { fetchTracker(); }, [fetchTracker]);
+    // A new filter starts again at the first page.
+    useEffect(() => { setPage(1); }, [status, vendor, dateFrom, dateTo]);
 
     // Realtime — one debounced refetch timer shared across every event, so ten changes in a
     // burst collapse into a single request instead of ten (the anti-storm guard).
@@ -171,7 +186,7 @@ export default function PaymentTrackerTable({ orgId }: Props) {
                                 const cmeta = row.compliance_status ? COMPLIANCE_META[row.compliance_status] : null;
                                 const hl = highlight[row.po_id];
                                 return (
-                                    <tr key={row.po_id} onClick={() => orgId && router.push(`/${orgId}/accounts/po/${row.po_id}`)}
+                                    <tr key={row.po_id} onClick={() => { if (onOpenPo) onOpenPo(row.po_id); else if (orgId) router.push(`/${orgId}/accounts/po/${row.po_id}`); }}
                                         className={`cursor-pointer hover:bg-surface-elevated transition-colors duration-700 ${hl ? 'bg-primary/5' : ''}`}>
                                         <td className="px-4 py-3 text-sm font-bold text-text-primary whitespace-nowrap">
                                             {row.po_number}
@@ -207,6 +222,15 @@ export default function PaymentTrackerTable({ orgId }: Props) {
                         </tbody>
                     </table>
                 </div>
+                {total > 0 && (
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border text-xs text-text-secondary">
+                        <span className="tabular-nums">{(page - 1) * PAGE + 1}–{Math.min(page * PAGE, total)} of {total}</span>
+                        <span className="flex items-center gap-1">
+                            <button className="px-2.5 py-1 rounded-lg border border-border font-bold disabled:opacity-40" disabled={page <= 1 || loading} onClick={() => setPage(x => x - 1)}>Previous</button>
+                            <button className="px-2.5 py-1 rounded-lg border border-border font-bold disabled:opacity-40" disabled={page * PAGE >= total || loading} onClick={() => setPage(x => x + 1)}>Next</button>
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );

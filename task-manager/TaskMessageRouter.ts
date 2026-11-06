@@ -4,7 +4,6 @@ import { TaskMessagingService } from './TaskMessagingService';
 import { TaskAccessService } from './TaskAccessService';
 import { TaskGatewayExecutor } from './TaskGatewayExecutor';
 import { classifyNaturalLanguage, classifyInsight, parseConfirmAnswer, parsePick, GatewayDecision, InsightDecision } from './TaskGateway';
-import { SuperuserAIInterpreter } from './SuperuserAIInterpreter';
 import { ContextSystem, Employee } from './types';
 
 export type RoutedSystem = 'TASK_MANAGER' | 'FACILITY' | 'AMBIGUOUS';
@@ -215,17 +214,9 @@ export class TaskMessageRouter {
                 };
             }
 
-            // Unclear to the rules: a superuser's message may be read by the AI (it only reads; changes still ask "confirm?")
-            if (isSuperuser) {
-                const departments = (await TaskDatabaseService.getDepartments()).map(d => d.name);
-                const ai = await SuperuserAIInterpreter.interpret(clean, { departments });
-                if (ai && ai.kind === 'task_assign') {
-                    return { system: 'TASK_MANAGER', reason: 'nl_task_assign', isExplicitSwitch: false, confidence: 0.8, nl: ai };
-                }
-                if (ai) {
-                    return { system: 'TASK_MANAGER', reason: 'nl_insight', isExplicitSwitch: false, confidence: 0.8, insight: ai };
-                }
-            }
+            // 2026-11-02 (owner): the separate "Superuser chat" AI (SuperuserAIInterpreter, Groq) is retired here. Every
+            // superuser's department has Smart chat ON, and Smart chat already answers these questions (team / company views,
+            // brain/live.ts readInsight) with the main model. The module and its tests stay, so it can be switched back on.
         }
 
         // 5. Active Context in Database

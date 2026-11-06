@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EventProcessor } from '@/backend/services/EventProcessor';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { getBookingDateTimeIST } from '@/backend/utils/timezone';
+import { isCreditExemptBooker } from '@/backend/lib/meetingRooms/creditExempt';
 
 /**
  * DELETE /api/meeting-room-bookings/[id]
@@ -95,27 +96,32 @@ async function cancelBooking(bookingId: string, user: any) {
     const [endH, endM] = booking.end_time.split(':').map(Number);
     const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
 
-    try {
-        const { error: refundErr } = await supabaseAdmin.rpc(
-            'refund_meeting_room_credit',
-            {
-                p_property_id: booking.property_id,
-                p_user_id: booking.user_id,
-                p_company_id: booking.company_id,
-                p_hours: durationHours,
-                p_booking_id: bookingId,
-                p_performed_by: user.id,
-                p_notes: 'Credit refund on booking cancellation'
-            }
-        );
+    // HR and CRM bookings were free (no deduction), so there is nothing to refund.
+    const bookerIsCreditExempt = await isCreditExemptBooker(booking.user_id, booking.organization_id);
 
-        if (refundErr) {
-            console.error('[Booking Cancel API] Credit refund RPC error:', refundErr);
-        } else {
-            console.log(`[Booking Cancel API] Successfully refunded ${durationHours}h credit for booking ${bookingId}`);
+    if (!bookerIsCreditExempt) {
+        try {
+            const { error: refundErr } = await supabaseAdmin.rpc(
+                'refund_meeting_room_credit',
+                {
+                    p_property_id: booking.property_id,
+                    p_user_id: booking.user_id,
+                    p_company_id: booking.company_id,
+                    p_hours: durationHours,
+                    p_booking_id: bookingId,
+                    p_performed_by: user.id,
+                    p_notes: 'Credit refund on booking cancellation'
+                }
+            );
+
+            if (refundErr) {
+                console.error('[Booking Cancel API] Credit refund RPC error:', refundErr);
+            } else {
+                console.log(`[Booking Cancel API] Successfully refunded ${durationHours}h credit for booking ${bookingId}`);
+            }
+        } catch (creditErr) {
+            console.error('[Booking Cancel API] Failed to refund credits:', creditErr);
         }
-    } catch (creditErr) {
-        console.error('[Booking Cancel API] Failed to refund credits:', creditErr);
     }
 
     // 5. Update booking status to 'cancelled' (DO NOT delete row, triggers Postgres outbox event)

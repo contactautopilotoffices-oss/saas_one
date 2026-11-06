@@ -162,7 +162,7 @@ export default function IvoryOrg({ m }: { m: OrgModel }) {
                                 </div>
                                 <div onKeyDown={listKeys}>
                                     {sites.map((s, i) => (
-                                        <div key={s.id} role="row" {...rowProps(() => m.previewAction(`Open ${s.name}`), s.name)} className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_44px_44px_44px] items-center gap-[6px] border-b py-[10px]" style={{ borderColor: '#EFE9DC' }}>
+                                        <div key={s.id} {...rowProps(() => m.previewAction(`Open ${s.name}`), s.name)} className="grid cursor-pointer grid-cols-[22px_minmax(0,1fr)_44px_44px_44px] items-center gap-[6px] border-b py-[10px]" style={{ borderColor: '#EFE9DC' }}>
                                             <span role="cell" className="text-[14px]" style={{ ...fig, color: IV.text3 }}>{i + 1}</span>
                                             <span role="cell" className="min-w-0">
                                                 <span className="block truncate text-[14px] font-semibold">{s.name}</span>

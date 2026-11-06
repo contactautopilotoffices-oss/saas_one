@@ -1,4 +1,7 @@
 {
+  "git": {
+    "deploymentEnabled": false
+  },
   "crons": [
     {
       "path": "/api/cron/check-sop-reminders",
@@ -69,6 +72,14 @@
       "schedule": "0 0 1 * *"
     },
     {
+      "path": "/api/cron/voice-id-keepalive",
+      "schedule": "17 */12 * * *"
+    },
+    {
+      "path": "/api/cron/meeting-room-reminders",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/sweep-outbox",
       "schedule": "*/5 * * * *"
     },
@@ -83,6 +94,10 @@
     {
       "path": "/api/cron/sync-purchase-mailbox",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/mail-archive",
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/sync-vendor-compliance",
@@ -129,6 +144,18 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/satej-worker",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/satej-benchmark",
+      "schedule": "30 2 1,11,21,31 * *"
+    },
+    {
+      "path": "/api/cron/wiki-compile",
+      "schedule": "30 0 * * 1"
+    },
+    {
       "path": "/api/cron/whatsapp-assistant",
       "schedule": "* * * * *"
     },
@@ -137,7 +164,35 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/task-manager-report",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/bot-autotune",
+      "schedule": "45 20 * * *"
+    },
+    {
       "path": "/api/cron/process-petty-cash-deliveries",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/po-approval-watch",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/ocr-heartbeat",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/po-status-refresh",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/aop-bounty",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/candidate-indexing",
       "schedule": "* * * * *"
     }
   ]

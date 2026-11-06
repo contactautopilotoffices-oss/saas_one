@@ -45,7 +45,7 @@ export async function preflight(orgId: string, agentKey: string): Promise<Prefli
     /* ---- 1. the agent row -------------------------------------------------- */
     const { data: agent, error: agentErr } = await supabaseAdmin
         .from('oem_agents')
-        .select('status, system_prompt, system_prompt_version, runtime, model_config')
+        .select('status, system_prompt, system_prompt_version, runtime, model_config, config')
         .eq('organization_id', orgId).eq('agent_key', agentKey).maybeSingle();
 
     if (agentErr || !agent) {
@@ -102,11 +102,17 @@ export async function preflight(orgId: string, agentKey: string): Promise<Prefli
     });
 
     /* ---- 5. tools ---------------------------------------------------------- */
-    const tools = bindTools(['db_read', 'db_write', 'llm', 'email', 'web_search', 'zoho_books']);
+    // The agent's own saved flow decides which tools matter. A tool its flow
+    // calls and this server lacks means a step that cannot run — blocking.
+    // Without a saved flow, fall back to the general set, advisory only.
+    const planned = ((agent.config as { plan?: { steps?: { tool?: string | null }[] } } | null)?.plan?.steps ?? [])
+        .map((st) => st.tool)
+        .filter((t): t is string => typeof t === 'string' && t.length > 0);
+    const tools = bindTools(planned.length ? planned : ['db_read', 'db_write', 'llm', 'email', 'web_search', 'zoho_books']);
     const missing = tools.filter((t) => t.status === 'missing');
     push({
-        key: 'tools', label: 'Tools',
-        state: missing.length === 0 ? 'ok' : 'advisory',
+        key: 'tools', label: planned.length ? 'Tools its flow calls' : 'Tools',
+        state: missing.length === 0 ? 'ok' : planned.length ? 'blocking' : 'advisory',
         detail: `${tools.length - missing.length}/${tools.length} configured` +
             (missing.length ? ` — missing ${missing.map((m) => m.label).join(', ')}.` : '.'),
         fix: missing.length ? `Set ${missing[0].requires.map((r) => r.split('|').join(' or ')).join(', ')}.` : undefined,

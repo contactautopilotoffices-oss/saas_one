@@ -221,7 +221,11 @@ export async function GET(request: NextRequest) {
         data_quality: {
             provisioned: !anomalyUnprovisioned,
             excluded_readings: excluded.size,
-            anomalies: (anomalies || []).slice(0, 10),
+            // Newest first, so the 10 sent are the latest (the view has no order, so the dashboard alert showed an old
+            // reading — docs/COMMAND_CENTER_DATA_AUDIT.md §2.2).
+            anomalies: [...(anomalies || [])]
+                .sort((a, b) => (b.reading_date || '').localeCompare(a.reading_date || ''))
+                .slice(0, 10),
         },
         properties,
     });

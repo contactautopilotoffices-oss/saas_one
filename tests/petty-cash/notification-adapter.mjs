@@ -4,10 +4,13 @@ export function notificationAdapter(db){
  class Query {
   constructor(table){this.table=identifier(table);this.filters=[];this.mode='select';this.returning=false;this.one=false;}
   select(){this.returning=true;return this;}
+  order(){return this;}
+  single(){this.one=true;return this;}
+  insert(rows){this.mode='insert';this.rows=Array.isArray(rows)?rows:[rows];return this;}
   eq(column,value){this.filters.push({column:identifier(column),value});return this;}
   in(column,value){this.filters.push({column:identifier(column),value,in:true});return this;}
   update(value){this.mode='update';this.values=value;return this;}
-  upsert(rows){this.mode='insert';this.rows=rows;return this;}
+  upsert(rows){this.mode='insert';this.rows=Array.isArray(rows)?rows:[rows];return this;}
   maybeSingle(){this.one=true;return this;}
   async execute(){
    try{

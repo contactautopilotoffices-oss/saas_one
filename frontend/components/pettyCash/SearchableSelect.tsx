@@ -3,9 +3,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 
 export interface SearchableOption { value: string; label: string; description?: string; searchText?: string }
-export default function SearchableSelect({ label, value, options, onChange, disabled = false, placeholder, emptyMessage = 'No matches found.' }: {
+export default function SearchableSelect({ label, value, options, onChange, disabled = false, placeholder, compact = false, emptyMessage = 'No matches found.' }: {
     label: string; value: string; options: SearchableOption[]; onChange: (value: string) => void;
-    disabled?: boolean; placeholder?: string; emptyMessage?: string;
+    disabled?: boolean; placeholder?: string; compact?:boolean; emptyMessage?: string;
 }) {
     const id = useId();
     const root = useRef<HTMLDivElement>(null); const trigger = useRef<HTMLButtonElement>(null); const input = useRef<HTMLInputElement>(null);
@@ -24,11 +24,11 @@ export default function SearchableSelect({ label, value, options, onChange, disa
     useEffect(() => { if (disabled) { setOpen(false); setSearch(''); setActive(-1); } }, [disabled]);
     useEffect(() => { document.getElementById(`${id}-option-${active}`)?.scrollIntoView({ block: 'nearest' }); }, [active, id]);
     return <div ref={root} className="relative min-w-0">
-        <label id={`${id}-label`} className="pc-field-label" htmlFor={`${id}-trigger`}>{label}</label>
-        <button ref={trigger} id={`${id}-trigger`} type="button" role="combobox" aria-labelledby={`${id}-label`} aria-expanded={open} aria-haspopup="listbox" aria-controls={`${id}-list`} disabled={disabled}
-            className={`pc-select-trigger ${open ? 'pc-select-open' : ''}`} onClick={() => { if (open) close(); else setOpen(true); }}
+        <label id={`${id}-label`} className={compact?'sr-only':'pc-field-label'} htmlFor={`${id}-trigger`}>{label}</label>
+        <button ref={trigger} id={`${id}-trigger`} type="button" role="combobox" aria-labelledby={`${id}-label`} aria-expanded={open} aria-haspopup="listbox" aria-controls={`${id}-list`} title={compact?`${label}: ${selected?.label||placeholder||'All'}`:undefined} disabled={disabled}
+            style={compact?{minHeight:36,height:36,padding:'6px 10px',fontSize:12}:undefined} className={`pc-select-trigger ${open ? 'pc-select-open' : ''}`} onClick={() => { if (open) close(); else setOpen(true); }}
             onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setActive(0); } }}>
-            <span className="min-w-0 text-left"><span className={`block truncate ${selected ? '' : 'text-text-secondary'}`}>{selected?.label || placeholder || `Select ${label.toLowerCase()}`}</span>{selected?.description && <span className="block truncate text-xs text-text-secondary mt-0.5">{selected.description}</span>}</span>
+            <span className="min-w-0 text-left"><span className={`block truncate ${selected ? '' : 'text-text-secondary'}`}>{compact&&<span className="text-text-secondary">{label}: </span>}{selected?.label || placeholder || `Select ${label.toLowerCase()}`}</span>{!compact && selected?.description && <span className="block truncate text-xs text-text-secondary mt-0.5">{selected.description}</span>}</span>
             <ChevronDown size={16} className={`shrink-0 text-text-secondary transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
         {open && <div className="pc-select-menu">

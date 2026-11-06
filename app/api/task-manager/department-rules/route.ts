@@ -54,6 +54,14 @@ export async function POST(request: NextRequest) {
             await DepartmentRulesService.remove(userId, String(body.ruleId || ''), department);
             return NextResponse.json({ success: true });
         }
+        if (body.action === 'send_now') {
+            const result = await DepartmentRulesService.sendNow(userId, { ruleId: String(body.ruleId || ''), confirm: body.confirm === true }, department);
+            return NextResponse.json({ success: true, result });
+        }
+        if (body.action === 'save_carry_forward') {
+            const carryForward = await DepartmentRulesService.saveCarryForward(userId, body.carryForward, department);
+            return NextResponse.json({ success: true, carryForward });
+        }
         if (body.action === 'preview') {
             const preview = await DepartmentRulesService.preview(userId, body.rule || {}, department);
             return NextResponse.json({ success: true, ...preview });

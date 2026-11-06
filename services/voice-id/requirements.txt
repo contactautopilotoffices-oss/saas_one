@@ -1,0 +1,9 @@
+# PyTorch (CPU build) is installed separately in the Dockerfile, from PyTorch's own CPU index, to keep the image small.
+# speechbrain 1.1.2 needs torch/torchaudio >= 2.7.1.
+speechbrain==1.1.2
+huggingface_hub==0.33.1
+fastapi==0.115.12
+uvicorn==0.34.3
+httpx==0.28.1
+numpy==2.2.6
+scipy==1.15.3

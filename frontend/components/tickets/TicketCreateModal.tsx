@@ -1,11 +1,19 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign } from 'lucide-react';
+import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
+import {
+    MAX_TICKET_FILES,
+    TICKET_ATTACHMENT_ACCEPT,
+    TicketFileIcon,
+    checkTicketFile,
+    formatFileSize,
+    uploadTicketFile,
+} from '@/frontend/components/tickets/TicketAttachments';
 
 interface TicketCreateModalProps {
     isOpen: boolean;
@@ -43,6 +51,10 @@ export default function TicketCreateModal({
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [showMediaModal, setShowMediaModal] = useState(false);
+    // Owner 2026-11-03: optional documents / images attached to the request (uploaded after the ticket is created)
+    const [attachments, setAttachments] = useState<File[]>([]);
+    const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
+    const attachInputRef = useRef<HTMLInputElement>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [classification, setClassification] = useState<Classification | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -56,8 +68,11 @@ export default function TicketCreateModal({
 
     // @mention state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const [propertyUsers, setPropertyUsers] = useState<{ id: string; full_name: string; role?: string }[]>([]);
+    const mentionDropdownRef = useRef<HTMLDivElement>(null);
+    const [propertyUsers, setPropertyUsers] = useState<{ id: string; full_name: string; role?: string; designation?: string; email?: string }[]>([]);
+    const [isLoadingUsers, setIsLoadingUsers] = useState(false);
     const [mentionQuery, setMentionQuery] = useState('');
+    const [mentionSearch, setMentionSearch] = useState('');
     const [mentionStartIndex, setMentionStartIndex] = useState(-1);
     const [showMentionDropdown, setShowMentionDropdown] = useState(false);
     const [taggedUser, setTaggedUser] = useState<{ id: string; full_name: string } | null>(null);
@@ -68,22 +83,52 @@ export default function TicketCreateModal({
         }
     }, [properties]);
 
-    // Fetch property users for @mention
+    // Fetch property users for @mention via backend API
     useEffect(() => {
         const pid = isAdminMode ? selectedPropId : propertyId;
-        if (!pid) return;
-        supabase
-            .from('property_memberships')
-            .select('user:users(id, full_name), role')
-            .eq('property_id', pid)
-            .eq('is_active', true)
-            .then(({ data }) => {
-                const users = (data || [])
-                    .map((m: any) => ({ id: m.user?.id, full_name: m.user?.full_name, role: m.role }))
-                    .filter((u: any) => u.id && u.full_name);
-                setPropertyUsers(users);
+        const oid = isAdminMode ? selectedOrgId : organizationId;
+        if (!pid && !oid) {
+            setPropertyUsers([]);
+            return;
+        }
+
+        let isMounted = true;
+        setIsLoadingUsers(true);
+        const params = new URLSearchParams();
+        if (pid) params.append('propertyId', pid);
+        if (oid) params.append('organizationId', oid);
+
+        fetch(`/api/tickets/mention-users?${params.toString()}`)
+            .then(res => res.json())
+            .then(data => {
+                if (isMounted && data.users) {
+                    setPropertyUsers(data.users);
+                }
+            })
+            .catch(err => console.error('Failed to load mention users:', err))
+            .finally(() => {
+                if (isMounted) setIsLoadingUsers(false);
             });
-    }, [propertyId, selectedPropId]);
+
+        return () => { isMounted = false; };
+    }, [propertyId, selectedPropId, organizationId, selectedOrgId, isAdminMode]);
+
+    // Close mention dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                mentionDropdownRef.current &&
+                !mentionDropdownRef.current.contains(e.target as Node) &&
+                textareaRef.current &&
+                !textareaRef.current.contains(e.target as Node)
+            ) {
+                setShowMentionDropdown(false);
+                setMentionSearch('');
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const handleOrgChange = async (orgId: string) => {
         setSelectedOrgId(orgId);
@@ -125,17 +170,26 @@ export default function TicketCreateModal({
     };
 
     const handleMentionSelect = (user: { id: string; full_name: string }) => {
-        const before = description.slice(0, mentionStartIndex);
-        const after = description.slice(mentionStartIndex + 1 + mentionQuery.length);
-        setDescription(`${before}@${user.full_name} ${after}`);
+        const atIdx = mentionStartIndex >= 0 ? mentionStartIndex : description.lastIndexOf('@');
+        const queryLen = mentionQuery.length;
+        const before = atIdx >= 0 ? description.slice(0, atIdx) : description;
+        const after = atIdx >= 0 ? description.slice(atIdx + 1 + queryLen) : '';
+        setDescription(`${before}@${user.full_name} ${after}`.trimStart());
         setTaggedUser(user);
         setShowMentionDropdown(false);
         setMentionQuery('');
+        setMentionSearch('');
         setTimeout(() => textareaRef.current?.focus(), 0);
     };
 
-    const filteredMentionUsers = mentionQuery
-        ? propertyUsers.filter(u => u.full_name.toLowerCase().includes(mentionQuery.toLowerCase()))
+    const activeFilter = (mentionSearch || mentionQuery).trim().toLowerCase();
+    const filteredMentionUsers = activeFilter
+        ? propertyUsers.filter(u =>
+            u.full_name.toLowerCase().includes(activeFilter) ||
+            (u.role && u.role.toLowerCase().includes(activeFilter)) ||
+            (u.designation && u.designation.toLowerCase().includes(activeFilter)) ||
+            (u.email && u.email.toLowerCase().includes(activeFilter))
+          )
         : propertyUsers;
 
     const handleSubmit = async () => {
@@ -187,15 +241,34 @@ export default function TicketCreateModal({
                 if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
             }
 
+            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
+            const failures: string[] = [];
+            if (attachments.length > 0 && data.ticket?.id) {
+                for (const file of attachments) {
+                    const err = await uploadTicketFile(data.ticket.id, file);
+                    if (err) failures.push(err);
+                }
+                if (failures.length) {
+                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
+                }
+            }
+
             playTickleSound();
             setClassification(data.classification);
             setSuccess(true);
             onSuccess?.(data.ticket);
 
+            // Dispatch global event so dashboards, lists, and boards update immediately
+            if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
+                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
+            }
+
+            // Keep the screen up longer when some files failed, so the warning can be read
             setTimeout(() => {
                 handleReset();
                 onClose();
-            }, 2000);
+            }, failures.length ? 7000 : 2000);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Something went wrong');
         } finally {
@@ -203,10 +276,30 @@ export default function TicketCreateModal({
         }
     };
 
+    const handleAttachPick = (list: FileList | null) => {
+        const picked = Array.from(list || []);
+        if (attachInputRef.current) attachInputRef.current.value = '';
+        if (!picked.length) return;
+        const problem = picked.map(checkTicketFile).find(Boolean);
+        if (problem) {
+            setError(problem);
+            return;
+        }
+        const room = MAX_TICKET_FILES - attachments.length;
+        if (picked.length > room) {
+            setError(`You can attach at most ${MAX_TICKET_FILES} files to a request.`);
+            return;
+        }
+        setError(null);
+        setAttachments(prev => [...prev, ...picked]);
+    };
+
     const handleReset = () => {
         setDescription('');
         setIsInternal(false);
         setMediaFile(null);
+        setAttachments([]);
+        setAttachmentWarning(null);
         setClassification(null);
         setError(null);
         setSuccess(false);
@@ -248,6 +341,12 @@ export default function TicketCreateModal({
                                 <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
                                 <h3 className="text-xl font-display font-semibold text-text-primary mb-2">Request Submitted!</h3>
                                 <p className="text-text-secondary font-body text-sm mb-4">Your request has been created and will be reviewed shortly.</p>
+                                {attachmentWarning && (
+                                    <div className="flex items-start gap-2 text-left text-amber-600 text-xs font-body bg-amber-50 border border-amber-200 rounded-xl p-3">
+                                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                        <span>{attachmentWarning}</span>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <>
@@ -285,9 +384,33 @@ export default function TicketCreateModal({
 
                                 {/* Description */}
                                 <div>
-                                    <label className="text-sm font-bold text-slate-700 mb-2 block">
-                                        Description
-                                        <span className="ml-2 text-xs font-normal text-slate-400">type @ to assign someone</span>
+                                    <label className="text-sm font-bold text-slate-700 mb-2 flex items-center justify-between flex-wrap gap-2">
+                                        <span className="flex items-center gap-2">
+                                            <span>Description</span>
+                                            <span className="text-xs font-normal text-slate-400 hidden xs:inline">type @ to assign someone</span>
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (!showMentionDropdown) {
+                                                    const cursor = textareaRef.current?.selectionStart ?? description.length;
+                                                    const newDesc = description.slice(0, cursor) + '@' + description.slice(cursor);
+                                                    setDescription(newDesc);
+                                                    setMentionStartIndex(cursor);
+                                                    setMentionQuery('');
+                                                    setMentionSearch('');
+                                                    setShowMentionDropdown(true);
+                                                    setTimeout(() => textareaRef.current?.focus(), 0);
+                                                } else {
+                                                    setShowMentionDropdown(false);
+                                                    setMentionSearch('');
+                                                }
+                                            }}
+                                            className="inline-flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 active:scale-95 transition-all px-3 py-1.5 rounded-xl touch-manipulation"
+                                        >
+                                            <AtSign className="w-3.5 h-3.5" />
+                                            <span>Mention / Assign</span>
+                                        </button>
                                     </label>
                                     <div className="relative">
                                         <textarea
@@ -297,39 +420,128 @@ export default function TicketCreateModal({
                                             onKeyDown={(e) => {
                                                 if (showMentionDropdown && e.key === 'Escape') {
                                                     setShowMentionDropdown(false);
+                                                    setMentionSearch('');
                                                     e.preventDefault();
                                                 }
                                             }}
                                             placeholder="Describe the issue in your own words...&#10;Example: Leaking tap in kitchenette, 2nd floor"
-                                            className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all"
+                                            className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all text-sm font-medium"
                                         />
 
-                                        {/* @mention dropdown */}
-                                        {showMentionDropdown && filteredMentionUsers.length > 0 && (
-                                            <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-48 overflow-y-auto">
-                                                <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-1.5">
-                                                    <AtSign className="w-3 h-3 text-primary" />
-                                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Assign to</span>
-                                                </div>
-                                                {filteredMentionUsers.map(user => (
-                                                    <button
-                                                        key={user.id}
-                                                        type="button"
-                                                        onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
-                                                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
-                                                    >
-                                                        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                                                            <span className="text-[10px] font-bold text-primary">
-                                                                {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                        {/* @mention mobile backdrop & dropdown */}
+                                        {showMentionDropdown && (
+                                            <>
+                                                {/* Mobile Backdrop */}
+                                                <div
+                                                    className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[110] sm:hidden transition-opacity"
+                                                    onClick={() => {
+                                                        setShowMentionDropdown(false);
+                                                        setMentionSearch('');
+                                                    }}
+                                                />
+
+                                                {/* Dropdown Container (Mobile bottom sheet / Desktop floating card) */}
+                                                <div
+                                                    ref={mentionDropdownRef}
+                                                    className="fixed inset-x-0 bottom-0 z-[120] max-h-[80vh] rounded-t-[28px] border-t border-slate-200 bg-white shadow-2xl flex flex-col overflow-hidden sm:absolute sm:inset-x-0 sm:top-full sm:bottom-auto sm:mt-1.5 sm:max-h-64 sm:rounded-2xl sm:border sm:shadow-xl sm:z-50 animate-in slide-in-from-bottom-4 sm:slide-in-from-top-1 duration-200"
+                                                >
+                                                    {/* Mobile Drag Indicator Handle */}
+                                                    <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5 sm:hidden shrink-0" />
+
+                                                    {/* Dropdown Header */}
+                                                    <div className="px-4 py-3 sm:px-3 sm:py-2 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                                                <AtSign className="w-3.5 h-3.5 text-primary" />
+                                                            </div>
+                                                            <span className="text-xs sm:text-[11px] font-black text-slate-800 uppercase tracking-wider">Assign to user</span>
+                                                            <span className="text-xs sm:text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                                                {filteredMentionUsers.length}
                                                             </span>
                                                         </div>
-                                                        <div>
-                                                            <p className="text-sm font-semibold text-slate-900">{user.full_name}</p>
-                                                            {user.role && <p className="text-[10px] text-slate-400 capitalize">{user.role.replace(/_/g, ' ')}</p>}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setShowMentionDropdown(false);
+                                                                setMentionSearch('');
+                                                            }}
+                                                            className="text-slate-400 hover:text-slate-700 active:bg-slate-200 p-2 sm:p-1 rounded-xl transition-all"
+                                                            aria-label="Close user selection"
+                                                        >
+                                                            <X className="w-5 h-5 sm:w-4 sm:h-4" />
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Search Input */}
+                                                    <div className="p-3 sm:p-2 border-b border-slate-100 bg-white shrink-0">
+                                                        <div className="relative">
+                                                            <Search className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                                            <input
+                                                                type="text"
+                                                                value={mentionSearch}
+                                                                onChange={(e) => setMentionSearch(e.target.value)}
+                                                                placeholder="Search name, role, or email..."
+                                                                className="w-full pl-9 pr-9 py-2.5 sm:py-1.5 text-sm sm:text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white transition-all font-medium"
+                                                                autoFocus
+                                                            />
+                                                            {mentionSearch && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setMentionSearch('')}
+                                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                                                                >
+                                                                    <X className="w-3.5 h-3.5" />
+                                                                </button>
+                                                            )}
                                                         </div>
-                                                    </button>
-                                                ))}
-                                            </div>
+                                                    </div>
+
+                                                    {/* User List */}
+                                                    <div className="overflow-y-auto max-h-[50vh] sm:max-h-48 divide-y divide-slate-100 custom-scrollbar overscroll-contain">
+                                                        {isLoadingUsers ? (
+                                                            <div className="p-6 flex items-center justify-center gap-2 text-xs text-slate-500">
+                                                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                                                <span>Loading team members...</span>
+                                                            </div>
+                                                        ) : filteredMentionUsers.length === 0 ? (
+                                                            <div className="p-6 text-center text-xs text-slate-400">
+                                                                {activeFilter ? (
+                                                                    <>No team members matching &ldquo;{activeFilter}&rdquo;</>
+                                                                ) : (
+                                                                    <>No users available for assignment</>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            filteredMentionUsers.map(user => (
+                                                                <button
+                                                                    key={user.id}
+                                                                    type="button"
+                                                                    onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                    onTouchEnd={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                    className="w-full flex items-center justify-between px-4 py-3 sm:px-3 sm:py-2.5 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left min-h-[50px] sm:min-h-0"
+                                                                >
+                                                                    <div className="flex items-center gap-3 min-w-0">
+                                                                        <div className="w-9 h-9 sm:w-7 sm:h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                                                                            <span className="text-xs sm:text-[10px] font-black text-primary">
+                                                                                {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="min-w-0">
+                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}{user.role === 'it' && ' (IT)'}</p>
+                                                                            {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                    {user.role && (
+                                                                        <span className="text-[10px] sm:text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2">
+                                                                            {user.role.replace(/_/g, ' ')}
+                                                                        </span>
+                                                                    )}
+                                                                </button>
+                                                            ))
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>
                                         )}
                                     </div>
 
@@ -419,6 +631,36 @@ export default function TicketCreateModal({
                                     </div>
                                 )}
 
+                                {/* Attachments (optional) */}
+                                {attachments.length > 0 && (
+                                    <ul className="space-y-2">
+                                        {attachments.map((file, i) => (
+                                            <li key={`${file.name}-${i}`} className="flex items-center gap-3 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                                                <TicketFileIcon name={file.name} className="w-4 h-4 text-primary flex-shrink-0" />
+                                                <span className="flex-1 min-w-0 truncate text-xs font-bold text-slate-700" title={file.name}>{file.name}</span>
+                                                <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+                                                    disabled={isSubmitting}
+                                                    title="Remove file"
+                                                    className="text-slate-400 hover:text-red-500 transition-colors p-0.5 disabled:opacity-50"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                <input
+                                    ref={attachInputRef}
+                                    type="file"
+                                    multiple
+                                    accept={TICKET_ATTACHMENT_ACCEPT}
+                                    className="hidden"
+                                    onChange={(e) => handleAttachPick(e.target.files)}
+                                />
+
                                 {/* Actions Row */}
                                 <div className="flex items-center gap-3 pt-4">
                                     {/* Camera / Media button */}
@@ -428,6 +670,20 @@ export default function TicketCreateModal({
                                     >
                                         <Camera className="w-6 h-6 text-slate-600" />
                                         <span className="text-xs font-bold text-slate-700 uppercase tracking-wide hidden sm:block">Camera</span>
+                                    </button>
+
+                                    {/* Attach files button (optional: PDF, Word, Excel, images) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => attachInputRef.current?.click()}
+                                        disabled={isSubmitting || attachments.length >= MAX_TICKET_FILES}
+                                        title={attachments.length >= MAX_TICKET_FILES ? `At most ${MAX_TICKET_FILES} files` : 'Attach PDF, Word, Excel or images'}
+                                        className="flex-1 flex flex-col items-center justify-center gap-1 px-2 py-3 bg-slate-100 border border-slate-300 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors active:scale-95 text-center h-20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Paperclip className="w-6 h-6 text-slate-600" />
+                                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide hidden sm:block">
+                                            Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}
+                                        </span>
                                     </button>
 
                                     {/* Submit */}

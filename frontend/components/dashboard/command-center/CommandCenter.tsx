@@ -3,11 +3,18 @@
 import React from 'react';
 import Row1Grid from './Row1Grid';
 import PriorityActions from './PriorityActions';
+import AlertsCard from './AlertsCard';
 import IntelligenceRow from './IntelligenceRow';
 import BottomRow from './BottomRow';
 import MoreAtAGlance from './MoreAtAGlance';
 import AgentActivityCard, { AgentDayRollup } from './AgentActivityCard';
+import KpiBand from './KpiBand';
 import { useCommandCenterData } from './useCommandCenterData';
+
+// Set to false to bring back the five Priority Actions tiles (docs/COMMAND_CENTER_DATA_AUDIT.md).
+const USE_ALERTS_CARD = true;
+// Set to false to bring back the full Agent Activity card in place of the KPI tiles (docs/COMMAND_CENTER_KPI_PLAN.md).
+const SHOW_KPI_BAND = true;
 
 /**
  * Command Center — the full super-admin board.
@@ -116,22 +123,30 @@ export default function CommandCenter({
       // See the data-org note in the header comment: this one attribute is what lets the
       // DOM-sniffing cards on this board find their scope.
       data-org={orgId || undefined}
+      // cc-board = the size container every row grid keys its columns off (globals.css).
+      className="cc-board"
       style={{ display: 'flex', flexDirection: 'column', gap: 22 }}
     >
-      {/* SCOREBOARD — above the horizons, because it does not belong to one. */}
-      <Row1Grid />
+      {/* SCOREBOARD — above the horizons, with live Health Score, Alerts & Portfolio. */}
+      <Row1Grid orgId={org} propertyId={propertyId ?? null} />
 
       <Band
         label="Ball by ball"
-        sub="Right now — what is on fire and which agent is moving on it"
+        sub="Right now — live pulse and operational coverage"
       >
-        <PriorityActions
-          tickets={data.tickets} ticketsState={data.ticketsState}
-          mailbox={data.mailbox} mailboxState={data.mailboxState}
-          budget={data.budget} aopState={data.aopState}
-          orgId={org}
-        />
-        <AgentActivityCard orgId={org} />
+        {!USE_ALERTS_CARD && (
+          <PriorityActions
+            tickets={data.tickets} ticketsState={data.ticketsState}
+            mailbox={data.mailbox} mailboxState={data.mailboxState}
+            budget={data.budget} aopState={data.aopState}
+            orgId={org}
+          />
+        )}
+        {SHOW_KPI_BAND ? (
+          <KpiBand orgId={org} propertyId={propertyId ?? null} />
+        ) : (
+          <AgentActivityCard orgId={org} />
+        )}
       </Band>
 
       <Band

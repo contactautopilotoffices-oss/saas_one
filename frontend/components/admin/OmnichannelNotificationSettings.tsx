@@ -156,7 +156,7 @@ function SearchableUserPicker({
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition-all cursor-pointer"
             >
                 <UserPlus className="w-3.5 h-3.5 text-primary" />
-                <span>+ Add user...</span>
+                <span>Add user...</span>
                 <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />
             </button>
 
@@ -337,6 +337,12 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { requester: true }
             },
             {
+                key: 'ticket_reply',
+                name: 'Ticket Reply',
+                description: 'WhatsApp only. Sent to the requester when the assignee replies on a ticket, and to the assignee when the requester replies.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
                 key: 'reminder_ticket_sla',
                 name: 'SLA Breach Warning (Reminder)',
                 description: 'Sent before resolution deadline breaches.',
@@ -371,7 +377,7 @@ const MODULES_META: ModuleMeta[] = [
                 key: 'checklist_completed',
                 name: 'Checklist Completed & Submitted',
                 description: 'Sent to designated supervisors/property admins when checklist photos and items are submitted.',
-                hasContextual: { requester: true }
+                hasContextual: { approver: true, requester: true }
             },
             {
                 key: 'checklist_overdue_alert',
@@ -492,13 +498,29 @@ const MODULES_META: ModuleMeta[] = [
             {
                 key: 'meeting_room_booked',
                 name: 'Meeting Room Booked',
-                description: 'Sent to selected staff/admins and the booking requester when a room is booked.',
+                description: 'Staff, admin roles & added users receive v3 (facility & refreshment prep). Booker/requester receives v4 (guest welcome).',
                 hasContextual: { requester: true }
             },
             {
                 key: 'meeting_room_cancelled',
                 name: 'Meeting Room Cancelled',
                 description: 'Sent to selected staff/admins and the booking requester when a reservation is cancelled.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'meeting_room_start_reminder',
+                name: 'Meeting Room Starting Soon Reminder',
+                description: 'Automated reminder dispatched in advance before the scheduled meeting begins.',
+                isReminder: true,
+                reminderLabel: 'Remind before meeting starts',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'meeting_room_end_reminder',
+                name: 'Meeting Room Ending Soon Reminder',
+                description: 'Automated reminder dispatched before the meeting room session concludes (e.g. 10 minutes before end time).',
+                isReminder: true,
+                reminderLabel: 'Remind before meeting ends',
                 hasContextual: { requester: true }
             }
         ]
@@ -654,12 +676,13 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
+        ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
     },
     checklists: {
         checklist_slot_reminder: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
         checklist_started: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
         checklist_overdue_alert: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
         checklist_rated: { channels: { email: false, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
@@ -682,7 +705,9 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     },
     meeting_rooms: {
         meeting_room_booked: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
-        meeting_room_cancelled: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true }
+        meeting_room_cancelled: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true },
+        meeting_room_start_reminder: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 },
+        meeting_room_end_reminder: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [], notify_requester: true, reminder_minutes: 10 }
     },
     ppm: {
         reminder_ppm: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], reminder_minutes: 1440 }
@@ -1051,7 +1076,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const toggleChannel = (moduleId: string, eventKey: string, channel: 'email' | 'whatsapp' | 'push' | 'voice') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
-            ...(moduleId === 'petty_cash' ? { enabled: channel === 'email' ? !current.channels.email || current.channels.whatsapp : !current.channels.whatsapp || current.channels.email } : {}),
+            ...(moduleId === 'petty_cash' ? { enabled: ['email','whatsapp','push'].some(key => key === channel ? !current.channels[channel] : current.channels[key as 'email'|'whatsapp'|'push']) } : {}),
             channels: {
                 ...current.channels,
                 [channel]: !current.channels[channel]
@@ -1480,7 +1505,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             {/* TAB VIEW: Voice Telephony Analytics */}
             {(mainTab === 'rules' || mainTab === 'templates') && <><nav aria-label="Notification modules" className="flex gap-2 overflow-x-auto py-2">{[...MODULES_META].sort((a,b)=>a.id==='tickets'?-1:b.id==='tickets'?1:0).map(module=><button type="button" key={module.id} aria-pressed={activeModuleTab===module.id} onClick={()=>setActiveModuleTab(module.id)} className={`shrink-0 rounded-lg border px-3 py-2 text-xs ${activeModuleTab===module.id?'bg-primary text-white':'bg-white text-slate-700'}`}>{module.id==='tickets'?'Tickets':module.name}</button>)}</nav><div className="flex gap-2"><button type="button" onClick={()=>setMainTab('rules')} aria-pressed={mainTab==='rules'} className="rounded-lg border px-3 py-2 text-xs">Channel & recipient rules</button><button type="button" onClick={()=>setMainTab('templates')} aria-pressed={mainTab==='templates'} className="rounded-lg border px-3 py-2 text-xs">Templates</button></div></>}
             {mainTab === 'templates' && <WhatsAppServiceSettings organizationId={organizationId} moduleId={activeModuleTab} featureKeys={MODULES_META.find(module => module.id === activeModuleTab)?.events.map(event => event.key)} />}
-            {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email or WhatsApp and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
+            {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email, WhatsApp or Push and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
             {mainTab === 'voice_analytics' && (
                 <VoiceAnomalyDashboard
                     organizationId={organizationId}
@@ -1613,8 +1638,9 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     </button>
 
                                                     {/* Push Toggle */}
-                                                    {module.id !== 'petty_cash' && <button
+                                                    <button
                                                         type="button"
+                                                        aria-pressed={rule.channels.push}
                                                         onClick={() => toggleChannel(module.id, ev.key, 'push')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
                                                             rule.channels.push
@@ -1624,7 +1650,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     >
                                                         <Bell className="w-3 h-3" />
                                                         <span>Push</span>
-                                                    </button>}
+                                                    </button>
                                                     
                                                     {/* Voice Toggle */}
                                                     {module.id !== 'petty_cash' && <button

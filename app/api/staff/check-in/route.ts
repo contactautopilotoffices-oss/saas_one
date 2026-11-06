@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
             // Staff -> soft_services
             const { data: userData } = await supabase
                 .from('users')
-                .select('id, property_memberships(role, property_id), mst_skills(skill_code)')
+                .select('id, property_memberships!property_memberships_user_id_fkey(role, property_id), mst_skills(skill_code)')
                 .eq('id', user.id)
                 .single();
 

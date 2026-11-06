@@ -39,6 +39,15 @@ export function isDirectBookingRequest(text) {
     return /^(?:(?:hey|hi|hello|please|can you|could you|would you|i want to|i need to|i would like to)\s+)*(?:book|reserve|schedule)\s+(?:(?:a|an|the)\s+)?(?:meeting room|conference room|boardroom|room)\b/.test(normalized);
 }
 
+// Owner 2026-10-20: a plain request like "I want to raise a ticket" starts the ticket flow, the same way
+// isDirectBookingRequest starts a booking, instead of "Please send HI and choose Create Ticket first".
+export function isDirectTicketRequest(text) {
+    const normalized = normalizeText(text);
+    if (/\b(?:do not|don t|dont|never|cancel|not|instead|status|update|close|tasks?)\b/.test(normalized)) return false;
+    return /^(?:(?:hey|hi|hello|please|can you|could you|i want to|i need to|i would like to|want to|need to)\s+)*(?:raise|create|log|open|file|register|submit)\s+(?:(?:a|an|new|the)\s+){0,2}(?:ticket|complaint)$/.test(normalized) ||
+        /^(?:new ticket|raise ticket)$/.test(normalized);
+}
+
 function competingBookingDetails(text) {
     const source = text.toLowerCase().replace(/\b([ap])\.m\./g, '$1m');
     const dates = new Set([...source.matchAll(/\b(?:day after tomorrow|today|tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday|\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[-/]\d{2}[-/]\d{4})\b/g)].map(match => match[0]));
@@ -136,6 +145,7 @@ export async function advanceConversation(input, current, deps) {
     const normalized = normalizeText(text);
     const menuSelection = ['create ticket','book meeting room'].includes(normalized) && !input.mediaUrl;
     const directBooking = !input.mediaUrl && !menuSelection && isDirectBookingRequest(text);
+    const directTicket = !input.mediaUrl && !menuSelection && !directBooking && isDirectTicketRequest(text);
     // Quotes bind to the recipient and exact current draft. An old prompt cannot confirm a new action.
     if (input.quotedIds?.length) {
         const quote = await deps.quote?.(input.phone, input.quotedIds);
@@ -147,7 +157,7 @@ export async function advanceConversation(input, current, deps) {
             const draft = state.drafts[quote.workflow];
             if (!draft || draft.id !== quote.conversation_id || draft.revision !== quote.revision) return reply('That is an older or completed request. Please reply to the latest prompt or send MENU.');
             state.active = quote.workflow;
-        } else if (!['create ticket', 'book meeting room', 'hi', 'hello', 'hey', 'menu'].includes(normalized)) {
+        } else if (!['create ticket', 'book meeting room', 'hi', 'hello', 'hey', 'menu'].includes(normalized) && !directTicket && !directBooking) {
             return reply('Please choose Create Ticket or Book Meeting Room from the menu.');
         }
         }
@@ -157,7 +167,7 @@ export async function advanceConversation(input, current, deps) {
         state.active = null;
         return { session: state, reply: { key: 'menu', params: [], workflow: 'menu', conversationId: input.requestId, revision: 0, lastInboundAt: input.inboundAt || now.toISOString() } };
     }
-    const selected = !input.mediaUrl && (normalized === 'create ticket' ? 'ticket' : normalized === 'book meeting room' || directBooking ? 'booking' : null);
+    const selected = !input.mediaUrl && (normalized === 'create ticket' || directTicket ? 'ticket' : normalized === 'book meeting room' || directBooking ? 'booking' : null);
     if (selected) {
         if (!allowed(selected).length) return reply('This service is not enabled for your account.');
         state.active = selected;

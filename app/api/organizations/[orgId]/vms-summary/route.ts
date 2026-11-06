@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 // GET: Organization-wide VMS summary (Super Admin)
 // HIGH PERFORMANCE: Uses SQL-side count queries instead of fetching all rows.
@@ -8,6 +9,8 @@ export async function GET(
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 

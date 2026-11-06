@@ -21,9 +21,10 @@ import {
  *
  * This is deliberately the cheapest route in the agent surface, because it is
  * the most called one: a procurement screen, a ticket screen, an electricity
- * screen and the Command Center may all mount it at once. It is therefore
- * exactly TWO queries, both index-covered, with a narrow projection and a hard
- * row ceiling:
+ * screen and the Command Center may all mount it at once. It reads two tables,
+ * with a narrow projection and a hard row ceiling. The run window is read as one
+ * exact count plus 1000-row pages fetched in parallel (~13 at Oct 2026 volume),
+ * because PostgREST returns at most 1000 rows per request (see RUN_PAGE_SIZE):
  *
  *   1. oem_agents          the registry. Dozens of rows. Carries health_state,
  *                          last_heartbeat_at and coins_balance already — the
@@ -71,8 +72,15 @@ export const dynamic = 'force-dynamic';
 /** Days of run history fetched so `last_run_at` survives a quiet day. */
 const WINDOW_DAYS = 7;
 
-/** Hard ceiling on the run projection. PostgREST truncates silently at 1000. */
-const RUN_ROW_CEILING = 2000;
+/**
+ * PostgREST returns at most 1000 rows per request whatever .limit() asks for, so the run window is read in pages of
+ * this size (a single 2000-row request silently came back with 1000: "Runs today" showed 1000 when 1160 had run —
+ * docs/COMMAND_CENTER_DATA_AUDIT.md).
+ */
+const RUN_PAGE_SIZE = 1000;
+
+/** Hard ceiling on the run projection (~13k runs per 7 days at today's volume). Reaching it sets runs_truncated. */
+const RUN_ROW_CEILING = 20000;
 
 /** Agents whose module is neither declared nor observable land here. */
 const UNASSIGNED = 'unassigned';
@@ -195,16 +203,39 @@ export async function GET(request: NextRequest) {
             .order('agent_key');
 
         // ---- Query 2: the run window. Five columns, newest first, capped.
-        let runsQ = supabase
-            .from('oem_agent_runs')
-            .select('agent_key, module, status, started_at, outcome_summary, error')
-            .eq('organization_id', orgId)
-            .gte('started_at', windowStart)
-            .order('started_at', { ascending: false })
-            .limit(RUN_ROW_CEILING);
-        if (moduleFilter) runsQ = runsQ.eq('module', moduleFilter);
+        // Read in pages (see RUN_PAGE_SIZE): first an exact count, then every page at once. The window's upper edge is
+        // fixed at request start so runs inserted meanwhile cannot shift rows between pages; id breaks started_at ties
+        // so the page order is stable.
+        const windowEnd = new Date(nowMs).toISOString();
+        const runsQuery = (columns: string, countOnly = false) => {
+            let q = supabase
+                .from('oem_agent_runs')
+                .select(columns, countOnly ? { count: 'exact', head: true } : undefined)
+                .eq('organization_id', orgId)
+                .gte('started_at', windowStart)
+                .lte('started_at', windowEnd);
+            if (moduleFilter) q = q.eq('module', moduleFilter);
+            return q;
+        };
+        const runsCountQ = runsQuery('id', true);
 
-        const [registryRes, runsRes] = await Promise.all([registryQ, runsQ]);
+        const [registryRes, runsCountRes] = await Promise.all([registryQ, runsCountQ]);
+
+        let runsRes: { data: Record<string, unknown>[] | null; error: typeof runsCountRes.error } = { data: [], error: runsCountRes.error };
+        if (!runsCountRes.error) {
+            const rowCount = Math.min(runsCountRes.count ?? 0, RUN_ROW_CEILING);
+            const pages = await Promise.all(
+                Array.from({ length: Math.ceil(rowCount / RUN_PAGE_SIZE) }, (_, i) =>
+                    runsQuery('agent_key, module, status, started_at, outcome_summary, error')
+                        .order('started_at', { ascending: false })
+                        .order('id', { ascending: false })
+                        .range(i * RUN_PAGE_SIZE, Math.min((i + 1) * RUN_PAGE_SIZE, rowCount) - 1)),
+            );
+            const failed = pages.find(p => p.error);
+            runsRes = failed
+                ? { data: null, error: failed.error }
+                : { data: pages.flatMap(p => (p.data ?? []) as unknown as Record<string, unknown>[]), error: null };
+        }
 
         // The registry predates this migration, so a missing REGISTRY means the
         // whole OEM stack is absent; a missing RUNS table means only the runtime

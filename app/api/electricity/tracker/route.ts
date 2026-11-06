@@ -34,6 +34,18 @@ export async function GET(request: NextRequest) {
     const access = await resolveElectricityAccess(request, readOrgId(request));
     if (isElectricityAccessError(access)) return access;
 
+    // The pipeline merge and the AOP reconciliation figures don't depend on the alerts: start them now, alongside the
+    // alerts and accounts, and read their answers further down in the original order with the original error handling
+    // (performance plan Phase 5b). (.then(r => r) starts a Supabase query now; a builder alone only runs when awaited.)
+    const pipelineRequest = supabaseAdmin
+        .from('electricity_bills')
+        .select('id, document_id, workflow_status')
+        .eq('organization_id', access.organizationId)
+        .range(0, 4999)
+        .then(result => result);
+    const aopActualRequest = loadAopActualByMonth(access.organizationId);
+    aopActualRequest.catch(() => { /* handled where it is awaited below */ });
+
     let alerts, accounts;
     try {
         [alerts, accounts] = await Promise.all([
@@ -77,11 +89,7 @@ export async function GET(request: NextRequest) {
     // the columns are missing and the register simply renders without them.
     let pipelineByBill = new Map<string, { document_id: string | null; workflow_status: string | null }>();
     {
-        const { data: pipelineRows, error: pipelineErr } = await supabaseAdmin
-            .from('electricity_bills')
-            .select('id, document_id, workflow_status')
-            .eq('organization_id', access.organizationId)
-            .range(0, 4999);
+        const { data: pipelineRows, error: pipelineErr } = await pipelineRequest;
         if (!pipelineErr && pipelineRows) {
             pipelineByBill = new Map(
                 (pipelineRows as { id: string; document_id: string | null; workflow_status: string | null }[])
@@ -96,7 +104,7 @@ export async function GET(request: NextRequest) {
     // ---- Reconciliation ----------------------------------------------------------------
     let aopActual;
     try {
-        aopActual = await loadAopActualByMonth(access.organizationId);
+        aopActual = await aopActualRequest;
     } catch (e) {
         console.error('[electricity tracker reconciliation]', e instanceof Error ? e.message : e);
         aopActual = { provisioned: false, lineItemFound: false, byMonth: new Map<string, number>() };

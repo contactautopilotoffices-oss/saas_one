@@ -126,10 +126,46 @@ export default function SiteRequisitionSheet({
         setRequisitionMonth(draft.month);
         setRequisitionYear(draft.year);
         setSiteNotes(draft.siteNotes);
-        setItems(current => draft.items.map(row => {
-            const catalog = current.find(item => item.id === row.id);
-            return catalog ? { ...row, unit_price: catalog.unit_price } : row;
-        }));
+        setItems(current => {
+            if (!current || current.length === 0) {
+                return draft.items;
+            }
+
+            const draftMap = new Map<string, RequisitionRow>();
+            const draftNameMap = new Map<string, RequisitionRow>();
+            for (const row of draft.items) {
+                if (row.id) draftMap.set(row.id, row);
+                if (row.name) draftNameMap.set(row.name.trim().toLowerCase(), row);
+            }
+
+            // 1. Walk every item in the live active catalog: preserve user's saved draft edits
+            // (quantities, available stock, remarks), while maintaining standard catalog rates & sorting
+            const mergedCatalog = current.map(catalogItem => {
+                const saved = draftMap.get(catalogItem.id) || draftNameMap.get((catalogItem.name || '').trim().toLowerCase());
+                if (saved) {
+                    return {
+                        ...catalogItem,
+                        requested_qty: saved.requested_qty ?? 0,
+                        available_stock_qty: saved.available_stock_qty ?? 0,
+                        remarks: saved.remarks ?? '',
+                        brand: saved.brand || catalogItem.brand,
+                        details: saved.details || catalogItem.details,
+                        unit: saved.unit || catalogItem.unit,
+                        unit_price: catalogItem.unit_price
+                    };
+                }
+                // Newly added catalog item not present when draft was originally saved:
+                // keep it in the sheet with default 0 quantities so site team sees it automatically
+                return catalogItem;
+            });
+
+            // 2. Preserve any custom rows manually added by the user via "Add Item" button (with non-empty name)
+            const customRows = draft.items.filter(row =>
+                row.id?.startsWith('row-') && (row.name || '').trim().length > 0 && !current.some(c => c.id === row.id)
+            );
+
+            return [...mergedCatalog, ...customRows];
+        });
     }, []);
     const draftPayload = { floorTag, month: requisitionMonth, year: requisitionYear, siteNotes, items };
     const draft = useRequisitionDraft({ userId: user?.id || '', orgId: draftOrgId, propertyId: selectedPropertyId,
@@ -348,7 +384,7 @@ export default function SiteRequisitionSheet({
         if (activeTab === 'HK') {
             base = items.filter(i => {
                 const cat = (i.category || '').toLowerCase();
-                return cat.includes('hk') || cat.includes('housekeeping') || cat.includes('stationery') || cat.includes('paper') || !cat;
+                return cat.includes('hk') || cat.includes('housekeeping') || cat.includes('tissue') || cat.includes('stationery') || cat.includes('paper') || !cat;
             });
         } else if (activeTab === 'Beverages') {
             base = items.filter(i => {

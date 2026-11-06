@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolvePettyCashAccess, isPettyCashAccessError, readOrgId } from '@/backend/lib/pettyCash/access';
 import { PC_SELECT, pcError, isUuid } from '@/backend/lib/pettyCash/api';
-import { notifyPettyCash } from '@/backend/lib/pettyCash/notify';
 export async function GET(request: NextRequest) {
     const access = await resolvePettyCashAccess(request, readOrgId(request));
     if (isPettyCashAccessError(access)) return access;
@@ -39,6 +38,5 @@ export async function POST(request: NextRequest) {
     if (isPettyCashAccessError(access)) return access;
     const { data, error } = await supabaseAdmin.rpc('pc_create_request', { actor: access.user.id, org: access.organizationId, body });
     if (error) return pcError(error);
-    if (data.status === 'submitted') void notifyPettyCash('submitted', data).catch(() => {});
     return NextResponse.json({ request: data }, { status: 201 });
 }

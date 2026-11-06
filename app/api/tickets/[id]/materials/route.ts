@@ -67,6 +67,7 @@ export async function POST(
             .insert({
                 ticket_id: ticketId,
                 property_id: ticket.property_id,
+                organization_id: ticket.organization_id,
                 requested_by: user.id,
                 assignee_uid,
                 items,

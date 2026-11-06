@@ -33,8 +33,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       console.error('Upload error:', uploadError);
       return NextResponse.json({ error: 'Upload failed', details: uploadError.message }, { status: 500 });
     }
-    const publicUrl = adminSupabase.storage.from('procurement_quotations').getPublicUrl(uploadData.path).data.publicUrl;
-    return NextResponse.json({ url: publicUrl });
+    const proxyUrl = `/api/storage/procurement_quotations/${uploadData.path}`;
+    return NextResponse.json({ url: proxyUrl });
   } catch (err) {
     console.error('Upload endpoint error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

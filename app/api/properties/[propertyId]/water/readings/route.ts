@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -43,8 +46,25 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
+
+    // Every water source written to must belong to THIS property (the guarded URL), not just exist.
+    const sourceIds = Array.from(new Set(
+        (Array.isArray(body.readings) ? body.readings : [body]).map((r: { source_id?: string }) => r?.source_id).filter(Boolean),
+    )) as string[];
+    if (sourceIds.length) {
+        const { data: ownSources } = await supabaseAdmin
+            .from('water_sources')
+            .select('id')
+            .in('id', sourceIds)
+            .eq('property_id', propertyId);
+        if ((ownSources || []).length !== sourceIds.length) {
+            return NextResponse.json({ error: 'Water source not found at this property' }, { status: 404 });
+        }
+    }
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

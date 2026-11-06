@@ -90,9 +90,12 @@ function CardShell({
     <div className="cc-card" style={{ padding: '14px 16px' }}>
       <div className="cc-card-head" style={{ marginBottom: 10, gap: 8 }}>
         <span className={`cc-chip ${chipClass}`}>{icon}</span>
+        {/* Ellipsis, never overflow: a visible overflow ran the title into the tag/menu
+            on narrow cards. The full title stays in the tooltip. */}
         <span
           className="cc-title"
-          style={{ letterSpacing: '0.06em', whiteSpace: 'nowrap', overflow: 'visible' }}
+          title={title}
+          style={{ letterSpacing: '0.06em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
         >
           {title}
         </span>
@@ -103,6 +106,8 @@ function CardShell({
       </div>
       <div style={{ flex: 1 }}>{children}</div>
       <div
+        // cc-foot: wraps the button under the label instead of past the card edge.
+        className="cc-foot"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -290,7 +295,13 @@ export default function PriorityActions({
     utilizedPct: budget.utilizedPct,
     forecastPct: null as number | null,
     overspendRisk: budget.overspendRisk,
+    monthLabel: budget.month
+      ? new Date(`${budget.month.slice(0, 7)}-01T00:00:00`).toLocaleString('en-IN', { month: 'short', year: 'numeric' })
+      : null,
   } : null;
+
+  // Badge = how many of the five cards show live data (it was a fixed "5": docs/COMMAND_CENTER_DATA_AUDIT.md §2.4).
+  const liveCards = [ea.live, !!budget, !!mailbox, !!wc, !!tickets].filter(Boolean).length;
   return (
     <section>
       {/* Row label. The band head above already names the horizon ("Ball by ball"); this
@@ -316,13 +327,14 @@ export default function PriorityActions({
         >
           {priorityActionsMeta.label}
         </span>
-        <span className="cc-badge">{priorityActionsMeta.count}</span>
+        <span className="cc-badge">{liveCards}</span>
       </div>
 
       <div
+        // Columns come from .cc-band-5 (container query on .cc-board): 5 → 3+2 → 2 → 1.
+        className="cc-band-5"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
           gap: 'var(--cc-gap, 16px)',
         }}
       >
@@ -351,7 +363,7 @@ export default function PriorityActions({
               <div className="cc-sub">{ea.sub}</div>
             </div>
             {ea.live && ea.meter
-              ? <div style={{ ...statLabel, maxWidth: 92, textAlign: 'right' }}>{ea.meter}</div>
+              ? <div className="cc-clamp-2" title={ea.meter} style={{ ...statLabel, maxWidth: 92, textAlign: 'right' }}>{ea.meter}</div>
               : null}
           </div>
           <div className="cc-sub" style={{ marginTop: 8, color: 'var(--cc-ink-3, #6b7c84)' }}>
@@ -364,7 +376,7 @@ export default function PriorityActions({
           chipClass="cc-chip--amber"
           icon={<Gauge />}
           title="Budget Health"
-          tag={<SourceTag live={!!budget} />}
+          tag={budget ? <SourceTag live /> : null}
           footer={
             links ? (
               <Link href={links.viewBudget} className="cc-btn" style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
@@ -393,6 +405,9 @@ export default function PriorityActions({
                     {bh.overspendRisk}
                   </div>
                 </div>
+                {bh.monthLabel && (
+                  <div style={{ ...statLabel, fontSize: 10 }}>Data: {bh.monthLabel}</div>
+                )}
               </div>
             </div>
           )}
@@ -403,7 +418,7 @@ export default function PriorityActions({
           chipClass="cc-chip--amber"
           icon={<Mail />}
           title="Purchase Mailbox"
-          tag={<SourceTag live={!!mailbox} />}
+          tag={mailbox ? <SourceTag live /> : null}
           footer={
             <>
               <div>
@@ -432,7 +447,7 @@ export default function PriorityActions({
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
               <div>
                 <div style={figure}>{mb.total}</div>
-                <div className="cc-sub">Total emails</div>
+                <div className="cc-sub">Email threads</div>
               </div>
               <div style={{ ...statCol }}>
                 <div>
@@ -453,7 +468,7 @@ export default function PriorityActions({
           chipClass="cc-chip--purple"
           icon={<Users />}
           title="Workforce Coverage"
-          tag={<SourceTag live={!!wc} />}
+          tag={wc ? <SourceTag live /> : null}
           footer={
             <>
               <div>
@@ -501,7 +516,7 @@ export default function PriorityActions({
           chipClass="cc-chip--red"
           icon={<ShieldAlert />}
           title="Tickets at Risk"
-          tag={<SourceTag live={!!tickets} />}
+          tag={tickets ? <SourceTag live /> : null}
           footer={
             links ? (
               <Link href={links.viewAllTickets} className="cc-btn" style={{ marginLeft: 'auto', whiteSpace: 'nowrap' }}>
@@ -522,7 +537,7 @@ export default function PriorityActions({
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
               <div>
                 <div style={figure}>{tk.atRisk}</div>
-                <div className="cc-sub">At risk of breach</div>
+                <div className="cc-sub">High-priority open</div>
               </div>
               <div style={statCol}>
                 <div>

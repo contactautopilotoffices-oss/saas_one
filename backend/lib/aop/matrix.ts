@@ -129,15 +129,32 @@ const MAX_ROWS = 200_000;
  * May came back 45% short, which the trend chart then plotted as a real collapse.
  *
  * `build` must return a fresh query each call: Supabase builders are single-use once awaited.
+ *
+ * The first page is read alone (a small table costs one request, as before); if it is full, the following pages are
+ * read in waves of PAGE_WAVE at once instead of one by one (performance plan Phase 5b). Pages are still taken strictly
+ * in order and stop at the first short page; an error on a page before that point is thrown exactly as before, and
+ * pages past it (never requested before) are ignored. Same rows, same order.
  */
+const PAGE_WAVE = 4;
 async function fetchAllRows<T>(build: () => any): Promise<T[]> {
     const out: T[] = [];
-    for (let from = 0; from < MAX_ROWS; from += PAGE) {
-        const { data, error } = await build().range(from, from + PAGE - 1);
-        if (error) throw error;
-        const rows = (data || []) as T[];
-        out.push(...rows);
-        if (rows.length < PAGE) break;
+    const readPage = (from: number) => build().range(from, from + PAGE - 1).then((r: any) => r);
+    let from = 0;
+    let wave = 1;
+    while (from < MAX_ROWS) {
+        const starts: number[] = [];
+        for (let i = 0; i < wave && from + i * PAGE < MAX_ROWS; i++) starts.push(from + i * PAGE);
+        const pages = starts.map(readPage);
+        pages.forEach((p: Promise<any>) => p.catch(() => { /* a page past the end may fail; handled in order below */ }));
+        for (const page of pages) {
+            const { data, error } = await page;
+            if (error) throw error;
+            const rows = (data || []) as T[];
+            out.push(...rows);
+            if (rows.length < PAGE) return out;
+        }
+        from += starts.length * PAGE;
+        wave = PAGE_WAVE;
     }
     return out;
 }
@@ -207,6 +224,53 @@ export async function loadCells(
         throw new Error(error?.message || 'Failed to load AOP cells');
     }
 
+    return cellsByMonth(data);
+}
+
+/**
+ * Everything the trend needs in ONE round (performance plan Phase 5b): sites, line items and every entry of the org.
+ * Same result as loadDimensions + loadCells(org, months): those months are every month that has an entry
+ * (period_month is NOT NULL), so loadCells matched every entry anyway. Entries are ordered by id, as in loadCells, so
+ * every per-month list (and its sums) is identical.
+ */
+export async function loadTrendData(
+    orgId: string,
+): Promise<(AopDimensions & { byMonth: Map<string, AopCell[]> }) | Unprovisioned> {
+    try {
+        const [sites, lineItems, entries] = await Promise.all([
+            fetchAllRows<AopSite>(() =>
+                supabaseAdmin
+                    .from('aop_sites')
+                    .select('id, code, name, city, property_id, sort_order')
+                    .eq('organization_id', orgId)
+                    .eq('is_active', true)
+                    .order('sort_order')),
+            fetchAllRows<AopLineItem>(() =>
+                supabaseAdmin
+                    .from('aop_line_items')
+                    .select('id, code, name, kind, unit, feed_source, sort_order')
+                    .eq('organization_id', orgId)
+                    .order('sort_order')),
+            fetchAllRows<any>(() =>
+                supabaseAdmin
+                    .from('aop_entries')
+                    .select('id, site_id, line_item_id, period_month, budget, actual, saving, remarks, source')
+                    .eq('organization_id', orgId)
+                    .order('id', { ascending: true })),
+        ]);
+
+        const months = [...new Set(entries.map(r => String(r.period_month).slice(0, 10)))]
+            .sort()
+            .reverse();
+
+        return { sites, lineItems, months, byMonth: cellsByMonth(entries) };
+    } catch (error: any) {
+        if (isMissingRelation(error)) return UNPROVISIONED;
+        throw new Error(error?.message || 'Failed to load AOP trend data');
+    }
+}
+
+function cellsByMonth(data: any[]): Map<string, AopCell[]> {
     const byMonth = new Map<string, AopCell[]>();
     for (const row of data || []) {
         const month = String((row as { period_month: string }).period_month).slice(0, 10);

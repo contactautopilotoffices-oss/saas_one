@@ -11,6 +11,7 @@ import PettyCashShell from '@/frontend/components/layout/PettyCashShell';
 import ModuleSwitch from "@/frontend/components/layout/ModuleSwitch";
 import { isBdSuperAdmin } from "@/frontend/constants/bdSuperAdmins";
 import CrmBackground, { useWallpaper, crmThemeVars, useIsDark } from "@/frontend/components/ui/CrmBackground";
+import AppZoom from "@/frontend/components/layout/AppZoom";
 
 export default function DashboardLayout({
     children,
@@ -94,12 +95,12 @@ export default function DashboardLayout({
     if (isFullDashboard || isPettyCashWorkspace) {
         // FMS dashboard renders its own chrome (no shared sidebar) — still surface
         // the CRM⇄FMS switch for BD Super Admins.
-        return <><PettyCashShell>{isPettyCashWorkspace ? children : undefined}</PettyCashShell><ModuleSwitch /></>;
+        return <><AppZoom /><PettyCashShell>{isPettyCashWorkspace ? children : undefined}</PettyCashShell><ModuleSwitch /></>;
     }
 
     if (isAccountsWorkspace) {
         // Accounts workspace provides its own sidebar; render it bare.
-        return <>{children}</>;
+        return <><AppZoom />{children}</>;
     }
 
     // BD Super Admin's CEO dashboard (/{orgId}/crm) renders its own rich top bar
@@ -110,6 +111,9 @@ export default function DashboardLayout({
 
     return (
         <div className={`flex min-h-screen ${wallpaperActive ? '' : 'bg-[#fafbfc]'}`} style={tintStyle}>
+            {/* Owner 2026-10-26: one consistent scale on every screen */}
+            <AppZoom />
+
             {/* Per-user CRM wallpaper — CRM routes only for now */}
             {isCrmRoute && <CrmBackground />}
 

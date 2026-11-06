@@ -39,7 +39,7 @@ messaging.onBackgroundMessage(function (payload) {
         icon: '/android-chrome-192x192.png',
         badge: '/android-chrome-192x192.png',
         // Fix minor: prefer deep_link, fallback to url
-        data: { url: data.deep_link || data.url || '/' },
+        data: { url: data.deep_link || data.deepLink || data.url || '/' },
         requireInteraction: true,
         vibrate: [200, 100, 200],
         tag: data.notification_id || 'autopilot-fms',
@@ -55,7 +55,8 @@ self.addEventListener('notificationclick', function (event) {
 
     // Fix minor: support both deep_link and url fields
     const data = event.notification.data || {};
-    const relativeUrl = data.deep_link || data.url || '/';
+    const fcmData = data.FCM_MSG?.data || {};
+    const relativeUrl = data.deep_link || data.deepLink || data.url || data.FCM_MSG?.fcmOptions?.link || fcmData.deep_link || fcmData.deepLink || fcmData.url || '/';
 
     // Ensure we have a valid absolute URL
     const targetUrl = new URL(relativeUrl, self.location.origin).href;

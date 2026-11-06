@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { Plus, Upload, QrCode, Search, Loader2, ChevronLeft, ChevronRight, PackageSearch } from 'lucide-react';
 import type { EnrichedAsset } from '@/backend/lib/assets/enrich';
 import { GRADE_META } from '@/backend/lib/assets/performance';
@@ -46,15 +47,24 @@ export default function AssetRegisterView({ organizationId, propertyId, property
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [labelAssets, setLabelAssets] = useState<LabelAsset[] | null>(null);
 
+    // Each page/filter result is kept in memory (per user): coming back to the tab shows it at once, then it is
+    // refreshed quietly. A ref keeps the cache reader out of the fetch functions' dependencies.
+    const { getCachedData, setCachedData } = useDataCache();
+    const readCache = useRef(getCachedData);
+    readCache.current = getCachedData;
+
     useEffect(() => {
         const t = setTimeout(() => setDebouncedSearch(search), 350);
         return () => clearTimeout(t);
     }, [search]);
 
     const fetchCategories = useCallback(async () => {
+        const cacheKey = `tab-asset-categories-${organizationId}`;
+        const cached = readCache.current(cacheKey);
+        if (cached) setCategories(cached.categories);
         const res = await fetch(`/api/assets/categories?organization_id=${organizationId}`);
-        if (res.ok) { const data = await res.json(); setCategories(data.categories || []); }
-    }, [organizationId]);
+        if (res.ok) { const data = await res.json(); setCategories(data.categories || []); setCachedData(cacheKey, { categories: data.categories || [] }); }
+    }, [organizationId, setCachedData]);
 
     const fetchAssets = useCallback(async () => {
         setLoading(true);
@@ -66,17 +76,24 @@ export default function AssetRegisterView({ organizationId, propertyId, property
             if (gradeFilter) params.set('grade', gradeFilter);
             if (statusFilter) params.set('status', statusFilter);
             if (debouncedSearch) params.set('search', debouncedSearch);
+            const cacheKey = `tab-assets-${params}`;
+            const cached = readCache.current(cacheKey);
+            if (cached) {
+                setAssets(cached.assets); setTotalPages(cached.totalPages); setTotal(cached.total);
+                setLoading(false);
+            }
             const res = await fetch(`/api/assets?${params}`);
             if (res.ok) {
                 const data = await res.json();
                 setAssets(data.assets || []);
                 setTotalPages(data.pagination?.total_pages || 1);
                 setTotal(data.pagination?.total || 0);
+                setCachedData(cacheKey, { assets: data.assets || [], totalPages: data.pagination?.total_pages || 1, total: data.pagination?.total || 0 });
             }
         } finally {
             setLoading(false);
         }
-    }, [organizationId, propertyId, propertyFilter, categoryFilter, gradeFilter, statusFilter, debouncedSearch, page]);
+    }, [organizationId, propertyId, propertyFilter, categoryFilter, gradeFilter, statusFilter, debouncedSearch, page, setCachedData]);
 
     useEffect(() => { fetchCategories(); }, [fetchCategories]);
     useEffect(() => { setPage(1); }, [propertyFilter, categoryFilter, gradeFilter, statusFilter, debouncedSearch]);

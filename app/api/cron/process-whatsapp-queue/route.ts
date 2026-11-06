@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { rememberTicketReplyMessage } from '@/backend/lib/whatsapp/ticketReply';
 
 /**
  * GET /api/cron/process-whatsapp-queue
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
             });
 
             success = result.success;
+            if (result.success) await rememberTicketReplyMessage(row, result.messageIds);
         } else {
             // Legacy WasenderAPI free-text path
             success = await WhatsAppService.sendAsync(row.phone, {

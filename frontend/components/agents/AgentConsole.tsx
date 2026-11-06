@@ -62,7 +62,7 @@ import {
     Timer,
     Wand2,
     X, Workflow, Send,PanelLeftClose,PanelLeftOpen, Crown,} from 'lucide-react';
-import AgentPlanCanvas, { type AgentPlan } from '@/frontend/components/agents/AgentPlanCanvas';
+import AgentPlanCanvas, { type AgentPlan, type ToolBinding } from '@/frontend/components/agents/AgentPlanCanvas';
 import AgentDelivery from '@/frontend/components/agents/AgentDelivery';
 import TabBoundary from '@/frontend/components/agents/TabBoundary';
 import AgentCost from '@/frontend/components/agents/AgentCost';
@@ -851,7 +851,11 @@ export default function AgentConsole({ orgId }: AgentConsoleProps) {
                                     {tab === 'configure' && (
                                         <div className="flex flex-col gap-4">
                                             <AgentPreflight orgId={orgId} agentKey={selected.agent_key} />
-                                            <AgentFirstRun orgId={orgId} agentKey={selected.agent_key} />
+                                            <SavedWorkflow agent={selected} />
+                                            {/* The first-run preview renders Ira's procurement digest and nothing
+                                                else (/api/ira/procurement-digest). Every other agent's Configure
+                                                tab showed Ira's email as if it were its own. */}
+                                            {selected.agent_key === 'ira' && <AgentFirstRun orgId={orgId} agentKey={selected.agent_key} />}
                                             <RuntimeEnvelope agent={selected} />
                                             <AgentTriView
                                                 key={selected.agent_key}
@@ -1204,6 +1208,35 @@ const CHIP_HINTS: Record<string, string> = {
     context: 'How much it can read at once. Too small and it silently forgets the earlier part of a long document.',
 };
 
+/**
+ * The agent's saved workflow (oem_agents.config.plan), written when a proposal
+ * is accepted with a plan. "The build works but the flow is not visible" was
+ * this panel not existing: the flow was never stored, so there was nothing to show.
+ */
+function SavedWorkflow({ agent }: { agent: ConsoleAgent }) {
+    const saved = (agent.config as { plan?: AgentPlan } | null)?.plan;
+    if (!saved?.steps?.length) {
+        return (
+            <div className="rounded-[16px] border border-dashed border-border bg-card px-4 py-3 text-[12.5px] text-text-secondary">
+                <b className="text-foreground">No workflow saved for this agent yet.</b> Open Describe it, press Plan workflow,
+                answer its questions, then Build and Accept — the flow is saved here with the agent.
+            </div>
+        );
+    }
+    const plan: AgentPlan = {
+        intent: saved.intent ?? '',
+        module: saved.module ?? null,
+        source: saved.source ?? 'model',
+        slots: saved.slots ?? [],
+        steps: saved.steps,
+        tools: saved.tools ?? [],
+        roles: saved.roles ?? [],
+        notes: [],
+        saved_at: saved.saved_at ?? null,
+    };
+    return <AgentPlanCanvas key={`${agent.agent_key}:${plan.saved_at ?? ''}`} plan={plan} variant="saved" />;
+}
+
 function RuntimeEnvelope({ agent }: { agent: ConsoleAgent }) {
     const r = agent.runtime ?? {};
     const m = agent.model_config ?? {};
@@ -1315,6 +1348,11 @@ function ComposeBox({
 
     const [plan, setPlan] = useState<AgentPlan | null>(null);
     const [planning, setPlanning] = useState(false);
+    /** Every tool on this deployment, from /api/agents/plan — the flow palette offers all of them. */
+    const [toolCatalog, setToolCatalog] = useState<ToolBinding[]>([]);
+    /** Bumped per new plan so the flow editor re-seeds instead of showing the previous plan's nodes. */
+    const [planKey, setPlanKey] = useState(0);
+    const proposalRef = useRef<HTMLDivElement | null>(null);
 
     const [optimizing, setOptimizing] = useState(false);
     const [optimized, setOptimized] = useState<OptimizeResult | null>(null);
@@ -1392,9 +1430,12 @@ function ComposeBox({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ description: description.trim() }),
             });
-            const json = await readJson<{ plan?: AgentPlan; error?: string }>(res);
+            const json = await readJson<{ plan?: AgentPlan; tool_catalog?: ToolBinding[]; error?: string }>(res);
             if (json.error) setError(json.error);
+            else if (!res.ok) setError(`Planning failed (HTTP ${res.status}).`);
             setPlan(json.plan ?? null);
+            setToolCatalog(json.tool_catalog ?? []);
+            setPlanKey((k) => k + 1);
         } catch (e) {
             setError((e as Error).message);
         } finally {
@@ -1402,8 +1443,15 @@ function ComposeBox({
         }
     };
 
-    const build = async () => {
-        if (busy || description.trim().length < 12) return;
+    /**
+     * `text` exists for "Accept plan & build": it appends the answers with a
+     * functional setState and then builds at once, when `description` in this
+     * closure is still the text WITHOUT them — so the answers never reached the
+     * composer. The caller now passes the finished text in.
+     */
+    const build = async (text?: string) => {
+        const brief = (text ?? description).trim();
+        if (busy || brief.length < 12) return;
         setBusy(true);
         setError(null);
         setSteps([]);
@@ -1429,13 +1477,14 @@ function ComposeBox({
                             identity.reports_to ? `- Reports to: ${identity.reports_to}` : '',
                             '',
                         ].filter(Boolean).join('\n') : '',
-                        description.trim(),
+                        brief,
                     ].filter(Boolean).join('\n'),
                     ...(agent ? { agentKey: agent.agent_key } : {}),
                 }),
             });
             const json = await readJson<ComposeResponse>(res);
             if (json.error) setError(json.error);
+            else if (!res.ok) setError(`Build failed (HTTP ${res.status}).`);
             setResult(json);
         } catch (e) {
             setError((e as Error).message);
@@ -1445,6 +1494,12 @@ function ComposeBox({
     };
 
     const proposal = result?.proposal ?? null;
+
+    // The proposal renders under a long plan canvas; after Build, bring it into
+    // view so a finished build is not mistaken for one that did nothing.
+    useEffect(() => {
+        if (proposal) proposalRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, [proposal]);
 
     const accept = async () => {
         if (!proposal || applying) return;
@@ -1458,8 +1513,17 @@ function ComposeBox({
             });
             return await readJson<Record<string, unknown>>(res);
         };
+        /**
+         * A 200 that says provisioned:false saved NOTHING. It used to count as
+         * success and print "Updated." / "Saved as vundefined." / "Version
+         * undefined is now active." over a write that never happened.
+         */
         const errorOf = (r: Record<string, unknown>): string | null =>
-            typeof r.error === 'string' ? r.error : null;
+            typeof r.error === 'string'
+                ? r.error
+                : r.provisioned === false
+                    ? String(r.note ?? `Not saved: the agent tables are not in this database yet (migration ${AGENT_RUNTIME_MIGRATION}).`)
+                    : null;
 
         try {
             if (applyIdentity) {
@@ -1495,7 +1559,7 @@ function ComposeBox({
                         err ??
                         (r.unchanged === true
                             ? 'Identical to the current version — no new version.'
-                            : `Saved as v${String(r.version)}.`),
+                            : r.version != null ? `Saved as v${String(r.version)}.` : 'Saved.'),
                 });
             }
 
@@ -1513,13 +1577,51 @@ function ComposeBox({
                 log.push({
                     label: 'Data bundle',
                     ok: !err,
-                    message: err ?? `Version ${String(r.version)} is now active.`,
+                    message: err ?? (r.version != null ? `Version ${String(r.version)} is now active.` : 'Saved.'),
+                });
+            }
+
+            /**
+             * THE FLOW IS SAVED WITH THE AGENT. Until now the plan lived only in
+             * this box's state: Build produced identity, prompt and bundle, and
+             * the workflow vanished when the box closed — so a successful build
+             * left no flow anywhere to look at. It is kept in oem_agents.config
+             * (merged, never replacing what is already there) and shown on the
+             * agent's Configure tab.
+             */
+            if (plan && plan.steps.length > 0 && (!log.length || log[log.length - 1].ok)) {
+                const sameAgent = agent?.agent_key === proposal.agent_key;
+                const r = await post('/api/agents/registry', {
+                    action: 'upsert',
+                    agent_key: proposal.agent_key,
+                    ...(sameAgent ? {} : { display_name: proposal.display_name }),
+                    config: {
+                        ...((sameAgent ? agent?.config : null) ?? {}),
+                        plan: {
+                            intent: plan.intent,
+                            module: plan.module,
+                            source: plan.source,
+                            steps: plan.steps,
+                            tools: plan.tools,
+                            roles: plan.roles,
+                            slots: plan.slots,
+                            notes: plan.notes,
+                            saved_at: new Date().toISOString(),
+                        },
+                    },
+                });
+                const err = errorOf(r);
+                log.push({
+                    label: 'Workflow',
+                    ok: !err,
+                    message: err ?? `${plan.steps.length} steps saved with the agent. See them on its Configure tab.`,
                 });
             }
 
             setSteps(log);
             if (log.every((s) => s.ok)) {
                 setResult(null);
+                setPlan(null);
                 setDescription('');
                 await onApplied(proposal.agent_key);
             }
@@ -1664,17 +1766,30 @@ function ComposeBox({
             {error && (
                 <p className="mt-2 rounded-[12px] border border-rose-200 bg-rose-50 px-3 py-2 text-[11.5px] text-rose-700">{error}</p>
             )}
-            {result && result.provisioned === false && (
+            {result && result.provisioned === false && !result.error && (
                 <p className="mt-2 rounded-[12px] border border-border bg-card px-3 py-2 text-[11.5px] text-text-secondary">
                     {result.note ?? `Not provisioned yet — run migration ${result.migration ?? AGENT_RUNTIME_MIGRATION}.`}
+                </p>
+            )}
+            {result?.existing_agent && result.existing_agent.agent_key !== agent?.agent_key && (
+                <p className="mt-2 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-800">
+                    An agent called {result.existing_agent.display_name} ({result.existing_agent.agent_key}) already exists.
+                    Accepting will update it, not create a new one.
                 </p>
             )}
 
             {plan && (
                 <div className="mt-4">
                     <AgentPlanCanvas
+                        key={planKey}
                         plan={plan}
                         accepting={busy}
+                        toolCatalog={toolCatalog}
+                        onStepsChange={(steps) => setPlan((p) => p && {
+                            ...p,
+                            steps,
+                            tools: (toolCatalog.length ? toolCatalog : p.tools).filter((t) => steps.some((st) => st.tool === t.slug)),
+                        })}
                         onAccept={(answers) => {
                             /**
                              * The answers were collected and then thrown away.
@@ -1689,10 +1804,11 @@ function ComposeBox({
                                 .map((sl) => [sl.question, (answers[sl.key] ?? '').split('|').filter(Boolean).join(', ')] as const)
                                 .filter(([, v]) => v.length > 0)
                                 .map(([q, v]) => `- ${q} ${v}`);
-                            if (stated.length) {
-                                setDescription((d) => `${d.trim()}\n\nAnswers already given (treat these as fact):\n${stated.join('\n')}`);
-                            }
-                            void build();
+                            const text = stated.length
+                                ? `${description.trim()}\n\nAnswers already given (treat these as fact):\n${stated.join('\n')}`
+                                : description;
+                            setDescription(text);
+                            void build(text);
                         }}
                     />
                 </div>
@@ -1701,6 +1817,7 @@ function ComposeBox({
             <AnimatePresence initial={false}>
                 {proposal && (
                     <motion.div
+                        ref={proposalRef}
                         initial={{ opacity: 0, y: -6 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -6 }}

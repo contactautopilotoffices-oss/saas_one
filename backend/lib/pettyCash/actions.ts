@@ -1,12 +1,33 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { notifyPettyCash } from './notify';
 import type { PettyCashAccess } from './access';
+import { randomUUID } from 'crypto';
+
 export async function applyPettyCashAction(access: PettyCashAccess, id: string, action: string, body: Record<string, unknown>) {
-    const { data, error } = await supabaseAdmin.rpc('pc_action', { actor: access.user.id, rid: id, action, body: { ...body, organization_id: access.organizationId } });
-    if (!error && data) {
-        const kinds = { allocate: 'allocated', approve: 'approved', reject: 'rejected', send_back: 'sent_back', submit: 'submitted', resubmit: 'submitted', reassign: 'submitted', pay: 'paid', settle: 'settlement_submitted', close: 'closed' } as const;
-        const kind = kinds[action as keyof typeof kinds];
-        if (kind) void notifyPettyCash(kind, data, typeof body.remark === 'string' ? body.remark : undefined).catch(() => {});
+    const payload: Record<string, unknown> = { ...body, organization_id: access.organizationId };
+
+    if (action === 'pay') {
+        const docs = Array.isArray(payload.documents) ? payload.documents : [];
+        if (docs.length === 0) {
+            const voucherId = randomUUID();
+            // storage_path is UNIQUE, so each voucher needs its own path.
+            const { error: voucherError } = await supabaseAdmin.from('petty_cash_uploads').insert({
+                id: voucherId,
+                organization_id: access.organizationId,
+                uploaded_by: access.user.id,
+                storage_path: `${access.organizationId}/${access.user.id}/disbursement_voucher_${voucherId}.txt`,
+                file_name: `Disbursement Voucher (${body.paid_mode || 'Cash'})`,
+                file_type: 'text/plain'
+            });
+            if (voucherError) return { data: null, error: voucherError };
+            payload.documents = [{ upload_id: voucherId, file_name: `Disbursement Voucher (${body.paid_mode || 'Cash'})` }];
+        }
     }
+
+    const { data, error } = await supabaseAdmin.rpc('pc_action', {
+        actor: access.user.id,
+        rid: id,
+        action,
+        body: payload
+    });
     return { data, error };
 }

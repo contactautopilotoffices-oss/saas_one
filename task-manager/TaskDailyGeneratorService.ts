@@ -20,7 +20,79 @@ export interface DailyTaskGenerationResult {
     errors?: string[];
 }
 
+export interface PersonalFixedResult {
+    date: string;
+    templatesProcessed: number;
+    tasksGenerated: number;
+    skipped: number;
+    errors: string[];
+}
+
+const PERSONAL_CARRY_DAYS = 14;
+
 export class TaskDailyGeneratorService {
+    /**
+     * Personal fixed ("locked") tasks: each one comes back for ITS OWNER on its days (Monday to Saturday by default).
+     * Idempotent, and never throws. Skips a task when the owner already has it today, or still has an unfinished copy from
+     * a recent day (that one is carried forward already, so a second card would be a duplicate).
+     */
+    static async generatePersonalFixedTasks(options: { date?: string; employeeId?: string } = {}): Promise<PersonalFixedResult> {
+        const date = options.date || new Date().toISOString().slice(0, 10);
+        const result: PersonalFixedResult = { date, templatesProcessed: 0, tasksGenerated: 0, skipped: 0, errors: [] };
+        try {
+            let query = supabaseAdmin.from('task_templates').select('*').eq('task_type', 'fixed').eq('is_active', true).not('owner_id', 'is', null);
+            if (options.employeeId) query = query.eq('owner_id', options.employeeId);
+            const { data, error } = await query;
+            if (error) throw error;
+
+            const weekday = new Date(`${date}T12:00:00Z`).getUTCDay(); // 0 = Sunday ... 6 = Saturday
+            const templates = ((data || []) as TaskTemplate[]).filter(t => (t.days_of_week && t.days_of_week.length ? t.days_of_week : [1, 2, 3, 4, 5, 6]).includes(weekday));
+            result.templatesProcessed = templates.length;
+            if (templates.length === 0) return result;
+
+            const owners: Employee[] = [];
+            for (const id of Array.from(new Set(templates.map(t => t.owner_id as string)))) {
+                const emp = await TaskDatabaseService.getEmployeeById(id);
+                if (emp && emp.active) owners.push(emp);
+            }
+            const allowed = new Set((await TaskAccessService.partition(owners)).allowed.map(e => e.id));
+
+            const since = new Date(`${date}T12:00:00Z`);
+            since.setUTCDate(since.getUTCDate() - PERSONAL_CARRY_DAYS);
+            const ids = templates.map(t => t.id);
+            const [today, open] = await Promise.all([
+                supabaseAdmin.from('task_assignments').select('employee_id, task_template_id').eq('assigned_date', date).in('task_template_id', ids),
+                supabaseAdmin.from('task_assignments').select('employee_id, task_template_id').in('task_template_id', ids)
+                    .lt('assigned_date', date).gte('assigned_date', since.toISOString().slice(0, 10)).neq('status', 'completed'),
+            ]);
+            if (today.error) throw today.error;
+            if (open.error) throw open.error;
+            const haveToday = new Set((today.data || []).map(r => `${r.employee_id}:${r.task_template_id}`));
+            const haveOpen = new Set((open.data || []).map(r => `${r.employee_id}:${r.task_template_id}`));
+
+            for (const tpl of templates) {
+                const key = `${tpl.owner_id}:${tpl.id}`;
+                if (!allowed.has(tpl.owner_id as string) || haveToday.has(key) || haveOpen.has(key)) { result.skipped++; continue; }
+                const { error: insError } = await supabaseAdmin.from('task_assignments').insert({
+                    task_template_id: tpl.id,
+                    title: tpl.title.trim(),
+                    description: tpl.description?.trim() || null,
+                    employee_id: tpl.owner_id,
+                    assigned_date: date,
+                    status: 'pending',
+                    assigned_by: tpl.owner_id,
+                });
+                if (!insError) result.tasksGenerated++;
+                else if (insError.code === '23505') result.skipped++; // a parallel run got there first
+                else result.errors.push(insError.message);
+            }
+        } catch (err: any) {
+            console.error('[TaskDailyGenerator] Personal fixed generation error:', err);
+            result.errors.push(err?.message || 'Personal fixed generation failed');
+        }
+        return result;
+    }
+
     /**
      * Generates daily fixed tasks for active employees in an idempotent manner.
      * Guaranteed to never create duplicate assignments for the same template, employee, and date.
@@ -35,7 +107,8 @@ export class TaskDailyGeneratorService {
                 .from('task_templates')
                 .select('*')
                 .eq('task_type', 'fixed')
-                .eq('is_active', true);
+                .eq('is_active', true)
+                .is('owner_id', null); // personal fixed tasks are created by generatePersonalFixedTasks, only for their owner
 
             if (options.departmentId) {
                 // Fixed tasks for this specific department OR org-wide (department_id IS NULL)

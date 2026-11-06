@@ -1,7 +1,10 @@
+import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId, internalOrgIds, internalPropertyIds } from '@/backend/lib/auth/callerAccess';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
+import { deliverySummaries, type DeliverySummary } from '@/backend/lib/procurement/requisitionDelivery';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -17,6 +20,17 @@ export async function GET(request: NextRequest) {
         const requisitionYear = searchParams.get('requisition_year');
         const status = searchParams.get('status');
 
+        // Signed-in internal staff only. Organisation-level members see their organisations'
+        // requisitions (procurement, admins and the like share them, as before); property-level
+        // members see their own properties'. Clients, tenants and vendors see none.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const myOrgIds = internalOrgIds(caller);
+        const myPropertyIds = internalPropertyIds(caller);
+        if (!caller.isMasterAdmin && myOrgIds.length === 0 && myPropertyIds.length === 0) {
+            return forbidden('Forbidden: no access to requisitions');
+        }
+
         const adminSupabase = createAdminClient();
 
         let query = adminSupabase
@@ -28,6 +42,13 @@ export async function GET(request: NextRequest) {
                 acknowledger:users!acknowledged_by(id, full_name, email)
             `)
             .order('created_at', { ascending: false });
+
+        if (!caller.isMasterAdmin) {
+            const scopes: string[] = [];
+            if (myOrgIds.length) scopes.push(`organization_id.in.(${myOrgIds.join(',')})`);
+            if (myPropertyIds.length) scopes.push(`property_id.in.(${myPropertyIds.join(',')})`);
+            query = query.or(scopes.join(','));
+        }
 
         if (organizationId) {
             query = query.eq('organization_id', organizationId);
@@ -86,8 +107,8 @@ export async function GET(request: NextRequest) {
                 categories: parsedData.categories || [],
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
-                site_notes: parsedData.site_notes || req.notes || '',
-                vendor_quotation: parsedData.vendor_quotation || null,
+                site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
+                vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 is_over_budget: Boolean(isOverBudget),
                 budget_limit: Number(budgetLimit) || 0,
@@ -96,7 +117,18 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        return NextResponse.json({ requisitions: enriched });
+        // Delivery progress from confirmed challans, shown next to the status
+        // (the status itself stays as approval / Issue PO need it).
+        let deliveries = new Map<string, DeliverySummary>();
+        try {
+            deliveries = await deliverySummaries(adminSupabase, (data || []).filter(r => ['approved', 'ordered'].includes(r.status)));
+        } catch (deliveryErr) {
+            console.warn('[Requisitions GET] Delivery summary unavailable:', deliveryErr);
+        }
+
+        return NextResponse.json({
+            requisitions: enriched.map(req => ({ ...req, delivery: deliveries.get(req.id) || null })),
+        });
     } catch (err: any) {
         console.error('[Requisitions GET Server Error]:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -105,6 +137,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        // The caller may only submit for a property they work at, and is always recorded as the uploader.
+        const refuseUnlessAllowed = async (orgId: string, propId: string): Promise<NextResponse | null> => {
+            const actualOrg = await propertyOrgId(propId);
+            if (!actualOrg || actualOrg !== orgId) return NextResponse.json({ error: 'Property not found in this organization' }, { status: 400 });
+            if (!canUseProperty(caller, propId, actualOrg)) return forbidden('Forbidden: no access to this property');
+            return null;
+        };
         const adminSupabase = createAdminClient();
 
         // Ensure storage bucket exists
@@ -134,7 +175,6 @@ export async function POST(request: NextRequest) {
         let rawItems: RequisitionItemData[] = [];
         let uploadedFileBuffer: Buffer | null = null;
         let uploadedFileName = '';
-        let cachedCatalog: any[] = [];
 
         let isPreviewOnly = false;
         if (contentType.includes('application/json')) {
@@ -153,10 +193,12 @@ export async function POST(request: NextRequest) {
             if (!organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
                 return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
             }
+            const refusedJson = await refuseUnlessAllowed(organizationId, propertyId);
+            if (refusedJson) return refusedJson;
+            userId = caller.userId;
 
             // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
             const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-            cachedCatalog = siteCatalog;
             const verifiedPriceMap = new Map<string, number>();
             siteCatalog.forEach((item: any) => {
                 verifiedPriceMap.set(normalizeText(item.name), item.unit_price);
@@ -224,12 +266,15 @@ export async function POST(request: NextRequest) {
             floorTag = (form.get('floor_tag') as string) || 'All Floors';
             requisitionMonth = parseInt(form.get('requisition_month') as string || '0');
             requisitionYear = parseInt(form.get('requisition_year') as string || '0');
-            siteNotes = form.get('notes') as string || '';
+            siteNotes = (form.get('site_notes') as string) || (form.get('notes') as string) || '';
             userId = form.get('user_id') as string;
 
             if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
                 return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
             }
+            const refusedForm = await refuseUnlessAllowed(organizationId, propertyId);
+            if (refusedForm) return refusedForm;
+            userId = caller.userId;
 
             uploadedFileName = file.name;
             const arrayBuffer = await file.arrayBuffer();
@@ -250,7 +295,7 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Failed to upload file to storage', details: uploadError.message }, { status: 500 });
         }
 
-        const publicUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+        const publicUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
 
         // Calculate total cost using locked price snapshots
         const totalEstimatedAmount = rawItems.reduce((acc, curr) => acc + ((curr.requested_qty || 0) * (curr.unit_price || 0)), 0);
@@ -432,83 +477,8 @@ export async function POST(request: NextRequest) {
             finalRecord = insertedRecord;
         }
 
-        // Fire-and-forget background sync of available stock counts to property's stock_items table
-        // Runs non-blocking so the user gets an instant submission response (< 1s)
-        if (Array.isArray(rawItems) && rawItems.length > 0) {
-            (async () => {
-                try {
-                    const catalogToUse = cachedCatalog && cachedCatalog.length > 0
-                        ? cachedCatalog
-                        : await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
-
-                    const { data: existingStocks } = await adminSupabase
-                        .from('stock_items')
-                        .select('id, name, quantity')
-                        .eq('property_id', propertyId);
-
-                    const stockMap = new Map<string, any>();
-                    (existingStocks || []).forEach((stk: any) => {
-                        if (stk.name) stockMap.set(normalizeText(stk.name), stk);
-                    });
-
-                    const catalogMap = new Map<string, any>();
-                    (catalogToUse || []).forEach((c: any) => {
-                        if (c.name) catalogMap.set(normalizeText(c.name), c);
-                    });
-
-                    const updatePromises: PromiseLike<any>[] = [];
-                    const toInsert: any[] = [];
-
-                    for (const item of rawItems) {
-                        if (!item.name) continue;
-                        const norm = normalizeText(item.name);
-                        const existingStock = stockMap.get(norm);
-                        const matchedCatalog = catalogMap.get(norm);
-
-                        if (existingStock) {
-                            if (item.available_stock_qty !== undefined && item.available_stock_qty !== null && Number(existingStock.quantity) !== Number(item.available_stock_qty)) {
-                                updatePromises.push(
-                                    adminSupabase
-                                        .from('stock_items')
-                                        .update({
-                                            quantity: Number(item.available_stock_qty) || 0,
-                                            catalog_item_id: matchedCatalog?.id || null,
-                                            updated_at: new Date().toISOString()
-                                        })
-                                        .eq('id', existingStock.id)
-                                );
-                            }
-                        } else {
-                            const itemCode = `STK-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-                            toInsert.push({
-                                organization_id: organizationId,
-                                property_id: propertyId,
-                                catalog_item_id: matchedCatalog?.id || null,
-                                name: item.name,
-                                category: item.category || 'HK',
-                                unit: item.unit || 'pcs',
-                                item_code: itemCode,
-                                quantity: Number(item.available_stock_qty) || 0,
-                                min_threshold: 10,
-                                unit_price: item.unit_price || 0
-                            });
-                        }
-                    }
-
-                    if (toInsert.length > 0) {
-                        await adminSupabase.from('stock_items').insert(toInsert);
-                    }
-                    if (updatePromises.length > 0) {
-                        const batchSize = 25;
-                        for (let i = 0; i < updatePromises.length; i += batchSize) {
-                            await Promise.all(updatePromises.slice(i, i + batchSize));
-                        }
-                    }
-                } catch (syncStockErr) {
-                    console.warn('[Auto Sync Stock Background Error]:', syncStockErr);
-                }
-            })();
-        }
+        // Submitting a requisition does not write to stock. Stock changes only through
+        // the stock screens and confirmed delivery challans (matched by catalog item id).
 
         // Dispatch Omnichannel notification via event_outbox (automatically delivers Email & WhatsApp via /api/webhooks/process-event)
         (async () => {

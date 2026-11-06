@@ -15,6 +15,12 @@ import { CardSkeleton, CardEmpty, fetchErrorReason } from './CardStates';
 import type { WaterResponse, Unprovisioned } from '@/backend/lib/commandCenter/types';
 import { useWidgetData, inr } from '@/frontend/lib/dashboard/useWidgetData';
 
+/**
+ * Switch (owner 2026-10-17): true = the clearer Material Requests / Purchase Orders cards with
+ * honest labels (docs/COMMAND_CENTER_DATA_AUDIT.md); false = the old two cards exactly as before.
+ */
+const USE_CLEAR_MR_PO = true;
+
 /* ---------- shared bits ---------- */
 
 function FooterGrid({ items, cols }: { items: { label: string; value: string; color?: string }[]; cols: number }) {
@@ -32,8 +38,9 @@ function FooterGrid({ items, cols }: { items: { label: string; value: string; co
     >
       {items.map((it) => (
         <div key={it.label} style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</div>
+          <div className="cc-clamp-2" title={it.label} style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>{it.label}</div>
           <div
+            title={it.value}
             style={{
               fontFamily: 'var(--font-display)',
               fontSize: 13,
@@ -72,6 +79,7 @@ function CardHead({
       </span>
       <span
         className="cc-title"
+        title={title}
         style={{
           fontSize: 9,
           letterSpacing: '0.04em',
@@ -179,11 +187,13 @@ function Donut({ pct, color }: { pct: number; color: string }) {
   const C = 2 * Math.PI * R;
   return (
     <div style={{ position: 'relative', width: 88, height: 88, flex: 'none' }}>
-      <svg viewBox="0 0 76 76" style={{ width: 88, height: 88, display: 'block' }}>
+      {/* viewBox matches the 88px box and both circles share one centre, so the track is not clipped and the arc
+          sits on it (it was a 76-unit viewBox with an arc centred at 38 — PPM ring cut off on the right). */}
+      <svg viewBox="0 0 88 88" style={{ width: 88, height: 88, display: 'block' }}>
         <circle cx="44" cy="44" r={R} fill="none" stroke="var(--cc-hairline)" strokeWidth="7" />
         <circle
-          cx="38"
-          cy="38"
+          cx="44"
+          cy="44"
           r={R}
           fill="none"
           stroke={color}
@@ -231,6 +241,98 @@ function SideStat({ label, value, color }: { label: string; value: React.ReactNo
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+/* ---------- clear MR / PO cards (USE_CLEAR_MR_PO) ---------- */
+
+/** Label (may wrap to 2 lines) above a number, with an optional small line under it. */
+function ClearStat({ label, value, sub, color, title, size = 18, align = 'left' }: {
+  label: string; value: React.ReactNode; sub?: string; color?: string; title?: string; size?: number; align?: 'left' | 'right';
+}) {
+  return (
+    <div style={{ minWidth: 0, textAlign: align }} title={title}>
+      <div className="cc-clamp-2" style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>{label}</div>
+      <div style={{
+        fontFamily: 'var(--font-display)', fontSize: size, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.25,
+        color: color || 'var(--cc-ink)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>{value}</div>
+      {sub ? <div className="cc-clamp-2" style={{ fontSize: 9.5, color: 'var(--cc-ink-3)', lineHeight: 1.3, fontVariantNumeric: 'tabular-nums' }}>{sub}</div> : null}
+    </div>
+  );
+}
+
+function Footnote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="cc-clamp-2" style={{ marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--cc-hairline)', fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>
+      {children}
+    </div>
+  );
+}
+
+const NOT_IN_QUEUE = 'Not in your queue';
+const cnt = (v: number) => v.toLocaleString('en-IN');
+
+function ClearMaterialRequests({ mr, state }: { mr?: MrStats | null; state?: { loading: boolean; error: string | null } }) {
+  return (
+    <div className="cc-card">
+      <CardHead chipClass="cc-chip--amber" icon={<Package />} title="Material Requests" meta={<SourceTag live={!!mr} />} />
+      {!mr ? (
+        state?.loading ? <CardSkeleton lines={4} /> : <CardEmpty reason={state?.error ? fetchErrorReason(state.error) : 'No material requests yet.'} />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', columnGap: 8, marginBottom: 10 }}>
+            <ClearStat label="Waiting for a quote" value={cnt(mr.needsQuote)} color={mr.needsQuote > 0 ? 'var(--cc-amber)' : undefined} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <ClearStat align="right" label="Waiting for a decision" value={cnt(mr.needsDecision)} />
+              <ClearStat align="right" label="Approved / ordered" value={cnt(mr.inFlight)} />
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <ClearStat
+              label="Oldest open request"
+              value={`${cnt(mr.oldestDays)} day${mr.oldestDays === 1 ? '' : 's'}`}
+              color={mr.oldestDays > 30 ? 'var(--cc-red)' : undefined}
+            />
+          </div>
+          <Footnote>Typical wait of open requests: {cnt(mr.medianWaitDays)} day{mr.medianWaitDays === 1 ? '' : 's'}</Footnote>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ClearPurchaseOrders({ po, state }: { po?: PoStats | null; state?: { loading: boolean; error: string | null } }) {
+  return (
+    <div className="cc-card">
+      <CardHead chipClass="cc-chip--teal" icon={<ShoppingCart />} title="Purchase Orders" meta={<SourceTag live={!!po} />} />
+      {!po ? (
+        state?.loading ? <CardSkeleton lines={4} /> : <CardEmpty reason={state?.error ? fetchErrorReason(state.error) : 'No purchase orders yet.'} />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', columnGap: 8, marginBottom: 10 }}>
+            <ClearStat label="POs this month" value={cnt(po.total)} sub={po.monthValue} />
+            <ClearStat align="right" label="Completed this month" value={cnt(po.completedThisMonth)} sub={po.completedValue} color={po.completedThisMonth > 0 ? 'var(--cc-green)' : undefined} />
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ marginTop: 'auto', paddingTop: 10, borderTop: '1px solid var(--cc-hairline)', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', columnGap: 8 }}>
+            <ClearStat
+              size={14}
+              label="Waiting for payment alignment"
+              value={po.alignCount == null ? '—' : cnt(po.alignCount)}
+              title={po.alignCount == null ? NOT_IN_QUEUE : undefined}
+              sub={po.alignCount == null ? undefined : `all time · ${cnt(po.alignCritical ?? 0)} critical`}
+            />
+            <ClearStat
+              size={14}
+              label="Waiting for payment / UTR"
+              value={po.completeCount == null ? '—' : cnt(po.completeCount)}
+              title={po.completeCount == null ? NOT_IN_QUEUE : undefined}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -385,7 +487,7 @@ export default function IntelligenceRow({
     cancelled: po ? '—' : PURCHASE_ORDERS.footer[1].value,
   };
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 16 }}>
+    <div className="cc-band-5" style={{ display: 'grid', gap: 16 }}>
       {/* 1 — Electricity Intelligence */}
       <div className="cc-card">
         <CardHead
@@ -430,8 +532,8 @@ export default function IntelligenceRow({
         <FooterGrid items={EL.footer.slice(0, 3)} cols={3} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', columnGap: 8, marginTop: 10 }}>
           {EL.footer.slice(3).map((it) => (
-            <div key={it.label}>
-              <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</div>
+            <div key={it.label} style={{ minWidth: 0 }}>
+              <div className="cc-clamp-2" title={it.label} style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>{it.label}</div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, letterSpacing: -0.3 }}>{it.value}</div>
             </div>
           ))}
@@ -493,8 +595,8 @@ export default function IntelligenceRow({
                 inferred — and "Low Risk" is exactly the kind of reassurance that must
                 never be invented. */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', columnGap: 8, marginTop: 10 }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Highest use</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="cc-clamp-2" style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>Highest use</div>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, letterSpacing: -0.3 }}>
                   {water.highest_use_source
                     ? `${water.highest_use_source.name}${water.highest_use_source.share_pct != null ? ` (${Math.round(water.highest_use_source.share_pct)}%)` : ''}`
@@ -523,8 +625,8 @@ export default function IntelligenceRow({
         <FooterGrid items={PPML.footer.slice(0, 2)} cols={2} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', columnGap: 8, marginTop: 10 }}>
           {PPML.footer.slice(2).map((it) => (
-            <div key={it.label}>
-              <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.label}</div>
+            <div key={it.label} style={{ minWidth: 0 }}>
+              <div className="cc-clamp-2" title={it.label} style={{ fontSize: 10, fontWeight: 500, color: 'var(--cc-ink-3)', lineHeight: 1.3 }}>{it.label}</div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700, letterSpacing: -0.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.value}</div>
             </div>
           ))}
@@ -532,6 +634,7 @@ export default function IntelligenceRow({
       </div>
 
       {/* 4 — Material Requests */}
+      {USE_CLEAR_MR_PO ? <ClearMaterialRequests mr={mr} state={mrState} /> : (
       <div className="cc-card">
         <CardHead chipClass="cc-chip--amber" icon={<Package />} title="Material Requests" meta={<SourceTag live={!!mr} />} />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
@@ -558,8 +661,10 @@ export default function IntelligenceRow({
           cols={2}
         />
       </div>
+      )}
 
       {/* 5 — Purchase Orders */}
+      {USE_CLEAR_MR_PO ? <ClearPurchaseOrders po={po} state={accountsState} /> : (
       <div className="cc-card">
         <CardHead chipClass="cc-chip--teal" icon={<ShoppingCart />} title="Purchase Orders" meta={<SourceTag live={!!po} />} />
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
@@ -595,6 +700,7 @@ export default function IntelligenceRow({
           { label: 'Cancelled', value: PO.cancelled },
         ]} cols={2} />
       </div>
+      )}
     </div>
   );
 }
