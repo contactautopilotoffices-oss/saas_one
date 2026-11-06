@@ -76,6 +76,38 @@ test('catalogue: no route without a visible sign-in check can be reached', async
     }
 });
 
+test('domain tools: every route they call is in the catalogue', async () => {
+    const { catalog } = await mods();
+    const { DOMAIN_TOOL_PATHS } = await import('../../backend/lib/mcp/domainTools');
+    for (const p of DOMAIN_TOOL_PATHS) {
+        const concrete = p.replace('{id}', PROP);
+        assert.ok(catalog.matchRoute(concrete), `${p} is used by a tool but is not in the catalogue`);
+    }
+});
+
+test('domain tools: called through the guarded path, so another organisation is refused', async () => {
+    const { tools } = await mods();
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const server = tools.buildMcpServer(ctxOf());
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    for (const [name, args] of [
+        ['finance', { view: 'purchase_orders', organization_id: OTHER_ORG }],
+        ['electricity', { view: 'tracker', organization_id: OTHER_ORG }],
+        ['ppm', { view: 'schedules', organization_id: OTHER_ORG, month: 1, year: 2026 }],
+        ['property_vendors', { view: 'list', property_id: OTHER_PROP }],
+        ['command_center', { view: 'kpis', organization_id: OTHER_ORG }],
+    ] as const) {
+        const r = await client.callTool({ name, arguments: args });
+        assert.equal(r.isError, true, `${name} must refuse another organisation or property`);
+        assert.match((r.content as { text: string }[])[0].text, /Refused/);
+    }
+    await client.close();
+    await server.close();
+});
+
 test('catalogue: HR tickets are reachable only as the reviewed exception', async () => {
     const { catalog } = await mods();
     assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
@@ -275,9 +307,11 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     const listed = await client.listTools();
     const names = listed.tools.map(t => t.name).sort();
     assert.deepEqual(names, [
-        'book_meeting_room', 'cancel_booking', 'confirm_action', 'create_ticket', 'fetch_endpoint', 'find_endpoints',
-        'find_meeting_rooms', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_tickets', 'my_bookings', 'my_pending_actions',
-        'po_approval_queue', 'whoami',
+        'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action', 'create_ticket',
+        'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance', 'find_endpoints', 'find_meeting_rooms',
+        'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties', 'list_requisitions', 'list_tickets',
+        'list_users', 'my_bookings', 'my_pending_actions', 'my_tasks', 'po_approval_queue', 'po_details', 'ppm',
+        'property_vendors', 'ticket_comments', 'visitor_summary', 'whoami',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.

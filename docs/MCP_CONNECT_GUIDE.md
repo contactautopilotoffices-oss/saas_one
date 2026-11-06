@@ -61,8 +61,19 @@ then sign in when asked.
   `npm run mcp:catalog` and commit the result.
 - **Log:** every tool call is written to `mcp_call_log` (who, which tool, which route, result). No
   FMS data is stored in it.
-- **Read tools:** `whoami`, `find_endpoints`, `fetch_endpoint`, `list_tickets`, `list_assets`,
-  `list_crm_leads`, `po_approval_queue`, `my_pending_actions`, `find_meeting_rooms`, `my_bookings`.
+- **Read tools:** `whoami`, `find_endpoints`, `fetch_endpoint` (any catalogued route), and one tool per area:
+  - Tickets: `list_tickets`, `ticket_comments`, `list_hr_tickets` (grievances, HR queries)
+  - Sites and people: `list_properties`, `list_users`, `property_vendors`, `visitor_summary`, `command_center`
+  - Maintenance: `list_assets`, `ppm`, `amc_contracts`, `document_bank`
+  - Utilities: `electricity`
+  - Purchasing and money: `list_requisitions`, `finance`, `po_details`, `po_approval_queue`, `invoices`, `aop`
+  - Sales: `list_crm_leads`, `crm_reports`
+  - Work: `my_tasks`, `my_pending_actions`, `find_meeting_rooms`, `my_bookings`
+
+  Related screens share one tool with a `view` (for example `finance` with `purchase_orders`,
+  `payment_tracker`, `payments`, `summary`). Every tool goes through the same checks as
+  `fetch_endpoint`. Routes the scan leaves out but a person reviewed and allowed are listed, with
+  the reason, in `REVIEWED_ROUTES` in `backend/lib/mcp/catalog.ts` (today: `/api/hr/tickets`).
 - **Actions (preview, then confirm):** `create_ticket`, `book_meeting_room`, `cancel_booking` only
   return a preview and a one-time code. `confirm_action` carries it out through the app's own route
   (`POST /api/tickets`, `POST /api/meeting-room-bookings`, `PATCH /api/meeting-room-bookings/{id}`)
