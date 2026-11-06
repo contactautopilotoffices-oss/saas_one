@@ -10,8 +10,28 @@ export type CatalogRoute = {
 
 type CompiledRoute = CatalogRoute & { regex: RegExp; staticSegments: number };
 
-const ROUTES: CatalogRoute[] = (catalogJson as { routes: CatalogRoute[] }).routes;
-const EXCLUDED: { path: string }[] = (catalogJson as { excluded: { path: string }[] }).excluded;
+/**
+ * Routes the automatic scan leaves out but a person has reviewed and allowed, with the reason.
+ * Only add a route here after reading its GET handler.
+ */
+export const REVIEWED_ROUTES: (CatalogRoute & { reason: string })[] = [
+    {
+        path: '/api/hr/tickets',
+        module: 'hr',
+        pathParams: [],
+        queryParams: ['orgId', 'propertyId', 'type', 'status'],
+        description: 'GET /api/hr/tickets?orgId= HR tickets (grievance, hr_query, confidential_feedback, anonymous_feedback) the caller may see: org super admins all, HR roles all except anonymous and confidential, everyone else their own, their team\'s and those assigned to them.',
+        reason: 'Excluded by the scan because the GET also starts the throttled SLA escalation check (at most every 5 minutes). That is the same thing that happens whenever anyone opens the HR tickets screen; the route checks sign-in and derives the role from the caller\'s memberships (PR #184).',
+    },
+];
+const REVIEWED_PATHS = new Set(REVIEWED_ROUTES.map(r => r.path));
+
+const ROUTES: CatalogRoute[] = [
+    ...(catalogJson as { routes: CatalogRoute[] }).routes,
+    ...REVIEWED_ROUTES.map(r => ({ path: r.path, module: r.module, pathParams: r.pathParams, queryParams: r.queryParams, description: r.description })),
+];
+const EXCLUDED: { path: string }[] = (catalogJson as { excluded: { path: string }[] }).excluded
+    .filter(e => !REVIEWED_PATHS.has(e.path));
 
 // One path segment value: ids, slugs, dates. No slashes, no dots-only, no encoded characters.
 const SEGMENT_VALUE = '([A-Za-z0-9_\\-:@][A-Za-z0-9_\\-.:@]{0,127})';

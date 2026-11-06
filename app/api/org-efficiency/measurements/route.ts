@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { resolveCaller, isCallerError, forbidden, isInternalOrgMember } from '@/backend/lib/auth/callerAccess';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 /**
  * GET  /api/org-efficiency/measurements?goalId=   — a goal's time series
@@ -12,6 +14,13 @@ export async function GET(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const goalId = searchParams.get('goalId');
         if (!goalId) return NextResponse.json({ error: 'goalId required' }, { status: 400 });
+        // Signed-in internal staff of the goal's organisation only.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const { data: goal } = await supabaseAdmin.from('oem_goals').select('organization_id').eq('id', goalId).maybeSingle();
+        if (!goal?.organization_id || !(await isInternalOrgMember(caller, goal.organization_id))) {
+            return forbidden('Forbidden: no access to this goal');
+        }
 
         const { data, error } = await supabase
             .from('oem_measurements')

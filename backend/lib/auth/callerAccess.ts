@@ -123,6 +123,52 @@ export async function belongsToOrg(c: CallerAccess, orgId: string): Promise<bool
     return !!data?.length;
 }
 
+/**
+ * Is the caller an internal member (not a client, tenant or vendor) of this organisation, at
+ * organisation level or through one of its properties? For internal-only screens.
+ */
+export async function isInternalOrgMember(c: CallerAccess, orgId: string): Promise<boolean> {
+    if (c.isMasterAdmin) return true;
+    if (c.orgMemberships.some(m => m.organization_id === orgId && isInternal(m.role))) return true;
+    const props = c.propertyMemberships.filter(m => isInternal(m.role));
+    if (props.some(m => m.organization_id === orgId)) return true;
+    const legacyIds = props.filter(m => !m.organization_id).map(m => m.property_id);
+    if (!legacyIds.length) return false;
+    const { data } = await supabaseAdmin.from('properties').select('id').in('id', legacyIds).eq('organization_id', orgId).limit(1);
+    return !!data?.length;
+}
+
+/**
+ * One-line guard for routes under /api/properties/[propertyId]: signed in, and an internal member
+ * of the property or its organisation (or master admin). With allowExternal, any member of the
+ * property (tenants, vendors) or of its organisation is accepted too.
+ * Returns the response to send when refused, or null to continue.
+ */
+export async function guardProperty(
+    request: Request | NextRequest,
+    propertyId: string,
+    opts: { allowExternal?: boolean } = {},
+): Promise<NextResponse | null> {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    const orgId = await propertyOrgId(propertyId);
+    if (!orgId) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+    if (opts.allowExternal) {
+        const member = caller.isMasterAdmin
+            || caller.propertyMemberships.some(m => m.property_id === propertyId)
+            || caller.orgMemberships.some(m => m.organization_id === orgId);
+        return member ? null : forbidden('Forbidden: no access to this property');
+    }
+    return canUseProperty(caller, propertyId, orgId) ? null : forbidden('Forbidden: no access to this property');
+}
+
+/** One-line guard for routes under /api/organizations/[orgId]: signed-in internal member of the organisation. */
+export async function guardOrg(request: Request | NextRequest, orgId: string): Promise<NextResponse | null> {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    return (await isInternalOrgMember(caller, orgId)) ? null : forbidden('Forbidden: no access to this organization');
+}
+
 /** The organisation a property belongs to, or null when the property does not exist. */
 export async function propertyOrgId(propertyId: string): Promise<string | null> {
     const { data } = await supabaseAdmin.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();

@@ -32,11 +32,50 @@ const BLOCKED_TOP = new Set([
 // Path segments that mean "not a plain JSON read" (files, OAuth hops, public tokens).
 const BLOCKED_SEGMENT = /(^|\/)(oauth|callback|connect|export|export-all|template|download|scan|webhook|webhooks|cron|preview-pdf|pdf|file|files|image|images|thumbnail|signed-url|token|\[token\])(\/|$)/i;
 
-const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
+const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\bresolveCaller\(|\bguardProperty\(|\bguardOrg\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
 const WRITE_EVIDENCE = /\.(insert|update|upsert|delete)\(|\.rpc\(|\.storage\s*\.\s*from\([^)]*\)\s*\.\s*(upload|remove|move)\(/;
 const SIDE_EFFECT_EVIDENCE = /\b(NotificationService|EmailService|WhatsApp\w*Service|WhatsAppEventProcessor|VoiceCallingService|LeadOutreachService|LeadSlaEscalationService|runAutoSlaEscalation|sendDigest|runCouncil|withAgentRun|TaskDailyGeneratorService|runBotHousekeeping|sendMail|sendEmail|sendPush|nodemailer)\b|\bfetch\(/;
 
-const METHOD_EXPORT = /^export\s+(?:async\s+)?(?:function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/m;
+/**
+ * Database functions declared STABLE or IMMUTABLE in the SQL migrations. Postgres does not let
+ * those modify data, so `.rpc('<name>', ...)` on one of them is a read, not a write.
+ */
+function readOnlyRpcNames() {
+    const names = new Set();
+    const dirs = ['supabase/migrations', 'backend/db/migrations', 'sql'].map(d => join(ROOT, d));
+    const files = [];
+    const collect = dir => {
+        let entries = [];
+        try { entries = readdirSync(dir); } catch { return; }
+        for (const n of entries) {
+            const p = join(dir, n);
+            if (statSync(p).isDirectory()) collect(p);
+            else if (n.endsWith('.sql')) files.push(p);
+        }
+    };
+    dirs.forEach(collect);
+    const def = /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?([a-z0-9_]+)"?\s*\(([\s\S]*?)(?=create\s+(?:or\s+replace\s+)?function|$)/gi;
+    const volatileSeen = new Set();
+    for (const f of files) {
+        const sql = readFileSync(f, 'utf8');
+        for (const m of sql.matchAll(def)) {
+            const name = m[1].toLowerCase();
+            // Only the header up to the body start decides volatility.
+            const header = m[2].split(/\bAS\s+\$[A-Za-z_]*\$/i)[0] + ' ' + (m[2].match(/\$[A-Za-z_]*\$[\s\S]*?\$[A-Za-z_]*\$([\s\S]{0,200})/)?.[1] || '');
+            if (/\b(stable|immutable)\b/i.test(header)) names.add(name);
+            else volatileSeen.add(name);
+        }
+    }
+    // A function redefined anywhere without STABLE/IMMUTABLE is not trusted.
+    for (const n of volatileSeen) names.delete(n);
+    return names;
+}
+const READ_ONLY_RPCS = readOnlyRpcNames();
+function withoutReadOnlyRpcs(code) {
+    return code.replace(/\.rpc\(\s*['"]([a-z0-9_]+)['"]/gi, (all, name) => (READ_ONLY_RPCS.has(name.toLowerCase()) ? `.readOnlyRpc('${name}'` : all));
+}
+
+const METHOD_EXPORT =/^export\s+(?:async\s+)?(?:function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/m;
 
 function walk(dir, out = []) {
     for (const name of readdirSync(dir)) {
@@ -48,6 +87,59 @@ function walk(dir, out = []) {
 }
 
 /** Split a route file into the GET handler, other exported method handlers, and shared code. */
+/**
+ * Sign-in checks done inside a helper, e.g. `const viewer = await meetingViewer(orgId)`.
+ * For each name imported from the project ('@/...'), read that exported function's own body in
+ * its module and count it as a sign-in check only if THAT body checks the session itself
+ * (auth.getUser / getClaims) and refuses with 401 when there is no user. One level deep, by
+ * design: a helper that only calls another helper is not trusted.
+ */
+const helperCache = new Map();
+function resolveModule(spec) {
+    const base = join(ROOT, spec.replace(/^@\//, ''));
+    for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, join(base, 'index.ts')]) {
+        try {
+            if (statSync(cand).isFile()) return cand;
+        } catch { /* try next */ }
+    }
+    return null;
+}
+function functionBody(src, name) {
+    const m = src.match(new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\s*\\(`));
+    if (!m) return null;
+    const open = src.indexOf('{', src.indexOf(')', m.index));
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
+    }
+    return null;
+}
+function helperChecksSignIn(spec, name) {
+    const key = `${spec}#${name}`;
+    if (helperCache.has(key)) return helperCache.get(key);
+    let ok = false;
+    const file = resolveModule(spec);
+    if (file) {
+        const body = functionBody(readFileSync(file, 'utf8'), name);
+        ok = !!body && /\.auth\.getUser\(|\.auth\.getClaims\(/.test(body) && /status:\s*401|Unauthorized/.test(body);
+    }
+    helperCache.set(key, ok);
+    return ok;
+}
+/** Does the route call an imported helper that itself checks sign-in? */
+function callsSignInHelper(src, code) {
+    for (const m of src.matchAll(/^\s*import\s*\{([^}]+)\}\s*from\s*['"](@\/[^'"]+)['"]/gm)) {
+        for (const raw of m[1].split(',')) {
+            const name = raw.trim().split(/\s+as\s+/)[0].replace(/^type\s+/, '').trim();
+            if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+            if (new RegExp(`\\b${name}\\(`).test(code) && helperChecksSignIn(m[2], name)) return true;
+        }
+    }
+    return false;
+}
+
 function splitHandlers(src) {
     const lines = src.split('\n');
     const blocks = [];
@@ -122,8 +214,8 @@ for (const file of files) {
     if (BLOCKED_TOP.has(top)) reason = `blocked area "${top}"`;
     else if (BLOCKED_SEGMENT.test(routeDir)) reason = 'file, OAuth or public-token route';
     else if (/\[\.\.\./.test(routeDir)) reason = 'catch-all route';
-    else if (!AUTH_EVIDENCE.test(get + '\n' + shared)) reason = 'no visible sign-in check';
-    else if (WRITE_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may write data';
+    else if (!AUTH_EVIDENCE.test(get + '\n' + shared) && !callsSignInHelper(src, get + '\n' + shared)) reason = 'no visible sign-in check';
+    else if (WRITE_EVIDENCE.test(withoutReadOnlyRpcs(get + '\n' + shared))) reason = 'GET path may write data';
     else if (SIDE_EFFECT_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may send messages or call outside services';
 
     if (reason) {

@@ -65,14 +65,83 @@ test('catalogue: never exposes blocked areas', async () => {
     for (const r of catalog.allRoutes()) assert.ok(!blocked.test(r.path), `blocked route leaked: ${r.path}`);
 });
 
-test('catalogue: excludes a route that has no sign-in check (property vendors)', async () => {
+test('catalogue: no route without a visible sign-in check can be reached', async () => {
     const { catalog } = await mods();
-    assert.equal(catalog.matchRoute(`/api/properties/${PROP}/vendors`), null);
+    const json = (await import('../../backend/lib/mcp/catalog.generated.json')).default as { excluded: { path: string; reason: string }[] };
+    const noAuth = json.excluded.filter(e => e.reason === 'no visible sign-in check');
+    assert.ok(noAuth.length > 0);
+    for (const e of noAuth) {
+        const concrete = e.path.replace(/\{[\w-]+\}/g, PROP);
+        assert.equal(catalog.matchRoute(concrete), null, `${e.path} must stay unreachable`);
+    }
+});
+
+test('domain tools: every route they call is in the catalogue', async () => {
+    const { catalog } = await mods();
+    const { DOMAIN_TOOL_PATHS } = await import('../../backend/lib/mcp/domainTools');
+    for (const p of DOMAIN_TOOL_PATHS) {
+        const concrete = p.replace('{id}', PROP);
+        assert.ok(catalog.matchRoute(concrete), `${p} is used by a tool but is not in the catalogue`);
+    }
+});
+
+test('domain tools: called through the guarded path, so another organisation is refused', async () => {
+    const { tools } = await mods();
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const server = tools.buildMcpServer(ctxOf());
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    for (const [name, args] of [
+        ['finance', { view: 'purchase_orders', organization_id: OTHER_ORG }],
+        ['electricity', { view: 'tracker', organization_id: OTHER_ORG }],
+        ['ppm', { view: 'schedules', organization_id: OTHER_ORG, month: 1, year: 2026 }],
+        ['property_vendors', { view: 'list', property_id: OTHER_PROP }],
+        ['command_center', { view: 'kpis', organization_id: OTHER_ORG }],
+        ['roster', { property_id: OTHER_PROP, month: '2026-11' }],
+        ['meetings', { view: 'list', organization_id: OTHER_ORG }],
+        ['org_efficiency', { view: 'goals', organization_id: OTHER_ORG }],
+        ['utilities', { view: 'diesel_readings', property_id: OTHER_PROP }],
+        ['utilities', { view: 'diesel_summary', organization_id: OTHER_ORG }],
+        ['stock', { view: 'items', property_id: OTHER_PROP }],
+        ['sop_checklists', { view: 'completions', property_id: OTHER_PROP }],
+        ['org_summary', { view: 'tickets', organization_id: OTHER_ORG }],
+        ['petty_cash', { view: 'requests', organization_id: OTHER_ORG }],
+        ['property_details', { property_id: OTHER_PROP }],
+    ] as const) {
+        const r = await client.callTool({ name, arguments: args });
+        assert.equal(r.isError, true, `${name} must refuse another organisation or property`);
+        assert.match((r.content as { text: string }[])[0].text, /Refused/);
+    }
+    await client.close();
+    await server.close();
+});
+
+test('catalogue: HR tickets are reachable only as the reviewed exception', async () => {
+    const { catalog } = await mods();
+    assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
+    assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets']);
+    assert.equal(catalog.matchRoute('/api/hr/tickets/escalate-all'), null);
+});
+
+test('list_hr_tickets: sends the org id as the HR route expects, and refuses another organisation', async () => {
+    const { tools } = await mods();
+    let seen: Record<string, string> | null = null;
+    const fake = async (o: { query: Record<string, string> }) => {
+        seen = o.query;
+        return { status: 200, ok: true, contentType: 'application/json', text: '{"success":true,"data":[]}', truncated: false };
+    };
+    const ok = await tools.callRoute(ctxOf(), 'list_hr_tickets', '/api/hr/tickets', { orgId: ORG, type: 'grievance' }, fake);
+    assert.ok(!ok.isError);
+    assert.deepEqual(seen, { orgId: ORG, type: 'grievance' });
+    const refused = await tools.callRoute(ctxOf(), 'list_hr_tickets', '/api/hr/tickets', { orgId: OTHER_ORG }, fake);
+    assert.equal(refused.isError, true);
 });
 
 test('catalogue: an excluded static route cannot be reached through an included {id} sibling', async () => {
     const { catalog } = await mods();
-    for (const p of ['/api/petty-cash/wallet', '/api/petty-cash/tracker', '/api/assets/template', '/api/invoices/files', '/api/document-bank/download']) {
+    for (const p of ['/api/petty-cash/wallet', '/api/petty-cash/context', '/api/assets/template', '/api/invoices/files', '/api/document-bank/download']) {
         assert.equal(catalog.matchRoute(p), null, p);
     }
     assert.ok(catalog.matchRoute('/api/petty-cash/0b6f3b8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b'), 'a real id still matches');
@@ -248,9 +317,14 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     const listed = await client.listTools();
     const names = listed.tools.map(t => t.name).sort();
     assert.deepEqual(names, [
-        'book_meeting_room', 'cancel_booking', 'confirm_action', 'create_ticket', 'fetch_endpoint', 'find_endpoints',
-        'find_meeting_rooms', 'list_assets', 'list_crm_leads', 'list_tickets', 'my_bookings', 'my_pending_actions',
-        'po_approval_queue', 'whoami',
+        'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action',
+        'create_ticket', 'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance',
+        'find_endpoints', 'find_meeting_rooms', 'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets',
+        'list_properties', 'list_requisitions', 'list_tickets', 'list_users', 'meetings', 'my_bookings',
+        'my_pending_actions', 'my_tasks', 'org_efficiency', 'org_summary', 'petty_cash', 'po_approval_queue',
+        'po_details', 'ppm', 'property_details', 'property_vendors', 'roster', 'sop_checklists',
+        'stock', 'supplier_rates', 'ticket_comments', 'utilities', 'visitor_summary', 'whoami',
+        'wiki',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.
