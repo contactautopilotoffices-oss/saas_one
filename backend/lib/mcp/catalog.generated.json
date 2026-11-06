@@ -2,8 +2,8 @@
   "generatedBy": "scripts/mcp/build-catalog.mjs",
   "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
   "counts": {
-    "included": 231,
-    "excluded": 210
+    "included": 239,
+    "excluded": 202
   },
   "routes": [
     {
@@ -1294,6 +1294,26 @@
       "description": "GET /api/meeting-rooms Fetch meeting rooms for a property"
     },
     {
+      "path": "/api/meetings/{id}",
+      "module": "meetings",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "after"
+      ],
+      "description": "ONE MEETING GET ?after=<line id> the meeting, agenda, decisions and transcript lines after `after` (the room page polls this) PATCH { action: 'end' } hosts: close the room for everyone PATCH { action: 'confirm' | 'reject', decision_id } hosts: settle a proposed decision Confirming a decision records that a person agreed with it. It does NOT approve or cancel anything in Zoho; that stays a human st"
+    },
+    {
+      "path": "/api/meetings",
+      "module": "meetings",
+      "pathParams": [],
+      "queryParams": [
+        "org_id"
+      ],
+      "description": "MEETINGS GET ?org_id= the organisation's meetings, newest first POST { org_id, min_days?, limit?, title? } hosts only: build an agenda of POs stuck at \"pending approval\" and create the meeting"
+    },
+    {
       "path": "/api/mst/shift",
       "module": "mst",
       "pathParams": [],
@@ -1301,6 +1321,64 @@
         "propertyId"
       ],
       "description": ""
+    },
+    {
+      "path": "/api/org-efficiency/agents",
+      "module": "org-efficiency",
+      "pathParams": [],
+      "queryParams": [
+        "orgId"
+      ],
+      "description": "GET /api/org-efficiency/agents?orgId= — registry + active bundle + recent council log per agent POST /api/org-efficiency/agents body.action = 'register' -> create/update an agent body.action = 'set_bundle' -> new bundle version (deactivates old) body.action = 'regenerate_prompt' -> rebuild system prompt from goals+bundle"
+    },
+    {
+      "path": "/api/org-efficiency/goals",
+      "module": "org-efficiency",
+      "pathParams": [],
+      "queryParams": [
+        "cadence",
+        "department",
+        "level",
+        "orgId",
+        "owner",
+        "status"
+      ],
+      "description": "GET /api/org-efficiency/goals?orgId=&level=&cadence=&owner=&department=&status= POST /api/org-efficiency/goals — create a goal (org super admin console) PATCH /api/org-efficiency/goals — update a goal by id"
+    },
+    {
+      "path": "/api/org-efficiency/measurements",
+      "module": "org-efficiency",
+      "pathParams": [],
+      "queryParams": [
+        "goalId"
+      ],
+      "description": "GET /api/org-efficiency/measurements?goalId= — a goal's time series POST /api/org-efficiency/measurements — record a period value"
+    },
+    {
+      "path": "/api/org-efficiency/meter",
+      "module": "org-efficiency",
+      "pathParams": [],
+      "queryParams": [
+        "cadence",
+        "department",
+        "orgId",
+        "owner"
+      ],
+      "description": "GET /api/org-efficiency/meter?orgId=&cadence=&department=&owner= The meter itself: per-level progress (agent -> employee -> department -> tech -> org), overall %, and the three governance lists the console filters on: - completing: goals at/over their expected pace - behind: goals moving slower than expected (actual vs expected rate) - not_in_chain: goals with no fresh measurement — data missing"
+    },
+    {
+      "path": "/api/org-efficiency/tasks",
+      "module": "org-efficiency",
+      "pathParams": [],
+      "queryParams": [
+        "from",
+        "goalId",
+        "orgId",
+        "owner",
+        "status",
+        "to"
+      ],
+      "description": "GET /api/org-efficiency/tasks?orgId=&from=&to=&owner=&goalId=&status= — the task calendar feed (from/to are dates) POST /api/org-efficiency/tasks — create a task PATCH /api/org-efficiency/tasks — update (complete with proof, block, etc.)"
     },
     {
       "path": "/api/organizations/{orgId}/material-requests-summary",
@@ -1800,6 +1878,16 @@
       "pathParams": [],
       "queryParams": [],
       "description": "GET /api/reports/task-manager-usage/schedule?orgId=<uuid> PUT /api/reports/task-manager-usage/schedule { organization_id, schedule } The report schedule set in the Report tab. Org super admins only. `provisioned: false` means the migration has not been run yet."
+    },
+    {
+      "path": "/api/roster",
+      "module": "roster",
+      "pathParams": [],
+      "queryParams": [
+        "month",
+        "propertyId"
+      ],
+      "description": ""
     },
     {
       "path": "/api/satej/faq",
@@ -2716,35 +2804,7 @@
       "reason": "blocked area \"mcp\""
     },
     {
-      "path": "/api/meetings/{id}",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/meetings/agent",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/meetings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/org-efficiency/agents",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/org-efficiency/goals",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/org-efficiency/measurements",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/org-efficiency/meter",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/org-efficiency/tasks",
       "reason": "no visible sign-in check"
     },
     {
@@ -2994,10 +3054,6 @@
     {
       "path": "/api/roster/export",
       "reason": "file, OAuth or public-token route"
-    },
-    {
-      "path": "/api/roster",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/satej/rates",

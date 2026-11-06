@@ -48,6 +48,59 @@ function walk(dir, out = []) {
 }
 
 /** Split a route file into the GET handler, other exported method handlers, and shared code. */
+/**
+ * Sign-in checks done inside a helper, e.g. `const viewer = await meetingViewer(orgId)`.
+ * For each name imported from the project ('@/...'), read that exported function's own body in
+ * its module and count it as a sign-in check only if THAT body checks the session itself
+ * (auth.getUser / getClaims) and refuses with 401 when there is no user. One level deep, by
+ * design: a helper that only calls another helper is not trusted.
+ */
+const helperCache = new Map();
+function resolveModule(spec) {
+    const base = join(ROOT, spec.replace(/^@\//, ''));
+    for (const cand of [base, `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.mjs`, join(base, 'index.ts')]) {
+        try {
+            if (statSync(cand).isFile()) return cand;
+        } catch { /* try next */ }
+    }
+    return null;
+}
+function functionBody(src, name) {
+    const m = src.match(new RegExp(`export\\s+(?:async\\s+)?function\\s+${name}\\s*\\(`));
+    if (!m) return null;
+    const open = src.indexOf('{', src.indexOf(')', m.index));
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
+    }
+    return null;
+}
+function helperChecksSignIn(spec, name) {
+    const key = `${spec}#${name}`;
+    if (helperCache.has(key)) return helperCache.get(key);
+    let ok = false;
+    const file = resolveModule(spec);
+    if (file) {
+        const body = functionBody(readFileSync(file, 'utf8'), name);
+        ok = !!body && /\.auth\.getUser\(|\.auth\.getClaims\(/.test(body) && /status:\s*401|Unauthorized/.test(body);
+    }
+    helperCache.set(key, ok);
+    return ok;
+}
+/** Does the route call an imported helper that itself checks sign-in? */
+function callsSignInHelper(src, code) {
+    for (const m of src.matchAll(/^\s*import\s*\{([^}]+)\}\s*from\s*['"](@\/[^'"]+)['"]/gm)) {
+        for (const raw of m[1].split(',')) {
+            const name = raw.trim().split(/\s+as\s+/)[0].replace(/^type\s+/, '').trim();
+            if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+            if (new RegExp(`\\b${name}\\(`).test(code) && helperChecksSignIn(m[2], name)) return true;
+        }
+    }
+    return false;
+}
+
 function splitHandlers(src) {
     const lines = src.split('\n');
     const blocks = [];
@@ -122,7 +175,7 @@ for (const file of files) {
     if (BLOCKED_TOP.has(top)) reason = `blocked area "${top}"`;
     else if (BLOCKED_SEGMENT.test(routeDir)) reason = 'file, OAuth or public-token route';
     else if (/\[\.\.\./.test(routeDir)) reason = 'catch-all route';
-    else if (!AUTH_EVIDENCE.test(get + '\n' + shared)) reason = 'no visible sign-in check';
+    else if (!AUTH_EVIDENCE.test(get + '\n' + shared) && !callsSignInHelper(src, get + '\n' + shared)) reason = 'no visible sign-in check';
     else if (WRITE_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may write data';
     else if (SIDE_EFFECT_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may send messages or call outside services';
 

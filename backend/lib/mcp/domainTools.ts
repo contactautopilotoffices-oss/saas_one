@@ -38,6 +38,8 @@ export const DOMAIN_TOOL_PATHS = [
     '/api/amc/contracts', '/api/document-bank',
     '/api/crm/stats', '/api/crm/reports',
     '/api/command-center/kpis', '/api/command-center/portfolio', '/api/command-center/ticket-alerts', '/api/command-center/water',
+    '/api/roster', '/api/meetings', '/api/meetings/{id}',
+    '/api/org-efficiency/goals', '/api/org-efficiency/tasks', '/api/org-efficiency/meter', '/api/org-efficiency/agents', '/api/org-efficiency/measurements',
 ] as const;
 
 export function registerDomainTools(server: McpServer, call: Call): void {
@@ -293,6 +295,64 @@ export function registerDomainTools(server: McpServer, call: Call): void {
     }, async ({ view, organization_id, type, report_type, period, from, to, property_id }) => view === 'stats'
         ? call('crm_reports', '/api/crm/stats', { org_id: organization_id, type, period, property_id })
         : call('crm_reports', '/api/crm/reports', { org_id: organization_id, type: report_type, from, to, property_id }));
+
+    server.registerTool('roster', {
+        title: 'Staff roster',
+        description:
+            'The staff roster of one property for a month: who is on the roster, their roles and shifts. ' +
+            'Use for "who is on duty at Andheri this month", "how many MSTs are rostered". For attendance numbers use command_center or find_endpoints. ' +
+            'Example: {"property_id": "<id>", "month": "2026-11"}.',
+        inputSchema: { property_id: prop(), month: ym() },
+        annotations: READ_ONLY,
+    }, async ({ property_id, month }) => call('roster', '/api/roster', { propertyId: property_id, month }));
+
+    server.registerTool('meetings', {
+        title: 'PO review meetings',
+        description:
+            'PO review meetings (for approvers, the purchase team and accounts). view "list": meetings of the organisation with their agendas. ' +
+            'view "detail": one meeting with its agenda, decisions and transcript lines (needs meeting_id). ' +
+            'Use for "what was decided in yesterday\'s PO review". Do not use for meeting-room bookings (use my_bookings). ' +
+            'Example: {"view": "list", "organization_id": "<id>"}.',
+        inputSchema: {
+            view: z.enum(['list', 'detail']),
+            organization_id: org(),
+            meeting_id: uuid().optional().describe('For detail.'),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, organization_id, meeting_id }) => {
+        if (view === 'list') return call('meetings', '/api/meetings', { org_id: organization_id });
+        if (!meeting_id) return { content: [{ type: 'text', text: 'meeting_id is required for view "detail". Use view "list" to find it.' }], isError: true };
+        return call('meetings', `/api/meetings/${meeting_id}`, { org_id: organization_id });
+    });
+
+    server.registerTool('org_efficiency', {
+        title: 'Organisation efficiency (goals and tasks)',
+        description:
+            'The Organisation Efficiency Meter. view "goals": goals with progress (filter by level, cadence, department, status). ' +
+            'view "tasks": tasks against those goals (filter by dates, goal, status). view "meter": the overall meter for active goals. ' +
+            'view "agents": the efficiency agents and their recent council log. view "measurements": measurements over time for one goal (needs goal_id). ' +
+            'Internal staff only. Example: {"view": "goals", "organization_id": "<id>", "status": "active"}.',
+        inputSchema: {
+            view: z.enum(['goals', 'tasks', 'meter', 'agents', 'measurements']),
+            organization_id: org(),
+            goal_id: uuid().optional().describe('For measurements, or to filter tasks.'),
+            level: text(40).optional(),
+            cadence: text(40).optional(),
+            department: text(80).optional(),
+            status: text(40).optional(),
+            from: ymd().optional().describe('For tasks.'),
+            to: ymd().optional().describe('For tasks.'),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, organization_id, goal_id, level, cadence, department, status, from, to }) => {
+        const orgId = organization_id;
+        if (view === 'goals') return call('org_efficiency', '/api/org-efficiency/goals', { orgId, level, cadence, department, status });
+        if (view === 'tasks') return call('org_efficiency', '/api/org-efficiency/tasks', { orgId, from, to, goalId: goal_id, status });
+        if (view === 'meter') return call('org_efficiency', '/api/org-efficiency/meter', { orgId, cadence, department });
+        if (view === 'agents') return call('org_efficiency', '/api/org-efficiency/agents', { orgId });
+        if (!goal_id) return { content: [{ type: 'text', text: 'goal_id is required for view "measurements". Use view "goals" to find it.' }], isError: true };
+        return call('org_efficiency', '/api/org-efficiency/measurements', { goalId: goal_id });
+    });
 
     server.registerTool('command_center', {
         title: 'Command Center overview',

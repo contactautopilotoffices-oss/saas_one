@@ -123,6 +123,21 @@ export async function belongsToOrg(c: CallerAccess, orgId: string): Promise<bool
     return !!data?.length;
 }
 
+/**
+ * Is the caller an internal member (not a client, tenant or vendor) of this organisation, at
+ * organisation level or through one of its properties? For internal-only screens.
+ */
+export async function isInternalOrgMember(c: CallerAccess, orgId: string): Promise<boolean> {
+    if (c.isMasterAdmin) return true;
+    if (c.orgMemberships.some(m => m.organization_id === orgId && isInternal(m.role))) return true;
+    const props = c.propertyMemberships.filter(m => isInternal(m.role));
+    if (props.some(m => m.organization_id === orgId)) return true;
+    const legacyIds = props.filter(m => !m.organization_id).map(m => m.property_id);
+    if (!legacyIds.length) return false;
+    const { data } = await supabaseAdmin.from('properties').select('id').in('id', legacyIds).eq('organization_id', orgId).limit(1);
+    return !!data?.length;
+}
+
 /** The organisation a property belongs to, or null when the property does not exist. */
 export async function propertyOrgId(propertyId: string): Promise<string | null> {
     const { data } = await supabaseAdmin.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();

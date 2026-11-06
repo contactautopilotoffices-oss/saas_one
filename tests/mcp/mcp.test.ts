@@ -99,6 +99,9 @@ test('domain tools: called through the guarded path, so another organisation is 
         ['ppm', { view: 'schedules', organization_id: OTHER_ORG, month: 1, year: 2026 }],
         ['property_vendors', { view: 'list', property_id: OTHER_PROP }],
         ['command_center', { view: 'kpis', organization_id: OTHER_ORG }],
+        ['roster', { property_id: OTHER_PROP, month: '2026-11' }],
+        ['meetings', { view: 'list', organization_id: OTHER_ORG }],
+        ['org_efficiency', { view: 'goals', organization_id: OTHER_ORG }],
     ] as const) {
         const r = await client.callTool({ name, arguments: args });
         assert.equal(r.isError, true, `${name} must refuse another organisation or property`);
@@ -310,8 +313,8 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
         'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action', 'create_ticket',
         'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance', 'find_endpoints', 'find_meeting_rooms',
         'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties', 'list_requisitions', 'list_tickets',
-        'list_users', 'my_bookings', 'my_pending_actions', 'my_tasks', 'po_approval_queue', 'po_details', 'ppm',
-        'property_vendors', 'ticket_comments', 'visitor_summary', 'whoami',
+        'list_users', 'meetings', 'my_bookings', 'my_pending_actions', 'my_tasks', 'org_efficiency', 'po_approval_queue', 'po_details', 'ppm',
+        'property_vendors', 'roster', 'ticket_comments', 'visitor_summary', 'whoami',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.
