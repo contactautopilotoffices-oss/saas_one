@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 /**
  * Electricity Readings API v2
@@ -16,6 +17,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const { searchParams } = new URL(request.url);
 
     const startDate = searchParams.get('startDate');
@@ -160,6 +163,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
 
@@ -313,6 +318,8 @@ export async function PATCH(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { id, ...updates } = await request.json();
 
@@ -412,6 +419,8 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const readingId = searchParams.get('id');

@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GET as getRoutingCandidates } from '@/app/api/petty-cash/candidates/route';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 /** Compatibility lookup for routing configuration; requesters cannot choose actors. */
 export async function GET(request: NextRequest, { params }: { params: Promise<{ propertyId: string }> }) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const url = new URL(request.url);
     url.searchParams.set('property_id', propertyId);
     url.searchParams.set('search', url.searchParams.get('q') || url.searchParams.get('search') || '');

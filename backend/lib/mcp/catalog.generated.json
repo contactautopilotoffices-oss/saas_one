@@ -2,8 +2,8 @@
   "generatedBy": "scripts/mcp/build-catalog.mjs",
   "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
   "counts": {
-    "included": 239,
-    "excluded": 202
+    "included": 277,
+    "excluded": 164
   },
   "routes": [
     {
@@ -1381,6 +1381,60 @@
       "description": "GET /api/org-efficiency/tasks?orgId=&from=&to=&owner=&goalId=&status= — the task calendar feed (from/to are dates) POST /api/org-efficiency/tasks — create a task PATCH /api/org-efficiency/tasks — update (complete with proof, block, etc.)"
     },
     {
+      "path": "/api/organizations/{orgId}/diesel-readings",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "endDate",
+        "period",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/organizations/{orgId}/diesel-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET: Cross-property diesel summary for Super Admin"
+    },
+    {
+      "path": "/api/organizations/{orgId}/electricity-meters",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/organizations/{orgId}/electricity-readings",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "endDate",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/organizations/{orgId}/generators",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
       "path": "/api/organizations/{orgId}/material-requests-summary",
       "module": "organizations",
       "pathParams": [
@@ -1410,6 +1464,20 @@
       "description": "GET /api/organizations/[orgId]/roster-coverage Org-level workforce coverage for the Command Center \"Workforce Coverage\" card. Guarded by the Command Center access rule (session/bearer + org or property admin membership), same as /api/command-center/portfolio. Sources — all honest, all already in the schema: scheduled staff_rosters rows for today whose shift is a working shift (shift_configurations"
     },
     {
+      "path": "/api/organizations/{orgId}/stock/reports",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "endDate",
+        "format",
+        "limit",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/organizations/{orgId}/stock/settings",
       "module": "organizations",
       "pathParams": [
@@ -1417,6 +1485,39 @@
       ],
       "queryParams": [],
       "description": "Same people who manage the requisition item list: procurement, org super admin, master admin. */ async function canManageStockSettings(userId: string, orgId: string): Promise<boolean> { if (await isProcurementUser(userId, orgId)) return true; const { data } = await createAdminClient() .from('users') .select('is_master_admin') .eq('id', userId) .maybeSingle(); return Boolean(data?.is_master_admin);"
+    },
+    {
+      "path": "/api/organizations/{orgId}/tickets-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET /api/organizations/[orgId]/tickets-summary Organization-wide ticketing summary for Super Admin / Master Admin. High-performance implementation using parallel SQL-side aggregations."
+    },
+    {
+      "path": "/api/organizations/{orgId}/vendor-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET: Organization-wide vendor revenue summary (Super Admin)"
+    },
+    {
+      "path": "/api/organizations/{orgId}/vms-summary",
+      "module": "organizations",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "period"
+      ],
+      "description": "GET: Organization-wide VMS summary (Super Admin) HIGH PERFORMANCE: Uses SQL-side count queries instead of fetching all rows."
     },
     {
       "path": "/api/pending-actions",
@@ -1452,6 +1553,16 @@
       "description": ""
     },
     {
+      "path": "/api/petty-cash/expenses",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [
+        "page",
+        "spend_mode"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/petty-cash/notification-deliveries",
       "module": "petty-cash",
       "pathParams": [],
@@ -1460,6 +1571,20 @@
     },
     {
       "path": "/api/petty-cash/pending-actions",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash",
+      "module": "petty-cash",
+      "pathParams": [],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/petty-cash/tracker",
       "module": "petty-cash",
       "pathParams": [],
       "queryParams": [],
@@ -1677,6 +1802,18 @@
       "description": ""
     },
     {
+      "path": "/api/properties/{propertyId}/approvers",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "q",
+        "search"
+      ],
+      "description": "Compatibility lookup for routing configuration; requesters cannot choose actors."
+    },
+    {
       "path": "/api/properties/{propertyId}/checklist-settings",
       "module": "properties",
       "pathParams": [
@@ -1684,6 +1821,81 @@
       ],
       "queryParams": [],
       "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/dg-tariffs",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "date",
+        "generatorId",
+        "includeHistory"
+      ],
+      "description": "GET: Fetch DG tariffs"
+    },
+    {
+      "path": "/api/properties/{propertyId}/diesel-export",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "generatorId",
+        "startDate"
+      ],
+      "description": "GET: Export diesel readings as Excel (DG-2 format)"
+    },
+    {
+      "path": "/api/properties/{propertyId}/diesel-readings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "generatorId",
+        "period",
+        "startDate"
+      ],
+      "description": "GET: Fetch diesel readings with optional filters"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-export",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "startDate"
+      ],
+      "description": "GET: Export electricity readings as CSV"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-meters",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET: Fetch all electricity meters for a property"
+    },
+    {
+      "path": "/api/properties/{propertyId}/electricity-readings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "meterId",
+        "period",
+        "startDate"
+      ],
+      "description": "GET: Fetch electricity readings with optional filters"
     },
     {
       "path": "/api/properties/{propertyId}/facility-meters",
@@ -1716,6 +1928,63 @@
       "description": "GET /api/properties/[propertyId]/features Fetch all feature flags for a specific property"
     },
     {
+      "path": "/api/properties/{propertyId}/generators",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET: Fetch all generators for a property"
+    },
+    {
+      "path": "/api/properties/{propertyId}/grid-tariffs",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "date",
+        "includeHistory"
+      ],
+      "description": "GET: Fetch grid tariffs"
+    },
+    {
+      "path": "/api/properties/{propertyId}/meter-multipliers",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "date",
+        "includeHistory",
+        "meterId"
+      ],
+      "description": "GET: Fetch multipliers for a meter"
+    },
+    {
+      "path": "/api/properties/{propertyId}",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/properties/[propertyId] Fetch detail for a specific property"
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/completions",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "completionDate",
+        "limit",
+        "templateId",
+        "userId"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/properties/{propertyId}/sop/report",
       "module": "properties",
       "pathParams": [
@@ -1738,6 +2007,89 @@
       "description": "PUT /api/properties/[propertyId]/sop/templates/[templateId]/cad/areas Save CAD areas with step linkages for a template."
     },
     {
+      "path": "/api/properties/{propertyId}/sop/templates/{templateId}",
+      "module": "properties",
+      "pathParams": [
+        "propertyId",
+        "templateId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/sop/templates",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "includeInactive",
+        "role"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items/{itemId}/barcode",
+      "module": "properties",
+      "pathParams": [
+        "propertyId",
+        "itemId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items/{itemId}",
+      "module": "properties",
+      "pathParams": [
+        "propertyId",
+        "itemId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/items",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "barcode",
+        "category",
+        "lowStockOnly",
+        "source"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/movements",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "itemId",
+        "limit",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/stock/reports",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "limit",
+        "startDate"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/properties/{propertyId}/stock/settings",
       "module": "properties",
       "pathParams": [
@@ -1754,6 +2106,44 @@
       ],
       "queryParams": [],
       "description": "GET /api/properties/[propertyId]/tenants Returns all users with 'tenant' role in the property. Only accessible by admins/staff of that property."
+    },
+    {
+      "path": "/api/properties/{propertyId}/ticket-config",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET: Retrieve skill groups and issue categories for a property"
+    },
+    {
+      "path": "/api/properties/{propertyId}/utilities-analytics",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "generatorId",
+        "meterId",
+        "period",
+        "scope",
+        "type"
+      ],
+      "description": "GET: Fetch aggregated analytics data"
+    },
+    {
+      "path": "/api/properties/{propertyId}/vendor-revenue",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "endDate",
+        "period",
+        "startDate",
+        "vendorId"
+      ],
+      "description": "GET: Fetch vendor revenue entries with optional filters"
     },
     {
       "path": "/api/properties/{propertyId}/vendor-summary",
@@ -1788,6 +2178,26 @@
     },
     {
       "path": "/api/properties/{propertyId}/water/import-template",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/readings",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "month"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/properties/{propertyId}/water/sources",
       "module": "properties",
       "pathParams": [
         "propertyId"
@@ -1906,6 +2316,13 @@
         "organizationId"
       ],
       "description": "Quote requests from the purchase@ inbox, for Meera. GET ?organizationId= → colleagues' asks for vendor quotes, last 30 days POST { organizationId, action:'draft', threadId } → a pre-filled requirement form from that email Nothing is started from here: the person reviews the draft and submits it."
+    },
+    {
+      "path": "/api/satej/rates",
+      "module": "satej",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "The rate checker: what we have paid, from Zoho PO lines. GET ?organizationId=&q=&unit= → pooled benchmark, the matching rows, and when it was last rebuilt GET ?organizationId=&q=&unit=&rate= → also where that rate sits (good / fair / slightly high / high) POST { organizationId, action:'refresh' } → rebuild this organisation's benchmark now (~3 s)"
     },
     {
       "path": "/api/satej/requirements/{id}/messages",
@@ -2342,6 +2759,17 @@
         "view"
       ],
       "description": ""
+    },
+    {
+      "path": "/api/wiki",
+      "module": "wiki",
+      "pathParams": [],
+      "queryParams": [
+        "kind",
+        "q",
+        "slug"
+      ],
+      "description": "ORG WIKI — reading pages. SUPER ADMINS ONLY. GET ?org_id= status: page counts by kind, last compiled, recent questions GET ?org_id=&slug= one page GET ?org_id=&kind=vendor every page of one kind (title order) GET ?org_id=&q=bvg search, top 20 POST ?org_id= { action: 'note', question, answer, cited } file an answer back as a note page"
     },
     {
       "path": "/api/workflows/spoc",
@@ -2808,60 +3236,12 @@
       "reason": "no visible sign-in check"
     },
     {
-      "path": "/api/organizations/{orgId}/diesel-readings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/diesel-summary",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/electricity-meters",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/electricity-readings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/generators",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/stock/reports",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/tickets-summary",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/vendor-summary",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/organizations/{orgId}/vms-summary",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/petty-cash/context",
       "reason": "GET path may write data"
     },
     {
       "path": "/api/petty-cash/documents/{docId}/download",
       "reason": "file, OAuth or public-token route"
-    },
-    {
-      "path": "/api/petty-cash/expenses",
-      "reason": "GET path may write data"
-    },
-    {
-      "path": "/api/petty-cash",
-      "reason": "GET path may write data"
-    },
-    {
-      "path": "/api/petty-cash/tracker",
-      "reason": "GET path may write data"
     },
     {
       "path": "/api/petty-cash/wallet",
@@ -2928,112 +3308,16 @@
       "reason": "file, OAuth or public-token route"
     },
     {
-      "path": "/api/properties/{propertyId}/approvers",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/dg-tariffs",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/diesel-export",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/diesel-readings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/electricity-export",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/electricity-meters",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/electricity-readings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/generators",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/grid-tariffs",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/meter-multipliers",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/properties/{propertyId}/sop/completions/{completionId}",
       "reason": "GET path may write data"
-    },
-    {
-      "path": "/api/properties/{propertyId}/sop/completions",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/sop/templates/{templateId}",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/sop/templates",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/stock/items/{itemId}/barcode",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/stock/items/{itemId}",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/stock/items",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/stock/movements",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/stock/reports",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/ticket-config",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/utilities-analytics",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/properties/{propertyId}/vendor-export",
       "reason": "GET path may write data"
     },
     {
-      "path": "/api/properties/{propertyId}/vendor-revenue",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/properties/{propertyId}/water/export",
       "reason": "file, OAuth or public-token route"
-    },
-    {
-      "path": "/api/properties/{propertyId}/water/readings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties/{propertyId}/water/sources",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/public/proctor/{token}",
@@ -3054,10 +3338,6 @@
     {
       "path": "/api/roster/export",
       "reason": "file, OAuth or public-token route"
-    },
-    {
-      "path": "/api/satej/rates",
-      "reason": "GET path may write data"
     },
     {
       "path": "/api/satej/voice/recording",
@@ -3162,10 +3442,6 @@
     {
       "path": "/api/webhooks/aisensy",
       "reason": "blocked area \"webhooks\""
-    },
-    {
-      "path": "/api/wiki",
-      "reason": "GET path may write data"
     }
   ]
 }

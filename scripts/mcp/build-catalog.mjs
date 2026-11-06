@@ -32,11 +32,50 @@ const BLOCKED_TOP = new Set([
 // Path segments that mean "not a plain JSON read" (files, OAuth hops, public tokens).
 const BLOCKED_SEGMENT = /(^|\/)(oauth|callback|connect|export|export-all|template|download|scan|webhook|webhooks|cron|preview-pdf|pdf|file|files|image|images|thumbnail|signed-url|token|\[token\])(\/|$)/i;
 
-const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\bresolveCaller\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
+const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\bresolveCaller\(|\bguardProperty\(|\bguardOrg\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
 const WRITE_EVIDENCE = /\.(insert|update|upsert|delete)\(|\.rpc\(|\.storage\s*\.\s*from\([^)]*\)\s*\.\s*(upload|remove|move)\(/;
 const SIDE_EFFECT_EVIDENCE = /\b(NotificationService|EmailService|WhatsApp\w*Service|WhatsAppEventProcessor|VoiceCallingService|LeadOutreachService|LeadSlaEscalationService|runAutoSlaEscalation|sendDigest|runCouncil|withAgentRun|TaskDailyGeneratorService|runBotHousekeeping|sendMail|sendEmail|sendPush|nodemailer)\b|\bfetch\(/;
 
-const METHOD_EXPORT = /^export\s+(?:async\s+)?(?:function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/m;
+/**
+ * Database functions declared STABLE or IMMUTABLE in the SQL migrations. Postgres does not let
+ * those modify data, so `.rpc('<name>', ...)` on one of them is a read, not a write.
+ */
+function readOnlyRpcNames() {
+    const names = new Set();
+    const dirs = ['supabase/migrations', 'backend/db/migrations', 'sql'].map(d => join(ROOT, d));
+    const files = [];
+    const collect = dir => {
+        let entries = [];
+        try { entries = readdirSync(dir); } catch { return; }
+        for (const n of entries) {
+            const p = join(dir, n);
+            if (statSync(p).isDirectory()) collect(p);
+            else if (n.endsWith('.sql')) files.push(p);
+        }
+    };
+    dirs.forEach(collect);
+    const def = /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?([a-z0-9_]+)"?\s*\(([\s\S]*?)(?=create\s+(?:or\s+replace\s+)?function|$)/gi;
+    const volatileSeen = new Set();
+    for (const f of files) {
+        const sql = readFileSync(f, 'utf8');
+        for (const m of sql.matchAll(def)) {
+            const name = m[1].toLowerCase();
+            // Only the header up to the body start decides volatility.
+            const header = m[2].split(/\bAS\s+\$[A-Za-z_]*\$/i)[0] + ' ' + (m[2].match(/\$[A-Za-z_]*\$[\s\S]*?\$[A-Za-z_]*\$([\s\S]{0,200})/)?.[1] || '');
+            if (/\b(stable|immutable)\b/i.test(header)) names.add(name);
+            else volatileSeen.add(name);
+        }
+    }
+    // A function redefined anywhere without STABLE/IMMUTABLE is not trusted.
+    for (const n of volatileSeen) names.delete(n);
+    return names;
+}
+const READ_ONLY_RPCS = readOnlyRpcNames();
+function withoutReadOnlyRpcs(code) {
+    return code.replace(/\.rpc\(\s*['"]([a-z0-9_]+)['"]/gi, (all, name) => (READ_ONLY_RPCS.has(name.toLowerCase()) ? `.readOnlyRpc('${name}'` : all));
+}
+
+const METHOD_EXPORT =/^export\s+(?:async\s+)?(?:function\s+|const\s+)(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/m;
 
 function walk(dir, out = []) {
     for (const name of readdirSync(dir)) {
@@ -176,7 +215,7 @@ for (const file of files) {
     else if (BLOCKED_SEGMENT.test(routeDir)) reason = 'file, OAuth or public-token route';
     else if (/\[\.\.\./.test(routeDir)) reason = 'catch-all route';
     else if (!AUTH_EVIDENCE.test(get + '\n' + shared) && !callsSignInHelper(src, get + '\n' + shared)) reason = 'no visible sign-in check';
-    else if (WRITE_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may write data';
+    else if (WRITE_EVIDENCE.test(withoutReadOnlyRpcs(get + '\n' + shared))) reason = 'GET path may write data';
     else if (SIDE_EFFECT_EVIDENCE.test(get + '\n' + shared)) reason = 'GET path may send messages or call outside services';
 
     if (reason) {

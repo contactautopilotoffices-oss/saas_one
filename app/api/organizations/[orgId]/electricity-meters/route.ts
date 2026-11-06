@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     // Get all properties for this org

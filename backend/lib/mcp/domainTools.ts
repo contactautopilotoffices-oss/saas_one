@@ -40,6 +40,17 @@ export const DOMAIN_TOOL_PATHS = [
     '/api/command-center/kpis', '/api/command-center/portfolio', '/api/command-center/ticket-alerts', '/api/command-center/water',
     '/api/roster', '/api/meetings', '/api/meetings/{id}',
     '/api/org-efficiency/goals', '/api/org-efficiency/tasks', '/api/org-efficiency/meter', '/api/org-efficiency/agents', '/api/org-efficiency/measurements',
+    '/api/properties/{id}', '/api/properties/{id}/features',
+    '/api/properties/{id}/diesel-readings', '/api/properties/{id}/electricity-readings', '/api/properties/{id}/water/readings',
+    '/api/properties/{id}/generators', '/api/properties/{id}/electricity-meters', '/api/properties/{id}/water/sources',
+    '/api/properties/{id}/utilities-analytics', '/api/properties/{id}/dg-tariffs', '/api/properties/{id}/grid-tariffs',
+    '/api/organizations/{id}/diesel-summary', '/api/organizations/{id}/diesel-readings', '/api/organizations/{id}/electricity-readings',
+    '/api/organizations/{id}/generators', '/api/organizations/{id}/electricity-meters',
+    '/api/properties/{id}/stock/items', '/api/properties/{id}/stock/movements', '/api/properties/{id}/stock/reports', '/api/organizations/{id}/stock/reports',
+    '/api/properties/{id}/sop/templates', '/api/properties/{id}/sop/completions',
+    '/api/organizations/{id}/tickets-summary', '/api/organizations/{id}/vendor-summary', '/api/organizations/{id}/vms-summary',
+    '/api/organizations/{id}/ppm-summary', '/api/organizations/{id}/roster-coverage', '/api/organizations/{id}/material-requests-summary',
+    '/api/petty-cash', '/api/petty-cash/expenses', '/api/petty-cash/tracker', '/api/wiki', '/api/satej/rates',
 ] as const;
 
 export function registerDomainTools(server: McpServer, call: Call): void {
@@ -353,6 +364,178 @@ export function registerDomainTools(server: McpServer, call: Call): void {
         if (!goal_id) return { content: [{ type: 'text', text: 'goal_id is required for view "measurements". Use view "goals" to find it.' }], isError: true };
         return call('org_efficiency', '/api/org-efficiency/measurements', { goalId: goal_id });
     });
+
+    server.registerTool('property_details', {
+        title: 'One property in full',
+        description:
+            'Details of one property (address, capacity, status) and, with include_features, which FMS modules are switched on there. ' +
+            'Example: {"property_id": "<id>", "include_features": true}.',
+        inputSchema: { property_id: prop(), include_features: z.boolean().optional() },
+        annotations: READ_ONLY,
+    }, async ({ property_id, include_features }) => include_features
+        ? call('property_details', `/api/properties/${property_id}/features`, {})
+        : call('property_details', `/api/properties/${property_id}`, {}));
+
+    server.registerTool('utilities', {
+        title: 'Diesel, electricity and water',
+        description:
+            'Utility readings and equipment. Give property_id for one property, or organization_id (without property_id) for the organisation-wide view. ' +
+            'Views: "diesel_readings", "electricity_readings", "water_readings" (property only, needs month), "generators", "meters" (electricity meters), ' +
+            '"water_sources" (property only), "analytics" (property only: consumption trends), "diesel_summary" (organisation only), "tariffs" (property only: DG and grid tariffs). ' +
+            'Use for "diesel consumed at Andheri last week", "which DG sets do we have". For electricity BILLS use electricity. ' +
+            'Example: {"view": "diesel_readings", "property_id": "<id>", "start_date": "2026-11-01", "end_date": "2026-11-06"}.',
+        inputSchema: {
+            view: z.enum(['diesel_readings', 'electricity_readings', 'water_readings', 'generators', 'meters', 'water_sources', 'analytics', 'diesel_summary', 'tariffs']),
+            property_id: prop().optional(),
+            organization_id: org().optional(),
+            start_date: ymd().optional(),
+            end_date: ymd().optional(),
+            period: text(20).optional().describe('e.g. "today", "week", "month".'),
+            month: ym().optional().describe('For water_readings.'),
+            generator_id: uuid().optional(),
+            meter_id: uuid().optional(),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, property_id, organization_id, start_date, end_date, period, month, generator_id, meter_id }) => {
+        const range = { startDate: start_date, endDate: end_date };
+        const need = (msg: string) => ({ content: [{ type: 'text' as const, text: msg }], isError: true });
+        if (property_id) {
+            const base = `/api/properties/${property_id}`;
+            if (view === 'diesel_readings') return call('utilities', `${base}/diesel-readings`, { ...range, period, generatorId: generator_id });
+            if (view === 'electricity_readings') return call('utilities', `${base}/electricity-readings`, { ...range, period, meterId: meter_id });
+            if (view === 'water_readings') return month ? call('utilities', `${base}/water/readings`, { month }) : need('month (YYYY-MM) is required for water_readings.');
+            if (view === 'generators') return call('utilities', `${base}/generators`, {});
+            if (view === 'meters') return call('utilities', `${base}/electricity-meters`, {});
+            if (view === 'water_sources') return call('utilities', `${base}/water/sources`, {});
+            if (view === 'analytics') return call('utilities', `${base}/utilities-analytics`, { period, generatorId: generator_id, meterId: meter_id });
+            if (view === 'tariffs') {
+                const [dg, grid] = await Promise.all([call('utilities', `${base}/dg-tariffs`, {}), call('utilities', `${base}/grid-tariffs`, {})]);
+                return { content: [...dg.content, ...grid.content], ...(dg.isError && grid.isError ? { isError: true } : {}) };
+            }
+            return need('diesel_summary is organisation-wide: give organization_id instead of property_id.');
+        }
+        if (!organization_id) return need('Give property_id (one property) or organization_id (the whole organisation).');
+        const base = `/api/organizations/${organization_id}`;
+        if (view === 'diesel_summary') return call('utilities', `${base}/diesel-summary`, { period });
+        if (view === 'diesel_readings') return call('utilities', `${base}/diesel-readings`, { ...range, period });
+        if (view === 'electricity_readings') return call('utilities', `${base}/electricity-readings`, range);
+        if (view === 'generators') return call('utilities', `${base}/generators`, {});
+        if (view === 'meters') return call('utilities', `${base}/electricity-meters`, {});
+        return need(`${view} is per property: give property_id.`);
+    });
+
+    server.registerTool('stock', {
+        title: 'Stock and stores',
+        description:
+            'Stores inventory. view "items": stock items at a property (low_stock_only for items below their minimum). ' +
+            'view "movements": issues and receipts over a period. view "report": the stock report for a property, or for the whole organisation with organization_id. ' +
+            'Use for "what is running low at Andheri", "how much tissue was issued last month". Do not use for purchase requisitions (use list_requisitions). ' +
+            'Example: {"view": "items", "property_id": "<id>", "low_stock_only": true}.',
+        inputSchema: {
+            view: z.enum(['items', 'movements', 'report']),
+            property_id: prop().optional(),
+            organization_id: org().optional().describe('For an organisation-wide report.'),
+            category: text(60).optional(),
+            low_stock_only: z.boolean().optional(),
+            item_id: uuid().optional(),
+            start_date: ymd().optional(),
+            end_date: ymd().optional(),
+            limit: z.number().int().min(1).max(500).optional(),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, property_id, organization_id, category, low_stock_only, item_id, start_date, end_date, limit }) => {
+        if (!property_id) {
+            if (view === 'report' && organization_id) return call('stock', `/api/organizations/${organization_id}/stock/reports`, { startDate: start_date, endDate: end_date, limit });
+            return { content: [{ type: 'text', text: 'Give property_id (or organization_id for an organisation-wide report).' }], isError: true };
+        }
+        const base = `/api/properties/${property_id}/stock`;
+        if (view === 'items') return call('stock', `${base}/items`, { category, lowStockOnly: low_stock_only });
+        if (view === 'movements') return call('stock', `${base}/movements`, { itemId: item_id, startDate: start_date, endDate: end_date, limit });
+        return call('stock', `${base}/reports`, { startDate: start_date, endDate: end_date, limit });
+    });
+
+    server.registerTool('sop_checklists', {
+        title: 'SOP checklists',
+        description:
+            'Standard operating procedure checklists at a property. view "templates": the checklists set up there (filter by role). ' +
+            'view "completions": who completed which checklist and when (filter by template, date, person). ' +
+            'Use for "was the morning housekeeping checklist done today at Andheri". ' +
+            'Example: {"view": "completions", "property_id": "<id>", "date": "2026-11-06"}.',
+        inputSchema: {
+            view: z.enum(['templates', 'completions']),
+            property_id: prop(),
+            template_id: uuid().optional(),
+            date: ymd().optional().describe('For completions.'),
+            role: text(40).optional().describe('For templates.'),
+            user_id: uuid().optional(),
+            limit: z.number().int().min(1).max(500).optional(),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, property_id, template_id, date, role, user_id, limit }) => view === 'templates'
+        ? call('sop_checklists', `/api/properties/${property_id}/sop/templates`, { role })
+        : call('sop_checklists', `/api/properties/${property_id}/sop/completions`, { templateId: template_id, completionDate: date, userId: user_id, limit }));
+
+    server.registerTool('org_summary', {
+        title: 'Organisation-wide summaries',
+        description:
+            'Organisation-wide numbers across all properties. Views: "tickets", "vendor_revenue", "visitors", "ppm" (maintenance compliance), ' +
+            '"roster_coverage" (staff coverage), "material_requests" (stuck material requests). ' +
+            'Use for "how many tickets are open across all sites", "visitors this month across the portfolio". ' +
+            'Example: {"view": "tickets", "organization_id": "<id>", "period": "month"}.',
+        inputSchema: {
+            view: z.enum(['tickets', 'vendor_revenue', 'visitors', 'ppm', 'roster_coverage', 'material_requests']),
+            organization_id: org(),
+            period: text(20).optional().describe('For tickets, vendor_revenue, visitors: e.g. "today", "week", "month".'),
+            property_id: prop().optional().describe('For material_requests.'),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, organization_id, period, property_id }) => {
+        const base = `/api/organizations/${organization_id}`;
+        const path = { tickets: 'tickets-summary', vendor_revenue: 'vendor-summary', visitors: 'vms-summary', ppm: 'ppm-summary', roster_coverage: 'roster-coverage', material_requests: 'material-requests-summary' }[view];
+        const q = view === 'material_requests' ? { property_id } : ['tickets', 'vendor_revenue', 'visitors'].includes(view) ? { period } : {};
+        return call('org_summary', `${base}/${path}`, q);
+    });
+
+    server.registerTool('petty_cash', {
+        title: 'Petty cash',
+        description:
+            'Petty cash, as the signed-in person may see it. view "requests": petty cash requests. view "my_expenses": the person\'s own expenses. ' +
+            'view "tracker": the petty cash report. Example: {"view": "requests", "organization_id": "<id>"}.',
+        inputSchema: {
+            view: z.enum(['requests', 'my_expenses', 'tracker']),
+            organization_id: org(),
+            page: page(),
+        },
+        annotations: READ_ONLY,
+    }, async ({ view, organization_id, page: p }) => {
+        if (view === 'requests') return call('petty_cash', '/api/petty-cash', { org_id: organization_id });
+        if (view === 'my_expenses') return call('petty_cash', '/api/petty-cash/expenses', { org_id: organization_id, page: p });
+        return call('petty_cash', '/api/petty-cash/tracker', { org_id: organization_id });
+    });
+
+    server.registerTool('wiki', {
+        title: 'Organisation wiki',
+        description:
+            'The organisation wiki (vendor pages, sites, how-tos). Give search to search it, slug for one page, or kind to list pages of a kind (e.g. "vendor"). ' +
+            'Super admins only (the FMS refuses others). Example: {"organization_id": "<id>", "search": "BVG"}.',
+        inputSchema: {
+            organization_id: org(),
+            search: text().optional(),
+            slug: text(160).optional(),
+            kind: text(40).optional(),
+        },
+        annotations: READ_ONLY,
+    }, async ({ organization_id, search, slug, kind }) => call('wiki', '/api/wiki', { org_id: organization_id, q: search, slug, kind }));
+
+    server.registerTool('supplier_rates', {
+        title: 'Rates we have paid',
+        description:
+            'The rate checker: what the organisation has paid for an item before, from Zoho PO lines, to judge a new quote. ' +
+            'Use for "what did we last pay for A4 paper", "is 450 per litre for floor cleaner high". ' +
+            'Example: {"organization_id": "<id>", "item": "floor cleaner", "unit": "litre"}.',
+        inputSchema: { organization_id: org(), item: text(), unit: text(40).optional() },
+        annotations: READ_ONLY,
+    }, async ({ organization_id, item, unit }) => call('supplier_rates', '/api/satej/rates', { organizationId: organization_id, q: item, unit }));
 
     server.registerTool('command_center', {
         title: 'Command Center overview',

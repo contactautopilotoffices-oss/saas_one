@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 // GET: Fetch vendor revenue entries with optional filters
 export async function GET(
@@ -7,6 +8,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId, { allowExternal: true });
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -63,6 +66,8 @@ export async function POST(
 ) {
     try {
         const { propertyId } = await params;
+        const denied = await guardProperty(request, propertyId, { allowExternal: true });
+        if (denied) return denied;
         const supabase = await createClient();
         const body = await request.json();
 

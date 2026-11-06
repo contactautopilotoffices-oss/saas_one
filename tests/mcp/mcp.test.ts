@@ -102,6 +102,13 @@ test('domain tools: called through the guarded path, so another organisation is 
         ['roster', { property_id: OTHER_PROP, month: '2026-11' }],
         ['meetings', { view: 'list', organization_id: OTHER_ORG }],
         ['org_efficiency', { view: 'goals', organization_id: OTHER_ORG }],
+        ['utilities', { view: 'diesel_readings', property_id: OTHER_PROP }],
+        ['utilities', { view: 'diesel_summary', organization_id: OTHER_ORG }],
+        ['stock', { view: 'items', property_id: OTHER_PROP }],
+        ['sop_checklists', { view: 'completions', property_id: OTHER_PROP }],
+        ['org_summary', { view: 'tickets', organization_id: OTHER_ORG }],
+        ['petty_cash', { view: 'requests', organization_id: OTHER_ORG }],
+        ['property_details', { property_id: OTHER_PROP }],
     ] as const) {
         const r = await client.callTool({ name, arguments: args });
         assert.equal(r.isError, true, `${name} must refuse another organisation or property`);
@@ -134,7 +141,7 @@ test('list_hr_tickets: sends the org id as the HR route expects, and refuses ano
 
 test('catalogue: an excluded static route cannot be reached through an included {id} sibling', async () => {
     const { catalog } = await mods();
-    for (const p of ['/api/petty-cash/wallet', '/api/petty-cash/tracker', '/api/assets/template', '/api/invoices/files', '/api/document-bank/download']) {
+    for (const p of ['/api/petty-cash/wallet', '/api/petty-cash/context', '/api/assets/template', '/api/invoices/files', '/api/document-bank/download']) {
         assert.equal(catalog.matchRoute(p), null, p);
     }
     assert.ok(catalog.matchRoute('/api/petty-cash/0b6f3b8e-1c2d-4e5f-8a9b-0c1d2e3f4a5b'), 'a real id still matches');
@@ -310,11 +317,14 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     const listed = await client.listTools();
     const names = listed.tools.map(t => t.name).sort();
     assert.deepEqual(names, [
-        'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action', 'create_ticket',
-        'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance', 'find_endpoints', 'find_meeting_rooms',
-        'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties', 'list_requisitions', 'list_tickets',
-        'list_users', 'meetings', 'my_bookings', 'my_pending_actions', 'my_tasks', 'org_efficiency', 'po_approval_queue', 'po_details', 'ppm',
-        'property_vendors', 'roster', 'ticket_comments', 'visitor_summary', 'whoami',
+        'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action',
+        'create_ticket', 'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance',
+        'find_endpoints', 'find_meeting_rooms', 'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets',
+        'list_properties', 'list_requisitions', 'list_tickets', 'list_users', 'meetings', 'my_bookings',
+        'my_pending_actions', 'my_tasks', 'org_efficiency', 'org_summary', 'petty_cash', 'po_approval_queue',
+        'po_details', 'ppm', 'property_details', 'property_vendors', 'roster', 'sop_checklists',
+        'stock', 'supplier_rates', 'ticket_comments', 'utilities', 'visitor_summary', 'whoami',
+        'wiki',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.

@@ -5,6 +5,7 @@ import { liveItems, toItemSource } from '@/frontend/lib/stock/itemSource';
 import { exec } from 'child_process';
 import path from 'path';
 import { promisify } from 'util';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 const execPromise = promisify(exec);
 
@@ -13,6 +14,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -70,6 +73,8 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -135,6 +140,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
