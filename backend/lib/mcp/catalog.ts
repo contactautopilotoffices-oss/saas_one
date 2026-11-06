@@ -23,6 +23,14 @@ export const REVIEWED_ROUTES: (CatalogRoute & { reason: string })[] = [
         description: 'GET /api/hr/tickets?orgId= HR tickets (grievance, hr_query, confidential_feedback, anonymous_feedback) the caller may see: org super admins all, HR roles all except anonymous and confidential, everyone else their own, their team\'s and those assigned to them.',
         reason: 'Excluded by the scan because the GET also starts the throttled SLA escalation check (at most every 5 minutes). That is the same thing that happens whenever anyone opens the HR tickets screen; the route checks sign-in and derives the role from the caller\'s memberships (PR #184).',
     },
+    {
+        path: '/api/hr/admin/categories',
+        module: 'hr',
+        pathParams: [],
+        queryParams: [],
+        description: 'GET /api/hr/admin/categories The active HR ticket categories (grievance, HR query, confidential, anonymous) with their ids, needed to raise an HR ticket.',
+        reason: 'Excluded by the scan because the GET also inserts any missing DEFAULT categories (idempotent seeding, the same as opening the HR ticket form). Signed-in users only since the MCP create-tools change.',
+    },
 ];
 const REVIEWED_PATHS = new Set(REVIEWED_ROUTES.map(r => r.path));
 
