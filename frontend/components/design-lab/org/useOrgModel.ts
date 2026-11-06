@@ -256,7 +256,7 @@ export function useOrgModel(previewState: PreviewState) {
             ? liveFeed(vendorQ, v => (Array.isArray(v.properties) ? { revenue: v.total_revenue, leader: v.properties.find(x => x.total_revenue > 0)?.property_name ?? null } : null))
             : sampleFeed(S.vendor);
 
-        const emptyApproval = (a: Feed<Approval>): Approval | null => (a.data ? { ...a.data, count: 0 } : null);
+        const emptyApproval = (a: Feed<Approval>): Approval | null => (a.data ? { ...a.data, count: 0, value: null, urgent: false, detail: 'Nothing waiting' } : null);
         return {
             sites: preview(sites, p, []),
             tickets: preview(tickets, p, { breached: 0, urgent: 0, active: 0 }),

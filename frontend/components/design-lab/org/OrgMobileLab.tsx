@@ -11,17 +11,43 @@ import NoirOrg from './NoirOrg';
 import IvoryOrg from './IvoryOrg';
 import OnyxOrg from './OnyxOrg';
 import GiltOrg from './GiltOrg';
+import PulseOrg, { type PulseTab } from './PulseOrg';
 
 /**
- * /design-lab/org-mobile: the org super admin's mobile dashboard in four directions.
- * "All four" puts the phones side by side; picking one shows it alone with its notes.
+ * /design-lab/org-mobile: the org super admin's mobile dashboard in five directions.
+ * "Compare all" puts the phones side by side; picking one shows it alone with its notes.
+ * Pulse shows three of its screens at once, the way a design shot would.
  * On a real phone the chosen design fills the screen instead of sitting in a frame.
  */
 
-type OrgDesignId = 'noir' | 'ivory' | 'onyx' | 'gilt';
+type OrgDesignId = 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
 type View = OrgDesignId | 'all';
 
-const DESIGNS: { id: OrgDesignId; name: string; dot: string; statusDark: boolean; blurb: string; Component: React.ComponentType<{ m: OrgModel }> }[] = [
+const DEFAULT_ORDER = [
+    'Portfolio score and the sites that need you',
+    'Waiting on you: approvals and escalations',
+    'Service risk: SLA, urgent, oldest open',
+    'Property scorecard, worst first',
+    'People, then compliance and asset risk',
+    'Money, utilities, and the rest of today',
+];
+
+const PULSE_SCREENS: { tab: PulseTab; label: string }[] = [
+    { tab: 'home', label: 'Home' }, { tab: 'approvals', label: 'Approvals' }, { tab: 'sites', label: 'Sites' },
+];
+
+const DESIGNS: { id: OrgDesignId; name: string; dot: string; statusDark: boolean; blurb: string; order?: string[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
+    { id: 'pulse', name: 'Pulse', dot: 'linear-gradient(135deg, #ECECE9 0%, #ECECE9 50%, #E6CD8C 50%)', statusDark: false, Component: PulseOrg,
+        blurb: 'Simple and informative. Soft grey page, white rounded cards, one gold hero chart per screen, number tiles in a 2x2 grid with an arrow to open each, progress bars for comparisons and a floating pill tab bar. Home, Approvals and Sites are live tabs.',
+        order: [
+            'Active tickets across all sites, last 7 days (hero chart)',
+            'Four tiles: waiting on you, SLA breached, on duty, PPM on time',
+            'Tickets raised, with Today, Month and All',
+            'Sites, worst first, as progress bars',
+            'Money: budget, electricity, bills at risk',
+            'Risk and compliance: late rounds, AMC, oldest ticket, grievances',
+            'Across sites today: diesel, water, visitors, rooms, vendor revenue',
+        ] },
     { id: 'noir', name: 'Noir', dot: 'linear-gradient(135deg, #0A0A0A 0%, #0A0A0A 55%, #C9A24A 55%)', statusDark: true, Component: NoirOrg,
         blurb: 'Private banking feel. A black band with a gold glow holds the portfolio score and your sites as swipeable cards; a white sheet below holds the rest in order of urgency.' },
     { id: 'ivory', name: 'Ivory', dot: 'linear-gradient(135deg, #FAF8F3 0%, #FAF8F3 55%, #C9A24A 55%)', statusDark: false, Component: IvoryOrg,
@@ -37,6 +63,20 @@ const STATES: { id: PreviewState; label: string }[] = [
     { id: 'error', label: 'Error' }, { id: 'offline', label: 'Offline' },
 ];
 
+function Notes({ design, sticky }: { design: (typeof DESIGNS)[number]; sticky?: boolean }) {
+    return (
+        <section className={`max-w-[380px] rounded-[20px] bg-white p-[24px] text-[#17171A]${sticky ? ' lg:sticky lg:top-[88px]' : ''}`}>
+            <div role="heading" aria-level={1} className="text-[22px] font-semibold">{design.name}</div>
+            <p className="mt-[8px] text-[14px] leading-relaxed text-[#4A4A50]">{design.blurb}</p>
+            <div role="heading" aria-level={2} className="mt-[18px] text-[13px] font-semibold uppercase tracking-[0.1em] text-[#6B6B70]">In this order</div>
+            <ol className="mt-[8px] list-decimal pl-[18px] text-[13.5px] leading-[1.7] text-[#2A2A2E]">
+                {(design.order ?? DEFAULT_ORDER).map(line => <li key={line}>{line}</li>)}
+            </ol>
+            <p className="mt-[16px] text-[12.5px] leading-relaxed text-[#6B6B70]">Blocks marked Sample are not wired to a data hook yet. Every button is preview only.</p>
+        </section>
+    );
+}
+
 function subscribeResize(cb: () => void) {
     window.addEventListener('resize', cb);
     return () => window.removeEventListener('resize', cb);
@@ -48,7 +88,7 @@ function read<T extends string>(name: string, allowed: readonly T[], fallback: T
 }
 
 export default function OrgMobileLab() {
-    const [view, setView] = useState<View>(() => read('design', ['all', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'all'));
+    const [view, setView] = useState<View>(() => read('design', ['all', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'pulse'));
     const [state, setState] = useState<PreviewState>(() => read('state', STATES.map(s => s.id), 'normal'));
     const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1440);
     const m = useOrgModel(state);
@@ -61,8 +101,10 @@ export default function OrgMobileLab() {
         window.history.replaceState(window.history.state, '', url.toString());
     }, [view, state]);
 
-    const shown = device && view === 'all' ? 'noir' : view;
-    const cols = width >= 1200 ? 4 : width >= 760 ? 2 : 1;
+    const shown = device && view === 'all' ? 'pulse' : view;
+    const cols = width >= 1380 ? 5 : width >= 1000 ? 3 : width >= 760 ? 2 : 1;
+    const pulseCols = width >= 1000 ? 3 : 1;
+    const pulseScale = Math.min(1, (width - 64 - (pulseCols - 1) * 28) / pulseCols / 414);
     const allScale = Math.min(1, (width - 64 - (cols - 1) * 28) / cols / 414);
     const one = DESIGNS.find(d => d.id === shown);
 
@@ -76,7 +118,7 @@ export default function OrgMobileLab() {
                     </Link>
                     <span className="hidden shrink-0 text-[13px] font-semibold lg:inline">Org super admin, mobile</span>
                     <div role="tablist" aria-label="Design" className="flex shrink-0 items-center gap-[6px]">
-                        {[{ id: 'all' as View, name: 'All four', dot: '' }, ...DESIGNS].filter(d => !(device && d.id === 'all')).map(d => {
+                        {[{ id: 'all' as View, name: 'Compare all', dot: '' }, ...DESIGNS].filter(d => !(device && d.id === 'all')).map(d => {
                             const on = d.id === shown;
                             return (
                                 <button key={d.id} type="button" role="tab" aria-selected={on} onClick={() => setView(d.id)}
@@ -114,23 +156,22 @@ export default function OrgMobileLab() {
                         </div>
                     ))}
                 </main>
+            ) : one?.id === 'pulse' ? (
+                <main className="mx-auto flex flex-col items-center gap-[28px] px-[32px] py-[32px]">
+                    <div className="flex flex-wrap justify-center gap-[28px]">
+                        {PULSE_SCREENS.map(s => (
+                            <div key={s.tab} className="flex flex-col items-center gap-[12px]">
+                                <PhoneFrame label={`Pulse, ${s.label}`} scale={pulseScale} statusDark={false}><PulseOrg m={m} initialTab={s.tab} /></PhoneFrame>
+                                <span className="text-[13px] font-semibold text-[#3A3A3F]">{s.label}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <Notes design={one} />
+                </main>
             ) : one ? (
                 <main className="mx-auto flex max-w-[1100px] flex-col items-center gap-[32px] px-[24px] py-[32px] lg:flex-row lg:items-start lg:justify-center">
                     <PhoneFrame label={one.name} statusDark={one.statusDark}><one.Component m={m} /></PhoneFrame>
-                    <section className="max-w-[380px] rounded-[20px] bg-white p-[24px] text-[#17171A] lg:sticky lg:top-[88px]">
-                        <div role="heading" aria-level={1} className="text-[22px] font-semibold">{one.name}</div>
-                        <p className="mt-[8px] text-[14px] leading-relaxed text-[#4A4A50]">{one.blurb}</p>
-                        <div role="heading" aria-level={2} className="mt-[18px] text-[13px] font-semibold uppercase tracking-[0.1em] text-[#6B6B70]">In this order</div>
-                        <ol className="mt-[8px] list-decimal pl-[18px] text-[13.5px] leading-[1.7] text-[#2A2A2E]">
-                            <li>Portfolio score and the sites that need you</li>
-                            <li>Waiting on you: approvals and escalations</li>
-                            <li>Service risk: SLA, urgent, oldest open</li>
-                            <li>Property scorecard, worst first</li>
-                            <li>People, then compliance and asset risk</li>
-                            <li>Money, utilities, and the rest of today</li>
-                        </ol>
-                        <p className="mt-[16px] text-[12.5px] leading-relaxed text-[#6B6B70]">Blocks marked Sample are not wired to a data hook yet. Every button is preview only.</p>
-                    </section>
+                    <Notes design={one} sticky />
                 </main>
             ) : null}
 
