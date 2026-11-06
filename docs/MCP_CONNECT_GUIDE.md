@@ -3,8 +3,10 @@
 The FMS has an MCP server at `https://<your FMS domain>/api/mcp`. When you connect Claude to it,
 Claude can **read** what you can see in the FMS, signed in as you. It can also **create** records
 (tickets, HR tickets, ticket comments, CRM leads, notes and activities, tasks, diesel, electricity
-and water readings, stock movements, petty cash drafts, meeting room bookings), one at a time and
-only after it shows you a preview and you say yes. There are no delete tools.
+and water readings, stock movements, petty cash drafts, meeting room bookings) and **update** one
+existing record (close or change a ticket, reassign it, move an HR ticket on, update a CRM lead,
+mark a task done), one at a time and only after it shows you a preview and you say yes. There are
+no delete tools.
 
 ## For users (anyone with an FMS login, clients included)
 
@@ -83,7 +85,20 @@ then sign in when asked.
   `draft_petty_cash_request` (saved as a draft only), `book_meeting_room`, `cancel_booking`.
   Each only returns a preview and a one-time code; `confirm_action` carries it out through the
   app's own route as the user. No delete tools.
-- **Guardrails against bulk inserts** ("create 100 test tickets"):
+- **Update actions (preview, then confirm):** one existing record each, only the listed fields:
+  - `update_ticket`: a service ticket's status (open, in progress, waitlist, resolved, closed),
+    priority or resolution notes. Staff only, as in the app (tenants, clients and vendors can comment).
+  - `reassign_ticket`: give a service ticket to another staff member at its property. Only
+    organisation or property admins.
+  - `update_hr_ticket`: start, resolve (with a note), accept the resolution, or reopen. The HR
+    route decides who may do which (current handler or HR to resolve, the person who raised it to accept).
+  - `update_crm_lead`: status, owner, next follow-up date, priority.
+  - `update_task_status`: pending, in progress, completed.
+  - The preview shows "current value -> new value". Just before acting, the record is read again;
+    if it changed since the preview (someone else closed or reassigned it), nothing is sent and
+    Claude has to prepare a new preview. Updates count towards the same per-person limits.
+  - Read one HR ticket with `hr_ticket_details`.
+- **Guardrails against bulk inserts and bulk changes** ("create 100 test tickets", "close all my tickets"):
   - one record per action: no tool accepts a list, every request sent holds exactly one record;
   - every record needs its own preview and the user's own yes; each code works once, expires after
     10 minutes and is bound to one user and one connection (signed by the server);

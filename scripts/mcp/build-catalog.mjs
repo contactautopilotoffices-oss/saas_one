@@ -168,9 +168,15 @@ function leadingComment(src) {
     const idx = src.search(/^export\s+(?:async\s+)?(?:function|const)\s+GET\b/m);
     if (idx < 0) return '';
     const before = src.slice(0, idx);
-    const block = before.match(/\/\*\*?([\s\S]*?)\*\/\s*$/);
+    // The comment directly above GET: the LAST block comment, not one that starts higher up.
+    const trimmed = before.replace(/\s+$/, '');
     let text = '';
-    if (block) text = block[1];
+    if (trimmed.endsWith('*/')) text = trimmed.slice(trimmed.lastIndexOf('/*') + 2, -2).replace(/^\*/, '');
+    // A banner such as "===== GET =====" says nothing: use the earlier block (usually the file header) instead.
+    if (text && (text.match(/[A-Za-z]/g) || []).length < 12) {
+        const block = before.match(/\/\*\*?([\s\S]*?)\*\/\s*$/);
+        text = block ? block[1] : '';
+    }
     else {
         const lineComments = before.match(/((?:^\s*\/\/.*\n)+)\s*$/m);
         if (lineComments) text = lineComments[1];

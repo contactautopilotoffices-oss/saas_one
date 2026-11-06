@@ -122,7 +122,9 @@ test('catalogue: HR tickets are reachable only as the reviewed exception', async
     const { catalog } = await mods();
     assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
     assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets', '/api/hr/admin/categories']);
-    assert.equal(catalog.matchRoute('/api/hr/tickets/escalate-all'), null);
+    // One HR ticket is readable since its route checks sign-in; its comments route does not yet, so it stays out.
+    assert.ok(catalog.matchRoute(`/api/hr/tickets/${PROP}`));
+    assert.equal(catalog.matchRoute(`/api/hr/tickets/${PROP}/comments`), null);
 });
 
 test('list_hr_tickets: sends the org id as the HR route expects, and refuses another organisation', async () => {
@@ -321,13 +323,14 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
         'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action', 'create_crm_lead',
         'create_ticket', 'crm_reports', 'document_bank', 'draft_petty_cash_request', 'electricity',
         'fetch_endpoint', 'finance', 'find_endpoints', 'find_meeting_rooms', 'hr_categories',
-        'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties',
+        'hr_ticket_details', 'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties',
         'list_requisitions', 'list_tickets', 'list_users', 'log_crm_activity', 'meetings',
         'my_bookings', 'my_pending_actions', 'my_tasks', 'org_efficiency', 'org_summary',
         'petty_cash', 'po_approval_queue', 'po_details', 'ppm', 'property_details',
-        'property_vendors', 'raise_hr_ticket', 'record_diesel_reading', 'record_electricity_reading', 'record_stock_movement',
+        'property_vendors', 'raise_hr_ticket', 'reassign_ticket', 'record_diesel_reading', 'record_electricity_reading', 'record_stock_movement',
         'record_water_reading', 'roster', 'sop_checklists', 'stock', 'supplier_rates',
-        'ticket_comments', 'utilities', 'visitor_summary', 'whoami', 'wiki',
+        'ticket_comments', 'update_crm_lead', 'update_hr_ticket', 'update_task_status', 'update_ticket',
+        'utilities', 'visitor_summary', 'whoami', 'wiki',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.
@@ -342,7 +345,7 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
         for (const [k, v] of Object.entries(props)) assert.notEqual(v.type, 'array', `${t.name}.${k} must not accept a list`);
     }
     for (const t of listed.tools.filter(t => !['confirm_action'].includes(t.name))) {
-        if (/^(create_|raise_|add_|log_|assign_|record_|draft_|book_|cancel_)/.test(t.name)) assert.match(t.description || '', /PREVIEW/i, `${t.name} must say it only previews`);
+        if (/^(create_|raise_|add_|log_|assign_|record_|draft_|book_|cancel_|update_|reassign_)/.test(t.name)) assert.match(t.description || '', /PREVIEW/i, `${t.name} must say it only previews`);
     }
 
     const who = await client.callTool({ name: 'whoami', arguments: {} });

@@ -14,7 +14,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 export const CONFIRM_TTL_SECONDS = 10 * 60;
 
-/** Every action the MCP can carry out. Creates only, plus cancelling one's own booking; no deletes. */
+/** Every action the MCP can carry out: creates, a few updates of one record each, no deletes. */
 export const ACTION_NAMES = [
     'create_ticket', 'book_meeting_room', 'cancel_booking',
     'raise_hr_ticket', 'add_ticket_comment',
@@ -22,6 +22,8 @@ export const ACTION_NAMES = [
     'assign_task',
     'record_diesel_reading', 'record_electricity_reading', 'record_water_reading',
     'record_stock_movement', 'draft_petty_cash_request',
+    // Updates: one existing record each, only the listed fields.
+    'update_ticket', 'reassign_ticket', 'update_hr_ticket', 'update_crm_lead', 'update_task_status',
 ] as const;
 export type ActionName = typeof ACTION_NAMES[number];
 
