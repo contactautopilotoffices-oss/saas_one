@@ -1,9 +1,10 @@
 # Connect Claude to the FMS
 
 The FMS has an MCP server at `https://<your FMS domain>/api/mcp`. When you connect Claude to it,
-Claude can **read** what you can see in the FMS, signed in as you. It can also **raise a ticket,
-book a meeting room or cancel a booking**, but only after it shows you a preview and you say yes.
-It cannot approve, change or delete anything else.
+Claude can **read** what you can see in the FMS, signed in as you. It can also **create** records
+(tickets, HR tickets, ticket comments, CRM leads, notes and activities, tasks, diesel, electricity
+and water readings, stock movements, petty cash drafts, meeting room bookings), one at a time and
+only after it shows you a preview and you say yes. There are no delete tools.
 
 ## For users (anyone with an FMS login, clients included)
 
@@ -28,7 +29,9 @@ then sign in when asked.
 
 ## For the admin (one-time setup)
 
-1. **Apply the migration** `supabase/migrations/20261105000001_mcp_call_log.sql` (creates the call log).
+1. **Apply the migrations, in order:** `supabase/migrations/20261105000001_mcp_call_log.sql` (call log
+   and used codes), then `supabase/migrations/20261106000001_mcp_action_limits.sql` (the per-person
+   limits and duplicate check). Without the second one, every create action is refused.
 2. **Supabase dashboard → Authentication → OAuth Server:**
    - Turn on **OAuth 2.1 server**.
    - Turn on **Dynamic client registration** (Claude registers itself).
@@ -74,11 +77,22 @@ then sign in when asked.
   `payment_tracker`, `payments`, `summary`). Every tool goes through the same checks as
   `fetch_endpoint`. Routes the scan leaves out but a person reviewed and allowed are listed, with
   the reason, in `REVIEWED_ROUTES` in `backend/lib/mcp/catalog.ts` (today: `/api/hr/tickets`).
-- **Actions (preview, then confirm):** `create_ticket`, `book_meeting_room`, `cancel_booking` only
-  return a preview and a one-time code. `confirm_action` carries it out through the app's own route
-  (`POST /api/tickets`, `POST /api/meeting-room-bookings`, `PATCH /api/meeting-room-bookings/{id}`)
-  as the user. The code is signed by the server, names the exact arguments previewed, belongs to one
-  user and one connection, expires after 10 minutes and works once (`mcp_action_confirmations`).
+- **Create actions (preview, then confirm):** `create_ticket`, `raise_hr_ticket`, `add_ticket_comment`,
+  `create_crm_lead`, `add_crm_note`, `log_crm_activity`, `assign_task`, `record_diesel_reading`,
+  `record_electricity_reading`, `record_water_reading`, `record_stock_movement`,
+  `draft_petty_cash_request` (saved as a draft only), `book_meeting_room`, `cancel_booking`.
+  Each only returns a preview and a one-time code; `confirm_action` carries it out through the
+  app's own route as the user. No delete tools.
+- **Guardrails against bulk inserts** ("create 100 test tickets"):
+  - one record per action: no tool accepts a list, every request sent holds exactly one record;
+  - every record needs its own preview and the user's own yes; each code works once, expires after
+    10 minutes and is bound to one user and one connection (signed by the server);
+  - per-user limit, all actions together: **10 per hour, 30 per day** by default
+    (`MCP_WRITE_LIMIT_PER_HOUR`, `MCP_WRITE_LIMIT_PER_DAY`); the same action with the same details
+    within 15 minutes is refused (`MCP_DUPLICATE_WINDOW_MINUTES`);
+  - checked and recorded in one locked database step (`mcp_consume_action`, migration
+    `20261106000001_mcp_action_limits.sql`), so many confirmations at once cannot slip past;
+  - text length caps and number ranges on every field.
   Optional `MCP_CONFIRM_SECRET` (32+ characters) sets the signing key; otherwise it is derived from
   the service role key.
 

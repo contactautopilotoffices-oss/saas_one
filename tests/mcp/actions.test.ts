@@ -42,7 +42,7 @@ function harness(responses: Record<string, { status: number; body: unknown }> = 
         },
         origin: 'https://fms.example.com',
         supabaseUrl: 'https://abcd.supabase.co',
-        deps: { fetcher: fetcher as unknown as typeof import('../../backend/lib/mcp/fetchAsUser').fetchAsUser, nonceStore, key: KEY },
+        deps: { fetcher: fetcher as unknown as typeof import('../../backend/lib/mcp/fetchAsUser').fetchAsUser, nonceStore, key: KEY, remaining: async () => ({ hour: 5, day: 20 }) },
     });
     return { calls, ctx };
 }
@@ -180,4 +180,106 @@ test('without a signing key, no action can be previewed or confirmed', async () 
     const ctx = { ...h.ctx(), deps: { ...h.ctx().deps, key: null } };
     assert.equal((await previewCreateTicket(ctx, { property_id: PROP, description: 'Broken chair in cafe' })).ok, false);
     assert.equal((await confirmAction(ctx, 'abc.def')).ok, false);
+});
+
+// ---------- create tools and bulk-insert guardrails ----------
+
+const GEN = '77777777-7777-4777-8777-777777777777';
+const METER = '88888888-8888-4888-8888-888888888888';
+const SRC = '99999999-9999-4999-8999-999999999990';
+const ITEM = '12121212-1212-4212-8212-121212121212';
+const LEAD = '13131313-1313-4313-8313-131313131313';
+const CAT = '14141414-1414-4414-8414-141414141414';
+
+test('guardrail: no preview once the per-person limit is reached', async () => {
+    const { previewCreateTicket } = await import('../../backend/lib/mcp/actions');
+    const h = harness();
+    const ctx = { ...h.ctx(), deps: { ...h.ctx().deps, remaining: async () => ({ hour: 0, day: 12 }) } };
+    const r = await previewCreateTicket(ctx, { property_id: PROP, description: 'Testing ticket number 11' });
+    assert.equal(r.ok, false);
+    assert.match(r.text, /limit/);
+});
+
+test('guardrail: a duplicate or over-limit refusal from the database stops the action', async () => {
+    const { previewCreateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
+    for (const reason of ['the same request was already carried out a few minutes ago, so it was not repeated', 'the limit of actions per hour through the assistant has been reached; try again later or use the FMS app']) {
+        const h = harness();
+        const ctx = { ...h.ctx(), deps: { ...h.ctx().deps, nonceStore: async () => ({ ok: false as const, reason }) } };
+        const prev = await previewCreateTicket(ctx, { property_id: PROP, description: 'Lift stuck on 2nd floor' });
+        const done = await confirmAction(ctx, codeOf(prev.text));
+        assert.equal(done.ok, false);
+        assert.ok(done.text.includes(reason));
+        assert.equal(writes(h.calls).length, 0, 'nothing is sent when the guardrail refuses');
+    }
+});
+
+test('guardrail: the duplicate fingerprint ignores case and spacing but not real changes', async () => {
+    const { paramsHash } = await import('../../backend/lib/mcp/confirm');
+    const a = paramsHash('create_ticket', { property_id: PROP, description: 'AC leaking' });
+    assert.equal(a, paramsHash('create_ticket', { description: '  ac LEAKING ', property_id: PROP }));
+    assert.notEqual(a, paramsHash('create_ticket', { property_id: PROP, description: 'AC leaking on 3rd floor' }));
+    assert.notEqual(a, paramsHash('raise_hr_ticket', { property_id: PROP, description: 'AC leaking' }));
+});
+
+test('every preview says it creates one record', async () => {
+    const { previewCreateTicket } = await import('../../backend/lib/mcp/actions');
+    const r = await previewCreateTicket(harness().ctx(), { property_id: PROP, description: 'Broken chair in pantry' });
+    assert.match(r.text, /creates ONE record/);
+});
+
+test('readings, stock, CRM, HR, tasks and petty cash: one record to the right route, exactly as previewed', async () => {
+    const a = await import('../../backend/lib/mcp/actions');
+    const h = harness({
+        [`GET /api/properties/${PROP}/generators`]: { status: 200, body: [{ id: GEN, name: 'DG 1' }] },
+        [`GET /api/properties/${PROP}/electricity-meters`]: { status: 200, body: [{ id: METER, name: 'Main' }] },
+        [`GET /api/properties/${PROP}/water/sources`]: { status: 200, body: [{ id: SRC, name: 'Tanker' }] },
+        [`GET /api/properties/${PROP}/stock/items/${ITEM}`]: { status: 200, body: { success: true, item: { id: ITEM, name: 'Tissue', quantity: 40 } } },
+        ['GET /api/hr/admin/categories']: { status: 200, body: { success: true, data: [{ id: CAT, category_name: 'Salary', ticket_type: 'grievance' }] } },
+        [`GET /api/tickets/${LEAD}/comments`]: { status: 200, body: [] },
+    });
+    const ctx = h.ctx();
+    type Sent = Record<string, unknown> & { readings?: unknown[] };
+    const cases: [Promise<{ ok: boolean; text: string }>, string, string, (b: Sent) => void][] = [
+        [a.previewRecordDieselReading(ctx, { property_id: PROP, generator_id: GEN, reading_date: '2026-11-06', opening_hours: 10, closing_hours: 12 }), 'POST', `/api/properties/${PROP}/diesel-readings`, b => { assert.equal(b.generator_id, GEN); assert.equal(b.readings, undefined); }],
+        [a.previewRecordElectricityReading(ctx, { property_id: PROP, meter_id: METER, reading_date: '2026-11-06', closing_reading: 500 }), 'POST', `/api/properties/${PROP}/electricity-readings`, b => assert.equal(b.meter_id, METER)],
+        [a.previewRecordWaterReading(ctx, { property_id: PROP, source_id: SRC, reading_date: '2026-11-06', quantity: 12 }), 'POST', `/api/properties/${PROP}/water/readings`, b => assert.equal(b.readings?.length, 1, 'the list holds exactly one reading')],
+        [a.previewRecordStockMovement(ctx, { property_id: PROP, item_id: ITEM, action: 'remove', quantity: 5 }), 'POST', `/api/properties/${PROP}/stock/movements`, b => assert.deepEqual(b, { itemId: ITEM, action: 'remove', quantity: 5 })],
+        [a.previewCreateCrmLead(ctx, { organization_id: ORG, company_name: 'Acme', seats: 20 }), 'POST', '/api/crm/leads', b => assert.equal(b.company_name, 'Acme')],
+        [a.previewAddCrmNote(ctx, { lead_id: LEAD, note: 'Wants a visit' }), 'POST', '/api/crm/notes', b => assert.equal(b.lead_id, LEAD)],
+        [a.previewLogCrmActivity(ctx, { lead_id: LEAD, activity_type: 'call' }), 'POST', '/api/crm/activities', b => assert.equal(b.activity_type, 'call')],
+        [a.previewRaiseHrTicket(ctx, { organization_id: ORG, category_id: CAT, subject: 'Salary', description: 'Not credited' }), 'POST', '/api/hr/tickets', b => assert.equal(b.category_id, CAT)],
+        [a.previewAddTicketComment(ctx, { ticket_id: LEAD, comment: 'Vendor visited' }), 'POST', `/api/tickets/${LEAD}/comments`, b => assert.deepEqual(b, { comment: 'Vendor visited', is_internal: false })],
+        [a.previewAssignTask(ctx, { target_employee_id: LEAD, title: 'Check DG' }), 'POST', '/api/task-manager/tasks', b => { assert.equal(b.action, 'assign_task'); assert.equal(b.actorId, USER); }],
+        [a.previewDraftPettyCash(ctx, { organization_id: ORG, property_id: PROP, purpose: 'Pantry', amount_requested: 2500 }), 'POST', '/api/petty-cash', b => { assert.equal(b.save_draft, true); assert.equal(b.request_type, 'advance'); }],
+    ];
+    for (const [prevP, method, path, check] of cases) {
+        const before = writes(h.calls).length;
+        const prev = await prevP;
+        assert.ok(prev.ok, prev.text);
+        assert.equal(writes(h.calls).length, before, 'preview must not write');
+        const done = await a.confirmAction(ctx, codeOf(prev.text));
+        assert.ok(done.ok, `${path}: ${done.text}`);
+        const sent = writes(h.calls).slice(before);
+        assert.equal(sent.length, 1, `${path}: exactly one write`);
+        assert.equal(sent[0].method, method);
+        assert.equal(sent[0].path, path);
+        check(sent[0].body as Sent);
+    }
+});
+
+test('create tools refuse things outside the user\'s reach before anything is sent', async () => {
+    const a = await import('../../backend/lib/mcp/actions');
+    const h = harness({ [`GET /api/properties/${PROP}/generators`]: { status: 200, body: [{ id: GEN, name: 'DG 1' }] } });
+    const ctx = h.ctx();
+    const refusals = await Promise.all([
+        a.previewRecordDieselReading(ctx, { property_id: OTHER_PROP, generator_id: GEN, reading_date: '2026-11-06' }),
+        a.previewRecordDieselReading(ctx, { property_id: PROP, generator_id: METER, reading_date: '2026-11-06' }),
+        a.previewCreateCrmLead(ctx, { organization_id: '99999999-9999-4999-8999-999999999999', company_name: 'X' }),
+        a.previewCreateCrmLead(ctx, { organization_id: ORG }),
+        a.previewRecordStockMovement(ctx, { property_id: PROP, item_id: ITEM, action: 'add', quantity: 1_000_000 }),
+        a.previewDraftPettyCash(ctx, { organization_id: ORG, property_id: PROP, purpose: 'x', amount_requested: 99_000_000 }),
+        a.previewRecordDieselReading(ctx, { property_id: PROP, generator_id: GEN, reading_date: '2026-11-06', diesel_added_litres: -5 }),
+    ]);
+    for (const r of refusals) assert.equal(r.ok, false, r.text);
+    assert.equal(writes(h.calls).length, 0);
 });

@@ -121,7 +121,7 @@ test('domain tools: called through the guarded path, so another organisation is 
 test('catalogue: HR tickets are reachable only as the reviewed exception', async () => {
     const { catalog } = await mods();
     assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
-    assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets']);
+    assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets', '/api/hr/admin/categories']);
     assert.equal(catalog.matchRoute('/api/hr/tickets/escalate-all'), null);
 });
 
@@ -317,20 +317,32 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     const listed = await client.listTools();
     const names = listed.tools.map(t => t.name).sort();
     assert.deepEqual(names, [
-        'amc_contracts', 'aop', 'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action',
-        'create_ticket', 'crm_reports', 'document_bank', 'electricity', 'fetch_endpoint', 'finance',
-        'find_endpoints', 'find_meeting_rooms', 'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets',
-        'list_properties', 'list_requisitions', 'list_tickets', 'list_users', 'meetings', 'my_bookings',
-        'my_pending_actions', 'my_tasks', 'org_efficiency', 'org_summary', 'petty_cash', 'po_approval_queue',
-        'po_details', 'ppm', 'property_details', 'property_vendors', 'roster', 'sop_checklists',
-        'stock', 'supplier_rates', 'ticket_comments', 'utilities', 'visitor_summary', 'whoami',
-        'wiki',
+        'add_crm_note', 'add_ticket_comment', 'amc_contracts', 'aop', 'assign_task',
+        'book_meeting_room', 'cancel_booking', 'command_center', 'confirm_action', 'create_crm_lead',
+        'create_ticket', 'crm_reports', 'document_bank', 'draft_petty_cash_request', 'electricity',
+        'fetch_endpoint', 'finance', 'find_endpoints', 'find_meeting_rooms', 'hr_categories',
+        'invoices', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_properties',
+        'list_requisitions', 'list_tickets', 'list_users', 'log_crm_activity', 'meetings',
+        'my_bookings', 'my_pending_actions', 'my_tasks', 'org_efficiency', 'org_summary',
+        'petty_cash', 'po_approval_queue', 'po_details', 'ppm', 'property_details',
+        'property_vendors', 'raise_hr_ticket', 'record_diesel_reading', 'record_electricity_reading', 'record_stock_movement',
+        'record_water_reading', 'roster', 'sop_checklists', 'stock', 'supplier_rates',
+        'ticket_comments', 'utilities', 'visitor_summary', 'whoami', 'wiki',
     ]);
     for (const t of listed.tools) {
         // Only confirm_action changes anything; the three action tools merely preview.
         if (t.name === 'confirm_action') assert.equal(t.annotations?.destructiveHint, true);
         else assert.equal(t.annotations?.readOnlyHint, true, `${t.name} must not change anything`);
         assert.ok((t.description || '').length > 80, `${t.name} needs a real description (doctrine L8)`);
+    }
+
+    // Guardrail: no tool takes a list, so nothing can create many records in one call.
+    for (const t of listed.tools) {
+        const props = (t.inputSchema as { properties?: Record<string, { type?: string }> }).properties || {};
+        for (const [k, v] of Object.entries(props)) assert.notEqual(v.type, 'array', `${t.name}.${k} must not accept a list`);
+    }
+    for (const t of listed.tools.filter(t => !['confirm_action'].includes(t.name))) {
+        if (/^(create_|raise_|add_|log_|assign_|record_|draft_|book_|cancel_)/.test(t.name)) assert.match(t.description || '', /PREVIEW/i, `${t.name} must say it only previews`);
     }
 
     const who = await client.callTool({ name: 'whoami', arguments: {} });

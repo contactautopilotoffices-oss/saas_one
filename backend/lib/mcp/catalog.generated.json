@@ -3153,7 +3153,7 @@
     },
     {
       "path": "/api/hr/admin/categories",
-      "reason": "no visible sign-in check"
+      "reason": "GET path may write data"
     },
     {
       "path": "/api/hr/admin/employees",
