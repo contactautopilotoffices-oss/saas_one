@@ -85,6 +85,23 @@ then sign in when asked.
   `draft_petty_cash_request` (saved as a draft only), `book_meeting_room`, `cancel_booking`.
   Each only returns a preview and a one-time code; `confirm_action` carries it out through the
   app's own route as the user. No delete tools.
+- **Every action checks the real flow before it prepares anything.** It reads the record and
+  applies the same rules as the FMS screen; when the action does not fit, nothing is prepared and
+  Claude is given the reason to tell you. For example:
+  - bookings: not in the past, at most 14 days ahead, at least 30 minutes, enough credits (shown);
+    cancelling only before the booking starts;
+  - comments: the preview names the ticket, its status and assignee;
+  - HR tickets: confidential or anonymous only through such a category; priority medium, as the form;
+  - CRM: no CRM access, no lead; a lead with the same email, phone or company is shown as a possible
+    duplicate; notes and activities only on a lead you can see; Lost or Disqualified need a reason
+    (saved as a note, as on the lead screen); follow-ups today or later;
+  - tasks: only reporting managers and superusers assign to others, and only to people on their
+    list; you change your own tasks (managers: their team's);
+  - readings: staff only, no future dates; diesel needs closing hours, kWh and diesel level, and
+    openings come from the last reading; closing cannot be below opening; an existing reading for
+    that day is shown as replaced;
+  - stock: staff only; you cannot issue more than is in stock;
+  - petty cash: only a property the petty cash screen offers you; saved as a draft.
 - **Update actions (preview, then confirm):** one existing record each, only the listed fields:
   - `update_ticket`: follows the ticket screen's flow, checked on the ticket as it is now (who it is
     assigned to, its status, the user's role). "Close" works out the right step:

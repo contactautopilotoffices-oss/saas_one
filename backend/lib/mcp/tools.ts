@@ -461,7 +461,12 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     const str = (max: number) => z.string().min(1).max(max);
     const nonNeg = () => z.number().min(0).max(1_000_000_000);
     const ACTION = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
-    const one = 'Creates ONE record: prepares a PREVIEW and a confirmation code, nothing is saved yet. Show the preview and call confirm_action only after the user says yes. Never call it in a loop or for test data. ';
+    const one = 'Creates ONE record: prepares a PREVIEW and a confirmation code, nothing is saved yet. Before preparing, it reads the real records and applies the same rules as the FMS screen, and refuses with the reason when the action does not fit. Show the preview and call confirm_action only after the user says yes. Never call it in a loop or for test data. ';
+
+    const whichTicket = {
+        ticket_number: z.string().min(1).max(40).optional().describe('The ticket number the user said, for example TKT-42. The FMS finds it among the tickets this user can see.'),
+        ticket_id: z.string().uuid().optional().describe('Only an id returned by list_tickets. Never make one up.'),
+    };
 
     server.registerTool('hr_categories', {
         title: 'HR ticket categories',
@@ -476,16 +481,18 @@ export function buildMcpServer(ctx: McpContext): McpServer {
             'Example: {"organization_id": "<id>", "category_id": "<id>", "subject": "Salary not credited", "description": "My October salary has not been credited yet."}.',
         inputSchema: {
             organization_id: orgIdArg, category_id: z.string().uuid(), subject: str(200), description: str(4000),
-            property_id: propIdArg.optional(), priority: z.enum(['low', 'medium', 'high', 'urgent']).optional(),
-            is_confidential: z.boolean().optional(), is_anonymous: z.boolean().optional(),
+            property_id: propIdArg.optional(),
+            is_confidential: z.boolean().optional().describe('Only with a confidential category from hr_categories.'),
+            is_anonymous: z.boolean().optional().describe('Only with an anonymous category from hr_categories.'),
         },
         annotations: ACTION,
     }, async (a) => asTool(previewRaiseHrTicket(actionCtx, a)));
 
     server.registerTool('add_ticket_comment', {
         title: 'Comment on a ticket (preview)',
-        description: one + 'Adds one comment to a service ticket the user can see. Example: {"ticket_id": "<ticket id>", "comment": "Vendor visited, part on order."}.',
-        inputSchema: { ticket_id: z.string().uuid(), comment: str(2000) },
+        description: one + 'Adds one comment to a service ticket the user can see; the preview names the ticket, its status and assignee so the user can check it is the right one. Clients see comments. ' +
+            'Example: {"ticket_number": "TKT-42", "comment": "Vendor visited, part on order."}.',
+        inputSchema: { ...whichTicket, comment: str(2000) },
         annotations: ACTION,
     }, async (a) => asTool(previewAddTicketComment(actionCtx, a)));
 
@@ -523,7 +530,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 
     server.registerTool('assign_task', {
         title: 'Assign a task (preview)',
-        description: one + 'One Task Manager task for a person the user may assign to (the FMS checks). Get the person\'s id from list_users. ' +
+        description: one + 'One Task Manager task for the user or, for reporting managers and superusers, a person on their assignable list (my_tasks shows it). Date today or later. ' +
             'Example: {"target_employee_id": "<user id>", "title": "Check DG oil level", "assigned_date": "2026-11-07"}.',
         inputSchema: { target_employee_id: z.string().uuid(), title: str(200), description: str(2000).optional(), assigned_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() },
         annotations: ACTION,
@@ -531,7 +538,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 
     server.registerTool('record_diesel_reading', {
         title: 'Record a diesel reading (preview)',
-        description: one + 'One day\'s reading for one generator (DG set). Get the generator id from utilities view "generators". ' +
+        description: one + 'One day\'s reading for one generator (DG set), staff only. Needs closing hours, kWh and diesel level; openings come from the last reading. No future dates. Get the generator id from utilities view "generators". ' +
             'Example: {"property_id": "<id>", "generator_id": "<id>", "reading_date": "2026-11-06", "opening_hours": 1520, "closing_hours": 1524, "diesel_added_litres": 50}.',
         inputSchema: {
             property_id: propIdArg, generator_id: z.string().uuid(), reading_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -543,7 +550,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
 
     server.registerTool('record_electricity_reading', {
         title: 'Record an electricity reading (preview)',
-        description: one + 'One day\'s reading for one electricity meter. Get the meter id from utilities view "meters". ' +
+        description: one + 'One day\'s reading for one electricity meter, staff only; the closing must be above the opening (taken from the last reading). No future dates. Get the meter id from utilities view "meters". ' +
             'Example: {"property_id": "<id>", "meter_id": "<id>", "reading_date": "2026-11-06", "closing_reading": 45210.5}.',
         inputSchema: {
             property_id: propIdArg, meter_id: z.string().uuid(), reading_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -580,11 +587,6 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     }, async (a) => asTool(previewDraftPettyCash(actionCtx, a)));
 
     const change = 'Changes ONE existing record: prepares a PREVIEW (current value -> new value) and a confirmation code, nothing is changed yet. Show the preview and call confirm_action only after the user says yes. Never call it in a loop or for many records ("close all tickets"). ';
-
-    const whichTicket = {
-        ticket_number: z.string().min(1).max(40).optional().describe('The ticket number the user said, for example TKT-42. The FMS finds it among the tickets this user can see.'),
-        ticket_id: z.string().uuid().optional().describe('Only an id returned by list_tickets. Never make one up.'),
-    };
 
     server.registerTool('update_ticket', {
         title: 'Close or move a service ticket on (preview)',
@@ -630,10 +632,11 @@ export function buildMcpServer(ctx: McpContext): McpServer {
     server.registerTool('update_crm_lead', {
         title: 'Update a CRM lead (preview)',
         description: change + 'For one lead: its status (a status id from fetch_endpoint /api/crm/statuses with org_id), its owner (a person\'s id), ' +
-            'the next follow-up date, or the priority. Example: {"lead_id": "<lead id>", "next_followup_date": "2026-11-12", "priority": "High"}.',
+            'the next follow-up date (today or later), or the priority. Lost and Disqualified need a reason, saved as a note, as on the lead screen. Example: {"lead_id": "<lead id>", "next_followup_date": "2026-11-12", "priority": "High"}.',
         inputSchema: {
             lead_id: z.string().uuid(), status_id: z.string().uuid().optional(), assigned_to: z.string().uuid().optional(),
             next_followup_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), priority: z.enum(['Low', 'Medium', 'High', 'Urgent']).optional(),
+            reason: str(1000).optional().describe('Why, when moving to Lost or Disqualified (required for those, as on the lead screen).'),
         },
         annotations: ACTION,
     }, async (a) => asTool(previewUpdateCrmLead(actionCtx, a)));

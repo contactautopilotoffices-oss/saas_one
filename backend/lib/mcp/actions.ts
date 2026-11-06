@@ -88,6 +88,15 @@ function property(ctx: ActionContext, propertyId: string) {
     return ctx.scope.properties.find(p => p.id === propertyId) || null;
 }
 
+/** Today's date and the minutes past midnight in India time, which is how the FMS reads booking times. */
+function nowIst(now = Date.now()): { date: string; minutes: number } {
+    const d = new Date(now + 330 * 60000);
+    return { date: d.toISOString().slice(0, 10), minutes: d.getUTCHours() * 60 + d.getUTCMinutes() };
+}
+function addDays(date: string, days: number): string {
+    return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+}
+
 function minutes(t: string): number {
     const [h, m] = String(t).slice(0, 5).split(':').map(Number);
     return h * 60 + m;
@@ -148,6 +157,12 @@ export async function previewBookRoom(
         return { ok: false, text: 'Use date YYYY-MM-DD and times HH:MM (24-hour, India time).' };
     }
     if (minutes(a.end_time) <= minutes(a.start_time)) return { ok: false, text: 'The end time must be after the start time.' };
+    if (minutes(a.end_time) - minutes(a.start_time) < 30) return { ok: false, text: 'A booking must be at least 30 minutes, as on the booking screen.' };
+    const now = nowIst();
+    if (a.date < now.date || (a.date === now.date && minutes(a.start_time) <= now.minutes)) {
+        return { ok: false, text: `That start time has already passed (it is now ${now.date} ${String(Math.floor(now.minutes / 60)).padStart(2, '0')}:${String(now.minutes % 60).padStart(2, '0')} India time). The FMS does not book past times.` };
+    }
+    if (a.date > addDays(now.date, 14)) return { ok: false, text: 'The booking screen allows booking up to 14 days ahead. Pick an earlier date.' };
 
     const res = await call(ctx, '/api/meeting-rooms/available', { propertyId: prop.id, date: a.date });
     const rooms = parseJson(res.text)?.rooms;
@@ -160,6 +175,20 @@ export async function previewBookRoom(
     }
 
     const hours = (minutes(a.end_time) - minutes(a.start_time)) / 60;
+    // Credits, read the way the booking screen reads them. Admins see everyone's, so the FMS decides for them.
+    const cr = await call(ctx, '/api/meeting-room-credits', { propertyId: prop.id });
+    const credits = parseJson(cr.text) as { credit?: { remaining_hours?: number } | null; credits?: unknown[] } | null;
+    let creditLine = 'The FMS checks meeting room credits when it books.';
+    if (cr.ok && credits && 'credit' in credits) {
+        const left = Number(credits.credit?.remaining_hours);
+        if (!credits.credit) creditLine = 'No credit limit applies to you at this property.';
+        else if (Number.isFinite(left)) {
+            if (left < hours) return { ok: false, text: `Not enough meeting room credits: this needs ${hours} hour${hours === 1 ? '' : 's'} and ${left} remain${left === 1 ? 's' : ''}. Book a shorter slot, or ask your admin for more credits.` };
+            creditLine = `Credits: ${left} hours left; this uses ${hours}, leaving ${Math.round((left - hours) * 100) / 100}.`;
+        }
+    } else if (cr.ok && Array.isArray(credits?.credits)) {
+        creditLine = 'As an admin, the FMS checks the credits of the person or company the booking is for.';
+    }
     const comment = (a.comment || '').trim();
     const params = {
         meetingRoomId: room.id, propertyId: prop.id, date: a.date, startTime: a.start_time, endTime: a.end_time,
@@ -171,7 +200,7 @@ export async function previewBookRoom(
         `Property: ${clean(prop.name) || prop.id}`,
         `When: ${a.date}, ${a.start_time} to ${a.end_time} (India time), ${hours} hour${hours === 1 ? '' : 's'}`,
         ...(comment ? [`Note: ${comment}`] : []),
-        `If you or your company have meeting room credits here, ${hours} hour${hours === 1 ? '' : 's'} will be used, and the FMS refuses the booking if there are not enough.`,
+        creditLine,
     ]);
 }
 
@@ -183,12 +212,17 @@ export async function previewCancelBooking(ctx: ActionContext, a: { booking_id: 
     const b = bookings.find(x => x.id === a.booking_id);
     if (!b) return { ok: false, text: 'That booking is not one of your active bookings. Use my_bookings to see them.' };
     if (!ctx.scope.propertyIds.has(b.property_id)) return { ok: false, text: 'You do not have access to that booking\'s property.' };
+    const now = nowIst();
+    const day = clean(b.booking_date, 10);
+    if (day && (day < now.date || (day === now.date && minutes(b.start_time) <= now.minutes))) {
+        return { ok: false, text: 'That booking has already started or is in the past. The FMS only cancels bookings before they start.' };
+    }
     const params = { booking_id: b.id, property_id: b.property_id };
     return issue(ctx, 'cancel_booking', params, [
         'Cancel this booking?',
         `Room: ${clean(b.meeting_room?.name) || clean(b.meeting_room_id)}`,
         `When: ${clean(b.booking_date, 10)}, ${clean(b.start_time, 5)} to ${clean(b.end_time, 5)}`,
-        'The FMS decides whether it can still be cancelled (for example, not after it has started) and refunds credits by its own rules.',
+        'If credits were used, the FMS gives the hours back (unless your role does not use credits).',
     ]);
 }
 
@@ -250,7 +284,13 @@ export async function confirmAction(ctx: ActionContext, code: string): Promise<A
             return { ok: false, text: `The FMS refused this (HTTP ${res.status}): ${msg}. Nothing was changed.` };
         }
         const data: Json = parseJson(res.text) || {};
-        return { ok: true, text: DONE[action](data, p) };
+        let extra = '';
+        if (target.then) {
+            const t2 = await call(ctx, target.then.path, target.then.query || {}, target.then.method, target.then.body);
+            await log(t2.ok, `confirm_action:${action} (then)`, target.then.path, t2.status, t2.ok ? null : t2.text.slice(0, 300), p);
+            extra = t2.ok ? '' : ` But the follow-up step (${target.then.path}) failed (HTTP ${t2.status}); add it in the FMS app.`;
+        }
+        return { ok: true, text: DONE[action](data, p) + extra };
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await log(false, `confirm_action:${action}`, path, null, msg, p);
@@ -277,35 +317,73 @@ function num(v: number | undefined, label: string, max = NUM_MAX): string | null
     return null;
 }
 
+const numOrUndef = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? undefined : Number(v));
+
+/** Readings: staff only (as the logging screens and routes require), and never a future date. */
+function readingGate(ctx: ActionContext, propertyId: string, date: string): ActionResult | null {
+    if (!ctx.scope.propertyIds.has(propertyId)) return need('You do not have access to that property.');
+    if (!isStaffAt(ctx, propertyId)) return need('Only staff of this property can record readings, not tenants or vendors.');
+    if (!DATE.test(date)) return need('reading_date must be YYYY-MM-DD.');
+    if (date > nowIst().date) return need('That date is in the future. The logging screens allow today or an earlier date.');
+    return null;
+}
+
+type BoardPerson = { id: string; full_name?: string };
+/** The Task Manager board as the user sees it: who they are there, and who they may assign to. */
+async function taskBoard(ctx: ActionContext, query: Record<string, string>): Promise<{ actor: { id?: string; role?: string } | null; assignable: BoardPerson[]; tasks: TaskRow[] } | null> {
+    const res = await call(ctx, '/api/task-manager/tasks', query);
+    const d = parseJson(res.text) as { actor?: { id?: string; role?: string }; assignableEmployees?: BoardPerson[]; employees?: BoardPerson[]; tasks?: TaskRow[] } | null;
+    if (!res.ok || !d) return null;
+    return { actor: d.actor || null, assignable: d.assignableEmployees || d.employees || [], tasks: d.tasks || [] };
+}
+
 export async function previewRaiseHrTicket(ctx: ActionContext, a: {
     organization_id: string; category_id: string; subject: string; description: string;
-    property_id?: string; priority?: 'low' | 'medium' | 'high' | 'urgent'; is_confidential?: boolean; is_anonymous?: boolean;
+    property_id?: string; is_confidential?: boolean; is_anonymous?: boolean;
 }): Promise<ActionResult> {
     if (!orgOk(ctx, a.organization_id)) return need('You do not belong to that organisation. Use whoami.');
     if (a.property_id && !ctx.scope.propertyIds.has(a.property_id)) return need('You do not have access to that property.');
     const res = await call(ctx, '/api/hr/admin/categories', {});
-    const cat = asList(parseJson(res.text)).find(c => c.id === a.category_id);
-    if (!cat) return need('That HR category does not exist. Use hr_categories to see the categories.');
+    const cats = asList(parseJson(res.text));
+    const cat = cats.find(c => c.id === a.category_id);
+    if (!cat) return need('That HR category does not exist or is not active. Use hr_categories to see the categories.');
+    if (cat.organization_id && cat.organization_id !== a.organization_id) return need('That HR category belongs to another organisation. Use hr_categories.');
+    // As on the HR form: confidential and anonymous are kinds of ticket, chosen through their category.
+    const confCat = (c: Record<string, unknown>) => c.ticket_type === 'confidential_feedback' || Boolean(c.is_confidential);
+    const anonCat = (c: Record<string, unknown>) => c.ticket_type === 'anonymous_feedback' || Boolean(c.is_anonymous);
+    const names = (f: (c: Record<string, unknown>) => boolean) => cats.filter(f).map(c => clean(c.category_name, 40)).join(', ') || 'none set up';
+    if (a.is_anonymous && !anonCat(cat)) return need(`Anonymous feedback uses an anonymous category (${names(anonCat)}). Ask the user which one, then use its id.`);
+    if (a.is_confidential && !confCat(cat)) return need(`Confidential feedback uses a confidential category (${names(confCat)}). Ask the user which one, then use its id.`);
+    const is_anonymous = cat.ticket_type === 'anonymous_feedback' || (anonCat(cat) && !!a.is_anonymous);
+    const is_confidential = !is_anonymous && (cat.ticket_type === 'confidential_feedback' || (confCat(cat) && !!a.is_confidential));
     const params = {
         organization_id: a.organization_id, category_id: a.category_id, subject: a.subject.trim(), description: a.description.trim(),
-        ...(a.property_id ? { property_id: a.property_id } : {}), priority: a.priority || 'medium',
-        is_confidential: !!a.is_confidential, is_anonymous: !!a.is_anonymous,
+        ...(a.property_id ? { property_id: a.property_id } : {}), priority: 'medium', is_confidential, is_anonymous,
     };
     return issue(ctx, 'raise_hr_ticket', params, [
         'Raise this HR ticket in your name?',
         `Category: ${clean(cat.category_name)} (${clean(cat.ticket_type, 40)})`,
         `Subject: ${params.subject}`,
         `Details: ${params.description}`,
-        `Priority: ${params.priority}${params.is_confidential ? ', confidential' : ''}${params.is_anonymous ? ', anonymous' : ''}`,
+        is_anonymous ? 'Anonymous: your name is hidden from the people handling it.' : is_confidential ? 'Confidential: only senior HR and the assigned handler see it, not your manager.' : 'Normal HR ticket: your reporting manager and HR can see it.',
+        'Priority: medium (the HR form always uses medium; HR can change it).',
     ]);
 }
 
-export async function previewAddTicketComment(ctx: ActionContext, a: { ticket_id: string; comment: string }): Promise<ActionResult> {
-    if (!UUID.test(a.ticket_id)) return need('ticket_id must be the id of a ticket from list_tickets.');
-    const res = await call(ctx, `/api/tickets/${a.ticket_id}/comments`, {});
-    if (!res.ok) return need(`You cannot comment on that ticket (HTTP ${res.status}).`);
-    const params = { ticket_id: a.ticket_id, comment: a.comment.trim() };
-    return issue(ctx, 'add_ticket_comment', params, ['Add this comment to the ticket?', `Comment: ${params.comment}`]);
+export async function previewAddTicketComment(ctx: ActionContext, a: { ticket_id?: string; ticket_number?: string; comment: string }): Promise<ActionResult> {
+    const found = await findTicket(ctx, a);
+    if (isResult(found)) return found;
+    const { t } = found;
+    const params = { ticket_id: t.id, comment: a.comment.trim() };
+    const status = String(t.status || '');
+    return issue(ctx, 'add_ticket_comment', params, [
+        'Add this comment to the ticket?',
+        `Ticket: ${ticketLabel(t)}`,
+        `Property: ${clean(t.property?.name) || t.property_id}, now ${clean(status, 30) || 'unknown'}, assigned to ${t.assigned_to === ctx.caller.userId ? 'you' : clean(t.assignee?.full_name) || (t.assigned_to ? 'someone else' : 'nobody')}`,
+        `Comment: ${params.comment}`,
+        'Everyone who can see the ticket sees the comment, clients included.',
+        ...(['closed', 'resolved'].includes(status) ? [`The ticket is ${status}; the comment is added but does not reopen it.`] : []),
+    ]);
 }
 
 export async function previewCreateCrmLead(ctx: ActionContext, a: {
@@ -319,43 +397,82 @@ export async function previewCreateCrmLead(ctx: ActionContext, a: {
     }
     const bad = num(a.seats, 'seats', 100000);
     if (bad) return need(bad);
+    // CRM access, as the CRM screen needs it.
+    const acc = await call(ctx, '/api/crm/statuses', { org_id: a.organization_id });
+    if (acc.status === 401 || acc.status === 403) return need('You have no CRM access in this organisation, so you cannot create leads there.');
     const params: Record<string, unknown> = { organization_id: a.organization_id };
     for (const k of ['company_name', 'contact_person', 'email', 'contact_number', 'city', 'location', 'requirement', 'seats', 'lead_source', 'priority', 'remarks'] as const) {
         const v = a[k];
         if (v !== undefined && v !== '') params[k] = typeof v === 'string' ? v.trim() : v;
     }
+    // The CRM does not stop duplicates, so the preview shows any lead with the same email, phone or company.
+    const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10);
+    const same: string[] = [];
+    for (const [field, value] of [['email', params.email], ['contact_number', params.contact_number], ['company_name', params.company_name]] as const) {
+        if (!value) continue;
+        const r = await call(ctx, '/api/crm/leads', { org_id: a.organization_id, search: String(value).slice(0, 80), page_size: '10' });
+        const leads = ((parseJson(r.text) as { leads?: Record<string, unknown>[] } | null)?.leads || []);
+        for (const l of leads) {
+            const hit = field === 'contact_number' ? digits(l.contact_number) !== '' && digits(l.contact_number) === digits(value)
+                : String(l[field] ?? '').trim().toLowerCase() === String(value).trim().toLowerCase();
+            const label = `${clean(l.company_name) || clean(l.contact_person) || 'a lead'} (same ${field.replace(/_/g, ' ')}, lead id ${clean(l.id, 40)})`;
+            if (hit && !same.includes(label)) same.push(label);
+        }
+    }
     return issue(ctx, 'create_crm_lead', params, [
         'Create this CRM lead?',
         ...['company_name', 'contact_person', 'email', 'contact_number', 'city', 'requirement', 'seats', 'lead_source', 'priority']
             .filter(k => params[k] !== undefined).map(k => `${k.replace(/_/g, ' ')}: ${params[k]}`),
+        ...(same.length ? [`POSSIBLE DUPLICATE: ${same.slice(0, 3).join('; ')}. Check with the user that this is a new lead before confirming.`] : ['No existing lead with the same email, phone or company was found.']),
     ]);
 }
 
 export async function previewAddCrmNote(ctx: ActionContext, a: { lead_id: string; note: string }): Promise<ActionResult> {
-    if (!UUID.test(a.lead_id)) return need('lead_id must be a lead id from list_crm_leads.');
-    const params = { lead_id: a.lead_id, note: a.note.trim() };
-    return issue(ctx, 'add_crm_note', params, ['Add this note to the lead?', `Note: ${params.note}`]);
+    const l = await leadFor(ctx, a.lead_id);
+    if (isLeadResult(l)) return l;
+    const params = { lead_id: l.id, note: a.note.trim() };
+    if (!params.note) return need('The note is empty.');
+    return issue(ctx, 'add_crm_note', params, ['Add this note to the lead?', ...leadFacts(l), `Note: ${params.note}`]);
 }
 
 const ACTIVITY_TYPES = ['call', 'meeting', 'site_visit', 'proposal_sent', 'followup_scheduled', 'email_sent'] as const;
 export async function previewLogCrmActivity(ctx: ActionContext, a: { lead_id: string; activity_type: typeof ACTIVITY_TYPES[number]; description?: string }): Promise<ActionResult> {
-    if (!UUID.test(a.lead_id)) return need('lead_id must be a lead id from list_crm_leads.');
     if (!ACTIVITY_TYPES.includes(a.activity_type)) return need(`activity_type must be one of ${ACTIVITY_TYPES.join(', ')}.`);
-    const params = { lead_id: a.lead_id, activity_type: a.activity_type, ...(a.description ? { description: a.description.trim() } : {}) };
-    return issue(ctx, 'log_crm_activity', params, ['Log this activity on the lead?', `Activity: ${a.activity_type.replace(/_/g, ' ')}`, ...(params.description ? [`Details: ${params.description}`] : [])]);
+    const l = await leadFor(ctx, a.lead_id);
+    if (isLeadResult(l)) return l;
+    const params = { lead_id: l.id, activity_type: a.activity_type, ...(a.description ? { description: a.description.trim() } : {}) };
+    const contact = ['call', 'meeting', 'site_visit', 'email_sent'].includes(a.activity_type);
+    return issue(ctx, 'log_crm_activity', params, [
+        'Log this activity on the lead?', ...leadFacts(l), `Activity: ${a.activity_type.replace(/_/g, ' ')}`,
+        ...(params.description ? [`Details: ${params.description}`] : []),
+        ...(contact ? ['The FMS also sets the lead\'s "last contacted" to now.'] : []),
+    ]);
 }
 
 export async function previewAssignTask(ctx: ActionContext, a: { target_employee_id: string; title: string; description?: string; assigned_date?: string }): Promise<ActionResult> {
-    if (!UUID.test(a.target_employee_id)) return need('target_employee_id must be a person\'s id (use list_users).');
+    if (!UUID.test(a.target_employee_id)) return need('target_employee_id must be a person\'s id from my_tasks (its assignable people) or list_users.');
     if (a.assigned_date && !DATE.test(a.assigned_date)) return need('assigned_date must be YYYY-MM-DD.');
+    const title = a.title.trim();
+    if (!title) return need('The task needs a title.');
+    const today = nowIst().date;
+    if (a.assigned_date && a.assigned_date < today) return need('That date is in the past. Give today or a later date.');
+    if (a.assigned_date && a.assigned_date > addDays(today, 366)) return need('That date is more than a year ahead.');
+    const board = await taskBoard(ctx, {});
+    if (!board) return need('Could not open your task list in the FMS. You may not have a Task Manager profile.');
+    const me = ctx.caller.userId;
+    const target = board.assignable.find(e => e.id === a.target_employee_id);
+    if (a.target_employee_id !== me) {
+        if (!['reporting_manager', 'superuser'].includes(String(board.actor?.role))) return need('On the task screen only reporting managers and superusers assign tasks to other people. You can add a task for yourself.');
+        if (!target) return need('That person is not in the list of people you can assign tasks to. Use my_tasks to see who you can assign to.');
+    }
     const params = {
-        action: 'assign_task', actorId: ctx.caller.userId, targetEmployeeId: a.target_employee_id, title: a.title.trim(),
+        action: 'assign_task', actorId: me, targetEmployeeId: a.target_employee_id, title,
         ...(a.description ? { description: a.description.trim() } : {}), ...(a.assigned_date ? { assignedDate: a.assigned_date } : {}),
     };
     return issue(ctx, 'assign_task', params, [
-        'Assign this task?', `To: ${a.target_employee_id}`, `Task: ${params.title}`,
-        ...(a.description ? [`Details: ${a.description.trim()}`] : []), `Date: ${a.assigned_date || 'today'}`,
-        'The FMS checks that you are allowed to assign tasks to this person.',
+        'Assign this task?', `To: ${a.target_employee_id === me ? 'yourself' : clean(target?.full_name) || a.target_employee_id}`, `Task: ${title}`,
+        ...(a.description ? [`Details: ${a.description.trim()}`] : []), `Date: ${a.assigned_date || `today (${today})`}`,
+        ...(a.target_employee_id === me ? [] : ['The FMS makes the final check: the person must report to you (directly or further down), and their department must use the Task Manager.']),
     ]);
 }
 
@@ -369,60 +486,96 @@ export async function previewRecordDieselReading(ctx: ActionContext, a: {
     opening_hours?: number; closing_hours?: number; opening_diesel_level?: number; closing_diesel_level?: number;
     diesel_added_litres?: number; opening_kwh?: number; closing_kwh?: number; notes?: string;
 }): Promise<ActionResult> {
-    if (!ctx.scope.propertyIds.has(a.property_id)) return need('You do not have access to that property.');
-    if (!DATE.test(a.reading_date)) return need('reading_date must be YYYY-MM-DD.');
+    const stop = readingGate(ctx, a.property_id, a.reading_date);
+    if (stop) return stop;
     for (const k of ['opening_hours', 'closing_hours', 'opening_diesel_level', 'closing_diesel_level', 'diesel_added_litres', 'opening_kwh', 'closing_kwh'] as const) {
         const bad = num(a[k], k); if (bad) return need(bad);
     }
+    if (a.closing_hours === undefined || a.closing_kwh === undefined || a.closing_diesel_level === undefined) {
+        return need('The diesel logging screen needs the closing run hours, the closing kWh and the closing diesel level. Ask the user for the missing ones.');
+    }
     const gen = await findAtProperty(ctx, a.property_id, 'generators', a.generator_id);
     if (!gen) return need('That generator is not at this property. Use utilities with view "generators".');
-    const params: Record<string, unknown> = { property_id: a.property_id };
-    for (const [k, v] of Object.entries(a)) if (v !== undefined && k !== 'property_id') params[k] = typeof v === 'string' ? v.trim() : v;
+    const res = await call(ctx, `/api/properties/${a.property_id}/diesel-readings`, { generatorId: a.generator_id });
+    const rows = res.ok ? asList(parseJson(res.text)).filter(r => r.generator_id === a.generator_id || r.generator_id === undefined) : [];
+    const existing = rows.find(r => r.reading_date === a.reading_date);
+    const prev = rows.find(r => String(r.reading_date) < a.reading_date);
+    // Openings: as on the screen, from the last reading before this date, else the generator's starting values.
+    const from = (k: string, initial: string) => prev?.[k] ?? gen[initial];
+    const opening_hours = a.opening_hours ?? numOrUndef(from('closing_hours', 'initial_run_hours'));
+    const opening_kwh = a.opening_kwh ?? numOrUndef(from('closing_kwh', 'initial_kwh_reading'));
+    const opening_diesel_level = a.opening_diesel_level ?? numOrUndef(from('closing_diesel_level', 'initial_diesel_level'));
+    if (opening_hours !== undefined && a.closing_hours < opening_hours) return need(`Closing hours (${a.closing_hours}) cannot be less than opening hours (${opening_hours}).`);
+    if (opening_kwh !== undefined && a.closing_kwh < opening_kwh) return need(`Closing kWh (${a.closing_kwh}) cannot be less than opening kWh (${opening_kwh}).`);
+    const params: Record<string, unknown> = { property_id: a.property_id, generator_id: a.generator_id, reading_date: a.reading_date };
+    for (const [k, v] of Object.entries({ ...a, opening_hours, opening_kwh, opening_diesel_level })) {
+        if (v !== undefined && !['property_id', 'generator_id', 'reading_date'].includes(k)) params[k] = typeof v === 'string' ? v.trim() : v;
+    }
     return issue(ctx, 'record_diesel_reading', params, [
         'Record this diesel reading?', `Generator: ${clean(gen.name) || a.generator_id}`, `Date: ${a.reading_date}`,
-        ...Object.entries(params).filter(([k]) => !['property_id', 'generator_id', 'reading_date'].includes(k)).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`),
-        'If a reading for this generator and date already exists, the FMS updates it.',
+        `Run hours: ${opening_hours ?? '?'} -> ${a.closing_hours}; kWh: ${opening_kwh ?? '?'} -> ${a.closing_kwh}; diesel level: ${opening_diesel_level ?? '?'} -> ${a.closing_diesel_level}${a.diesel_added_litres ? `; diesel added ${a.diesel_added_litres} L` : ''}`,
+        prev ? `Openings come from the last reading, on ${clean(prev.reading_date, 10)}.` : 'No earlier reading: openings come from the generator\'s starting values.',
+        ...(existing ? [`A reading for this generator on ${a.reading_date} already exists (closing hours ${clean(existing.closing_hours, 20)}). Saving REPLACES it.`] : []),
+        ...(a.notes ? [`Note: ${a.notes.trim()}`] : []),
     ]);
 }
 
 export async function previewRecordElectricityReading(ctx: ActionContext, a: {
     property_id: string; meter_id: string; reading_date: string; opening_reading?: number; closing_reading: number; notes?: string;
 }): Promise<ActionResult> {
-    if (!ctx.scope.propertyIds.has(a.property_id)) return need('You do not have access to that property.');
-    if (!DATE.test(a.reading_date)) return need('reading_date must be YYYY-MM-DD.');
+    const stop = readingGate(ctx, a.property_id, a.reading_date);
+    if (stop) return stop;
     for (const k of ['opening_reading', 'closing_reading'] as const) { const bad = num(a[k], k); if (bad) return need(bad); }
     const meter = await findAtProperty(ctx, a.property_id, 'electricity-meters', a.meter_id);
     if (!meter) return need('That meter is not at this property. Use utilities with view "meters".');
+    const res = await call(ctx, `/api/properties/${a.property_id}/electricity-readings`, { meterId: a.meter_id });
+    const rows = res.ok ? asList(parseJson(res.text)).filter(r => r.meter_id === a.meter_id || r.meter_id === undefined) : [];
+    const existing = rows.find(r => r.reading_date === a.reading_date);
+    const prev = rows.find(r => String(r.reading_date) < a.reading_date);
+    const opening = a.opening_reading ?? numOrUndef(prev?.closing_reading ?? meter.last_reading);
+    if (opening !== undefined && !(a.closing_reading > opening)) return need(`The closing reading (${a.closing_reading}) must be more than the opening reading (${opening}), as on the electricity logging screen.`);
     const params: Record<string, unknown> = { property_id: a.property_id, meter_id: a.meter_id, reading_date: a.reading_date, closing_reading: a.closing_reading };
-    if (a.opening_reading !== undefined) params.opening_reading = a.opening_reading;
+    if (opening !== undefined) params.opening_reading = opening;
     if (a.notes) params.notes = a.notes.trim();
     return issue(ctx, 'record_electricity_reading', params, [
         'Record this electricity reading?', `Meter: ${clean(meter.name ?? meter.meter_name) || a.meter_id}`, `Date: ${a.reading_date}`,
-        ...(a.opening_reading !== undefined ? [`Opening: ${a.opening_reading}`] : []), `Closing: ${a.closing_reading}`,
+        `Reading: ${opening ?? '?'} -> ${a.closing_reading}${opening !== undefined ? ` (${Math.round((a.closing_reading - opening) * 100) / 100} units before the multiplier)` : ''}`,
+        prev ? `Opening comes from the last reading, on ${clean(prev.reading_date, 10)}.` : a.opening_reading !== undefined ? 'Opening as given.' : 'Opening comes from the meter\'s last recorded value.',
+        ...(existing ? [`A reading for this meter on ${a.reading_date} already exists (closing ${clean(existing.closing_reading, 20)}). Saving REPLACES it.`] : []),
     ]);
 }
 
 export async function previewRecordWaterReading(ctx: ActionContext, a: { property_id: string; source_id: string; reading_date: string; quantity: number }): Promise<ActionResult> {
-    if (!ctx.scope.propertyIds.has(a.property_id)) return need('You do not have access to that property.');
-    if (!DATE.test(a.reading_date)) return need('reading_date must be YYYY-MM-DD.');
+    const stop = readingGate(ctx, a.property_id, a.reading_date);
+    if (stop) return stop;
     const bad = num(a.quantity, 'quantity'); if (bad) return need(bad);
     const src = await findAtProperty(ctx, a.property_id, 'water/sources', a.source_id);
     if (!src) return need('That water source is not at this property. Use utilities with view "water_sources".');
+    const res = await call(ctx, `/api/properties/${a.property_id}/water/readings`, { month: a.reading_date.slice(0, 7) });
+    const existing = res.ok ? asList(parseJson(res.text)).find(r => r.source_id === a.source_id && r.reading_date === a.reading_date) : undefined;
     const params = { property_id: a.property_id, source_id: a.source_id, reading_date: a.reading_date, quantity: a.quantity };
-    return issue(ctx, 'record_water_reading', params, ['Record this water reading?', `Source: ${clean(src.name ?? src.source_name) || a.source_id}`, `Date: ${a.reading_date}`, `Quantity: ${a.quantity}`]);
+    return issue(ctx, 'record_water_reading', params, [
+        'Record this water reading?', `Source: ${clean(src.name ?? src.source_name) || a.source_id}`, `Date: ${a.reading_date}`, `Quantity: ${a.quantity}`,
+        ...(existing ? [`A reading for this source on ${a.reading_date} already exists (quantity ${clean(existing.quantity, 20)}). Saving REPLACES it.`] : []),
+    ]);
 }
 
 export async function previewRecordStockMovement(ctx: ActionContext, a: { property_id: string; item_id: string; action: 'add' | 'remove'; quantity: number; notes?: string }): Promise<ActionResult> {
     if (!ctx.scope.propertyIds.has(a.property_id)) return need('You do not have access to that property.');
+    if (!isStaffAt(ctx, a.property_id)) return need('Only staff of this property can move stock, not tenants or vendors.');
     if (!UUID.test(a.item_id)) return need('item_id must be an item id from stock.');
     if (!(a.quantity > 0 && a.quantity <= 100000)) return need('quantity must be between 1 and 100000.');
     const res = await call(ctx, `/api/properties/${a.property_id}/stock/items/${a.item_id}`, {});
     const item = (parseJson(res.text) as { item?: Record<string, unknown> } | null)?.item;
     if (!res.ok || !item) return need('That stock item is not at this property.');
+    const have = Number(item.quantity);
+    if (a.action === 'remove' && Number.isFinite(have) && a.quantity > have) {
+        return need(`Only ${have} ${clean(item.unit, 20)} of ${clean(item.name ?? item.item_name)} in stock; ${a.quantity} cannot be issued. The stock screen does not allow taking more than is in stock.`.replace('  ', ' '));
+    }
     const params = { property_id: a.property_id, itemId: a.item_id, action: a.action, quantity: a.quantity, ...(a.notes ? { notes: a.notes.trim() } : {}) };
     return issue(ctx, 'record_stock_movement', params, [
         `${a.action === 'add' ? 'Add to' : 'Issue from'} stock?`, `Item: ${clean(item.name ?? item.item_name) || a.item_id}`,
-        `Quantity: ${a.quantity}${item.quantity !== undefined ? ` (in stock now: ${Number(item.quantity)})` : ''}`, ...(a.notes ? [`Note: ${a.notes.trim()}`] : []),
+        `Quantity: ${a.quantity}${Number.isFinite(have) ? ` (in stock now: ${have}, after this: ${a.action === 'add' ? have + a.quantity : have - a.quantity})` : ''}`, ...(a.notes ? [`Note: ${a.notes.trim()}`] : []),
     ]);
 }
 
@@ -436,14 +589,24 @@ export async function previewDraftPettyCash(ctx: ActionContext, a: {
         return need('amount_requested must be more than 0, at most 1,00,00,000, with at most 2 decimals.');
     }
     if (a.expected_date && !DATE.test(a.expected_date)) return need('expected_date must be YYYY-MM-DD.');
+    const purpose = a.purpose.trim();
+    if (!purpose) return need('A purpose is required.');
+    // The properties the petty cash screen offers this person.
+    const res = await call(ctx, '/api/petty-cash/context', { org_id: a.organization_id });
+    if (res.status === 401 || res.status === 403) return need('You cannot use petty cash in this organisation.');
+    const props = ((parseJson(res.text) as { properties?: { id: string; name?: string }[] } | null)?.properties || []);
+    if (res.ok && !props.some(x => x.id === a.property_id)) {
+        return need(`You cannot raise petty cash for that property. The properties you can use: ${props.map(x => clean(x.name, 40)).join(', ') || 'none'}.`);
+    }
     const params: Record<string, unknown> = {
-        organization_id: a.organization_id, property_id: a.property_id, purpose: a.purpose.trim(), amount_requested: a.amount_requested,
-        request_type: 'advance', save_draft: true,
+        organization_id: a.organization_id, property_id: a.property_id, purpose, amount_requested: a.amount_requested,
+        category: (a.category || 'Multi-purpose').trim(), payment_mode: (a.payment_mode || 'Cash').trim(), save_draft: true,
+        ...(a.expected_date ? { expected_date: a.expected_date } : {}),
     };
-    for (const k of ['category', 'expected_date', 'payment_mode'] as const) if (a[k]) params[k] = String(a[k]).trim();
     return issue(ctx, 'draft_petty_cash_request', params, [
         'Save this petty cash request as a DRAFT? (It is not submitted for approval; you submit it in the FMS app.)',
-        `Amount: ${a.amount_requested}`, `Purpose: ${params.purpose}`, ...(params.category ? [`Category: ${params.category}`] : []),
+        `Property: ${clean(props.find(x => x.id === a.property_id)?.name) || a.property_id}`,
+        `Amount: ${a.amount_requested}`, `Purpose: ${purpose}`, `Category: ${params.category}, paid by ${params.payment_mode}`,
     ]);
 }
 
@@ -628,7 +791,7 @@ export async function previewReassignTicket(ctx: ActionContext, a: { ticket_id?:
     const users = ((parseJson(res.text) as { users?: U[] } | null)?.users || []);
     const u = users.find(x => x.id === a.assignee_id && x.is_active !== false);
     if (!u) return need('That person is not an active member of this property. Use list_users with the property id.');
-    if (EXTERNAL_ROLES.includes(String(u.propertyRole || '').toLowerCase().trim())) return need('Tickets can only be assigned to staff, not to tenants, clients or vendors.');
+    if ([...EXTERNAL_ROLES, 'guest'].includes(String(u.propertyRole || '').toLowerCase().trim())) return need('Tickets can only be assigned to staff, not to tenants, clients, vendors or guests.');
     const params = { ticket_id: t.id, property_id: t.property_id, assigned_to: a.assignee_id, expect_assigned_to: t.assigned_to ?? null };
     return issue(ctx, 'reassign_ticket', params, [
         'Reassign this ticket?',
@@ -636,7 +799,8 @@ export async function previewReassignTicket(ctx: ActionContext, a: { ticket_id?:
         `Property: ${clean(t.property?.name) || t.property_id}, now ${clean(t.status, 30)}`,
         `From: ${clean(t.assignee?.full_name) || (t.assigned_to ? t.assigned_to : 'nobody')}`,
         `To: ${clean(u.full_name) || clean(u.email) || a.assignee_id}${u.propertyRole ? ` (${clean(u.propertyRole, 30)})` : ''}`,
-        'As in the app: the status becomes "assigned", the SLA clock restarts and the new assignee is notified.',
+        ...(['closed', 'resolved', 'pending_validation'].includes(String(t.status)) ? [`This ticket is ${clean(t.status, 30)}. Reassigning REOPENS it: its status becomes "assigned".`] : ['Its status becomes "assigned".']),
+        'The new assignee is notified, as when reassigning on the ticket screen.',
     ], 'change');
 }
 
@@ -686,72 +850,112 @@ export async function previewUpdateHrTicket(ctx: ActionContext, a: { ticket_id: 
     ], 'change');
 }
 
-type LeadRow = { id: string; organization_id?: string; company_name?: string; contact_person?: string; status?: string | null; priority?: string | null; assigned_to?: string | null; next_followup_date?: string | null };
+type LeadRow = { id: string; organization_id?: string; company_name?: string; contact_person?: string; status?: string | null; priority?: string | null; assigned_to?: string | null; next_followup_date?: string | null; is_archived?: boolean | null; status_name?: string | null; status_info?: { name?: string } | null };
 async function loadLead(ctx: ActionContext, id: string): Promise<LeadRow | null> {
     const res = await call(ctx, `/api/crm/leads/${id}`, {});
     const l = (parseJson(res.text) as { lead?: LeadRow } | null)?.lead;
     return res.ok && l?.id ? l : null;
 }
+/** The lead the user means, read from the FMS; refused when it cannot be seen. */
+async function leadFor(ctx: ActionContext, id: string): Promise<LeadRow | ActionResult> {
+    if (!UUID.test(id)) return need('lead_id must be a lead id from list_crm_leads. Do not make one up.');
+    const l = await loadLead(ctx, id);
+    if (!l || !l.organization_id) return need('You cannot see that lead. Use list_crm_leads to find it.');
+    if (!ctx.scope.orgIds.has(l.organization_id)) return need('You do not belong to that lead\'s organisation.');
+    return l;
+}
+const isLeadResult = (x: LeadRow | ActionResult): x is ActionResult => 'ok' in x && 'text' in x && !('id' in x);
+const leadFacts = (l: LeadRow) => [
+    `Lead: ${clean(l.company_name) || clean(l.contact_person) || l.id}${l.company_name && l.contact_person ? ` (${clean(l.contact_person)})` : ''}`,
+    ...(l.is_archived ? ['This lead is ARCHIVED. Check with the user that it is the right one.'] : []),
+];
+
 const LEAD_FIELDS = ['status', 'assigned_to', 'next_followup_date', 'priority'] as const;
 
 export async function previewUpdateCrmLead(ctx: ActionContext, a: {
-    lead_id: string; status_id?: string; assigned_to?: string; next_followup_date?: string; priority?: 'Low' | 'Medium' | 'High' | 'Urgent';
+    lead_id: string; status_id?: string; assigned_to?: string; next_followup_date?: string; priority?: 'Low' | 'Medium' | 'High' | 'Urgent'; reason?: string;
 }): Promise<ActionResult> {
-    if (!UUID.test(a.lead_id)) return need('lead_id must be a lead id from list_crm_leads.');
     if (a.status_id && !UUID.test(a.status_id)) return need('status_id must be a status id from fetch_endpoint /api/crm/statuses.');
     if (a.assigned_to && !UUID.test(a.assigned_to)) return need('assigned_to must be a person\'s id from list_users.');
     if (a.next_followup_date && !DATE.test(a.next_followup_date)) return need('next_followup_date must be YYYY-MM-DD.');
-    const l = await loadLead(ctx, a.lead_id);
-    if (!l || !l.organization_id) return need('You cannot see that lead. Use list_crm_leads.');
-    if (!ctx.scope.orgIds.has(l.organization_id)) return need('You do not belong to that lead\'s organisation.');
+    if (a.next_followup_date && a.next_followup_date < nowIst().date) return need('That follow-up date is in the past. Give today or a later date.');
+    const found = await leadFor(ctx, a.lead_id);
+    if (isLeadResult(found)) return found;
+    const l = found;
     const changes: Record<string, string> = {};
     if (a.status_id && a.status_id !== l.status) changes.status = a.status_id;
     if (a.assigned_to && a.assigned_to !== l.assigned_to) changes.assigned_to = a.assigned_to;
     if (a.next_followup_date && a.next_followup_date !== String(l.next_followup_date || '').slice(0, 10)) changes.next_followup_date = a.next_followup_date;
     if (a.priority && a.priority !== l.priority) changes.priority = a.priority;
     if (!Object.keys(changes).length) return need('Nothing to change: the lead already has those values.');
+    const reason = (a.reason || '').trim();
     let statusLine: string[] = [];
+    let reasonNote: string | null = null;
     if (changes.status) {
-        const res = await call(ctx, '/api/crm/statuses', { org_id: l.organization_id });
+        const res = await call(ctx, '/api/crm/statuses', { org_id: l.organization_id! });
         const list = ((parseJson(res.text) as { statuses?: { id: string; name?: string }[] } | null)?.statuses || []);
         const to = list.find(s => s.id === changes.status);
         if (!to) return need('That status is not one of this organisation\'s lead statuses. Use fetch_endpoint /api/crm/statuses with org_id.');
         const from = list.find(s => s.id === l.status);
-        statusLine = [`Status: ${clean(from?.name) || 'none'} -> ${clean(to.name)}`];
+        const toName = String(to.name || '').toLowerCase().trim();
+        // As on the lead screen: Lost and Disqualified need a reason, saved as a note on the lead.
+        if (['lost', 'disqualified'].includes(toName)) {
+            if (reason.length < 3) return need(`Moving a lead to "${clean(to.name)}" needs a reason, as on the lead screen. Ask the user why.`);
+            reasonNote = `[${clean(to.name, 40)}] ${reason}`;
+        }
+        // "Future" stages need a reminder date, which the lead screen sets up with the move.
+        if (/future/i.test(toName)) return need(`Moving a lead to "${clean(to.name)}" also sets a future reminder in the FMS. Do this in the FMS app.`);
+        statusLine = [`Status: ${clean(from?.name) || 'none'} -> ${clean(to.name)}`, ...(reasonNote ? [`Reason (saved as a note on the lead): ${reason}`] : [])];
+    }
+    let ownerLine: string[] = [];
+    if (changes.assigned_to) {
+        // The people list answers for admins; for others the FMS itself checks the new owner is in the organisation.
+        const res = await call(ctx, '/api/users/list', { orgId: l.organization_id! });
+        type U = { id?: string; full_name?: string; email?: string; is_active?: boolean };
+        const users = res.ok ? ((parseJson(res.text) as { users?: U[] } | null)?.users || []) : null;
+        const u = users?.find(x => x.id === changes.assigned_to);
+        if (users && (!u || u.is_active === false)) return need('That person is not an active member of this organisation. Use list_users.');
+        ownerLine = [`Owner: ${l.assigned_to || 'nobody'} -> ${u ? clean(u.full_name) || clean(u.email) : `${changes.assigned_to} (the FMS checks they are in this organisation)`}`];
     }
     const expect = Object.fromEntries(LEAD_FIELDS.map(f => [f, f === 'next_followup_date' ? (String(l[f] || '').slice(0, 10) || null) : (l[f] ?? null)]));
-    const params = { lead_id: l.id, organization_id: l.organization_id, ...changes, expect };
+    const params = { lead_id: l.id, organization_id: l.organization_id, ...changes, expect, ...(reasonNote ? { reason_note: reasonNote } : {}) };
     return issue(ctx, 'update_crm_lead', params, [
         'Update this lead?',
-        `Lead: ${clean(l.company_name) || clean(l.contact_person) || l.id}`,
+        ...leadFacts(l),
         ...statusLine,
-        ...(changes.assigned_to ? [`Owner: ${l.assigned_to || 'nobody'} -> ${changes.assigned_to} (the FMS checks the new owner is in this organisation)`] : []),
+        ...ownerLine,
         ...(changes.next_followup_date ? [`Next follow-up: ${String(l.next_followup_date || '').slice(0, 10) || 'none'} -> ${changes.next_followup_date}`] : []),
         ...(changes.priority ? [`Priority: ${clean(l.priority, 20) || 'none'} -> ${changes.priority}`] : []),
     ], 'change');
 }
 
-type TaskRow = { id: string; status?: string | null; title?: string; template?: { title?: string; name?: string } | null; employee?: { full_name?: string } | null; assigned_date?: string };
-async function loadTask(ctx: ActionContext, id: string): Promise<TaskRow | null> {
-    const until = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
-    const res = await call(ctx, '/api/task-manager/tasks', { from: '2000-01-01', to: until });
-    const tasks = ((parseJson(res.text) as { tasks?: TaskRow[] } | null)?.tasks || []);
-    return res.ok ? tasks.find(x => x.id === id) || null : null;
+type TaskRow = { id: string; status?: string | null; title?: string; employee_id?: string; template?: { title?: string; name?: string } | null; employee?: { full_name?: string } | null; assigned_date?: string };
+async function loadTask(ctx: ActionContext, id: string): Promise<{ task: TaskRow; actor: { id?: string; role?: string } | null } | null> {
+    const until = addDays(nowIst().date, 60);
+    const board = await taskBoard(ctx, { from: '2000-01-01', to: until });
+    const task = board?.tasks.find(x => x.id === id);
+    return board && task ? { task, actor: board.actor } : null;
 }
 export const TASK_STATUSES = ['pending', 'in_progress', 'completed'] as const;
 
 export async function previewUpdateTaskStatus(ctx: ActionContext, a: { task_id: string; status: typeof TASK_STATUSES[number] }): Promise<ActionResult> {
     if (!UUID.test(a.task_id)) return need('task_id must be a task id from my_tasks.');
-    const t = await loadTask(ctx, a.task_id);
-    if (!t) return need('That task is not in your task list. Use my_tasks to find it.');
+    const found = await loadTask(ctx, a.task_id);
+    if (!found) return need('That task is not in your task list. Use my_tasks to find it.');
+    const { task: t, actor } = found;
     if (t.status === a.status) return need(`Nothing to change: the task is already ${a.status}.`);
+    // The Task Manager's rule: your own tasks; a manager also those of people below them; a superuser only their own.
+    const own = t.employee_id === ctx.caller.userId || (actor?.id && t.employee_id === actor.id);
+    if (!own && actor?.role === 'superuser') return need('A superuser can change only their own tasks.');
+    if (!own && actor?.role !== 'reporting_manager') return need(`This task belongs to ${clean(t.employee?.full_name) || 'someone else'}. You can change only your own tasks.`);
     const params = { task_id: t.id, status: a.status, actor: ctx.caller.userId, expect_status: t.status ?? null };
     return issue(ctx, 'update_task_status', params, [
         'Change this task\'s status?',
         `Task: ${clean(t.title ?? t.template?.title ?? t.template?.name) || t.id}${t.assigned_date ? ` (${clean(t.assigned_date, 10)})` : ''}`,
-        ...(t.employee?.full_name ? [`Person: ${clean(t.employee.full_name)}`] : []),
+        `Person: ${own ? 'you' : clean(t.employee?.full_name) || 'someone else'}`,
         `Status: ${clean(t.status, 20) || 'none'} -> ${a.status}`,
-        'The FMS checks that you may change this task.',
+        ...(own ? [] : ['The FMS makes the final check: the person must report to you.']),
+        ...(t.status === 'completed' ? ['This reopens a completed task.'] : []),
     ], 'change');
 }
 
@@ -787,9 +991,9 @@ const PRECHECK: Partial<Record<ActionName, (ctx: ActionContext, p: Record<string
         return null;
     },
     update_task_status: async (ctx, p) => {
-        const t = await loadTask(ctx, String(p.task_id));
-        if (!t) return 'the task can no longer be read';
-        return (t.status ?? null) !== p.expect_status ? changedSince('task status', t.status) : null;
+        const f = await loadTask(ctx, String(p.task_id));
+        if (!f) return 'the task can no longer be read';
+        return (f.task.status ?? null) !== p.expect_status ? changedSince('task status', f.task.status) : null;
     },
 };
 
@@ -803,7 +1007,7 @@ const HR_BODY: Record<typeof HR_CHANGES[number], (p: Record<string, unknown>) =>
 
 // ---------- where each confirmed action goes, and what "done" says ----------
 
-type Target = { path: string; method: 'POST' | 'PATCH'; body: unknown; query?: Record<string, string> };
+type Target = { path: string; method: 'POST' | 'PATCH'; body: unknown; query?: Record<string, string>; then?: Omit<Target, 'then'> };
 const idOf = (o: unknown) => ((o || {}) as { id?: string }).id;
 
 const ROUTES: Record<ActionName, (p: Record<string, unknown>) => Target | null> = {
@@ -846,13 +1050,18 @@ const ROUTES: Record<ActionName, (p: Record<string, unknown>) => Target | null> 
                                 : null;
         return body ? { path: `/api/tickets/${p.ticket_id}`, method: 'PATCH', body } : null;
     },
-    reassign_ticket: p => (UUID.test(String(p.ticket_id || '')) && UUID.test(String(p.assigned_to || '')) ? { path: `/api/tickets/${p.ticket_id}`, method: 'PATCH', body: { assigned_to: p.assigned_to } } : null),
+    // The ticket screen's own reassign call.
+    reassign_ticket: p => (UUID.test(String(p.ticket_id || '')) && UUID.test(String(p.assigned_to || '')) ? { path: '/api/tickets/reassign', method: 'POST', body: { ticketId: p.ticket_id, newAssigneeId: p.assigned_to, forceAssign: true } } : null),
     update_hr_ticket: p => {
         const change = p.change as typeof HR_CHANGES[number];
         if (!UUID.test(String(p.ticket_id || '')) || !HR_CHANGES.includes(change)) return null;
         return { path: `/api/hr/tickets/${p.ticket_id}`, method: 'PATCH', body: { ...HR_BODY[change](p), actor_user_id: p.actor } };
     },
-    update_crm_lead: p => (UUID.test(String(p.lead_id || '')) ? { path: `/api/crm/leads/${p.lead_id}`, method: 'PATCH', body: pick(p, [...LEAD_FIELDS]), query: { org_id: String(p.organization_id) } } : null),
+    // A Lost or Disqualified move also adds the reason as a note, as the lead screen does.
+    update_crm_lead: p => (UUID.test(String(p.lead_id || '')) ? {
+        path: `/api/crm/leads/${p.lead_id}`, method: 'PATCH', body: pick(p, [...LEAD_FIELDS]), query: { org_id: String(p.organization_id) },
+        ...(p.reason_note ? { then: { path: '/api/crm/notes', method: 'POST' as const, body: { lead_id: p.lead_id, note: p.reason_note } } } : {}),
+    } : null),
     update_task_status: p => (UUID.test(String(p.task_id || '')) && TASK_STATUSES.includes(p.status as typeof TASK_STATUSES[number])
         ? { path: '/api/task-manager/tasks', method: 'POST', body: { action: 'update_status', actorId: p.actor, taskId: p.task_id, status: p.status } } : null),
 };
@@ -880,6 +1089,6 @@ const DONE: Record<ActionName, (d: Json, p: Record<string, unknown>) => string> 
     },
     reassign_ticket: () => 'Done. Ticket reassigned; the new assignee is notified.',
     update_hr_ticket: d => { const t = (d.data || {}) as HrTicketRow; return `Done. HR ticket updated${t.status ? `: status is now ${clean(t.status, 40)}` : ''}.`; },
-    update_crm_lead: () => 'Done. Lead updated.',
+    update_crm_lead: (_d, p) => `Done. Lead updated${p.reason_note ? ', and the reason is saved as a note' : ''}.`,
     update_task_status: (_d, p) => `Done. Task marked ${p.status}.`,
 };
