@@ -58,10 +58,37 @@ export async function POST(request: NextRequest) {
     if (result.error || !result.data?.redirect_url) {
         const reason = result.error?.message || 'no redirect returned';
         console.error(`[oauth/decision] ${effective} failed:`, reason);
+        // Supabase takes one decision per request. A second submission (double click, a second
+        // tab) lands here after the first one has already gone through.
+        if (/no longer pending|cannot be processed/i.test(reason)) {
+            return page('Your choice for this connection was already recorded. Go back to your assistant. If it does not show the FMS as connected, click Connect there once more: it should connect straight away.', 409);
+        }
         return page(`The FMS could not record your choice (${escapeHtml(reason)}). Start the connection again from your assistant.`, 400);
     }
     if (!isAllowedRedirect(result.data.redirect_url)) {
         return page(effective === 'approve' ? 'Connection refused: this app is not an approved assistant.' : 'Access denied. You can close this window.', 200);
     }
-    return NextResponse.redirect(result.data.redirect_url, 303);
+    return continueTo(result.data.redirect_url, effective === 'approve');
+}
+
+/**
+ * Send the browser on to the assistant. Not an HTTP redirect: the site's Content-Security-Policy
+ * has form-action 'self', and browsers apply form-action to the redirects a form post follows,
+ * so a 303 to claude.ai was silently blocked (the user stayed on the consent screen, clicked
+ * Allow again, and got "no longer pending"). A page that moves on by itself is a plain
+ * navigation, which form-action does not cover. The URL has already passed isAllowedRedirect.
+ */
+function continueTo(url: string, approved: boolean) {
+    const safe = escapeAttr(url);
+    const message = approved ? 'Connected. Taking you back to your assistant...' : 'Access denied. Taking you back to your assistant...';
+    return new NextResponse(
+        `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${safe}"><title>FMS</title>` +
+        `<body style="font-family:sans-serif;padding:2rem;background:#020617;color:#e2e8f0">` +
+        `<p>${message}</p><p><a href="${safe}" style="color:#2dd4bf">Continue</a></p></body>`,
+        { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } },
+    );
+}
+
+function escapeAttr(s: string): string {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
