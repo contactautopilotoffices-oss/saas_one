@@ -45,7 +45,9 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
 
     const { data: details, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
     if (error || !details) {
-        return <Problem title="This request has expired" detail="Start the connection again from your assistant." />;
+        const reason = error?.message || 'no details returned';
+        console.error('[oauth/consent] getAuthorizationDetails failed:', reason);
+        return <Problem title="This request could not be opened" detail={`Start the connection again from your assistant. (Reason: ${reason.slice(0, 200)})`} />;
     }
 
     // Already approved earlier: Supabase hands back the redirect straight away. Still check where it goes.
