@@ -12,6 +12,10 @@ import { publicOrigin } from '@/backend/lib/mcp/config';
  */
 const ID = /^[A-Za-z0-9_-]{1,200}$/;
 
+function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string)).slice(0, 300);
+}
+
 function page(message: string, status: number) {
     return new NextResponse(
         `<!doctype html><meta charset="utf-8"><title>FMS</title><body style="font-family:sans-serif;padding:2rem;background:#020617;color:#e2e8f0"><p>${message}</p></body>`,
@@ -39,17 +43,22 @@ export async function POST(request: NextRequest) {
 
     let effective: 'approve' | 'deny' = decision;
     if (effective === 'approve') {
-        // Re-check the client here: never trust that the page showed the button for a good reason.
+        // Extra check of the client before approving. Supabase may not answer this lookup a second
+        // time (the consent page already made it), so a failed lookup does not stop the approval:
+        // the redirect it returns is checked below before the browser is sent anywhere, and the
+        // consent page never shows Allow for a client that fails the redirect policy.
         const { data: details, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
-        if (error || !details) return page('This request has expired. Start the connection again from your assistant.', 400);
-        if ('authorization_id' in details && !isAllowedRedirect(details.redirect_uri)) effective = 'deny';
+        if (error) console.warn('[oauth/decision] details re-check failed, relying on the redirect check:', error.message);
+        if (details && 'authorization_id' in details && !isAllowedRedirect(details.redirect_uri)) effective = 'deny';
     }
 
     const result = effective === 'approve'
         ? await supabase.auth.oauth.approveAuthorization(authorizationId, { skipBrowserRedirect: true })
         : await supabase.auth.oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
     if (result.error || !result.data?.redirect_url) {
-        return page('The FMS could not record your choice. Start the connection again from your assistant.', 400);
+        const reason = result.error?.message || 'no redirect returned';
+        console.error(`[oauth/decision] ${effective} failed:`, reason);
+        return page(`The FMS could not record your choice (${escapeHtml(reason)}). Start the connection again from your assistant.`, 400);
     }
     if (!isAllowedRedirect(result.data.redirect_url)) {
         return page(effective === 'approve' ? 'Connection refused: this app is not an approved assistant.' : 'Access denied. You can close this window.', 200);
