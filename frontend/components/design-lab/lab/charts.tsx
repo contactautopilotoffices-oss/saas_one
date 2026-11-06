@@ -239,11 +239,13 @@ export function Columns({
 export function LineArea({
     data, color, height = 140, gridColor = 'var(--lab-grid)', textColor = 'var(--lab-text3)', keyColor = 'var(--lab-text)',
     fillOpacity = 0.1, showAxis = false, pinPeak = false, format = (n: number) => n.toLocaleString('en-IN'), ariaLabel,
-    xLabels, partialLast = false, gridLines = 3, dotFill,
+    xLabels, partialLast = false, gridLines = 3, dotFill, fitRange = false,
 }: {
     data: { label: string; value: number }[]; color: string; height?: number; gridColor?: string; textColor?: string; keyColor?: string;
     fillOpacity?: number; showAxis?: boolean; pinPeak?: boolean; format?: (n: number) => string; ariaLabel: string;
     xLabels?: { index: number; text: string }[]; partialLast?: boolean; gridLines?: number; dotFill?: string;
+    /** Fit the y range to the data instead of starting at zero, so small moves stay visible (lines only). */
+    fitRange?: boolean;
 }) {
     const [ref, width] = useMeasure<HTMLDivElement>();
     const { host, tip, show, hide } = useTip();
@@ -254,15 +256,19 @@ export function LineArea({
     const padB = xLabels ? 20 : 4;
     const plotW = Math.max(0, width - padL - padR);
     const plotH = Math.max(10, height - padT - padB);
-    const max = niceMax(Math.max(1, ...data.map(d => d.value)));
+    const hiRaw = Math.max(1, ...data.map(d => d.value));
+    const loRaw = Math.min(...data.map(d => d.value));
+    const spread = Math.max(1, hiRaw - loRaw);
+    const lo = fitRange ? Math.max(0, loRaw - spread * 0.6) : 0;
+    const max = fitRange ? hiRaw + spread * 0.3 : niceMax(hiRaw);
     const n = data.length;
     const x = (i: number) => padL + (n <= 1 ? plotW / 2 : (plotW * i) / (n - 1));
-    const y = (val: number) => padT + plotH - (val / max) * plotH;
+    const y = (val: number) => padT + plotH - ((val - lo) / Math.max(1e-6, max - lo)) * plotH;
     const peak = data.reduce((b, d, i) => (d.value > data[b].value ? i : b), 0);
     const solidEnd = partialLast ? n - 1 : n;
     const line = data.slice(0, solidEnd).map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i)},${y(d.value)}`).join(' ');
     const area = `${line} L${x(solidEnd - 1)},${padT + plotH} L${x(0)},${padT + plotH} Z`;
-    const ticks = Array.from({ length: gridLines }, (_, i) => (max * i) / Math.max(1, gridLines - 1));
+    const ticks = Array.from({ length: gridLines }, (_, i) => lo + ((max - lo) * i) / Math.max(1, gridLines - 1));
     const active = hover ?? (pinPeak ? peak : null);
 
     return (

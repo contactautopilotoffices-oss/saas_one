@@ -12,15 +12,19 @@ import IvoryOrg from './IvoryOrg';
 import OnyxOrg from './OnyxOrg';
 import GiltOrg from './GiltOrg';
 import PulseOrg, { type PulseTab } from './PulseOrg';
+import CobaltOrg from './CobaltOrg';
+import TealOrg from './TealOrg';
+import PlumOrg from './PlumOrg';
 
 /**
- * /design-lab/org-mobile: the org super admin's mobile dashboard in five directions.
- * "Compare all" puts the phones side by side; picking one shows it alone with its notes.
- * Pulse shows three of its screens at once, the way a design shot would.
+ * /design-lab/org-mobile: the org super admin's mobile dashboard.
+ * Current round: Cobalt, Teal and Plum, three colours with their own components each.
+ * "Compare" puts those three side by side. The earlier gold set (Pulse, Noir, Ivory, Onyx,
+ * Gilt) stays one click away for reference. Pulse shows three of its screens at once.
  * On a real phone the chosen design fills the screen instead of sitting in a frame.
  */
 
-type OrgDesignId = 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
+type OrgDesignId = 'cobalt' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
 type View = OrgDesignId | 'all';
 
 const DEFAULT_ORDER = [
@@ -36,8 +40,42 @@ const PULSE_SCREENS: { tab: PulseTab; label: string }[] = [
     { tab: 'home', label: 'Home' }, { tab: 'approvals', label: 'Approvals' }, { tab: 'sites', label: 'Sites' },
 ];
 
-const DESIGNS: { id: OrgDesignId; name: string; dot: string; statusDark: boolean; blurb: string; order?: string[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
-    { id: 'pulse', name: 'Pulse', dot: 'linear-gradient(135deg, #ECECE9 0%, #ECECE9 50%, #E6CD8C 50%)', statusDark: false, Component: PulseOrg,
+const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
+    { id: 'cobalt', name: 'Cobalt', group: 'new', dot: '#2B59E8', statusDark: false, Component: CobaltOrg,
+        blurb: 'Light and friendly with one blue accent. Swipe through three hero cards, act from round quick buttons, and work one filterable list that holds every approval and risk.',
+        order: [
+            'Hero deck you swipe: active tickets, waiting on you, budget',
+            'Round quick actions: approve, assign, raise, report',
+            'Needs you: one list, filter by all, approvals or risks',
+            'Sites as thick bars, worst first, name inside the bar',
+            'People on shift as a split bar: on time, late, absent',
+            'Compliance: PPM against its target, AMC renewals as chips',
+            'This month: budget, electricity, diesel, vendor revenue',
+            'Today: visitors, rooms, water',
+        ] },
+    { id: 'teal', name: 'Teal', group: 'new', dot: '#0F766E', statusDark: false, Component: TealOrg,
+        blurb: 'Calm and roomy in mint and white. A 14 day line opens the screen, approvals are a card stack you flip one queue at a time, sites sit in a grid, and the rest folds into an accordion so the page stays short.',
+        order: [
+            'Active tickets over 14 days, with SLA, urgent and raised under it',
+            'Waiting on you: a stack of cards, one queue each',
+            'Sites in a two column grid with a trend line each',
+            'At a glance: people, compliance, money, utilities (fold open)',
+            'Also today: visitors, rooms, oldest open ticket',
+        ] },
+    { id: 'plum', name: 'Plum', group: 'new', dot: '#B9A6FF', statusDark: true, Component: PlumOrg,
+        blurb: 'Dark and quiet with a lilac accent. Jump chips reach any part of the page, the hero switches between bars and a line, queues are pills whose length is the count, sites are score dials and staff on duty is one dot per person.',
+        order: [
+            'Jump chips with counts',
+            'Active tickets: bars or line, 7 or 14 days',
+            'Waiting on you: queue pills sized by count',
+            'Alerts: red only for SLA and late rounds',
+            'Sites as score dials you swipe',
+            'Money: budget capsule, power, bills, vendors',
+            'On duty: one dot per person',
+            'Compliance: PPM, AMC renewals on a 30 day line',
+            'Today: visitors, rooms, diesel, water',
+        ] },
+    { id: 'pulse', group: 'gold', name: 'Pulse', dot: 'linear-gradient(135deg, #ECECE9 0%, #ECECE9 50%, #E6CD8C 50%)', statusDark: false, Component: PulseOrg,
         blurb: 'Simple and informative. Soft grey page, white rounded cards, one gold hero chart per screen, number tiles in a 2x2 grid with an arrow to open each, progress bars for comparisons and a floating pill tab bar. Home, Approvals and Sites are live tabs.',
         order: [
             'Active tickets across all sites, last 7 days (hero chart)',
@@ -48,13 +86,13 @@ const DESIGNS: { id: OrgDesignId; name: string; dot: string; statusDark: boolean
             'Risk and compliance: late rounds, AMC, oldest ticket, grievances',
             'Across sites today: diesel, water, visitors, rooms, vendor revenue',
         ] },
-    { id: 'noir', name: 'Noir', dot: 'linear-gradient(135deg, #0A0A0A 0%, #0A0A0A 55%, #C9A24A 55%)', statusDark: true, Component: NoirOrg,
+    { id: 'noir', group: 'gold', name: 'Noir', dot: 'linear-gradient(135deg, #0A0A0A 0%, #0A0A0A 55%, #C9A24A 55%)', statusDark: true, Component: NoirOrg,
         blurb: 'Private banking feel. A black band with a gold glow holds the portfolio score and your sites as swipeable cards; a white sheet below holds the rest in order of urgency.' },
-    { id: 'ivory', name: 'Ivory', dot: 'linear-gradient(135deg, #FAF8F3 0%, #FAF8F3 55%, #C9A24A 55%)', statusDark: false, Component: IvoryOrg,
+    { id: 'ivory', group: 'gold', name: 'Ivory', dot: 'linear-gradient(135deg, #FAF8F3 0%, #FAF8F3 55%, #C9A24A 55%)', statusDark: false, Component: IvoryOrg,
         blurb: 'A morning brief. One headline sentence says what matters, then numbered sections read top to bottom like a newspaper, with a ranked ledger of sites.' },
-    { id: 'onyx', name: 'Onyx', dot: 'radial-gradient(circle at 35% 35%, #D4AF5A 0 28%, #111113 30%)', statusDark: true, Component: OnyxOrg,
+    { id: 'onyx', group: 'gold', name: 'Onyx', dot: 'radial-gradient(circle at 35% 35%, #D4AF5A 0 28%, #111113 30%)', statusDark: true, Component: OnyxOrg,
         blurb: 'Dark triage. Act now, Watch and Trends are tabs; Act now is one inbox of every approval and risk, each with its action button.' },
-    { id: 'gilt', name: 'Gilt', dot: 'linear-gradient(135deg, #EED79A 0%, #C9A24A 100%)', statusDark: true, Component: GiltOrg,
+    { id: 'gilt', group: 'gold', name: 'Gilt', dot: 'linear-gradient(135deg, #EED79A 0%, #C9A24A 100%)', statusDark: true, Component: GiltOrg,
         blurb: 'Photo led. The building sits under a dark gradient, frosted glass tiles float over it, and gold appears only on good news.' },
 ];
 
@@ -88,7 +126,7 @@ function read<T extends string>(name: string, allowed: readonly T[], fallback: T
 }
 
 export default function OrgMobileLab() {
-    const [view, setView] = useState<View>(() => read('design', ['all', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'pulse'));
+    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'all'));
     const [state, setState] = useState<PreviewState>(() => read('state', STATES.map(s => s.id), 'normal'));
     const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1440);
     const m = useOrgModel(state);
@@ -101,8 +139,9 @@ export default function OrgMobileLab() {
         window.history.replaceState(window.history.state, '', url.toString());
     }, [view, state]);
 
-    const shown = device && view === 'all' ? 'pulse' : view;
-    const cols = width >= 1380 ? 5 : width >= 1000 ? 3 : width >= 760 ? 2 : 1;
+    const shown = device && view === 'all' ? 'cobalt' : view;
+    const compared = DESIGNS.filter(d => d.group === 'new');
+    const cols = width >= 1000 ? 3 : width >= 760 ? 2 : 1;
     const pulseCols = width >= 1000 ? 3 : 1;
     const pulseScale = Math.min(1, (width - 64 - (pulseCols - 1) * 28) / pulseCols / 414);
     const allScale = Math.min(1, (width - 64 - (cols - 1) * 28) / cols / 414);
@@ -118,15 +157,19 @@ export default function OrgMobileLab() {
                     </Link>
                     <span className="hidden shrink-0 text-[13px] font-semibold lg:inline">Org super admin, mobile</span>
                     <div role="tablist" aria-label="Design" className="flex shrink-0 items-center gap-[6px]">
-                        {[{ id: 'all' as View, name: 'Compare all', dot: '' }, ...DESIGNS].filter(d => !(device && d.id === 'all')).map(d => {
+                        {[{ id: 'all' as View, name: 'Compare', dot: '', group: 'new' as const }, ...DESIGNS].filter(d => !(device && d.id === 'all')).map((d, i, all) => {
                             const on = d.id === shown;
+                            const firstGold = d.group === 'gold' && all[i - 1]?.group !== 'gold';
                             return (
-                                <button key={d.id} type="button" role="tab" aria-selected={on} onClick={() => setView(d.id)}
-                                    className="inline-flex h-10 shrink-0 items-center gap-[8px] rounded-full px-[14px] text-[13px] font-medium"
-                                    style={{ background: on ? '#FFFFFF' : 'rgba(255,255,255,0.08)', color: on ? '#111113' : 'rgba(255,255,255,0.86)' }}>
-                                    {d.dot && <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={{ background: d.dot, boxShadow: on ? 'none' : '0 0 0 1px rgba(255,255,255,0.35)' }} />}
-                                    {d.name}
-                                </button>
+                                <React.Fragment key={d.id}>
+                                    {firstGold && <span className="ml-[8px] shrink-0 pr-[2px] text-[11.5px] font-medium uppercase tracking-[0.08em] text-white/55">Earlier, gold</span>}
+                                    <button type="button" role="tab" aria-selected={on} onClick={() => setView(d.id)}
+                                        className="inline-flex h-10 shrink-0 items-center gap-[8px] rounded-full px-[14px] text-[13px] font-medium"
+                                        style={{ background: on ? '#FFFFFF' : 'rgba(255,255,255,0.08)', color: on ? '#111113' : d.group === 'gold' ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.9)' }}>
+                                        {d.dot && <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={{ background: d.dot, boxShadow: on ? 'none' : '0 0 0 1px rgba(255,255,255,0.35)' }} />}
+                                        {d.name}
+                                    </button>
+                                </React.Fragment>
                             );
                         })}
                     </div>
@@ -149,7 +192,7 @@ export default function OrgMobileLab() {
                 <div style={{ ['--org-safe-top' as string]: '0px' } as React.CSSProperties}><one.Component m={m} /></div>
             ) : shown === 'all' ? (
                 <main className="mx-auto flex flex-wrap justify-center gap-[28px] px-[32px] py-[32px]">
-                    {DESIGNS.map(d => (
+                    {compared.map(d => (
                         <div key={d.id} className="flex flex-col items-center gap-[12px]">
                             <PhoneFrame label={d.name} scale={allScale} statusDark={d.statusDark}><d.Component m={m} /></PhoneFrame>
                             <button type="button" onClick={() => setView(d.id)} className="h-10 rounded-full bg-white px-[16px] text-[13px] font-semibold text-[#111113] shadow-sm">{d.name}</button>
