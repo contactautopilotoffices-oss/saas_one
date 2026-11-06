@@ -2,8 +2,8 @@
   "generatedBy": "scripts/mcp/build-catalog.mjs",
   "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
   "counts": {
-    "included": 227,
-    "excluded": 213
+    "included": 231,
+    "excluded": 210
   },
   "routes": [
     {
@@ -1559,6 +1559,20 @@
       "description": "Replace the comparison file procurement attached when sending requisitions for approval. GET ?organization_id&batch_id | requisition_id - the sites the new file would apply to. POST form: organization_id, batch_id | requisition_id, quote_file (required), note, target_approver_id - every Pending / Rejected / Approved site in the batch gets the new file and goes back to Pending Approval. PO issued s"
     },
     {
+      "path": "/api/procurement/requisitions",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id",
+        "property_id",
+        "property_ids",
+        "requisition_month",
+        "requisition_year",
+        "status"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/procurement/settings",
       "module": "procurement",
       "pathParams": [],
@@ -1675,6 +1689,15 @@
       "description": "GET /api/properties/[propertyId]/vendor-summary Property-level vendor revenue summary. Uses supabaseAdmin to bypass RLS. Query params: period = 'today' | 'month' | 'all'"
     },
     {
+      "path": "/api/properties/{propertyId}/vendors",
+      "module": "properties",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [],
+      "description": "GET: Fetch all vendors for a property"
+    },
+    {
       "path": "/api/properties/{propertyId}/vms-summary",
       "module": "properties",
       "pathParams": [
@@ -1693,6 +1716,16 @@
       ],
       "queryParams": [],
       "description": ""
+    },
+    {
+      "path": "/api/properties",
+      "module": "properties",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "organization_id"
+      ],
+      "description": "POST /api/properties Create a new property for an organization Uses service role - bypasses RLS"
     },
     {
       "path": "/api/reliability/contests",
@@ -1844,6 +1877,17 @@
         "organizationId"
       ],
       "description": "Meera's caller script in the Meera console. GET ?organizationId= → live script, greeting preview, versions, last 7 days of calls POST { organizationId, action:'suggest', welcome, prompt, feedback, transcripts? } → a revision to review POST { organizationId, action:'publish', welcome, prompt, note? } → push to Bolna (admins)"
+    },
+    {
+      "path": "/api/search",
+      "module": "search",
+      "pathParams": [],
+      "queryParams": [
+        "org_id",
+        "q",
+        "scope"
+      ],
+      "description": ""
     },
     {
       "path": "/api/shared-files",
@@ -2621,7 +2665,7 @@
     },
     {
       "path": "/api/hr/tickets",
-      "reason": "no visible sign-in check"
+      "reason": "GET path may send messages or call outside services"
     },
     {
       "path": "/api/internal/cleanup-empty-sheets",
@@ -2666,6 +2710,10 @@
     {
       "path": "/api/ira/vendor-outreach",
       "reason": "GET path may send messages or call outside services"
+    },
+    {
+      "path": "/api/mcp",
+      "reason": "blocked area \"mcp\""
     },
     {
       "path": "/api/meetings/{id}",
@@ -2820,10 +2868,6 @@
       "reason": "file, OAuth or public-token route"
     },
     {
-      "path": "/api/procurement/requisitions",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/properties/{propertyId}/approvers",
       "reason": "no visible sign-in check"
     },
@@ -2920,10 +2964,6 @@
       "reason": "no visible sign-in check"
     },
     {
-      "path": "/api/properties/{propertyId}/vendors",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/properties/{propertyId}/water/export",
       "reason": "file, OAuth or public-token route"
     },
@@ -2933,10 +2973,6 @@
     },
     {
       "path": "/api/properties/{propertyId}/water/sources",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/properties",
       "reason": "no visible sign-in check"
     },
     {
@@ -2970,10 +3006,6 @@
     {
       "path": "/api/satej/voice/recording",
       "reason": "GET path may send messages or call outside services"
-    },
-    {
-      "path": "/api/search",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/shared-files/{id}/download",

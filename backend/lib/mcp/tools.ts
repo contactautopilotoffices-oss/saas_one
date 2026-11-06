@@ -211,7 +211,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
             description:
                 'Lists FMS service tickets the user can see (their properties, or tickets assigned to or raised by them), newest first. ' +
                 'Use for "open tickets at X", "what is overdue", "tickets raised this week". ' +
-                'Do not use for HR tickets or meeting-room bookings (use find_endpoints for those). ' +
+                'Do not use for HR tickets such as grievances or HR queries (use list_hr_tickets) or for meeting-room bookings (use my_bookings). ' +
                 'Example: {"property_id": "<id>", "status": "open", "limit": 20}.',
             inputSchema: {
                 organization_id: orgIdArg.optional(),
@@ -227,6 +227,29 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         },
         async ({ organization_id, property_id, ...rest }) =>
             callRoute(ctx, 'list_tickets', '/api/tickets', { organizationId: organization_id, propertyId: property_id, ...rest }),
+    );
+
+    server.registerTool(
+        'list_hr_tickets',
+        {
+            title: 'List HR tickets (grievances, HR queries)',
+            description:
+                'Lists HR tickets in one organisation that the user may see: grievances, HR queries, confidential and anonymous feedback. ' +
+                'Org super admins see all; HR roles see all except anonymous and confidential ones not raised by or assigned to them; ' +
+                'everyone else sees tickets they raised, tickets assigned to them, and their team\'s. Each ticket says who raised it (raised_by). ' +
+                'Use for "how many grievances have I raised", "open HR tickets at Andheri". Do not use for facility or maintenance tickets (use list_tickets). ' +
+                'Example: {"organization_id": "<id>", "type": "grievance"}.',
+            inputSchema: {
+                organization_id: orgIdArg.describe('Organisation id from whoami (required).'),
+                type: z.enum(['grievance', 'hr_query', 'confidential_feedback', 'anonymous_feedback']).optional()
+                    .describe('Ticket type. Omit for all types.'),
+                status: z.string().max(40).optional().describe('e.g. "open", "in_progress", "resolved", "closed".'),
+                property_id: propIdArg.optional(),
+            },
+            annotations: READ_ONLY,
+        },
+        async ({ organization_id, property_id, type, status }) =>
+            callRoute(ctx, 'list_hr_tickets', '/api/hr/tickets', { orgId: organization_id, propertyId: property_id, type, status }),
     );
 
     server.registerTool(

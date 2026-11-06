@@ -65,9 +65,36 @@ test('catalogue: never exposes blocked areas', async () => {
     for (const r of catalog.allRoutes()) assert.ok(!blocked.test(r.path), `blocked route leaked: ${r.path}`);
 });
 
-test('catalogue: excludes a route that has no sign-in check (property vendors)', async () => {
+test('catalogue: no route without a visible sign-in check can be reached', async () => {
     const { catalog } = await mods();
-    assert.equal(catalog.matchRoute(`/api/properties/${PROP}/vendors`), null);
+    const json = (await import('../../backend/lib/mcp/catalog.generated.json')).default as { excluded: { path: string; reason: string }[] };
+    const noAuth = json.excluded.filter(e => e.reason === 'no visible sign-in check');
+    assert.ok(noAuth.length > 0);
+    for (const e of noAuth) {
+        const concrete = e.path.replace(/\{[\w-]+\}/g, PROP);
+        assert.equal(catalog.matchRoute(concrete), null, `${e.path} must stay unreachable`);
+    }
+});
+
+test('catalogue: HR tickets are reachable only as the reviewed exception', async () => {
+    const { catalog } = await mods();
+    assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
+    assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets']);
+    assert.equal(catalog.matchRoute('/api/hr/tickets/escalate-all'), null);
+});
+
+test('list_hr_tickets: sends the org id as the HR route expects, and refuses another organisation', async () => {
+    const { tools } = await mods();
+    let seen: Record<string, string> | null = null;
+    const fake = async (o: { query: Record<string, string> }) => {
+        seen = o.query;
+        return { status: 200, ok: true, contentType: 'application/json', text: '{"success":true,"data":[]}', truncated: false };
+    };
+    const ok = await tools.callRoute(ctxOf(), 'list_hr_tickets', '/api/hr/tickets', { orgId: ORG, type: 'grievance' }, fake);
+    assert.ok(!ok.isError);
+    assert.deepEqual(seen, { orgId: ORG, type: 'grievance' });
+    const refused = await tools.callRoute(ctxOf(), 'list_hr_tickets', '/api/hr/tickets', { orgId: OTHER_ORG }, fake);
+    assert.equal(refused.isError, true);
 });
 
 test('catalogue: an excluded static route cannot be reached through an included {id} sibling', async () => {
@@ -249,7 +276,7 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     const names = listed.tools.map(t => t.name).sort();
     assert.deepEqual(names, [
         'book_meeting_room', 'cancel_booking', 'confirm_action', 'create_ticket', 'fetch_endpoint', 'find_endpoints',
-        'find_meeting_rooms', 'list_assets', 'list_crm_leads', 'list_tickets', 'my_bookings', 'my_pending_actions',
+        'find_meeting_rooms', 'list_assets', 'list_crm_leads', 'list_hr_tickets', 'list_tickets', 'my_bookings', 'my_pending_actions',
         'po_approval_queue', 'whoami',
     ]);
     for (const t of listed.tools) {

@@ -32,7 +32,7 @@ const BLOCKED_TOP = new Set([
 // Path segments that mean "not a plain JSON read" (files, OAuth hops, public tokens).
 const BLOCKED_SEGMENT = /(^|\/)(oauth|callback|connect|export|export-all|template|download|scan|webhook|webhooks|cron|preview-pdf|pdf|file|files|image|images|thumbnail|signed-url|token|\[token\])(\/|$)/i;
 
-const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
+const AUTH_EVIDENCE = /\.auth\.getUser\(|\.auth\.getClaims\(|\bresolve\w*Access\(|\bresolveCaller\(|\brequire[A-Z]\w*\(|\bTaskAccessService\b/;
 const WRITE_EVIDENCE = /\.(insert|update|upsert|delete)\(|\.rpc\(|\.storage\s*\.\s*from\([^)]*\)\s*\.\s*(upload|remove|move)\(/;
 const SIDE_EFFECT_EVIDENCE = /\b(NotificationService|EmailService|WhatsApp\w*Service|WhatsAppEventProcessor|VoiceCallingService|LeadOutreachService|LeadSlaEscalationService|runAutoSlaEscalation|sendDigest|runCouncil|withAgentRun|TaskDailyGeneratorService|runBotHousekeeping|sendMail|sendEmail|sendPush|nodemailer)\b|\bfetch\(/;
 
