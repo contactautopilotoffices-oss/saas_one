@@ -459,60 +459,170 @@ function isStaffAt(ctx: ActionContext, propertyId: string): boolean {
 }
 
 type TicketRow = {
-    id: string; ticket_number?: string | number; title?: string; status?: string | null; priority?: string | null;
-    property_id?: string; assigned_to?: string | null; assignee?: { full_name?: string } | null; property?: { name?: string } | null;
+    id: string; ticket_number?: string | number; title?: string; status?: string | null; priority?: string | null; internal?: boolean | null;
+    property_id?: string; organization_id?: string | null; assigned_to?: string | null; created_at?: string;
+    assignee?: { full_name?: string } | null; property?: { name?: string } | null;
 };
+type LoadedTicket = { t: TicketRow; validationEnabled: boolean };
 /** One service ticket, read as the user. (For procurement users this GET also marks its material requests as seen, as opening the ticket in the app does.) */
-async function loadTicket(ctx: ActionContext, id: string): Promise<TicketRow | null> {
+async function loadTicket(ctx: ActionContext, id: string): Promise<LoadedTicket | null> {
     const res = await call(ctx, `/api/tickets/${id}`, {});
-    const t = (parseJson(res.text) as { ticket?: TicketRow } | null)?.ticket;
-    return res.ok && t?.id ? t : null;
+    const d = parseJson(res.text) as { ticket?: TicketRow; validationEnabled?: boolean } | null;
+    return res.ok && d?.ticket?.id ? { t: d.ticket, validationEnabled: d.validationEnabled !== false } : null;
 }
 const ticketLabel = (t: TicketRow) => `${t.ticket_number ? `#${clean(t.ticket_number, 30)} ` : ''}${clean(t.title) || t.id}`;
+const TICKET_NUMBER = /^[A-Za-z0-9][A-Za-z0-9_\-/]{0,39}$/;
 
-export const TICKET_STATUSES = ['open', 'in_progress', 'waitlist', 'resolved', 'closed'] as const;
+/**
+ * Find the ticket the user means, from the FMS only: by id, or by its number among the tickets
+ * this user can see. Zero or several matches stop here with what was found; nothing is guessed.
+ */
+async function findTicket(ctx: ActionContext, a: { ticket_id?: string; ticket_number?: string }): Promise<LoadedTicket | ActionResult> {
+    let id = a.ticket_id;
+    const number = (a.ticket_number || '').trim().replace(/^#/, '');
+    if (!id && !number) return need('Say which ticket: its ticket_number (for example TKT-42) or its ticket_id from list_tickets.');
+    if (id && !UUID.test(id)) return need('ticket_id must be the id of a ticket from list_tickets.');
+    if (!id) {
+        if (!TICKET_NUMBER.test(number)) return need('That does not look like a ticket number. Use the number shown in the FMS, for example TKT-42.');
+        const res = await call(ctx, '/api/tickets', { search: number, limit: '20' });
+        const list = ((parseJson(res.text) as { tickets?: TicketRow[] } | null)?.tickets || []);
+        const hits = list.filter(x => String(x.ticket_number ?? '').toLowerCase() === number.toLowerCase());
+        if (!res.ok) return need(`Could not search your tickets (HTTP ${res.status}).`);
+        if (!hits.length) return need(`No ticket numbered ${number} among the tickets you can see. Check the number with the user, or use list_tickets. Do not guess another ticket.`);
+        if (hits.length > 1) {
+            return need([`${hits.length} tickets you can see have the number ${number}. Ask the user which one, then use its ticket_id:`,
+                ...hits.slice(0, 10).map(x => `- ${ticketLabel(x)}, ${clean(x.property?.name) || 'property ?'}, ${clean(x.status, 30)} (ticket_id ${x.id})`)].join('\n'));
+        }
+        id = hits[0].id;
+    }
+    const loaded = await loadTicket(ctx, id);
+    if (!loaded || !loaded.t.property_id) return need('You cannot see that ticket. Use list_tickets to find it.');
+    if (number && String(loaded.t.ticket_number ?? '').toLowerCase() !== number.toLowerCase()) {
+        return need(`ticket_id and ticket_number point to different tickets (${ticketLabel(loaded.t)}). Check with the user which one is meant.`);
+    }
+    if (!ctx.scope.propertyIds.has(loaded.t.property_id)) return need('You do not have access to that ticket\'s property.');
+    return loaded;
+}
+const isResult = (x: LoadedTicket | ActionResult): x is ActionResult => 'ok' in x;
+
+/** The same roles as the ticket screen: who manages tickets at this property (Force Close, Reassign, priority). */
+const TICKET_MANAGER_ORG_ROLES = ['master_admin', 'org_super_admin', 'ops_super_admin', 'org_admin', 'owner', 'super_admin'];
+const TICKET_MANAGER_PROPERTY_ROLES = ['property_admin', 'ops_super_admin', 'org_super_admin', 'org_admin', 'master_admin', 'owner'];
+function canManageTicket(ctx: ActionContext, t: TicketRow): boolean {
+    const prop = ctx.scope.properties.find(p => p.id === t.property_id);
+    const orgId = t.organization_id || prop?.organization_id;
+    const orgRoles = (ctx.scope.orgs.find(o => o.id === orgId)?.roles || []).map(r => r.toLowerCase().trim());
+    const propRoles = (prop?.roles || []).map(r => r.toLowerCase().trim());
+    return orgRoles.some(r => TICKET_MANAGER_ORG_ROLES.includes(r)) || propRoles.some(r => TICKET_MANAGER_PROPERTY_ROLES.includes(r));
+}
+const isTenantAt = (ctx: ActionContext, t: TicketRow) =>
+    (ctx.scope.properties.find(p => p.id === t.property_id)?.roles || []).some(r => r.toLowerCase().trim() === 'tenant');
+
+export const TICKET_CHANGES = ['close', 'start_work', 'complete', 'force_close', 'approve_completed_work', 'reject_completed_work', 'set_priority'] as const;
 export const TICKET_PRIORITIES = ['low', 'medium', 'high', 'urgent'] as const;
+type TicketChange = typeof TICKET_CHANGES[number];
+const START_FROM = ['assigned', 'open', 'waitlist'];
 
+/**
+ * Change one service ticket the way the ticket screen does, never a raw status write:
+ *  - the assigned person starts work (assigned, open or waiting) and completes it (in progress);
+ *    completing closes it, or sends it to the client for approval when the property uses that;
+ *  - a ticket manager (org or property admin) can force close it, or change its priority;
+ *  - a tenant approves or rejects work that waits for their approval.
+ * "close" works out which of these fits this user and this ticket. When the ticket is not theirs
+ * but they may force close it, the preview says so plainly and asks the user to confirm a FORCE close.
+ */
 export async function previewUpdateTicket(ctx: ActionContext, a: {
-    ticket_id: string; status?: typeof TICKET_STATUSES[number]; priority?: typeof TICKET_PRIORITIES[number]; resolution_notes?: string;
+    ticket_id?: string; ticket_number?: string; change: TicketChange; note?: string; priority?: typeof TICKET_PRIORITIES[number];
 }): Promise<ActionResult> {
-    if (!UUID.test(a.ticket_id)) return need('ticket_id must be the id of a ticket from list_tickets.');
-    const notes = (a.resolution_notes || '').trim();
-    if (!a.status && !a.priority && !notes) return need('Say what to change: status, priority or resolution_notes.');
-    const t = await loadTicket(ctx, a.ticket_id);
-    if (!t || !t.property_id) return need('You cannot see that ticket. Use list_tickets to find it.');
-    if (!ctx.scope.propertyIds.has(t.property_id)) return need('You do not have access to that ticket\'s property.');
-    if (!isStaffAt(ctx, t.property_id)) return need('Only staff can change a ticket\'s status or priority, as in the app. You can add a comment instead (add_ticket_comment).');
-    const status = a.status && a.status !== t.status ? a.status : undefined;
-    const priority = a.priority && a.priority !== t.priority ? a.priority : undefined;
-    if (!status && !priority && !notes) return need(`Nothing to change: the ticket is already ${clean(t.status, 30)}${t.priority ? `, priority ${clean(t.priority, 20)}` : ''}.`);
-    const params: Record<string, unknown> = {
-        ticket_id: t.id, property_id: t.property_id, expect_status: t.status ?? null, expect_priority: t.priority ?? null,
-        ...(status ? { status } : {}), ...(priority ? { priority } : {}), ...(notes ? { resolution_notes: notes } : {}),
-    };
-    const forceClose = status === 'closed' && !['resolved', 'closed'].includes(String(t.status));
-    return issue(ctx, 'update_ticket', params, [
-        'Change this ticket?',
+    const found = await findTicket(ctx, a);
+    if (isResult(found)) return found;
+    const { t, validationEnabled } = found;
+    const me = ctx.caller.userId;
+    const status = String(t.status || '');
+    const mine = t.assigned_to === me;
+    const manager = canManageTicket(ctx, t);
+    const tenant = isTenantAt(ctx, t);
+    const note = (a.note || '').trim();
+    const who = clean(t.assignee?.full_name) || (t.assigned_to ? 'someone else' : 'nobody');
+    const facts = [
         `Ticket: ${ticketLabel(t)}`,
         `Property: ${clean(t.property?.name) || t.property_id}`,
-        ...(status ? [`Status: ${clean(t.status, 30) || 'none'} -> ${status}`] : []),
-        ...(priority ? [`Priority: ${clean(t.priority, 20) || 'none'} -> ${priority}`] : []),
-        ...(notes ? [`Resolution notes: ${notes}`] : []),
-        ...(forceClose ? ['It is not resolved yet, so the FMS records this as a force close.'] : []),
-        'The FMS logs the change and notifies people as it does in the app.',
-    ], 'change');
+        `Now: ${clean(status, 30) || 'unknown'}, assigned to ${mine ? 'you' : who}${t.priority ? `, priority ${clean(t.priority, 20)}` : ''}${t.created_at ? `, raised ${clean(t.created_at, 10)}` : ''}`,
+    ];
+    const flow = `In the FMS the assigned person starts and completes the work${validationEnabled && !t.internal ? ', the client then approves it,' : ''} and an org or property admin can force close it.`;
+    const refuse = (why: string) => need([`Not prepared: ${why}`, ...facts, flow, 'Tell the user this. Do not try another action to get around it unless the user asks for that action.'].join('\n'));
+
+    let change: Exclude<TicketChange, 'close'>;
+    if (a.change === 'close') {
+        if (status === 'closed') return refuse('the ticket is already closed.');
+        if (tenant && !manager && !mine) {
+            if (status !== 'pending_validation') return refuse('as the client you close a ticket by approving the completed work, and this ticket is not waiting for your approval.');
+            change = 'approve_completed_work';
+        } else if (mine && status === 'in_progress') change = 'complete';
+        else if (manager) change = 'force_close';
+        else if (mine && START_FROM.includes(status)) return refuse('work on it has not been started. Ask the user whether to start work first (change "start_work"), then complete it.');
+        else if (mine) return refuse(`it is ${status} and is not waiting for you; there is nothing for you to complete.`);
+        else return refuse(`it is assigned to ${who}, not to you, and you are not an org or property admin who could force close it. You can add a comment instead.`);
+    } else change = a.change;
+
+    const params: Record<string, unknown> = {
+        ticket_id: t.id, property_id: t.property_id, change,
+        expect_status: t.status ?? null, expect_assigned_to: t.assigned_to ?? null, expect_priority: t.priority ?? null,
+    };
+    const done = (title: string, lines: string[]) => issue(ctx, 'update_ticket', params, [title, ...facts, ...lines], 'change');
+
+    switch (change) {
+        case 'start_work':
+            if (!mine) return refuse(`only the assigned person (${who}) can start work on it.`);
+            if (!START_FROM.includes(status)) return refuse(`it is ${status}; work can be started only when it is assigned, open or waiting.`);
+            return done('Start work on this ticket?', ['Status: -> in progress.']);
+        case 'complete': {
+            if (!mine) return refuse(`only the assigned person (${who}) can complete it.${manager ? ' As an admin you could force close it instead, if the user wants that.' : ''}`);
+            if (status !== 'in_progress') return refuse(`it is ${status}; it can be completed only while work is in progress${START_FROM.includes(status) ? ' (start work first)' : ''}.`);
+            if (note) params.resolution_notes = note;
+            const next = t.internal || !validationEnabled ? 'closed (this property does not ask the client to approve)' : 'waiting for the client to approve the work; it closes when they approve';
+            return done('Complete this ticket?', [`Status: in progress -> ${next}.`, ...(note ? [`Resolution notes: ${note}`] : [])]);
+        }
+        case 'force_close': {
+            if (!manager) return refuse('only an org or property admin can force close a ticket.');
+            if (status === 'closed') return refuse('the ticket is already closed.');
+            if (note) params.resolution_notes = note;
+            const why = mine ? '' : `It is assigned to ${who}, not to you. `;
+            const skips = status === 'pending_validation' ? ' It also skips the client\'s approval, which is still pending.' : '';
+            const recorded = ['resolved'].includes(status) ? '' : ' The FMS records this as a FORCE CLOSE in the ticket history.';
+            return done(`FORCE CLOSE this ticket? ${why}As an admin you can close it without the normal completion flow.${skips}${recorded}`,
+                [`Status: ${status} -> closed.`, ...(note ? [`Reason / resolution notes: ${note}`] : ['No reason given. Ask the user if they want to add one (note).'])]);
+        }
+        case 'approve_completed_work':
+        case 'reject_completed_work': {
+            if (!tenant) return refuse('only a tenant of this property can approve or reject completed work.');
+            if (status !== 'pending_validation') return refuse(`it is ${status}, not waiting for the client's approval.`);
+            const ok = change === 'approve_completed_work';
+            if (!ok && note.length < 5) return refuse('to reject the work, say what is still wrong (note).');
+            params.validation_approved = ok;
+            if (note) params.validation_note = note;
+            return done(ok ? 'Approve the completed work?' : 'Reject the completed work?',
+                [ok ? 'Status: waiting for your approval -> resolved.' : 'Status: waiting for your approval -> open again, back to the team.', ...(note ? [`Note: ${note}`] : [])]);
+        }
+        case 'set_priority':
+            if (!manager) return refuse('only an org or property admin can change a ticket\'s priority.');
+            if (!a.priority) return refuse('say the new priority (low, medium, high or urgent).');
+            if (a.priority === t.priority) return refuse(`the priority is already ${a.priority}.`);
+            params.priority = a.priority;
+            return done('Change this ticket\'s priority?', [`Priority: ${clean(t.priority, 20) || 'none'} -> ${a.priority}.`]);
+    }
 }
 
-export async function previewReassignTicket(ctx: ActionContext, a: { ticket_id: string; assignee_id: string }): Promise<ActionResult> {
-    if (!UUID.test(a.ticket_id)) return need('ticket_id must be the id of a ticket from list_tickets.');
+export async function previewReassignTicket(ctx: ActionContext, a: { ticket_id?: string; ticket_number?: string; assignee_id: string }): Promise<ActionResult> {
     if (!UUID.test(a.assignee_id)) return need('assignee_id must be a person\'s id from list_users.');
-    const t = await loadTicket(ctx, a.ticket_id);
-    if (!t || !t.property_id) return need('You cannot see that ticket. Use list_tickets to find it.');
-    if (!ctx.scope.propertyIds.has(t.property_id)) return need('You do not have access to that ticket\'s property.');
-    if (!isStaffAt(ctx, t.property_id)) return need('Only staff can reassign tickets.');
+    const found = await findTicket(ctx, a);
+    if (isResult(found)) return found;
+    const { t } = found;
+    if (!isStaffAt(ctx, t.property_id!)) return need('Only staff can reassign tickets.');
     if (t.assigned_to === a.assignee_id) return need('The ticket is already assigned to that person.');
     // The people list answers only for organisation and property admins: the same people who reassign in the app.
-    const res = await call(ctx, '/api/users/list', { propertyId: t.property_id });
+    const res = await call(ctx, '/api/users/list', { propertyId: String(t.property_id) });
     if (!res.ok) return need(`Only organisation or property admins can reassign tickets through the assistant (the FMS said HTTP ${res.status}).`);
     type U = { id?: string; full_name?: string; email?: string; propertyRole?: string; is_active?: boolean };
     const users = ((parseJson(res.text) as { users?: U[] } | null)?.users || []);
@@ -523,13 +633,14 @@ export async function previewReassignTicket(ctx: ActionContext, a: { ticket_id: 
     return issue(ctx, 'reassign_ticket', params, [
         'Reassign this ticket?',
         `Ticket: ${ticketLabel(t)}`,
+        `Property: ${clean(t.property?.name) || t.property_id}, now ${clean(t.status, 30)}`,
         `From: ${clean(t.assignee?.full_name) || (t.assigned_to ? t.assigned_to : 'nobody')}`,
         `To: ${clean(u.full_name) || clean(u.email) || a.assignee_id}${u.propertyRole ? ` (${clean(u.propertyRole, 30)})` : ''}`,
         'As in the app: the status becomes "assigned", the SLA clock restarts and the new assignee is notified.',
     ], 'change');
 }
 
-type HrTicketRow = { id: string; organization_id?: string; ticket_number?: string; subject?: string; title?: string; status?: string | null };
+type HrTicketRow = { id: string; organization_id?: string; ticket_number?: string; subject?: string; title?: string; status?: string | null; raised_by_user_id?: string | null; assigned_to_user_id?: string | null; assigned_to?: { full_name?: string } | null };
 async function loadHrTicket(ctx: ActionContext, id: string): Promise<{ t: HrTicketRow | null; status: number }> {
     const res = await call(ctx, `/api/hr/tickets/${id}`, {});
     const t = (parseJson(res.text) as { data?: HrTicketRow } | null)?.data;
@@ -550,6 +661,18 @@ export async function previewUpdateHrTicket(ctx: ActionContext, a: { ticket_id: 
     const { t, status } = await loadHrTicket(ctx, a.ticket_id);
     if (!t || !t.organization_id) return need(`You cannot see that HR ticket (HTTP ${status}). Use list_hr_tickets.`);
     if (!ctx.scope.orgIds.has(t.organization_id)) return need('You do not belong to that HR ticket\'s organisation.');
+    // The HR flow, checked on the ticket as it is now, before anything is prepared.
+    const st = String(t.status || '');
+    const waitingToAccept = ['pending_acknowledgement', 'resolved'].includes(st);
+    const raisedByMe = t.raised_by_user_id === ctx.caller.userId;
+    const handler = clean(t.assigned_to?.full_name) || 'the assigned handler';
+    const stop = (why: string) => need(`Not prepared: ${why} (HR ticket ${clean(t.ticket_number, 30)}, now ${clean(st, 40) || 'unknown'}, handled by ${handler}). Tell the user; do not try another action to get around it unless they ask for it.`);
+    if (a.change === 'in_progress' && (st === 'closed' || waitingToAccept || st === 'in_progress')) return stop(st === 'in_progress' ? 'it is already in progress' : 'it is already resolved or closed');
+    if (a.change === 'resolve' && (st === 'closed' || waitingToAccept)) return stop('it is already resolved or closed');
+    if (a.change === 'resolve' && raisedByMe) return stop('the person who raised a ticket cannot resolve it; the handler or HR does');
+    if (a.change === 'accept_resolution' && !waitingToAccept) return stop('there is no resolution waiting to be accepted');
+    if (a.change === 'accept_resolution' && !raisedByMe) return stop('only the person who raised it can accept the resolution');
+    if (a.change === 'reopen' && !(waitingToAccept || st === 'closed')) return stop('only a resolved or closed ticket can be reopened');
     const params: Record<string, unknown> = {
         ticket_id: t.id, organization_id: t.organization_id, change: a.change, actor: ctx.caller.userId, expect_status: t.status ?? null,
         ...(note ? { note } : {}),
@@ -636,16 +759,17 @@ export async function previewUpdateTaskStatus(ctx: ActionContext, a: { task_id: 
 const changedSince = (what: string, now: unknown) => `the ${what} changed since the preview (it is now ${clean(now, 40) || 'empty'})`;
 const PRECHECK: Partial<Record<ActionName, (ctx: ActionContext, p: Record<string, unknown>) => Promise<string | null>>> = {
     update_ticket: async (ctx, p) => {
-        const t = await loadTicket(ctx, String(p.ticket_id));
-        if (!t) return 'the ticket can no longer be read';
-        if ((t.status ?? null) !== p.expect_status) return changedSince('ticket status', t.status);
-        if ((t.priority ?? null) !== p.expect_priority) return changedSince('ticket priority', t.priority);
+        const l = await loadTicket(ctx, String(p.ticket_id));
+        if (!l) return 'the ticket can no longer be read';
+        if ((l.t.status ?? null) !== p.expect_status) return changedSince('ticket status', l.t.status);
+        if ((l.t.assigned_to ?? null) !== p.expect_assigned_to) return changedSince('ticket assignee', l.t.assignee?.full_name || l.t.assigned_to);
+        if ((l.t.priority ?? null) !== p.expect_priority) return changedSince('ticket priority', l.t.priority);
         return null;
     },
     reassign_ticket: async (ctx, p) => {
-        const t = await loadTicket(ctx, String(p.ticket_id));
-        if (!t) return 'the ticket can no longer be read';
-        return (t.assigned_to ?? null) !== p.expect_assigned_to ? changedSince('ticket assignee', t.assignee?.full_name || t.assigned_to) : null;
+        const l = await loadTicket(ctx, String(p.ticket_id));
+        if (!l) return 'the ticket can no longer be read';
+        return (l.t.assigned_to ?? null) !== p.expect_assigned_to ? changedSince('ticket assignee', l.t.assignee?.full_name || l.t.assigned_to) : null;
     },
     update_hr_ticket: async (ctx, p) => {
         const { t } = await loadHrTicket(ctx, String(p.ticket_id));
@@ -708,7 +832,20 @@ const ROUTES: Record<ActionName, (p: Record<string, unknown>) => Target | null> 
     },
     draft_petty_cash_request: p => ({ path: '/api/petty-cash', method: 'POST', body: p, query: { org_id: String(p.organization_id) } }),
     // Updates: only the listed fields are ever sent, for one record.
-    update_ticket: p => (UUID.test(String(p.ticket_id || '')) ? { path: `/api/tickets/${p.ticket_id}`, method: 'PATCH', body: pick(p, ['status', 'priority', 'resolution_notes']) } : null),
+    // Ticket changes go exactly as the ticket screen sends them.
+    update_ticket: p => {
+        if (!UUID.test(String(p.ticket_id || ''))) return null;
+        const notes = p.resolution_notes ? { resolution_notes: p.resolution_notes } : {};
+        const body: Record<string, unknown> | null =
+            p.change === 'start_work' ? { status: 'in_progress' }
+                : p.change === 'complete' ? { action: 'complete', ...notes }
+                    : p.change === 'force_close' ? { status: 'closed', ...notes }
+                        : p.change === 'approve_completed_work' || p.change === 'reject_completed_work'
+                            ? { action: 'validate', validation_approved: p.change === 'approve_completed_work', ...(p.validation_note ? { validation_note: p.validation_note } : {}) }
+                            : p.change === 'set_priority' && TICKET_PRIORITIES.includes(p.priority as typeof TICKET_PRIORITIES[number]) ? { priority: p.priority }
+                                : null;
+        return body ? { path: `/api/tickets/${p.ticket_id}`, method: 'PATCH', body } : null;
+    },
     reassign_ticket: p => (UUID.test(String(p.ticket_id || '')) && UUID.test(String(p.assigned_to || '')) ? { path: `/api/tickets/${p.ticket_id}`, method: 'PATCH', body: { assigned_to: p.assigned_to } } : null),
     update_hr_ticket: p => {
         const change = p.change as typeof HR_CHANGES[number];
@@ -735,7 +872,12 @@ const DONE: Record<ActionName, (d: Json, p: Record<string, unknown>) => string> 
     record_water_reading: () => 'Done. Water reading recorded.',
     record_stock_movement: (_d, p) => `Done. Stock ${p.action === 'add' ? 'added' : 'issued'}.`,
     draft_petty_cash_request: d => `Done. Petty cash request saved as a draft${idOf(d.request) ? ` (id ${idOf(d.request)})` : ''}. Submit it in the FMS app when ready.`,
-    update_ticket: d => { const t = (d.ticket || {}) as TicketRow; return `Done. Ticket updated${t.status ? `: status is now ${clean(t.status, 30)}` : ''}${t.priority ? `, priority ${clean(t.priority, 20)}` : ''}.`; },
+    update_ticket: (d, p) => {
+        const t = (d.ticket || {}) as TicketRow;
+        const what = p.change === 'force_close' ? 'force closed' : p.change === 'start_work' ? 'started' : p.change === 'complete' ? 'completed'
+            : p.change === 'approve_completed_work' ? 'approved' : p.change === 'reject_completed_work' ? 'sent back to the team' : 'updated';
+        return `Done. Ticket ${what}${t.status ? `; its status is now ${clean(t.status, 30)}` : ''}${p.change === 'set_priority' && t.priority ? `, priority ${clean(t.priority, 20)}` : ''}.`;
+    },
     reassign_ticket: () => 'Done. Ticket reassigned; the new assignee is notified.',
     update_hr_ticket: d => { const t = (d.data || {}) as HrTicketRow; return `Done. HR ticket updated${t.status ? `: status is now ${clean(t.status, 40)}` : ''}.`; },
     update_crm_lead: () => 'Done. Lead updated.',

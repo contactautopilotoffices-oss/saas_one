@@ -86,14 +86,27 @@ then sign in when asked.
   Each only returns a preview and a one-time code; `confirm_action` carries it out through the
   app's own route as the user. No delete tools.
 - **Update actions (preview, then confirm):** one existing record each, only the listed fields:
-  - `update_ticket`: a service ticket's status (open, in progress, waitlist, resolved, closed),
-    priority or resolution notes. Staff only, as in the app (tenants, clients and vendors can comment).
+  - `update_ticket`: follows the ticket screen's flow, checked on the ticket as it is now (who it is
+    assigned to, its status, the user's role). "Close" works out the right step:
+    - assigned to you and in progress: **complete** it (it closes, or waits for the client's approval
+      if the property uses that);
+    - not yours, but you are an org or property admin: the preview asks **"FORCE CLOSE this ticket?
+      It is assigned to Ramesh, not to you"** and closes only after your yes;
+    - you are the client and the work waits for your approval: **approve** it;
+    - otherwise nothing is prepared and Claude tells you who can close it.
+    Also: start work (assignee), set priority (admins), reject completed work (client, with a note).
+    A ticket can be named by its number (TKT-42); the FMS finds it among the tickets you can see,
+    and stops if none or several match.
   - `reassign_ticket`: give a service ticket to another staff member at its property. Only
     organisation or property admins.
-  - `update_hr_ticket`: start, resolve (with a note), accept the resolution, or reopen. The HR
-    route decides who may do which (current handler or HR to resolve, the person who raised it to accept).
+  - `update_hr_ticket`: start, resolve (with a note), accept the resolution, or reopen. The status is
+    checked first (for example, only a resolved ticket can be accepted, and only by the person who
+    raised it); the HR route then decides the rest (current handler or HR to resolve).
   - `update_crm_lead`: status, owner, next follow-up date, priority.
   - `update_task_status`: pending, in progress, completed.
+  - Claude is told never to guess ids, numbers, names or statuses, to ask when several records
+    match, and not to switch to another action (such as a force close) when one is refused unless
+    you ask for it. The preview text itself is written by the FMS from the real record.
   - The preview shows "current value -> new value". Just before acting, the record is read again;
     if it changed since the preview (someone else closed or reassigned it), nothing is sent and
     Claude has to prepare a new preview. Updates count towards the same per-person limits.

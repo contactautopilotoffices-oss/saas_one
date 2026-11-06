@@ -303,49 +303,112 @@ const ticketBody = (status: string, extra: Record<string, unknown> = {}) => ({
     ticket: { id: TICKET, ticket_number: 'TKT-7', title: 'AC leaking', status, priority: 'medium', property_id: PROP, assigned_to: null, property: { name: 'Andheri' }, ...extra },
 });
 
-test('update_ticket: tenants are refused; staff preview shows the change; confirm sends only the listed fields', async () => {
+const RAMESH = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+function ticketResponses(status: string, extra: Record<string, unknown> = {}, validationEnabled = true) {
+    return {
+        [`GET /api/tickets/${TICKET}`]: { status: 200, body: { ...ticketBody(status, extra), validationEnabled } },
+        [`PATCH /api/tickets/${TICKET}`]: { status: 200, body: { success: true, ticket: { status: 'closed' } } },
+    } as Record<string, { status: number; body: unknown }>;
+}
+const roleCtx = (h: ReturnType<typeof harness>, role: string) => { const c = h.ctx(); c.scope.properties[0].roles = [role]; return c; };
+
+test('close: the assignee completes in-progress work through the normal flow', async () => {
     const { previewUpdateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
-    const responses: Record<string, { status: number; body: unknown }> = {
-        [`GET /api/tickets/${TICKET}`]: { status: 200, body: ticketBody('open') },
-        [`PATCH /api/tickets/${TICKET}`]: { status: 200, body: { success: true, ticket: { status: 'closed', priority: 'medium' } } },
-    };
-    const h = harness(responses);
-
-    const asTenant = await previewUpdateTicket(h.ctx(), { ticket_id: TICKET, status: 'closed' });
-    assert.equal(asTenant.ok, false);
-    assert.match(asTenant.text, /Only staff/);
-
-    const ctx = staffCtx(h);
-    const same = await previewUpdateTicket(ctx, { ticket_id: TICKET, status: 'open' });
-    assert.equal(same.ok, false, 'no change, no preview');
-
-    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, status: 'closed', resolution_notes: 'Gas refilled' });
+    const h = harness(ticketResponses('in_progress', { assigned_to: USER }));
+    const ctx = roleCtx(h, 'mst');
+    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, change: 'close', note: 'Gas refilled' });
     assert.ok(prev.ok, prev.text);
-    assert.match(prev.text, /Status: open -> closed/);
-    assert.match(prev.text, /force close/);
-    assert.match(prev.text, /changes ONE existing record/);
+    assert.match(prev.text, /Complete this ticket\?/);
+    assert.match(prev.text, /assigned to you/);
+    assert.match(prev.text, /waiting for the client to approve/);
+    assert.doesNotMatch(prev.text, /FORCE/);
     assert.equal(writes(h.calls).length, 0, 'preview must not write');
-
     const done = await confirmAction(ctx, codeOf(prev.text));
     assert.ok(done.ok, done.text);
-    const w = writes(h.calls);
-    assert.equal(w.length, 1);
-    assert.equal(w[0].method, 'PATCH');
-    assert.equal(w[0].path, `/api/tickets/${TICKET}`);
-    assert.deepEqual(w[0].body, { status: 'closed', resolution_notes: 'Gas refilled' }, 'nothing but the previewed fields is sent');
+    assert.deepEqual(writes(h.calls).map(c => [c.method, c.path, c.body]), [['PATCH', `/api/tickets/${TICKET}`, { action: 'complete', resolution_notes: 'Gas refilled' }]]);
 });
 
-test('update_ticket: if the ticket changed after the preview, nothing is sent', async () => {
+test('close: not assigned to me but I am an admin, so the preview asks to confirm a FORCE CLOSE', async () => {
     const { previewUpdateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
-    const responses: Record<string, { status: number; body: unknown }> = { [`GET /api/tickets/${TICKET}`]: { status: 200, body: ticketBody('open') } };
+    const h = harness(ticketResponses('in_progress', { assigned_to: RAMESH, assignee: { full_name: 'Ramesh' } }));
+    const ctx = roleCtx(h, 'property_admin');
+    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, change: 'close' });
+    assert.ok(prev.ok, prev.text);
+    assert.match(prev.text, /FORCE CLOSE this ticket\? It is assigned to Ramesh, not to you/);
+    assert.match(prev.text, /Ask the user if they want to add one/);
+    const done = await confirmAction(ctx, codeOf(prev.text));
+    assert.ok(done.ok, done.text);
+    assert.match(done.text, /force closed/);
+    assert.deepEqual(writes(h.calls).map(c => c.body), [{ status: 'closed' }]);
+});
+
+test('close: not my ticket and not an admin, so nothing is prepared and the reason is given', async () => {
+    const { previewUpdateTicket } = await import('../../backend/lib/mcp/actions');
+    const h = harness(ticketResponses('in_progress', { assigned_to: RAMESH, assignee: { full_name: 'Ramesh' } }));
+    const res = await previewUpdateTicket(roleCtx(h, 'mst'), { ticket_id: TICKET, change: 'close' });
+    assert.equal(res.ok, false);
+    assert.match(res.text, /assigned to Ramesh, not to you/);
+    assert.match(res.text, /do not try another action/i);
+    assert.doesNotMatch(res.text, /PREVIEW/);
+    const forced = await previewUpdateTicket(roleCtx(h, 'mst'), { ticket_id: TICKET, change: 'force_close' });
+    assert.equal(forced.ok, false, 'asking for a force close directly does not get around it');
+    assert.equal(writes(h.calls).length, 0);
+});
+
+test('close: my ticket but work not started yet, so it asks to start work first', async () => {
+    const { previewUpdateTicket } = await import('../../backend/lib/mcp/actions');
+    const h = harness(ticketResponses('assigned', { assigned_to: USER }));
+    const res = await previewUpdateTicket(roleCtx(h, 'mst'), { ticket_id: TICKET, change: 'close' });
+    assert.equal(res.ok, false);
+    assert.match(res.text, /has not been started/);
+    const closed = await previewUpdateTicket(roleCtx(harness(ticketResponses('closed')), 'property_admin'), { ticket_id: TICKET, change: 'close' });
+    assert.match(closed.text, /already closed/);
+});
+
+test('close: a tenant closes by approving work that waits for them; the screen\'s validate call is sent', async () => {
+    const { previewUpdateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
+    const h = harness(ticketResponses('pending_validation', { assigned_to: RAMESH }));
+    const ctx = roleCtx(h, 'tenant');
+    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, change: 'close' });
+    assert.ok(prev.ok, prev.text);
+    assert.match(prev.text, /Approve the completed work\?/);
+    await confirmAction(ctx, codeOf(prev.text));
+    assert.deepEqual(writes(h.calls).map(c => c.body), [{ action: 'validate', validation_approved: true }]);
+    const notWaiting = await previewUpdateTicket(roleCtx(harness(ticketResponses('in_progress')), 'tenant'), { ticket_id: TICKET, change: 'close' });
+    assert.equal(notWaiting.ok, false);
+});
+
+test('ticket number: found only among the user\'s tickets; none or several stop with what was found', async () => {
+    const { previewUpdateTicket } = await import('../../backend/lib/mcp/actions');
+    const r = ticketResponses('in_progress', { assigned_to: USER });
+    r['GET /api/tickets'] = { status: 200, body: { tickets: [{ id: TICKET, ticket_number: 'TKT-7', title: 'AC leaking', status: 'in_progress' }, { id: RAMESH, ticket_number: 'TKT-70', title: 'Other' }] } };
+    const h = harness(r);
+    const ctx = roleCtx(h, 'mst');
+    const ok = await previewUpdateTicket(ctx, { ticket_number: '#tkt-7', change: 'close' });
+    assert.ok(ok.ok, ok.text);
+    assert.match(ok.text, /#TKT-7 AC leaking/);
+    const none = await previewUpdateTicket(ctx, { ticket_number: 'TKT-999', change: 'close' });
+    assert.match(none.text, /No ticket numbered TKT-999/);
+    r['GET /api/tickets'] = { status: 200, body: { tickets: [{ id: TICKET, ticket_number: 'TKT-7' }, { id: RAMESH, ticket_number: 'TKT-7' }] } };
+    const two = await previewUpdateTicket(ctx, { ticket_number: 'TKT-7', change: 'close' });
+    assert.equal(two.ok, false);
+    assert.match(two.text, /2 tickets you can see have the number TKT-7/);
+    const bad = await previewUpdateTicket(ctx, { ticket_number: 'TKT-7%,status.eq.open', change: 'close' });
+    assert.equal(bad.ok, false, 'odd characters never reach the search');
+    assert.equal(writes(h.calls).length, 0);
+});
+
+test('update_ticket: if the ticket changed after the preview (reassigned), nothing is sent', async () => {
+    const { previewUpdateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
+    const responses = ticketResponses('in_progress', { assigned_to: RAMESH, assignee: { full_name: 'Ramesh' } });
     const h = harness(responses);
-    const ctx = staffCtx(h);
-    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, status: 'closed' });
+    const ctx = roleCtx(h, 'property_admin');
+    const prev = await previewUpdateTicket(ctx, { ticket_id: TICKET, change: 'close' });
     assert.ok(prev.ok);
-    responses[`GET /api/tickets/${TICKET}`] = { status: 200, body: ticketBody('in_progress') }; // someone else moved it
+    responses[`GET /api/tickets/${TICKET}`] = { status: 200, body: { ...ticketBody('in_progress', { assigned_to: STAFF, assignee: { full_name: 'Suresh' } }), validationEnabled: true } };
     const done = await confirmAction(ctx, codeOf(prev.text));
     assert.equal(done.ok, false);
-    assert.match(done.text, /changed since the preview/);
+    assert.match(done.text, /changed since the preview \(it is now Suresh\)/);
     assert.equal(writes(h.calls).length, 0);
 });
 
@@ -386,6 +449,8 @@ test('update_hr_ticket: resolve needs a note and is sent as the signed-in user',
     const ctx = h.ctx();
     const noNote = await previewUpdateHrTicket(ctx, { ticket_id: TICKET, change: 'resolve' });
     assert.equal(noNote.ok, false);
+    const accept = await previewUpdateHrTicket(ctx, { ticket_id: TICKET, change: 'accept_resolution' });
+    assert.match(accept.text, /no resolution waiting to be accepted/, 'the HR flow is checked before anything is prepared');
     const prev = await previewUpdateHrTicket(ctx, { ticket_id: TICKET, change: 'resolve', note: 'Salary credited on 5 Nov' });
     assert.ok(prev.ok, prev.text);
     const done = await confirmAction(ctx, codeOf(prev.text));
