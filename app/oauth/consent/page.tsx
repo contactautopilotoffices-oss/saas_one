@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { ShieldCheck, Eye, Ban, CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { isAllowedRedirect } from '@/backend/lib/mcp/redirectPolicy';
+import ConsentForm from './ConsentForm';
 
 /**
  * /oauth/consent — the FMS "Allow this assistant to access your account?" screen.
@@ -105,27 +106,7 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
                 </p>
             )}
 
-            <form action="/api/oauth/decision" method="POST" className="mt-6 flex gap-3">
-                <input type="hidden" name="authorization_id" value={authorizationId} />
-                <button
-                    type="submit"
-                    name="decision"
-                    value="deny"
-                    className="flex-1 rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800"
-                >
-                    Deny
-                </button>
-                {allowed && (
-                    <button
-                        type="submit"
-                        name="decision"
-                        value="approve"
-                        className="flex-1 rounded-lg bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-400"
-                    >
-                        Allow
-                    </button>
-                )}
-            </form>
+            <ConsentForm authorizationId={authorizationId} allowed={allowed} />
         </Shell>
     );
 }
