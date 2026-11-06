@@ -247,9 +247,15 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
 
     const listed = await client.listTools();
     const names = listed.tools.map(t => t.name).sort();
-    assert.deepEqual(names, ['fetch_endpoint', 'find_endpoints', 'list_assets', 'list_crm_leads', 'list_tickets', 'my_pending_actions', 'po_approval_queue', 'whoami']);
+    assert.deepEqual(names, [
+        'book_meeting_room', 'cancel_booking', 'confirm_action', 'create_ticket', 'fetch_endpoint', 'find_endpoints',
+        'find_meeting_rooms', 'list_assets', 'list_crm_leads', 'list_tickets', 'my_bookings', 'my_pending_actions',
+        'po_approval_queue', 'whoami',
+    ]);
     for (const t of listed.tools) {
-        assert.equal(t.annotations?.readOnlyHint, true, `${t.name} must be read only`);
+        // Only confirm_action changes anything; the three action tools merely preview.
+        if (t.name === 'confirm_action') assert.equal(t.annotations?.destructiveHint, true);
+        else assert.equal(t.annotations?.readOnlyHint, true, `${t.name} must not change anything`);
         assert.ok((t.description || '').length > 80, `${t.name} needs a real description (doctrine L8)`);
     }
 

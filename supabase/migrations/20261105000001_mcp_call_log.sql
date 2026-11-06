@@ -34,3 +34,19 @@ DROP TRIGGER IF EXISTS trg_mcp_call_log_append_only ON public.mcp_call_log;
 CREATE TRIGGER trg_mcp_call_log_append_only
     BEFORE UPDATE OR DELETE ON public.mcp_call_log
     FOR EACH ROW EXECUTE FUNCTION public.mcp_call_log_append_only();
+
+--   mcp_action_confirmations   one row per confirmation code that has been used, so each code
+--                              (raise a ticket, book or cancel a meeting room) works once only.
+--                              The primary key on the nonce is what refuses a second use.
+CREATE TABLE IF NOT EXISTS public.mcp_action_confirmations (
+    nonce       TEXT PRIMARY KEY,
+    user_id     UUID NOT NULL,                    -- no FK, same reason as above
+    action      TEXT NOT NULL CHECK (action IN ('create_ticket', 'book_meeting_room', 'cancel_booking')),
+    used_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE public.mcp_action_confirmations ENABLE ROW LEVEL SECURITY;
+
+DROP TRIGGER IF EXISTS trg_mcp_action_confirmations_append_only ON public.mcp_action_confirmations;
+CREATE TRIGGER trg_mcp_action_confirmations_append_only
+    BEFORE UPDATE OR DELETE ON public.mcp_action_confirmations
+    FOR EACH ROW EXECUTE FUNCTION public.mcp_call_log_append_only();

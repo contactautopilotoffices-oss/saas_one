@@ -69,12 +69,17 @@ export async function fetchAsUser(opts: {
     expiresAt: number;
     path: string;
     query: Record<string, string>;
+    /** GET unless set. Only the confirmed write actions (actions.ts) ever pass POST or PATCH. */
+    method?: 'GET' | 'POST' | 'PATCH';
+    /** JSON body, for POST and PATCH. */
+    body?: unknown;
 }): Promise<FetchResult> {
     const url = buildTargetUrl(opts.origin, opts.path, opts.query);
     if (!url) throw new Error('refused: target is outside the FMS API');
+    const method = opts.method || 'GET';
 
     const res = await fetch(url, {
-        method: 'GET',
+        method,
         redirect: 'manual', // a redirect could point anywhere; never follow one with the user's token
         cache: 'no-store',
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -84,7 +89,9 @@ export async function fetchAsUser(opts: {
             cookie: buildSessionCookie(opts.supabaseUrl, opts.accessToken, opts.expiresAt),
             'x-fms-mcp': '1',
             'user-agent': 'fms-mcp/1.0',
+            ...(method === 'GET' ? {} : { 'content-type': 'application/json' }),
         },
+        ...(method === 'GET' ? {} : { body: JSON.stringify(opts.body ?? {}) }),
     });
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase();

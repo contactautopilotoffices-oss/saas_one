@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { ShieldCheck, Eye, Ban } from 'lucide-react';
+import { ShieldCheck, Eye, Ban, CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { isAllowedRedirect } from '@/backend/lib/mcp/redirectPolicy';
 
@@ -83,8 +83,12 @@ export default async function OAuthConsentPage({ searchParams }: { searchParams:
                             <span>It can <strong>read</strong> what you can see in the FMS: your properties, tickets, assets, leads and the rest, as you. Nothing more than your own access.</span>
                         </li>
                         <li className="flex gap-2">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" />
+                            <span>It can <strong>raise tickets</strong> and <strong>book or cancel meeting rooms</strong> for you, but only after it shows you the details and you say yes. It follows the same rules as the app (credits, room availability).</span>
+                        </li>
+                        <li className="flex gap-2">
                             <Ban className="mt-0.5 h-4 w-4 shrink-0 text-teal-400" />
-                            <span>The FMS connection only offers read tools: through it, the assistant <strong>cannot</strong> create, change, approve or delete anything.</span>
+                            <span>Through this connection it <strong>cannot</strong> approve, change or delete anything else.</span>
                         </li>
                     </ul>
                     <p className="mt-4 text-xs text-slate-400">

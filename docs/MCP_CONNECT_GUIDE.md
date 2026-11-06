@@ -1,8 +1,9 @@
 # Connect Claude to the FMS
 
 The FMS has an MCP server at `https://<your FMS domain>/api/mcp`. When you connect Claude to it,
-Claude can **read** what you can see in the FMS, signed in as you. It cannot create, change,
-approve or delete anything.
+Claude can **read** what you can see in the FMS, signed in as you. It can also **raise a ticket,
+book a meeting room or cancel a booking**, but only after it shows you a preview and you say yes.
+It cannot approve, change or delete anything else.
 
 ## For users (anyone with an FMS login, clients included)
 
@@ -10,7 +11,12 @@ approve or delete anything.
 2. Name: `Autopilot FMS`. URL: `https://<your FMS domain>/api/mcp`. Leave the OAuth fields empty.
 3. Click **Connect**. The FMS login opens. Sign in with your normal FMS account.
 4. You will see "Connect Claude to the FMS?". Check it says you go back to `claude.ai`, then click **Allow**.
-5. Ask Claude things like "what open tickets do I have at Andheri?" or "which assets are graded P1?".
+5. Ask Claude things like "what open tickets do I have at Andheri?", "raise a ticket: the AC on the
+   3rd floor is leaking" or "book a room for 6 people tomorrow 3 to 4 pm".
+
+For a ticket or a booking, Claude first shows what it will do ("Book Board Room, tomorrow 15:00 to
+16:00, uses 1 hour of credits?"). Nothing happens until you reply yes. The same app rules apply as
+always: credits, double bookings, and who may cancel what.
 
 What Claude sees is exactly what you see when you log in: your organisations and properties only.
 If your FMS access is removed, Claude's access stops with it.
@@ -55,8 +61,15 @@ then sign in when asked.
   `npm run mcp:catalog` and commit the result.
 - **Log:** every tool call is written to `mcp_call_log` (who, which tool, which route, result). No
   FMS data is stored in it.
-- **Tools:** `whoami`, `find_endpoints`, `fetch_endpoint`, `list_tickets`, `list_assets`,
-  `list_crm_leads`, `po_approval_queue`, `my_pending_actions`.
+- **Read tools:** `whoami`, `find_endpoints`, `fetch_endpoint`, `list_tickets`, `list_assets`,
+  `list_crm_leads`, `po_approval_queue`, `my_pending_actions`, `find_meeting_rooms`, `my_bookings`.
+- **Actions (preview, then confirm):** `create_ticket`, `book_meeting_room`, `cancel_booking` only
+  return a preview and a one-time code. `confirm_action` carries it out through the app's own route
+  (`POST /api/tickets`, `POST /api/meeting-room-bookings`, `PATCH /api/meeting-room-bookings/{id}`)
+  as the user. The code is signed by the server, names the exact arguments previewed, belongs to one
+  user and one connection, expires after 10 minutes and works once (`mcp_action_confirmations`).
+  Optional `MCP_CONFIRM_SECRET` (32+ characters) sets the signing key; otherwise it is derived from
+  the service role key.
 
 Code: `app/api/mcp/route.ts`, `backend/lib/mcp/`, `app/oauth/consent/page.tsx`,
 `app/api/oauth/decision/route.ts`. Tests: `npm run test:mcp`.

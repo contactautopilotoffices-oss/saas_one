@@ -99,6 +99,7 @@ This is the "build intelligence and route to frontier models" part.
 - 2026-10-26 — PO approval, the first write tool: Zoho link and decision logic written and type-checked; migration written, **not applied**; routes, screen and tests still to do. This work is the same code the MCP approve tool will call, so it is not wasted effort.
 - 2026-11-05 — Owner widened access: every FMS user (clients included) can connect, each scoped to their own data. Design section added.
 - 2026-11-05 — Phase 1 and 2 built, read only: `/api/mcp`, OAuth consent screen, route catalogue (227 of 440 GET routes), membership fence, call log migration (**not applied**), 8 tools, tests (`npm run test:mcp`). Setup steps in `docs/MCP_CONNECT_GUIDE.md`. Not yet tested against the real Supabase OAuth server, which an admin has to switch on first.
+- 2026-11-06 — First write actions, owner approved: raise a ticket, book a meeting room, cancel a booking. Preview plus a signed one-time confirm code (10 minutes, one use), then the app's own route runs as the user. Open to every user the app itself allows. Tests: 27 passing.
 
 ## Design for "every user, their own data" (proposed 2026-11-05)
 
