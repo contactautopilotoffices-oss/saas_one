@@ -1,6 +1,7 @@
 import { siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId, internalOrgIds, internalPropertyIds } from '@/backend/lib/auth/callerAccess';
 import { generateRequisitionExcelWorkbook, RequisitionItemData } from '@/backend/lib/excel/requisitionExcelGenerator';
 import { PricingAndAliasService, normalizeText } from '@/backend/lib/procurement/pricingAndAliasService';
 import { deliverySummaries, type DeliverySummary } from '@/backend/lib/procurement/requisitionDelivery';
@@ -19,6 +20,17 @@ export async function GET(request: NextRequest) {
         const requisitionYear = searchParams.get('requisition_year');
         const status = searchParams.get('status');
 
+        // Signed-in internal staff only. Organisation-level members see their organisations'
+        // requisitions (procurement, admins and the like share them, as before); property-level
+        // members see their own properties'. Clients, tenants and vendors see none.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const myOrgIds = internalOrgIds(caller);
+        const myPropertyIds = internalPropertyIds(caller);
+        if (!caller.isMasterAdmin && myOrgIds.length === 0 && myPropertyIds.length === 0) {
+            return forbidden('Forbidden: no access to requisitions');
+        }
+
         const adminSupabase = createAdminClient();
 
         let query = adminSupabase
@@ -30,6 +42,13 @@ export async function GET(request: NextRequest) {
                 acknowledger:users!acknowledged_by(id, full_name, email)
             `)
             .order('created_at', { ascending: false });
+
+        if (!caller.isMasterAdmin) {
+            const scopes: string[] = [];
+            if (myOrgIds.length) scopes.push(`organization_id.in.(${myOrgIds.join(',')})`);
+            if (myPropertyIds.length) scopes.push(`property_id.in.(${myPropertyIds.join(',')})`);
+            query = query.or(scopes.join(','));
+        }
 
         if (organizationId) {
             query = query.eq('organization_id', organizationId);
@@ -118,6 +137,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        // The caller may only submit for a property they work at, and is always recorded as the uploader.
+        const refuseUnlessAllowed = async (orgId: string, propId: string): Promise<NextResponse | null> => {
+            const actualOrg = await propertyOrgId(propId);
+            if (!actualOrg || actualOrg !== orgId) return NextResponse.json({ error: 'Property not found in this organization' }, { status: 400 });
+            if (!canUseProperty(caller, propId, actualOrg)) return forbidden('Forbidden: no access to this property');
+            return null;
+        };
         const adminSupabase = createAdminClient();
 
         // Ensure storage bucket exists
@@ -165,6 +193,9 @@ export async function POST(request: NextRequest) {
             if (!organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
                 return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
             }
+            const refusedJson = await refuseUnlessAllowed(organizationId, propertyId);
+            if (refusedJson) return refusedJson;
+            userId = caller.userId;
 
             // CRITICAL SECURITY RULE: Resolve authorized prices server-side from item_site_prices / procurement_catalog
             const siteCatalog = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
@@ -241,6 +272,9 @@ export async function POST(request: NextRequest) {
             if (!file || !organizationId || !propertyId || !requisitionMonth || !requisitionYear || !userId) {
                 return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
             }
+            const refusedForm = await refuseUnlessAllowed(organizationId, propertyId);
+            if (refusedForm) return refusedForm;
+            userId = caller.userId;
 
             uploadedFileName = file.name;
             const arrayBuffer = await file.arrayBuffer();

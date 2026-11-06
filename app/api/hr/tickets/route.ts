@@ -12,6 +12,7 @@ import {
     pickTicketPropertyId,
     unwrapFlowAssignees
 } from '@/backend/lib/hr/levelAssignees';
+import { resolveCaller, isCallerError, forbidden, belongsToOrg } from '@/backend/lib/auth/callerAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -124,9 +125,15 @@ export async function GET(request: Request) {
 
         const { searchParams } = new URL(request.url);
 
+        // Signed-in callers only, and only for an organisation they belong to. Who the caller is and
+        // what they may see come from their account, never from the URL: the old ?userId= and ?role=
+        // parameters are ignored, so nobody can read HR tickets by claiming to be HR.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const orgId = searchParams.get('orgId');
-        const userId = searchParams.get('userId');
-        const role = searchParams.get('role') || 'employee';
+        if (!orgId) return NextResponse.json({ success: false, error: 'orgId is required' }, { status: 400 });
+        const userId = caller.userId;
+        if (!(await belongsToOrg(caller, orgId))) return forbidden('Forbidden: no access to this organization');
         const type = searchParams.get('type');
         const status = searchParams.get('status');
 
@@ -190,38 +197,28 @@ export async function GET(request: Request) {
         //
         // Boolean guards use `not.is.true`, never `neq.true`: is_anonymous / is_confidential can be NULL
         // on older rows, and `NULL <> true` evaluates to NULL in SQL, which silently drops the ticket.
-        const normalizedRole = (role || '').toLowerCase();
         const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
         const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
-        
-        let isOrgSuperAdmin = orgSuperAdminRoles.includes(normalizedRole);
-        let isHrRole = hrRoles.includes(normalizedRole);
+
+        // Tier comes from the caller's own memberships in this organisation (both levels) and the
+        // master-admin flag; the employee-profile HR flags are checked below.
+        const callerRolesInOrg = [
+            ...caller.orgMemberships.filter(m => m.organization_id === orgId).map(m => m.role),
+            ...caller.propertyMemberships.filter(m => m.organization_id === orgId).map(m => m.role),
+        ];
+        const isOrgSuperAdmin = caller.isMasterAdmin || callerRolesInOrg.some(r => orgSuperAdminRoles.includes(r));
+        let isHrRole = !isOrgSuperAdmin && callerRolesInOrg.some(r => hrRoles.includes(r));
         let myProfile: any = null;
 
         if (userId) {
-            // Fetch caller profile and org memberships concurrently for maximum speed
-            const [profileRes, memsRes] = await Promise.all([
-                supabaseAdmin
-                    .from('employee_profiles')
-                    .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code, is_hr_authority, is_hr_manager_authority, designation, department, location')
-                    .eq('user_id', userId)
-                    .maybeSingle(),
-                supabaseAdmin
-                    .from('organization_memberships')
-                    .select('role')
-                    .eq('user_id', userId)
-                    .eq('organization_id', orgId)
-            ]);
+            // Caller's employee profile (memberships were read above, active ones only).
+            const profileRes = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id, employee_code, first_name, last_name, email, reporting_manager_id, reporting_manager_code, is_hr_authority, is_hr_manager_authority, designation, department, location')
+                .eq('user_id', userId)
+                .maybeSingle();
 
             myProfile = profileRes.data;
-            const mems = memsRes.data;
-
-            if (mems && mems.some(m => orgSuperAdminRoles.includes((m.role || '').toLowerCase()))) {
-                isOrgSuperAdmin = true;
-            }
-            if (!isOrgSuperAdmin && mems && mems.some(m => hrRoles.includes((m.role || '').toLowerCase()))) {
-                isHrRole = true;
-            }
 
             // Check employee_profiles for HR authority flags
             if (!isOrgSuperAdmin && !isHrRole && myProfile) {
@@ -647,12 +644,18 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
     try {
+        // Signed-in callers only, and a ticket is always raised as the caller (never as someone else).
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const body = await request.json();
+        if (body.organization_id && !(await belongsToOrg(caller, String(body.organization_id)))) {
+            return forbidden('Forbidden: no access to this organization');
+        }
+        const raised_by_user_id = caller.userId;
         const {
             organization_id,
             property_id,
             category_id,
-            raised_by_user_id,
             subject,
             description,
             attachment_urls = [],
