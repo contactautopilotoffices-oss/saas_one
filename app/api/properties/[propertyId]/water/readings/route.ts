@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { guardProperty } from '@/backend/lib/auth/callerAccess';
+import { checkReadings } from '@/backend/lib/utilities/readingRules';
 
 export async function GET(
     request: NextRequest,
@@ -50,6 +51,11 @@ export async function POST(
     if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
+
+    {
+        const invalid = checkReadings('water', Array.isArray(body?.readings) ? body.readings : [body]);
+        if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
+    }
 
     // Every water source written to must belong to THIS property (the guarded URL), not just exist.
     const sourceIds = Array.from(new Set(

@@ -5,6 +5,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { resolveCaller, isCallerError, forbidden, guardOrg, propertyOrgId, canUseProperty } from '@/backend/lib/auth/callerAccess';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -20,6 +21,9 @@ export async function GET(
         if (!id) {
             return NextResponse.json({ error: 'Requisition ID is required' }, { status: 400 });
         }
+        // Sign-in first, so a missing and a forbidden requisition look the same to an outsider.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
 
         const adminSupabase = createAdminClient();
 
@@ -31,6 +35,11 @@ export async function GET(
 
         if (error || !req) {
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+        }
+        {
+            const orgId = req.organization_id || (req.property_id ? await propertyOrgId(req.property_id) : null);
+            const allowed = req.property_id ? canUseProperty(caller, req.property_id, orgId) : !!orgId && (await guardOrg(request, orgId)) === null;
+            if (!allowed) return forbidden('Forbidden: no access to this requisition');
         }
 
         let propertyObj: any = null;

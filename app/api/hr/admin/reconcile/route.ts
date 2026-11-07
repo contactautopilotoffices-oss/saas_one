@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError, forbidden } from '@/backend/lib/auth/callerAccess';
+import { isHrAdmin, hrAdminOfProfile } from '@/backend/lib/auth/hrAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
+        // HR admins only (the Reconciliation tab of the HR screen).
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!(await isHrAdmin(caller, null))) return forbidden('Forbidden: HR admins only');
         // Fetch all employee profiles
         const { data: profiles, error: profErr } = await supabaseAdmin
             .from('employee_profiles')
@@ -152,6 +158,15 @@ export async function POST(request: Request) {
     try {
         const body = await request.json();
         const { action, employee_profile_id, user_id, reporting_manager_id } = body;
+
+        // HR admins only; a change to one employee needs an HR admin of that employee's organisation.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!(await isHrAdmin(caller, null))) return forbidden('Forbidden: HR admins only');
+        if (employee_profile_id) {
+            const r = await hrAdminOfProfile(caller, String(employee_profile_id));
+            if (r === 'denied') return forbidden('Forbidden: HR admins of this employee\'s organisation only');
+        }
 
         if (action === 'approve_onboarding') {
             // Approve onboarding employee: Link app user_id to employee_profile & assign reporting manager

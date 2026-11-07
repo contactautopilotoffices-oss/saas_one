@@ -3,15 +3,18 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getSettings, getUser } from '@/backend/lib/vms-face/context';
 import { isHostCallConfigured } from '@/backend/lib/vms-face/hostCall';
 import { isBioFrqConfigured } from '@/backend/services/BioFrqService';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET/PUT /api/vms-face/org/[orgId]/settings — the VMS Face (testing) switches for one organisation,
  * plus which integrations are configured on the server (so the UI can explain a disabled feature).
  */
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ orgId: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ orgId: string }> }) {
     const { orgId } = await params;
     const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     return NextResponse.json({
         settings: await getSettings(orgId),
@@ -28,6 +31,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const { orgId } = await params;
     const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     const body = await request.json().catch(() => ({}));
     const patch: Record<string, unknown> = {};

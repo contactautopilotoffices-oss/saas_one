@@ -25,6 +25,14 @@ const API_DIR = join(ROOT, 'app', 'api');
 const OUT = join(ROOT, 'backend', 'lib', 'mcp', 'catalog.generated.json');
 
 // Areas never exposed, whatever the code says.
+// Routes a person has read and decided to keep away from the assistant, with the reason. The scan
+// cannot see these: the write or the file happens in a helper module.
+const MANUAL_EXCLUDE = {
+    '/api/ppm/audit': 'GET path may write data (it saves an audit report through auditService)',
+    '/api/ppm/debug': 'debugging aid, not for the assistant',
+    '/api/crm/import': 'its GET only returns an import template file',
+};
+
 const BLOCKED_TOP = new Set([
     'cron', 'webhooks', 'internal', 'diag', 'test-mcp', 'auth', 'session', 'public',
     'push-tokens', 'mcp', 'oauth', 'email-actions', 'invite-links', 'storage', 'proctor',
@@ -217,7 +225,8 @@ for (const file of files) {
     const readable = pattern.replace(/\[(?:\.\.\.)?([\w-]+)\]/g, '{$1}');
 
     let reason = null;
-    if (BLOCKED_TOP.has(top)) reason = `blocked area "${top}"`;
+    if (MANUAL_EXCLUDE[readable]) reason = MANUAL_EXCLUDE[readable];
+    else if (BLOCKED_TOP.has(top)) reason = `blocked area "${top}"`;
     else if (BLOCKED_SEGMENT.test(routeDir)) reason = 'file, OAuth or public-token route';
     else if (/\[\.\.\./.test(routeDir)) reason = 'catch-all route';
     else if (!AUTH_EVIDENCE.test(get + '\n' + shared) && !callsSignInHelper(src, get + '\n' + shared)) reason = 'no visible sign-in check';

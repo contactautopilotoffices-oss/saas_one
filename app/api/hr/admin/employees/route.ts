@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError, forbidden, isOrgAdmin, isInternalOrgMember, internalOrgIds } from '@/backend/lib/auth/callerAccess';
+import { isHrAdmin, hrAdminOfProfile } from '@/backend/lib/auth/hrAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -11,12 +13,32 @@ interface EmployeesCacheEntry {
 const serverEmployeesCache = new Map<string, EmployeesCacheEntry>();
 const CACHE_TTL_MS = 60 * 1000;
 
+const ADMIN_LEVEL_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'super_admin', 'ops_super_admin'];
+
+/** Changing or deleting an employee: an HR admin of the employee's organisation. */
+async function requireHrAdminOfProfile(request: Request, profileId: string): Promise<NextResponse | null> {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    const r = await hrAdminOfProfile(caller, profileId);
+    if (r === 'missing') return NextResponse.json({ success: false, error: 'Employee not found' }, { status: 404 });
+    return r === 'ok' ? null : forbidden('Forbidden: HR admins only');
+}
+
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const department = searchParams.get('department');
         const queryStr = searchParams.get('q');
-        const orgId = searchParams.get('organization_id') || searchParams.get('orgId');
+        let orgId = searchParams.get('organization_id') || searchParams.get('orgId');
+        // Signed-in members of the organisation; checked before the cache, which is shared.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!orgId && !caller.isMasterAdmin) {
+            const mine = internalOrgIds(caller);
+            if (mine.length !== 1) return NextResponse.json({ success: false, error: 'organization_id is required' }, { status: 400 });
+            orgId = mine[0];
+        }
+        if (orgId && !(await isInternalOrgMember(caller, orgId))) return forbidden('Forbidden: no access to this organization');
         const cacheKey = `${orgId || 'all'}_${department || 'all'}_${queryStr || 'all'}`;
         const cached = serverEmployeesCache.get(cacheKey);
         if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
@@ -208,6 +230,8 @@ export async function PATCH(request: Request) {
         if (!targetId) {
             return NextResponse.json({ success: false, error: 'employee_id is required' }, { status: 400 });
         }
+        const denied = await requireHrAdminOfProfile(request, targetId);
+        if (denied) return denied;
 
         // Fetch employee details before update
         let { data: profile, error: fetchErr } = await supabaseAdmin
@@ -529,6 +553,14 @@ export async function POST(request: Request) {
             targetOrgId = '211e1330-ad83-446d-941f-dcea48396798';
         }
 
+        // Only HR admins of that organisation add employees; admin roles only from an organisation admin.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!(await isHrAdmin(caller, targetOrgId))) return forbidden('Forbidden: HR admins only');
+        if (ADMIN_LEVEL_ROLES.includes(String(role).toLowerCase()) && !isOrgAdmin(caller, targetOrgId)) {
+            return forbidden('Forbidden: only an organisation admin can give an admin role');
+        }
+
         // 3. Handle App Account creation if requested or update existing user
         if (create_app_account) {
             const full_name = `${cleanFirstName} ${cleanLastName}`.trim();
@@ -737,6 +769,8 @@ export async function DELETE(request: Request) {
         if (!id) {
             return NextResponse.json({ success: false, error: 'Employee ID is required' }, { status: 400 });
         }
+        const denied = await requireHrAdminOfProfile(request, id);
+        if (denied) return denied;
 
         const { error } = await supabaseAdmin
             .from('employee_profiles')

@@ -2,8 +2,8 @@
   "generatedBy": "scripts/mcp/build-catalog.mjs",
   "note": "Generated file. Do not edit by hand; re-run the script after adding or changing API routes.",
   "counts": {
-    "included": 278,
-    "excluded": 163
+    "included": 306,
+    "excluded": 135
   },
   "routes": [
     {
@@ -184,6 +184,20 @@
       "description": "GET /api/admin/dashboard-stats Securely fetch global stats for the Master Admin console."
     },
     {
+      "path": "/api/admin/issue-config",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET: Fetch all skill groups with their issue categories and keywords"
+    },
+    {
+      "path": "/api/admin/issue-config/seed",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [],
+      "description": "GET: Check current seeding status"
+    },
+    {
       "path": "/api/admin/ocr-monitor",
       "module": "admin",
       "pathParams": [],
@@ -195,6 +209,33 @@
       "description": "GET /api/admin/ocr-monitor?source=&failed=1&limit= — the OCR Monitor's snapshot. Master admin only. Read-only."
     },
     {
+      "path": "/api/admin/organizations/{orgId}/metrics",
+      "module": "admin",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/admin/organizations/[orgId]/metrics Get organization metrics Uses service role - bypasses RLS"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/modules",
+      "module": "admin",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/admin/organizations/[orgId]/modules Get module usage analytics Uses service role - bypasses RLS"
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/properties",
+      "module": "admin",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/admin/organizations/[orgId]/properties Get properties for a specific organization Uses service role - bypasses RLS"
+    },
+    {
       "path": "/api/admin/organizations/{orgId}",
       "module": "admin",
       "pathParams": [
@@ -202,6 +243,15 @@
       ],
       "queryParams": [],
       "description": ""
+    },
+    {
+      "path": "/api/admin/organizations/{orgId}/storage",
+      "module": "admin",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET /api/admin/organizations/[orgId]/storage Get storage breakdown by property Uses service role - bypasses RLS"
     },
     {
       "path": "/api/admin/resolver-stats",
@@ -223,6 +273,18 @@
       "pathParams": [],
       "queryParams": [],
       "description": "GET /api/admin/verify Verify if the current user is a Master Admin"
+    },
+    {
+      "path": "/api/admin/whatsapp/analytics",
+      "module": "admin",
+      "pathParams": [],
+      "queryParams": [
+        "limit",
+        "organizationId",
+        "status",
+        "template"
+      ],
+      "description": "GET /api/admin/whatsapp/analytics?organizationId=...&status=...&template=...&limit=150 WhatsApp Gateway Health, Delivery Telemetry, Root Cause Diagnostics & Meta Template Health."
     },
     {
       "path": "/api/agents/bundles",
@@ -513,6 +575,25 @@
         "status"
       ],
       "description": "GET /api/assets — list/search the asset register. Query: organization_id (required unless single-org), property_id, category_id, floor, status, grade (P1|P2|P3), search, page, page_size."
+    },
+    {
+      "path": "/api/audit/master",
+      "module": "audit",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id"
+      ],
+      "description": "GET /api/audit/master?organization_id=... Fetch the master audit items (the 35-point template)."
+    },
+    {
+      "path": "/api/audit/submissions",
+      "module": "audit",
+      "pathParams": [],
+      "queryParams": [
+        "period",
+        "property_id"
+      ],
+      "description": "GET /api/audit/submissions?property_id=...&period=... Fetch audit submissions for a property, joined with master items."
     },
     {
       "path": "/api/candidates/{id}",
@@ -1105,6 +1186,51 @@
       "description": "What the signed-in user may do: drives whether the floating bot (and its admin link) shows."
     },
     {
+      "path": "/api/hr/admin/employees",
+      "module": "hr",
+      "pathParams": [],
+      "queryParams": [
+        "department",
+        "orgId",
+        "organization_id",
+        "q"
+      ],
+      "description": "Changing or deleting an employee: an HR admin of the employee's organisation."
+    },
+    {
+      "path": "/api/hr/admin/escalation-config",
+      "module": "hr",
+      "pathParams": [],
+      "queryParams": [
+        "orgId",
+        "organization_id"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/hr/notes",
+      "module": "hr",
+      "pathParams": [],
+      "queryParams": [
+        "includeSubmitter",
+        "orgId",
+        "search",
+        "type"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/hr/tickets/{id}/comments",
+      "module": "hr",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [
+        "includeInternal"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/hr/tickets/{id}",
       "module": "hr",
       "pathParams": [
@@ -1680,6 +1806,15 @@
       "description": ""
     },
     {
+      "path": "/api/procurement/aliases",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/procurement/budgets",
       "module": "procurement",
       "pathParams": [],
@@ -1725,6 +1860,16 @@
       "description": "GET /api/procurement/mailbox/summary \"Who is waiting on the purchase team, and how long have they been waiting.\" Reads through the service role behind resolveMailboxAccess rather than letting the browser query mailbox_threads directly, so the procurement/super-admin restriction is enforced in one place regardless of what the RLS policy happens to allow. ?from=<substring> filters to one counterpart"
     },
     {
+      "path": "/api/procurement/pricing",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "organization_id",
+        "property_id"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/procurement/requests",
       "module": "procurement",
       "pathParams": [],
@@ -1748,11 +1893,34 @@
       "description": "Delivery challans for an approved monthly requisition. GET - what was ordered, what has arrived so far, and every challan uploaded. POST - a property admin uploads a challan and the received quantity per item; confirm_requisition_delivery() adds it to stock in one transaction. Items are matched to stock by the catalog item id each requisition line was created from (row id 'cat-<catalog id>'), neve"
     },
     {
+      "path": "/api/procurement/requisitions/{id}",
+      "module": "procurement",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": ""
+    },
+    {
       "path": "/api/procurement/requisitions/approvers",
       "module": "procurement",
       "pathParams": [],
       "queryParams": [
         "organization_id"
+      ],
+      "description": ""
+    },
+    {
+      "path": "/api/procurement/requisitions/budgets",
+      "module": "procurement",
+      "pathParams": [],
+      "queryParams": [
+        "floorTag",
+        "floor_tag",
+        "organizationId",
+        "organization_id",
+        "propertyId",
+        "property_id"
       ],
       "description": ""
     },
@@ -2299,6 +2467,27 @@
       "description": "GET /api/reports/task-manager-usage/schedule?orgId=<uuid> PUT /api/reports/task-manager-usage/schedule { organization_id, schedule } The report schedule set in the Report tab. Org super admins only. `provisioned: false` means the migration has not been run yet."
     },
     {
+      "path": "/api/resolvers/workload",
+      "module": "resolvers",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId",
+        "propertyId",
+        "skillGroupId"
+      ],
+      "description": "GET: Get resolver workload for load balancing"
+    },
+    {
+      "path": "/api/roster/config",
+      "module": "roster",
+      "pathParams": [],
+      "queryParams": [
+        "propertyId",
+        "property_id"
+      ],
+      "description": ""
+    },
+    {
       "path": "/api/roster",
       "module": "roster",
       "pathParams": [],
@@ -2592,6 +2781,15 @@
       "description": "Step 5 — the Procurement \"Tasks\" tab. GET /api/task-manager/workspace?date=YYYY-MM-DD[&department=Procurement] GET /api/task-manager/workspace?scope=console (superusers: my tasks + tasks I gave, all departments) GET /api/task-manager/workspace?scope=assigned&from=&to= (\"Assigned by me\") POST /api/task-manager/workspace { action: 'assign' | 'assign_many' | 'check_duplicates' | 'set_status' | 'hand_"
     },
     {
+      "path": "/api/tickets/{id}/activity",
+      "module": "tickets",
+      "pathParams": [
+        "id"
+      ],
+      "queryParams": [],
+      "description": "GET /api/tickets/[id]/activity Get full activity log for a ticket"
+    },
+    {
       "path": "/api/tickets/{id}/assets",
       "module": "tickets",
       "pathParams": [
@@ -2724,6 +2922,17 @@
       "description": "GET /api/users/list?orgId=xxx&propertyId=yyy Fetch all users for an organization or property. Uses admin client to bypass RLS so org_super_admins can see all users."
     },
     {
+      "path": "/api/vendors/{vendorId}/commission-cycles",
+      "module": "vendors",
+      "pathParams": [
+        "vendorId"
+      ],
+      "queryParams": [
+        "status"
+      ],
+      "description": "The vendor's owner may read its cycles; internal staff of the vendor's property may read and change them."
+    },
+    {
       "path": "/api/vendors/maintenance",
       "module": "vendors",
       "pathParams": [],
@@ -2758,6 +2967,92 @@
         "status"
       ],
       "description": "GET: List visitors for a property"
+    },
+    {
+      "path": "/api/vms-face/org/{orgId}/profiles",
+      "module": "vms-face",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "search"
+      ],
+      "description": "GET /api/vms-face/org/[orgId]/profiles?search= enrolled faces (fixed details only) DELETE /api/vms-face/org/[orgId]/profiles?id=&reason=visitor_request|admin Permanently deletes the face from BioFRQ and our table; the deletion is logged."
+    },
+    {
+      "path": "/api/vms-face/org/{orgId}/settings",
+      "module": "vms-face",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [],
+      "description": "GET/PUT /api/vms-face/org/[orgId]/settings — the VMS Face (testing) switches for one organisation, plus which integrations are configured on the server (so the UI can explain a disabled feature)."
+    },
+    {
+      "path": "/api/vms/{propertyId}/hosts",
+      "module": "vms",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "limit",
+        "q"
+      ],
+      "description": "GET /api/vms/[propertyId]/hosts Get searchable list of hosts (staff + tenants) for auto-complete Uses service role to allow anonymous kiosk access"
+    },
+    {
+      "path": "/api/vms/{propertyId}",
+      "module": "vms",
+      "pathParams": [
+        "propertyId"
+      ],
+      "queryParams": [
+        "approval_status",
+        "date",
+        "host_id",
+        "host_name",
+        "host_user_id",
+        "search",
+        "status",
+        "user_id"
+      ],
+      "description": "Notification is handled automatically via DB event_outbox trigger (trg_vms_visitors_outbox)"
+    },
+    {
+      "path": "/api/vms/org/{orgId}",
+      "module": "vms",
+      "pathParams": [
+        "orgId"
+      ],
+      "queryParams": [
+        "customDate",
+        "date",
+        "propertyId",
+        "search",
+        "status"
+      ],
+      "description": "GET /api/vms/org/[orgId] Returns all visitor logs across all properties in an organization. Intended for org_super_admin."
+    },
+    {
+      "path": "/api/voice/analytics",
+      "module": "voice",
+      "pathParams": [],
+      "queryParams": [
+        "eventType",
+        "limit",
+        "organizationId",
+        "status"
+      ],
+      "description": "GET /api/voice/analytics?organizationId=...&limit=50&status=...&eventType=... Comprehensive Voice Telephony Analytics & Anomaly Detection Gateway."
+    },
+    {
+      "path": "/api/voice/logs",
+      "module": "voice",
+      "pathParams": [],
+      "queryParams": [
+        "organizationId"
+      ],
+      "description": "GET /api/voice/logs?organizationId=... Fetches recent AI voice call logs."
     },
     {
       "path": "/api/whatsapp-assistant/settings",
@@ -2801,40 +3096,12 @@
       "reason": "file, OAuth or public-token route"
     },
     {
-      "path": "/api/admin/issue-config",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/admin/issue-config/seed",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/admin/organizations/{orgId}/metrics",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/admin/organizations/{orgId}/modules",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/admin/organizations/{orgId}/properties",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/admin/organizations/{orgId}/storage",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/admin/usage-dashboard",
       "reason": "GET path may write data"
     },
     {
       "path": "/api/admin/usage-metrics",
       "reason": "GET path may write data"
-    },
-    {
-      "path": "/api/admin/whatsapp/analytics",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/agents/mail/callback",
@@ -2869,14 +3136,6 @@
       "reason": "GET path may send messages or call outside services"
     },
     {
-      "path": "/api/audit/master",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/audit/submissions",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/auth/callback",
       "reason": "blocked area \"auth\""
     },
@@ -2902,7 +3161,7 @@
     },
     {
       "path": "/api/crm/import",
-      "reason": "no visible sign-in check"
+      "reason": "its GET only returns an import template file"
     },
     {
       "path": "/api/crm/oauth/linkedin/callback",
@@ -3165,24 +3424,8 @@
       "reason": "GET path may write data"
     },
     {
-      "path": "/api/hr/admin/employees",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/hr/admin/escalation-config",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/hr/admin/reconcile",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/hr/notes",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/hr/tickets/{id}/comments",
-      "reason": "no visible sign-in check"
+      "reason": "GET path may write data"
     },
     {
       "path": "/api/hr/tickets",
@@ -3262,11 +3505,11 @@
     },
     {
       "path": "/api/ppm/audit",
-      "reason": "no visible sign-in check"
+      "reason": "GET path may write data (it saves an audit report through auditService)"
     },
     {
       "path": "/api/ppm/debug",
-      "reason": "no visible sign-in check"
+      "reason": "debugging aid, not for the assistant"
     },
     {
       "path": "/api/proctor/attempts/{id}/evidence/{file}",
@@ -3285,28 +3528,12 @@
       "reason": "blocked area \"proctor\""
     },
     {
-      "path": "/api/procurement/aliases",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/procurement/catalog/template",
       "reason": "file, OAuth or public-token route"
     },
     {
-      "path": "/api/procurement/pricing",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/procurement/requisitions/{id}/export",
       "reason": "file, OAuth or public-token route"
-    },
-    {
-      "path": "/api/procurement/requisitions/{id}",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/procurement/requisitions/budgets",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/procurement/requisitions/export-all",
@@ -3331,14 +3558,6 @@
     {
       "path": "/api/public/zone-info",
       "reason": "blocked area \"public\""
-    },
-    {
-      "path": "/api/resolvers/workload",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/roster/config",
-      "reason": "no visible sign-in check"
     },
     {
       "path": "/api/roster/export",
@@ -3381,10 +3600,6 @@
       "reason": "blocked area \"test-mcp\""
     },
     {
-      "path": "/api/tickets/{id}/activity",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/tickets/{id}",
       "reason": "GET path may write data"
     },
@@ -3397,10 +3612,6 @@
       "reason": "no visible sign-in check"
     },
     {
-      "path": "/api/vendors/{vendorId}/commission-cycles",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/vendors/maintenance/{vendorId}",
       "reason": "GET path may write data"
     },
@@ -3409,36 +3620,8 @@
       "reason": "GET path may write data"
     },
     {
-      "path": "/api/vms-face/org/{orgId}/profiles",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/vms-face/org/{orgId}/settings",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/vms/{propertyId}/hosts",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/vms/{propertyId}",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/vms/org/{orgId}",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/voice/analytics",
-      "reason": "no visible sign-in check"
-    },
-    {
       "path": "/api/voice/download-audio",
-      "reason": "no visible sign-in check"
-    },
-    {
-      "path": "/api/voice/logs",
-      "reason": "no visible sign-in check"
+      "reason": "GET path may send messages or call outside services"
     },
     {
       "path": "/api/voice/plivo-answer",

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveCaller, isCallerError } from '@/backend/lib/auth/callerAccess';
 
 /**
  * Split text into chunks of <= 140 characters at punctuation or word boundaries
@@ -43,6 +44,9 @@ function splitTextIntoTTSChunks(fullText: string, maxLen = 140): string[] {
  */
 export async function GET(request: NextRequest) {
     try {
+        // Signed-in users only: it calls outside services on the server's behalf.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const { searchParams } = new URL(request.url);
         const text = searchParams.get('text');
         const recordingUrl = searchParams.get('recordingUrl');
@@ -50,7 +54,8 @@ export async function GET(request: NextRequest) {
         const sanitizedFilename = customFilename.replace(/[^a-zA-Z0-9_.-]/g, '_');
 
         // 1. Direct Recording URL Check
-        if (recordingUrl && recordingUrl.startsWith('http')) {
+        // Only call recordings stored by Plivo, never any other address (the server must not fetch arbitrary URLs).
+        if (recordingUrl && isPlivoRecording(recordingUrl)) {
             try {
                 const audioRes = await fetch(recordingUrl);
                 if (audioRes.ok) {
@@ -117,5 +122,14 @@ export async function GET(request: NextRequest) {
     } catch (err: any) {
         console.error('Audio download error:', err);
         return NextResponse.json({ error: err.message || 'Internal error downloading audio' }, { status: 500 });
+    }
+}
+
+function isPlivoRecording(raw: string): boolean {
+    try {
+        const u = new URL(raw);
+        return u.protocol === 'https:' && (u.hostname === 'plivo.com' || u.hostname.endsWith('.plivo.com'));
+    } catch {
+        return false;
     }
 }

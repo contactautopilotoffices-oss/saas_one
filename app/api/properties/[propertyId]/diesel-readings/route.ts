@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { guardProperty } from '@/backend/lib/auth/callerAccess';
+import { checkReadings } from '@/backend/lib/utilities/readingRules';
 
 /**
  * Diesel Readings API v2
@@ -83,6 +84,10 @@ export async function POST(
 
     if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    {
+        const invalid = checkReadings('diesel', Array.isArray(body?.readings) ? body.readings : [body]);
+        if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
     }
 
     // Helper function to compute cost for a single reading

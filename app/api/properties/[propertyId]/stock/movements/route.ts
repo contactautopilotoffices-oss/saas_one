@@ -93,6 +93,16 @@ export async function POST(
             );
         }
 
+        // As on the stock screen: a real amount. Adding or issuing needs more than 0 (a negative "add"
+        // would quietly reduce stock); an adjustment sets the count, which cannot go below 0.
+        const qty = Number(quantity);
+        if (!Number.isFinite(qty) || (action === 'adjust' ? qty < 0 : qty <= 0)) {
+            return NextResponse.json(
+                { error: action === 'adjust' ? 'quantity cannot be negative' : 'quantity must be more than 0' },
+                { status: 400 }
+            );
+        }
+
         // Get current item
         const { data: item, error: itemError } = await supabase
             .from('stock_items')

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAnswer } from '@/backend/lib/voice/answerSignature';
 
 /**
  * GET/POST /api/voice/plivo-answer
@@ -15,6 +16,10 @@ export async function POST(request: NextRequest) {
 
 function handlePlivoXML(request: NextRequest) {
     const { searchParams } = new URL(request.url);
+    // Plivo has no login: only a link signed by VoiceCallingService is spoken (backend/lib/voice/answerSignature.ts).
+    if (!verifyAnswer(searchParams.get('text') ?? '', searchParams.get('voice') ?? '', searchParams.get('speed') ?? '', searchParams.get('sig'))) {
+        return new NextResponse('Forbidden', { status: 403 });
+    }
     const text = searchParams.get('text') || 'Hi, this is Pratiksha from the Operations team. Have a great day.';
     const rawVoice = searchParams.get('voice') || 'Polly.Aditi';
     const rawSpeed = searchParams.get('speed') || '1.0';
@@ -24,7 +29,9 @@ function handlePlivoXML(request: NextRequest) {
     if (cleanVoiceName.toLowerCase().includes('kajal')) {
         cleanVoiceName = 'Polly.Aditi';
     }
-    const voice = cleanVoiceName.startsWith('Polly.') ? cleanVoiceName : `Polly.${cleanVoiceName}`;
+    const named = cleanVoiceName.startsWith('Polly.') ? cleanVoiceName : `Polly.${cleanVoiceName}`;
+    // The voice goes into an XML attribute: only a plain name such as Polly.Aditi is accepted.
+    const voice = /^Polly\.[A-Za-z]{2,30}$/.test(named) ? named : 'Polly.Aditi';
 
     // Parse speed into valid SSML prosody rate percentage (e.g. "1.1" -> "110%", "0.9" -> "90%")
     let ratePercent = '100%';

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getUser } from '@/backend/lib/vms-face/context';
 import { deleteFaceProfile } from '@/backend/lib/vms-face/face';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET    /api/vms-face/org/[orgId]/profiles?search=   enrolled faces (fixed details only)
@@ -12,6 +13,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { orgId } = await params;
     const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     const search = (request.nextUrl.searchParams.get('search') || '').replace(/[,()%]/g, '').trim();
     let query = supabaseAdmin
@@ -31,6 +34,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const { orgId } = await params;
     const user = await getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     const id = request.nextUrl.searchParams.get('id');
     const reason = request.nextUrl.searchParams.get('reason') === 'visitor_request' ? 'visitor_request' : 'admin';

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError, guardProperty } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/vms/[propertyId]/hosts
@@ -26,8 +27,12 @@ export async function GET(
             }
         );
 
-        const search = searchParams.get('q') || '';
-        const limit = parseInt(searchParams.get('limit') || '20');
+        // The lobby kiosk has no login, so this stays open; a signed-in member of the property also gets emails.
+        const caller = await resolveCaller(request);
+        const signedIn = !isCallerError(caller) && (await guardProperty(request, propertyId, { allowExternal: true })) === null;
+        const search = (searchParams.get('q') || '').replace(/[,()%]/g, '').trim();
+        const limit = Math.min(Math.max(parseInt(searchParams.get('limit') || '20') || 20, 1), 50);
+        if (!signedIn && search.length < 2) return NextResponse.json({ hosts: [] });
 
         // Get property members who can receive visitors
         let query = supabaseAdmin
@@ -42,7 +47,9 @@ export async function GET(
 
         // Apply search filter in DB
         if (search) {
-            query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`, { foreignTable: 'users' });
+            query = signedIn
+                ? query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`, { foreignTable: 'users' })
+                : query.or(`full_name.ilike.%${search}%`, { foreignTable: 'users' });
         }
 
         const { data: memberships, error } = await query
@@ -58,7 +65,7 @@ export async function GET(
         const hosts = (memberships || []).map((m: any) => ({
             id: m.user_id,
             name: m.user.full_name,
-            email: m.user.email,
+            ...(signedIn ? { email: m.user.email } : {}), // the kiosk shows names and roles, never emails
             role: m.role,
         }));
 

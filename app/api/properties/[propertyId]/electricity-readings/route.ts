@@ -3,6 +3,7 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { guardProperty } from '@/backend/lib/auth/callerAccess';
+import { checkReadings } from '@/backend/lib/utilities/readingRules';
 
 /**
  * Electricity Readings API v2
@@ -174,6 +175,10 @@ export async function POST(
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    {
+        const invalid = checkReadings('electricity', Array.isArray(body?.readings) ? body.readings : [body]);
+        if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
     }
 
     // Handle batch submission (multiple meters)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { resolveCaller, isCallerError, guardOrg, guardProperty } from '@/backend/lib/auth/callerAccess';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUUID = (v: string | null): v is string => !!v && UUID_RE.test(v);
@@ -13,6 +14,12 @@ export async function GET(request: NextRequest) {
         const propertyId = isUUID(searchParams.get('propertyId')) ? searchParams.get('propertyId') : null;
         const organizationId = isUUID(searchParams.get('organizationId')) ? searchParams.get('organizationId') : null;
         const skillGroupId = isUUID(searchParams.get('skillGroupId')) ? searchParams.get('skillGroupId') : null;
+        {
+            const denied = propertyId ? await guardProperty(request, propertyId)
+                : organizationId ? await guardOrg(request, organizationId)
+                    : await (async () => { const c = await resolveCaller(request); return isCallerError(c) ? c : null; })();
+            if (denied) return denied;
+        }
 
         // Base query for resolvers
         let resolverQuery = supabase

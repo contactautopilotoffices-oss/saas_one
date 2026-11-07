@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, isOrgAdmin, orgRolesIn } from '@/backend/lib/auth/callerAccess';
 
 export interface WhatsAppAnomalyItem {
     id: string;
@@ -319,6 +320,12 @@ export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const organizationId = searchParams.get('organizationId');
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const mayRead = organizationId
+            ? isOrgAdmin(caller, organizationId) || orgRolesIn(caller, organizationId).some(r => ['owner', 'ops_super_admin'].includes(String(r).toLowerCase()))
+            : caller.isMasterAdmin;
+        if (!mayRead) return forbidden('Forbidden: organisation admins only');
         const filterStatus = searchParams.get('status');
         const filterTemplate = searchParams.get('template');
         const limit = Math.min(parseInt(searchParams.get('limit') || '150', 10), 300);
