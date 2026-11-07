@@ -130,8 +130,19 @@ export function verifyCode(
     return { ok: true, payload };
 }
 
+/**
+ * Actions without the "same request within N minutes" refusal. Raising the same service ticket
+ * again is allowed (owner decision 2026-11-07); the per-person limits and one-time codes still apply.
+ */
+export const NO_REPEAT_CHECK: ReadonlySet<ActionName> = new Set<ActionName>(['create_ticket']);
+
+/** The fingerprint for the repeat check, or null for actions that skip it. */
+export function repeatHash(action: ActionName, params: Record<string, unknown>): string | null {
+    return NO_REPEAT_CHECK.has(action) ? null : paramsHash(action, params);
+}
+
 export type NonceStore = (
-    nonce: string, userId: string, action: ActionName, hash: string,
+    nonce: string, userId: string, action: ActionName, hash: string | null,
 ) => Promise<{ ok: true } | { ok: false; reason: string }>;
 
 const REFUSALS: Record<string, string> = {

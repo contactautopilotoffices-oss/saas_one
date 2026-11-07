@@ -134,7 +134,8 @@ then sign in when asked.
     10 minutes and is bound to one user and one connection (signed by the server);
   - per-user limit, all actions together: **10 per hour, 30 per day** by default
     (`MCP_WRITE_LIMIT_PER_HOUR`, `MCP_WRITE_LIMIT_PER_DAY`); the same action with the same details
-    within 15 minutes is refused (`MCP_DUPLICATE_WINDOW_MINUTES`);
+    within 15 minutes is refused (`MCP_DUPLICATE_WINDOW_MINUTES`), except raising a service ticket,
+    which may be repeated (it still counts towards the hourly and daily limits);
   - checked and recorded in one locked database step (`mcp_consume_action`, migration
     `20261106000001_mcp_action_limits.sql`), so many confirmations at once cannot slip past;
   - text length caps and number ranges on every field.

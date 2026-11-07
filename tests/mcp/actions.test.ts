@@ -675,3 +675,25 @@ test('petty cash: only a property the petty cash screen offers this person', asy
     assert.equal(res.ok, false);
     assert.match(res.text, /cannot raise petty cash for that property.*Lower Parel/);
 });
+
+test('repeat check: raising the same service ticket again is allowed; other actions keep it', async () => {
+    const { repeatHash } = await import('../../backend/lib/mcp/confirm');
+    const { previewCreateTicket, confirmAction } = await import('../../backend/lib/mcp/actions');
+    const ticket = { property_id: PROP, organization_id: ORG, description: 'AC leaking' };
+    assert.equal(repeatHash('create_ticket', ticket), null, 'no fingerprint, so the database skips the repeat check');
+    assert.equal(typeof repeatHash('book_meeting_room', { meetingRoomId: ROOM }), 'string');
+    assert.equal(typeof repeatHash('raise_hr_ticket', { subject: 'x' }), 'string');
+
+    // Through confirm_action: the hash handed to the database is null for a service ticket.
+    const h = harness({ 'POST /api/tickets': { status: 201, body: { ticket: { id: 't1' } } } });
+    const ctx = h.ctx();
+    const seen: (string | null)[] = [];
+    const inner = ctx.deps.nonceStore;
+    (ctx.deps as { nonceStore: unknown }).nonceStore = async (n: string, _u: string, _a: string, hash: string | null) => { seen.push(hash); return inner(n); };
+    for (let i = 0; i < 2; i++) {
+        const prev = await previewCreateTicket(ctx, { property_id: PROP, description: 'AC near pantry leaking' });
+        assert.ok((await confirmAction(ctx, codeOf(prev.text))).ok);
+    }
+    assert.deepEqual(seen, [null, null]);
+    assert.equal(writes(h.calls).length, 2, 'both tickets were raised');
+});
