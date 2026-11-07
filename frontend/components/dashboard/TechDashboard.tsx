@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
+    Menu, Mic, PanelLeftClose, PanelLeftOpen, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -101,6 +101,23 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
     },
 ];
 const ALL_TABS = NAV.flatMap(s => s.items);
+const SIDEBAR_STORE = 'tech-console-sidebar-collapsed';
+let sidebarNow: boolean | null = null;
+const sidebarWatchers = new Set<() => void>();
+function readSidebar(): boolean {
+    if (sidebarNow !== null) return sidebarNow;
+    try { sidebarNow = localStorage.getItem(SIDEBAR_STORE) === '1'; } catch { sidebarNow = false; }
+    return sidebarNow;
+}
+function watchSidebar(notify: () => void) {
+    sidebarWatchers.add(notify);
+    return () => { sidebarWatchers.delete(notify); };
+}
+function writeSidebar(collapsed: boolean) {
+    sidebarNow = collapsed;
+    try { localStorage.setItem(SIDEBAR_STORE, collapsed ? '1' : '0'); } catch { /* remembered for this visit only */ }
+    sidebarWatchers.forEach(notify => notify());
+}
 const DEFAULT_TAB: TechTab = 'tasks';
 const isTechTab = (v: string | null): v is TechTab => !!v && ALL_TABS.some(t => t.id === v);
 
@@ -136,11 +153,17 @@ export default function TechDashboard() {
     const [properties, setProperties] = useState<Property[]>([]);
     const [errorMsg, setErrorMsg] = useState('');
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    // Owner 2026-11-06: on desktop the sidebar can shrink to icons (remembered per browser); phones keep the slide-in menu.
+    const sidebarCollapsed = useSyncExternalStore(watchSidebar, readSidebar, () => false);
     const [selectorOpen, setSelectorOpen] = useState(false);
     const [showSignOut, setShowSignOut] = useState(false);
     const [showTicketCreate, setShowTicketCreate] = useState(false);
     // Bumped when "New" creates a ticket, so the Requests list reloads.
     const [ticketsVersion, setTicketsVersion] = useState(0);
+
+    const toggleSidebar = () => writeSidebar(!sidebarCollapsed);
+    /** Hidden while the desktop sidebar is collapsed. */
+    const hideCollapsed = sidebarCollapsed ? 'lg:hidden' : '';
 
     useEffect(() => {
         if (!orgId) return;
@@ -209,7 +232,9 @@ export default function TechDashboard() {
     const propertyFilter = selectedPropertyId === 'all' ? undefined : selectedPropertyId;
 
     return (
-        <div className="flex min-h-screen bg-background font-inter text-foreground">
+        // Owner 2026-11-07: the console scrolls inside <main> (h-dvh + overflow-hidden here), not the page. <body> has
+        // overflow-x: hidden app-wide, which stops position: sticky working against the page; inside <main> it works.
+        <div className="flex h-dvh overflow-hidden bg-background font-inter text-foreground">
             <AnimatePresence>
                 {sidebarOpen && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -218,21 +243,25 @@ export default function TechDashboard() {
             </AnimatePresence>
 
             {/* Sidebar */}
-            <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r border-border bg-white transition-all duration-300 ${sidebarOpen ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 lg:translate-x-0 lg:opacity-100'}`}>
+            <aside className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r border-border bg-white transition-all duration-300 ${sidebarCollapsed ? 'lg:w-20' : ''} ${sidebarOpen ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 lg:translate-x-0 lg:opacity-100'}`}>
                 <button type="button" onClick={() => setSidebarOpen(false)} aria-label="Close menu" className="absolute right-4 top-4 rounded-lg p-2 hover:bg-surface-elevated lg:hidden">
                     <X className="h-5 w-5 text-text-secondary" />
                 </button>
                 <div className="flex shrink-0 flex-col items-center gap-1 p-5 pb-3">
-                    <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-10 w-auto object-contain" />
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-text-tertiary">Tech Console</p>
+                    <img src="/autopilot-logo-new.png" alt="Autopilot" className={`h-10 w-auto object-contain ${hideCollapsed}`} />
+                    <p className={`text-[10px] font-black uppercase tracking-[0.2em] text-text-tertiary ${hideCollapsed}`}>Tech Console</p>
+                    <button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed}
+                        className={`hidden h-9 w-9 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-muted hover:text-text-primary lg:flex ${sidebarCollapsed ? '' : 'lg:absolute lg:right-3 lg:top-3'}`}>
+                        {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+                    </button>
                 </div>
-                <nav className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 pb-4" aria-label="Tech console">
+                <nav className={`custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 ${sidebarCollapsed ? 'lg:px-3' : ''}`} aria-label="Tech console">
                     {/* Quick Actions: the Super Admin console's "New" ticket button (OrgAdminDashboard), same look */}
                     <div className="mb-6">
-                        <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                        <p className={`mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500 ${hideCollapsed}`}>
                             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />Quick Actions
                         </p>
-                        <div className="grid grid-cols-3 gap-2.5 px-4">
+                        <div className={`grid grid-cols-3 gap-2.5 px-4 ${sidebarCollapsed ? 'lg:grid-cols-1 lg:px-0' : ''}`}>
                             <button type="button" onClick={() => { setSidebarOpen(false); setShowTicketCreate(true); }} title="Create New Ticket"
                                 className="group flex min-h-[64px] w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-primary bg-primary p-2.5 text-text-inverse shadow-sm transition-all hover:brightness-110">
                                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/20 text-white transition-transform group-hover:scale-110">
@@ -244,7 +273,7 @@ export default function TechDashboard() {
                     </div>
                     {NAV.map(group => (
                         <div key={group.section} className="mb-6">
-                            <p className="mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            <p className={`mb-3 flex items-center gap-2 px-4 text-[10px] font-black uppercase tracking-widest text-slate-500 ${hideCollapsed}`}>
                                 <span className="h-3 w-0.5 rounded-full bg-primary" />{group.section}
                             </p>
                             <div className="space-y-1">
@@ -252,9 +281,9 @@ export default function TechDashboard() {
                                     const Icon = item.icon;
                                     const on = activeTab === item.id;
                                     return (
-                                        <button key={item.id} type="button" onClick={() => openTab(item.id)} aria-current={on ? 'page' : undefined}
-                                            className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-bold transition-all duration-200 ${on ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary'}`}>
-                                            <Icon className="h-4 w-4" />{item.label}
+                                        <button key={item.id} type="button" onClick={() => openTab(item.id)} aria-current={on ? 'page' : undefined} aria-label={item.label} title={sidebarCollapsed ? item.label : undefined}
+                                            className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-bold transition-all duration-200 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''} ${on ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary'}`}>
+                                            <Icon className="h-4 w-4 shrink-0" /><span className={hideCollapsed}>{item.label}</span>
                                         </button>
                                     );
                                 })}
@@ -263,15 +292,15 @@ export default function TechDashboard() {
                     ))}
                 </nav>
                 <div className="shrink-0 border-t border-border p-4">
-                    <div className="mb-3 flex items-center gap-3 px-2">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-black text-slate-700">{fullName[0]?.toUpperCase()}</span>
-                        <span className="min-w-0">
+                    <div className={`mb-3 flex items-center gap-3 px-2 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-black text-slate-700" title={sidebarCollapsed ? fullName : undefined}>{fullName[0]?.toUpperCase()}</span>
+                        <span className={`min-w-0 ${hideCollapsed}`}>
                             <span className="block truncate text-sm font-bold text-text-primary">{fullName}</span>
                             <span className="block text-[10px] font-black uppercase tracking-widest text-text-tertiary">Access: Tech</span>
                         </span>
                     </div>
-                    <button type="button" onClick={() => setShowSignOut(true)} className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-bold text-rose-600 hover:bg-rose-50">
-                        <LogOut className="h-4 w-4" /> Sign out
+                    <button type="button" onClick={() => setShowSignOut(true)} aria-label="Sign out" title={sidebarCollapsed ? 'Sign out' : undefined} className={`flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-bold text-rose-600 hover:bg-rose-50 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+                        <LogOut className="h-4 w-4 shrink-0" /><span className={hideCollapsed}>Sign out</span>
                     </button>
                 </div>
             </aside>
@@ -291,7 +320,7 @@ export default function TechDashboard() {
             )}
 
             {/* Main */}
-            <main className="w-full min-w-0 flex-1 bg-white lg:ml-72">
+            <main id="main-scroll-container" className={`w-full min-w-0 flex-1 overflow-y-auto bg-white transition-[margin] duration-300 ${sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-72'}`}>
                 <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-border/10 bg-white px-4 md:px-8">
                     <div className="flex min-w-0 items-center gap-3">
                         <button type="button" onClick={() => setSidebarOpen(true)} aria-label="Open menu" className="-ml-2 p-2 text-text-tertiary lg:hidden">

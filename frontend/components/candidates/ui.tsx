@@ -1,8 +1,8 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Copy, LoaderCircle, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import { STATUS_LABELS, RECORD_STATUSES, type RecordStatus } from '@/backend/lib/candidates/types';
 import { STATUS_DOT } from './format';
@@ -231,6 +231,160 @@ export function Drawer({
         </ModalPortal>
     );
 }
+
+/** Slides its content open and shut. Content overflows only once open, so a dropdown inside it is not cut off. */
+export function Reveal({ open, children }: { open: boolean; children: React.ReactNode }) {
+    const [settled, setSettled] = useState(open);
+    useEffect(() => {
+        const t = setTimeout(() => setSettled(open), open ? 300 : 0);
+        return () => clearTimeout(t);
+    }, [open]);
+    return (
+        <div className={`grid transition-[grid-template-rows,opacity,visibility] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none ${open ? 'visible grid-rows-[1fr] opacity-100' : 'invisible grid-rows-[0fr] opacity-0'}`}>
+            <div className={`min-h-0 ${open && settled ? 'overflow-visible' : 'overflow-hidden'}`}>{children}</div>
+        </div>
+    );
+}
+
+const watchPointer = (notify: () => void) => {
+    const media = window.matchMedia('(pointer: coarse)');
+    media.addEventListener('change', notify);
+    return () => media.removeEventListener('change', notify);
+};
+const useCoarsePointer = () => useSyncExternalStore(watchPointer, () => window.matchMedia('(pointer: coarse)').matches, () => false);
+
+export interface DropdownOption<T extends string> {
+    value: T;
+    label: string;
+    /** A background class for the status dot. */
+    dot?: string;
+}
+
+const DROPDOWN_TRIGGER = {
+    field: 'h-10 w-full rounded-xl pl-3 pr-2.5 text-sm font-medium',
+    compact: 'h-9 w-full rounded-[10px] pl-3 pr-2.5 text-sm font-medium',
+    tight: 'h-10 shrink-0 rounded-xl pl-2 pr-1.5 text-[13px] font-medium',
+    pill: 'h-8 rounded-full bg-surface-elevated pl-2.5 pr-2 text-xs font-semibold',
+} as const;
+
+/**
+ * The dropdown of the Candidate Search filters: arrows, Enter and Escape work, and the menu floats above the page, so a
+ * scrolling panel cannot cut it off. On a touch screen it is the phone's own picker, which is the easiest one to use there.
+ */
+export function Dropdown<T extends string>({
+    value, options, onChange, label, id, variant = 'field', align = 'left',
+}: {
+    value: T; options: DropdownOption<T>[]; onChange: (value: T) => void; label: string; id?: string;
+    variant?: keyof typeof DROPDOWN_TRIGGER; align?: 'left' | 'right';
+}) {
+    const coarse = useCoarsePointer();
+    const buttonRef = useRef<HTMLButtonElement | null>(null);
+    const [menu, setMenu] = useState<{ top?: number; bottom?: number; left?: number; right?: number; minWidth: number } | null>(null);
+    const [active, setActive] = useState(-1);
+    const at = options.findIndex(o => o.value === value);
+    const current = options[at] ?? options[0];
+    const open = !!menu;
+
+    useEffect(() => {
+        if (!open) return;
+        const close = () => setMenu(null);
+        window.addEventListener('scroll', close, true);
+        window.addEventListener('resize', close);
+        return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+    }, [open]);
+
+    const show = () => {
+        const box = buttonRef.current?.getBoundingClientRect();
+        if (!box) return;
+        const height = Math.min(280, options.length * 36 + 8);
+        const flip = box.bottom + height + 8 > window.innerHeight && box.top > height;
+        setMenu({
+            ...(flip ? { bottom: window.innerHeight - box.top + 4 } : { top: box.bottom + 4 }),
+            ...(align === 'right' ? { right: window.innerWidth - box.right } : { left: box.left }),
+            minWidth: box.width,
+        });
+        setActive(at);
+    };
+    const choose = (next: T) => { setMenu(null); if (next !== value) onChange(next); };
+
+    if (coarse) {
+        return (
+            <select id={id} aria-label={label} value={value} onChange={e => onChange(e.target.value as T)} className={`${DROPDOWN_TRIGGER[variant]} max-w-full border border-border bg-surface text-text-primary outline-none`}>
+                {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+        );
+    }
+
+    return (
+        <>
+            <button
+                ref={buttonRef}
+                id={id}
+                type="button"
+                aria-label={label}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => (open ? setMenu(null) : show())}
+                onBlur={() => setMenu(null)}
+                onKeyDown={e => {
+                    if (e.key === 'Escape' && open) { e.preventDefault(); setMenu(null); return; }
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        if (!open) { show(); return; }
+                        setActive(i => (i + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length);
+                        return;
+                    }
+                    if ((e.key === 'Enter' || e.key === ' ') && open) {
+                        e.preventDefault();
+                        if (options[active]) choose(options[active].value);
+                    }
+                }}
+                className={`${DROPDOWN_TRIGGER[variant]} flex items-center justify-between gap-1.5 border border-border bg-surface text-left text-text-primary transition-[border-color,box-shadow] duration-150 hover:border-primary focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 aria-expanded:border-primary aria-expanded:ring-2 aria-expanded:ring-primary/20`}
+            >
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                    {current.dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${current.dot}`} aria-hidden />}
+                    <span className="truncate">{current.label}</span>
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-text-tertiary transition-transform duration-200 ${open ? 'rotate-180' : ''}`} aria-hidden />
+            </button>
+            {menu && (
+                <ModalPortal>
+                    <motion.ul
+                        role="listbox"
+                        aria-label={label}
+                        initial={{ opacity: 0, y: -4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.16, ease: EASE_PATIENT }}
+                        style={menu}
+                        className={`${OVERLAY} fixed z-[95] max-h-[280px] overflow-y-auto rounded-xl p-1`}
+                    >
+                        {options.map((o, i) => {
+                            const on = o.value === value;
+                            return (
+                                <li key={o.value} role="option" aria-selected={on}>
+                                    <button
+                                        type="button"
+                                        tabIndex={-1}
+                                        // Mouse down, not click: the button above keeps focus, so its blur does not close this first.
+                                        onMouseDown={e => { e.preventDefault(); choose(o.value); }}
+                                        onMouseEnter={() => setActive(i)}
+                                        className={`flex h-9 w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 text-left text-sm ${i === active ? 'bg-muted' : ''} ${on ? 'font-semibold text-primary-dark' : 'font-medium text-text-primary'}`}
+                                    >
+                                        {o.dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${o.dot}`} aria-hidden />}
+                                        <span className="min-w-0 flex-1">{o.label}</span>
+                                        {on && <Check className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </motion.ul>
+                </ModalPortal>
+            )}
+        </>
+    );
+}
+
+export const STATUS_OPTIONS: DropdownOption<RecordStatus>[] = RECORD_STATUSES.map(value => ({ value, label: STATUS_LABELS[value], dot: STATUS_DOT[value] }));
 
 export function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: React.ReactNode }) {
     return (

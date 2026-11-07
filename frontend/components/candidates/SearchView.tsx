@@ -1,100 +1,215 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import { CircleAlert, Lock, Search, Sparkles, Star, Tag } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleAlert, ListFilter, Sparkles } from 'lucide-react';
 import {
-    TOP_N_DEFAULT, TOP_N_MAX, TOP_N_MIN,
-    type CandidateRecord, type ChipKind, type RecordStatus, type SearchResponse,
-} from '@/backend/lib/candidates/types';
+    blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
+    type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
+} from '@/backend/lib/candidates/filters';
+import type { Preferences } from '@/backend/lib/candidates/query-spec';
+import type { CandidateRecord, RecordStatus, SearchResponse, SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api } from './api';
+import CandidateDetails from './CandidateDetails';
+import FilterRail, { FilterStrip } from './FilterRail';
 import { formatCount } from './format';
+import KeywordBar from './KeywordBar';
 import RecordForm from './RecordForm';
 import ResultCard from './ResultCard';
-import { BTN_PRIMARY, CARD, EASE_PATIENT, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
+import UnderstoodCard from './UnderstoodCard';
+import { BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
 
-const MAX_QUERY = 4000;
+/**
+ * The search screen (owner 2026-11-06): keywords and filters change the list at once, straight from the database. AI is
+ * optional: it can read a job description into these filters, and rank the current list on request.
+ */
 
-const EXAMPLES = [
-    'BMS operators in Thane or Navi Mumbai, 3+ years relevant experience, notice under 30 days, expected under 35K',
-    'Facility executive for a coworking site in Pune, 2 to 5 years, can join immediately',
-    'Electrician with HVAC or DG set experience in Mumbai, expected in-hand up to ₹25K',
-];
+const PAGE_SIZE = 20;
+const RAIL_MIN = 260;
+const RAIL_MAX = 520;
+const RAIL_DEFAULT = 280;
+/** Keep at least this much for the list beside the panel, gap included. */
+const LIST_MIN = 416;
+/** Space on the row, so a collapsed app sidebar counts: under OVER_WIDTH the panel slides over; under OPEN_WIDTH it starts as a strip. */
+const OVER_WIDTH = 698;
+const OPEN_WIDTH = 928;
+const RAIL_STORE = 'candidate-search-filters';
 
-/** Rough phases of the 5–15 s search, shown as reassurance (timed hints, not real progress). */
-const PHASES: Array<[number, string]> = [
-    [0, 'Reading your query…'],
-    [3, 'Searching the records…'],
-    [7, 'Comparing the best matches…'],
-    [14, 'Almost there…'],
-];
+type SortValue = FilterSort | 'match';
 
-const CHIP_STYLE: Record<ChipKind, { cls: string; icon: React.ComponentType<{ className?: string }> }> = {
-    // Hard filter: the one solid fill. Preference: outline. Keyword: neutral. Shape differs, not only colour.
-    must: { cls: 'bg-primary text-white', icon: Lock },
-    prefer: { cls: 'bg-surface text-primary-dark ring-1 ring-inset ring-primary/60', icon: Star },
-    keyword: { cls: 'bg-surface-elevated text-text-secondary ring-1 ring-inset ring-border', icon: Tag },
-};
-const CHIP_GROUPS: Array<[ChipKind, string]> = [['must', 'Must have'], ['prefer', 'Preferred'], ['keyword', 'Search terms']];
+interface RailPrefs { width: number; collapsed: boolean | null }
 
-type TopN = { ok: true; value: number } | { ok: false; message: string };
-
-function parseTopN(raw: string): TopN {
-    const t = raw.trim();
-    if (!t) return { ok: false, message: `Enter how many candidates to show (${TOP_N_MIN}–${TOP_N_MAX}).` };
-    const n = Number(t);
-    if (!Number.isInteger(n)) return { ok: false, message: 'Use a whole number.' };
-    if (n < TOP_N_MIN || n > TOP_N_MAX) return { ok: false, message: `Choose a number from ${TOP_N_MIN} to ${TOP_N_MAX}.` };
-    return { ok: true, value: n };
+function readRail(): RailPrefs {
+    try {
+        const saved = JSON.parse(localStorage.getItem(RAIL_STORE) ?? '{}') as Partial<RailPrefs>;
+        const width = typeof saved.width === 'number' ? Math.min(RAIL_MAX, Math.max(RAIL_MIN, saved.width)) : RAIL_DEFAULT;
+        return { width, collapsed: typeof saved.collapsed === 'boolean' ? saved.collapsed : null };
+    } catch {
+        return { width: RAIL_DEFAULT, collapsed: null };
+    }
 }
 
-export default function SearchView({ orgId, onDataChanged }: { orgId: string; onDataChanged: () => void }) {
+function saveRail(prefs: RailPrefs) {
+    try { localStorage.setItem(RAIL_STORE, JSON.stringify(prefs)); } catch { /* a remembered width is only a convenience */ }
+}
+
+function plainResult(record: CandidateRecord, index: number): SearchResult {
+    return { rank: index + 1, record, matchPercent: null, criteria: [], reasons: [], missing: [], summary: record.remark ?? '' };
+}
+
+export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
     const { notify, reportError } = useUi();
-    const [query, setQuery] = useState('');
-    const [topNText, setTopNText] = useState(String(TOP_N_DEFAULT));
-    const [response, setResponse] = useState<SearchResponse | null>(null);
-    const [searchError, setSearchError] = useState('');
-    const [searching, setSearching] = useState(false);
-    const [elapsed, setElapsed] = useState(0);
+    const [filters, setFilters] = useState<SearchFilters>(EMPTY_FILTERS);
+    const [page, setPage] = useState(1);
+    const [list, setList] = useState<{ key: string; total: number; blankCount: number; records: CandidateRecord[] } | null>(null);
+    const [listError, setListError] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [ranked, setRanked] = useState<SearchResponse | null>(null);
+    const [ranking, setRanking] = useState(false);
+    const [notices, setNotices] = useState<string[]>([]);
+    const [prefer, setPrefer] = useState<Preferences>({});
+    const [preferred, setPreferred] = useState<PreferredItem[]>([]);
+    const [jobText, setJobText] = useState('');
+    const [jobNote, setJobNote] = useState('');
+    const [reading, setReading] = useState(false);
     const [statusBusy, setStatusBusy] = useState<Record<string, boolean>>({});
-    const [editor, setEditor] = useState<{ record: CandidateRecord; key: number } | null>(null);
-    const [editorOpen, setEditorOpen] = useState(false);
-    const abortRef = useRef<AbortController | null>(null);
-    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const [loosen, setLoosen] = useState<{ label: string; count: number; clear: Partial<SearchFilters> } | null>(null);
+    const [details, setDetails] = useState<{ record: CandidateRecord; open: boolean } | null>(null);
+    const [editor, setEditor] = useState<{ record: CandidateRecord; key: number; open: boolean } | null>(null);
+    const [availability, setAvailability] = useState<FieldAvailability | null>(null);
 
-    const topN = parseTopN(topNText);
-    const canSearch = query.trim().length > 0 && topN.ok && !searching;
+    const rowRef = useRef<HTMLDivElement | null>(null);
+    const [rowWidth, setRowWidth] = useState<number | null>(null);
+    const [rail, setRail] = useState<RailPrefs>({ width: RAIL_DEFAULT, collapsed: null });
+    const [overOpen, setOverOpen] = useState(false);
+    const [dragging, setDragging] = useState(false);
+    const dragRef = useRef<{ x: number; width: number; max: number } | null>(null);
 
-    useEffect(() => () => abortRef.current?.abort(), []);
-
+    useEffect(() => { setRail(readRail()); }, []);
     useEffect(() => {
-        if (!searching) return;
-        const started = Date.now();
-        const t = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 500);
-        return () => clearInterval(t);
-    }, [searching]);
+        const row = rowRef.current;
+        if (!row) return;
+        const observer = new ResizeObserver(() => setRowWidth(row.clientWidth));
+        observer.observe(row);
+        return () => observer.disconnect();
+    }, []);
 
-    const runSearch = async () => {
-        if (!canSearch || !topN.ok) return;
-        abortRef.current?.abort();
+    const over = rowWidth !== null && rowWidth < OVER_WIDTH;
+    const collapsed = !over && (rail.collapsed ?? (rowWidth !== null && rowWidth < OPEN_WIDTH));
+
+    const changeRail = (patch: Partial<RailPrefs>) => setRail(r => {
+        const next = { ...r, ...patch };
+        saveRail(next);
+        return next;
+    });
+
+    const update = useCallback((patch: Partial<SearchFilters>) => {
+        setFilters(f => ({ ...f, ...patch }));
+        setPage(1);
+        setRanked(null);
+        setNotices([]);
+    }, []);
+
+    // Which resume filters have data yet; the rest stay greyed out. Refreshed after an upload or an edit.
+    useEffect(() => {
         const ctrl = new AbortController();
-        abortRef.current = ctrl;
-        setSearching(true);
-        setElapsed(0);
-        setSearchError('');
-        const res = await api<SearchResponse>('/api/candidates/search', {
-            json: { orgId, query: query.trim(), topN: topN.value }, signal: ctrl.signal,
+        void api<FieldAvailability>(`/api/candidates/filter-fields?orgId=${encodeURIComponent(orgId)}`, { signal: ctrl.signal }).then(res => {
+            if (!ctrl.signal.aborted && res.ok) setAvailability(res.data);
         });
-        if (ctrl.signal.aborted) return;
-        setSearching(false);
-        // Shown inline under the query box; only a 401/403 goes to reportError (it swaps in the no-access panel).
-        if (!res.ok) { setSearchError(res.error); if (res.noAccess) reportError(res); return; }
-        setResponse(res.data);
+        return () => ctrl.abort();
+    }, [orgId, dataVersion]);
+
+    // The list: a short pause after a change, and the old list stays up meanwhile, so nothing flashes.
+    const filterKey = JSON.stringify(filters);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        setLoading(true);
+        const t = setTimeout(() => {
+            void api<FilterResponse>('/api/candidates/filter', { json: { orgId, filters, page, pageSize: PAGE_SIZE }, signal: ctrl.signal }).then(res => {
+                if (ctrl.signal.aborted) return;
+                setLoading(false);
+                if (!res.ok) { setListError(res.error); if (res.noAccess) reportError(res); return; }
+                setListError('');
+                setList(prev => ({
+                    key: filterKey,
+                    total: res.data.total,
+                    blankCount: res.data.blankCount,
+                    records: page > 1 && prev?.key === filterKey ? [...prev.records, ...res.data.records.filter(r => !prev.records.some(x => x.id === r.id))] : res.data.records,
+                }));
+            });
+        }, page > 1 ? 0 : 250);
+        return () => { clearTimeout(t); ctrl.abort(); };
+        // filterKey stands for filters; dataVersion refetches after an edit, an upload or a delete in another view.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterKey, page, orgId, dataVersion, reportError]);
+
+    // No results: find the one filter whose removal brings back the most candidates.
+    const total = list?.key === filterKey ? list.total : null;
+    const blankCount = list?.key === filterKey ? list.blankCount : 0;
+    useEffect(() => {
+        setLoosen(null);
+        if (total !== 0) return;
+        const chips = filterChips(filters).slice(0, 8);
+        if (!chips.length) return;
+        const ctrl = new AbortController();
+        void Promise.all(chips.map(async chip => {
+            const res = await api<FilterResponse>('/api/candidates/filter', { json: { orgId, filters: { ...filters, ...chip.clear }, page: 1, pageSize: 1 }, signal: ctrl.signal });
+            return { chip, count: res.ok ? res.data.total : 0 };
+        })).then(all => {
+            if (ctrl.signal.aborted) return;
+            const best = all.filter(a => a.count > 0).sort((a, b) => b.count - a.count)[0];
+            if (best) setLoosen({ label: best.chip.label, count: best.count, clear: best.chip.clear });
+        });
+        return () => ctrl.abort();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [total, filterKey, orgId]);
+
+    const clearAll = () => {
+        setFilters(f => ({ ...EMPTY_FILTERS, sort: f.sort, expBasis: f.expBasis, salaryBasis: f.salaryBasis, salaryUnit: f.salaryUnit }));
+        setPage(1);
+        setRanked(null);
+        setNotices([]);
+        setPrefer({});
+        setPreferred([]);
+        setJobText('');
+        setJobNote('');
+    };
+
+    const removePreferred = (key: PreferredItem['key']) => {
+        setPrefer(p => { const next = { ...p }; delete next[key]; return next; });
+        setPreferred(items => items.filter(i => i.key !== key));
+        setRanked(null);
+    };
+
+    const readJob = async (text: string): Promise<boolean> => {
+        setReading(true);
+        setJobNote('');
+        const res = await api<UnderstandResponse>('/api/candidates/understand', { json: { orgId, text } });
+        setReading(false);
+        if (!res.ok) { setJobNote(res.error); if (res.noAccess) reportError(res); return false; }
+        if (!res.data.aiParsed) { setJobNote(res.data.notices[0] ?? 'Nothing could be read from that.'); return false; }
+        update(res.data.filters);
+        setPrefer(res.data.prefer);
+        setPreferred(res.data.preferred);
+        setJobText(res.data.summary);
+        setJobNote('Filled in from the job description. Check the filters and change anything you need.');
+        return true;
+    };
+
+    const rank = async () => {
+        setRanking(true);
+        setNotices([]);
+        const res = await api<SearchResponse>('/api/candidates/rank', { json: { orgId, filters, prefer, jobText } });
+        setRanking(false);
+        if (!res.ok) { setNotices([res.error]); if (res.noAccess) reportError(res); return; }
+        setNotices(res.data.notices);
+        if (res.data.aiRanked) setRanked(res.data);
     };
 
     const replaceRecord = (record: CandidateRecord) => {
-        setResponse(prev => prev && { ...prev, results: prev.results.map(x => (x.record.id === record.id ? { ...x, record } : x)) });
+        setList(prev => prev && { ...prev, records: prev.records.map(r => (r.id === record.id ? record : r)) });
+        setRanked(prev => prev && { ...prev, results: prev.results.map(x => (x.record.id === record.id ? { ...x, record } : x)) });
+        setDetails(d => (d && d.record.id === record.id ? { ...d, record } : d));
     };
 
     const changeStatus = async (record: CandidateRecord, status: RecordStatus) => {
@@ -104,183 +219,235 @@ export default function SearchView({ orgId, onDataChanged }: { orgId: string; on
         setStatusBusy(b => ({ ...b, [record.id]: false }));
         if (!res.ok) { reportError(res); return; }
         replaceRecord(res.data.record);
-        onDataChanged();
         notify(`${record.fullName}: status updated`, 'success');
+        onDataChanged();
     };
 
-    const phase = [...PHASES].reverse().find(([s]) => elapsed >= s)?.[1] ?? PHASES[0][1];
+    const onHandleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = { x: e.clientX, width: rail.width, max: Math.max(RAIL_DEFAULT, Math.min(RAIL_MAX, (rowWidth ?? 0) - LIST_MIN)) };
+        setDragging(true);
+    };
+    const onHandleMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+        const d = dragRef.current;
+        if (d) setRail(r => ({ ...r, width: Math.max(RAIL_MIN, Math.min(d.max, d.width + e.clientX - d.x)) }));
+    };
+    const onHandleUp = () => {
+        if (!dragRef.current) return;
+        dragRef.current = null;
+        setDragging(false);
+        setRail(r => { saveRail(r); return r; });
+    };
+    const onHandleKey = (e: React.KeyboardEvent) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        changeRail({ width: Math.max(RAIL_MIN, Math.min(RAIL_MAX, rail.width + (e.key === 'ArrowRight' ? 16 : -16))) });
+    };
+
+    const records = list?.records ?? [];
+    const results: SearchResult[] = ranked ? ranked.results : records.map(plainResult);
+    const active = hasActiveFilter(filters) || preferred.length > 0;
+    const activeCount = filterChips(filters).length + filters.keywords.length + filters.excludes.length;
+    const sortOptions = useMemo<DropdownOption<SortValue>[]>(() => [
+        ...(ranked ? [{ value: 'match' as const, label: 'Best AI match' }] : []),
+        ...SORTS.map(value => ({ value, label: SORT_LABELS[value] })),
+    ], [ranked]);
+    const canShowMore = !ranked && total !== null && records.length < total;
+    const showBlanks = blankCount > 0 && !ranked;
 
     return (
-        <div className="space-y-6">
-            {/* Query card */}
-            <form
-                className={`${CARD} p-4 sm:p-6`}
-                onSubmit={e => { e.preventDefault(); void runSearch(); }}
-            >
-                <label htmlFor="cand-query" className="font-display text-base font-semibold text-text-primary">Who are you looking for?</label>
-                <p className="mt-1 text-sm text-text-secondary">Describe the candidate in plain English, or paste a job description.</p>
-                <textarea
-                    id="cand-query"
-                    ref={textareaRef}
-                    value={query}
-                    maxLength={MAX_QUERY}
-                    rows={4}
-                    onChange={e => setQuery(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void runSearch(); } }}
-                    placeholder="e.g. BMS operators in Thane or Navi Mumbai, 3+ years relevant experience, notice under 30 days, expected under 35K"
-                    className={`${INPUT} mt-4 h-auto min-h-[112px] resize-y py-3 leading-relaxed`}
-                />
-                <div className="mt-1 flex justify-between gap-2 text-xs text-text-tertiary">
-                    <span className="hidden sm:inline">Ctrl + Enter to search</span>
-                    <span className={`ml-auto tabular-nums ${query.length >= MAX_QUERY ? 'font-semibold text-text-primary' : ''}`}>{formatCount(query.length)} / {formatCount(MAX_QUERY)}</span>
+        <div className="space-y-4">
+            <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
+
+            <div ref={rowRef} className="flex items-start gap-4">
+                {over && overOpen && <button type="button" aria-label="Close filters" onClick={() => setOverOpen(false)} className="fixed inset-0 z-[79] bg-slate-900/30" />}
+
+                <div
+                    style={over ? undefined : { flexBasis: collapsed ? 56 : rail.width }}
+                    className={over
+                        ? `fixed inset-y-0 left-0 z-[80] w-[min(360px,100vw)] transition-[transform,visibility] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none ${overOpen ? 'visible translate-x-0' : 'invisible -translate-x-full'}`
+                        : `sticky top-20 min-w-0 shrink-0 grow-0 ${dragging ? '' : 'transition-[flex-basis] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none'}`}
+                >
+                    <aside aria-label="Filters" className={`${over ? 'h-full rounded-none' : 'max-h-[calc(100dvh/var(--app-zoom,1)-6rem)]'} ${CARD} overflow-y-auto overscroll-contain ${collapsed ? 'p-1.5' : 'p-4'}`}>
+                        {collapsed
+                            ? <FilterStrip activeCount={activeCount} onExpand={() => changeRail({ collapsed: false })} />
+                            : (
+                                <FilterRail
+                                    orgId={orgId}
+                                    filters={filters}
+                                    update={update}
+                                    availability={availability}
+                                    canClear={active}
+                                    onClear={clearAll}
+                                    onCollapse={() => (over ? setOverOpen(false) : changeRail({ collapsed: true }))}
+                                    collapseLabel={over ? 'Close filters' : 'Collapse filters'}
+                                />
+                            )}
+                    </aside>
+                    {!over && !collapsed && (
+                        <button
+                            type="button"
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label="Resize filters. Use the left and right arrow keys."
+                            aria-valuemin={RAIL_MIN}
+                            aria-valuemax={RAIL_MAX}
+                            aria-valuenow={rail.width}
+                            title="Drag to resize. Double-click to reset."
+                            onPointerDown={onHandleDown}
+                            onPointerMove={onHandleMove}
+                            onPointerUp={onHandleUp}
+                            onPointerCancel={onHandleUp}
+                            onKeyDown={onHandleKey}
+                            onDoubleClick={() => changeRail({ width: RAIL_DEFAULT })}
+                            className="group absolute inset-y-0 -right-3.5 flex w-3 cursor-col-resize touch-none items-center justify-center rounded-md"
+                        >
+                            <span className="block h-10 w-1 rounded-full bg-border transition-all duration-200 group-hover:h-16 group-hover:bg-primary group-focus-visible:h-16 group-focus-visible:bg-primary group-active:h-16 group-active:bg-primary" aria-hidden />
+                        </button>
+                    )}
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-end gap-3">
-                    <div className="w-28">
-                        <label htmlFor="cand-topn" className={`${LABEL} mb-1.5 block`}>Show top</label>
-                        <input
-                            id="cand-topn"
-                            type="number"
-                            inputMode="numeric"
-                            min={TOP_N_MIN}
-                            max={TOP_N_MAX}
-                            step={1}
-                            value={topNText}
-                            onChange={e => setTopNText(e.target.value)}
-                            onBlur={() => {
-                                const n = Number(topNText);
-                                if (topNText.trim() && Number.isFinite(n)) setTopNText(String(Math.min(TOP_N_MAX, Math.max(TOP_N_MIN, Math.round(n)))));
-                            }}
-                            aria-invalid={!topN.ok}
-                            aria-describedby="cand-topn-msg"
-                            className={`${INPUT} tabular-nums ${!topN.ok ? 'border-error focus:border-error focus:ring-error/20' : ''}`}
-                        />
+                <section aria-label="Search results" className="min-w-0 flex-1 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                            {over && (
+                                <button type="button" onClick={() => setOverOpen(true)} aria-expanded={overOpen} className={`${BTN_SECONDARY} h-9 px-3`}>
+                                    <ListFilter className="h-4 w-4" aria-hidden />{activeCount ? `Filters (${activeCount})` : 'Filters'}
+                                </button>
+                            )}
+                            <p role="status" className="flex items-center gap-2 font-display text-lg font-semibold text-text-primary">
+                                {total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}
+                                {loading && total !== null && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-[13px] font-semibold text-text-secondary">Sort</span>
+                            <div className="w-[170px]">
+                                <Dropdown
+                                    variant="compact"
+                                    label="Sort"
+                                    value={ranked ? 'match' : filters.sort}
+                                    options={sortOptions}
+                                    onChange={value => { if (value !== 'match') update({ sort: value }); }}
+                                />
+                            </div>
+                            <button type="button" onClick={() => void rank()} disabled={ranking || !total || !!ranked} className={`${BTN_PRIMARY} h-9 rounded-[10px] px-3`}>
+                                {ranking ? <Spinner /> : <Sparkles className="h-4 w-4" aria-hidden />}{ranking ? 'Comparing…' : ranked ? 'Ranked' : 'Rank with AI'}
+                            </button>
+                        </div>
                     </div>
-                    <button type="submit" disabled={!canSearch} className={`${BTN_PRIMARY} flex-1 sm:flex-none sm:min-w-[140px]`}>
-                        {searching ? <Spinner /> : <Search className="h-4 w-4" />}{searching ? 'Searching…' : 'Search'}
-                    </button>
-                </div>
-                <p id="cand-topn-msg" className={`mt-1.5 text-xs ${topN.ok ? 'text-text-tertiary' : 'font-medium text-error'}`}>
-                    {topN.ok ? `Candidates to show, ${TOP_N_MIN} to ${TOP_N_MAX}.` : topN.message}
-                </p>
-            </form>
 
-            {/* Loading */}
-            {searching && (
-                <div aria-live="polite" className="space-y-4">
-                    <p className="flex items-center gap-2 text-sm font-medium text-text-secondary"><Spinner className="h-4 w-4 text-primary" />{phase}<span className="tabular-nums text-text-tertiary">{elapsed}s</span></p>
-                    {[0, 1, 2].map(i => (
+                    {active && (
+                        <UnderstoodCard
+                            filters={filters}
+                            update={update}
+                            preferred={preferred}
+                            onRemovePreferred={removePreferred}
+                            total={ranked?.matchingCount ?? total ?? 0}
+                            shown={results.length}
+                            comparedCount={ranked?.comparedCount ?? null}
+                        />
+                    )}
+
+                    {showBlanks && (
+                        <p className="flex flex-wrap items-center gap-1 text-[13px] text-text-secondary">
+                            {filters.includeBlank
+                                ? `Showing ${formatCount(blankCount)} with blank details.`
+                                : `${formatCount(blankCount)} more ${blankCount === 1 ? 'has' : 'have'} blank details.`}
+                            <button type="button" onClick={() => update({ includeBlank: !filters.includeBlank })} className="font-bold text-primary-dark underline">
+                                {filters.includeBlank ? 'Hide them' : 'Show them'}
+                            </button>
+                        </p>
+                    )}
+
+                    {ranked && (
+                        <p className="flex flex-wrap items-center gap-1 text-[13px] text-text-secondary">
+                            Ranked by AI.
+                            <button type="button" onClick={() => setRanked(null)} className="font-bold text-primary-dark underline">Remove ranking</button>
+                        </p>
+                    )}
+
+                    {notices.length > 0 && (
+                        <ul className="space-y-2" aria-live="polite">
+                            {notices.map(n => (
+                                <li key={n} className={`${WELL} flex gap-2.5 border-l-2 border-warning px-4 py-3 text-sm text-text-primary`}>
+                                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />{n}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+
+                    {listError && (
+                        <p role="alert" className={`${CARD} flex gap-3 border-l-2 border-error p-4 text-sm text-text-primary`}>
+                            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{listError}
+                        </p>
+                    )}
+
+                    {!list && !listError && [0, 1, 2].map(i => (
                         <div key={i} className={`${CARD} space-y-3 p-4 sm:p-6`}>
-                            <div className="flex gap-3"><Skeleton className="h-8 w-8 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div><Skeleton className="h-9 w-14" /></div>
+                            <div className="flex gap-3"><Skeleton className="h-8 w-8 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div></div>
                             <Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-4/5" />
                         </div>
                     ))}
-                </div>
-            )}
 
-            {!searching && searchError && (
-                <p role="alert" className={`${CARD} flex gap-3 border-l-2 border-error p-4 text-sm text-text-primary`}>
-                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{searchError}
-                </p>
-            )}
+                    {total === 0 && !listError && (
+                        <div className={`${CARD} flex flex-col items-center gap-2 px-4 py-10 text-center`}>
+                            <p className="font-display text-base font-semibold text-text-primary">{active ? 'No candidates match' : 'No candidates yet'}</p>
+                            {loosen
+                                ? <button type="button" onClick={() => update(loosen.clear)} className={BTN_PRIMARY}>Remove {loosen.label} to see {formatCount(loosen.count)} {loosen.count === 1 ? 'candidate' : 'candidates'}</button>
+                                : <p className="text-sm text-text-secondary">{active ? 'Try removing a few filters or keywords.' : 'Upload a sheet from the Sheets tab to get started.'}</p>}
+                        </div>
+                    )}
 
-            {/* Empty state with examples */}
-            {!searching && !response && !searchError && (
-                <div className={`${WELL} p-4 sm:p-6`}>
-                    <p className="flex items-center gap-2 font-display text-sm font-semibold text-text-primary"><Sparkles className="h-4 w-4 text-secondary" aria-hidden />Try one of these</p>
-                    <ul className="mt-3 grid gap-2">
-                        {EXAMPLES.map(ex => (
-                            <li key={ex}>
-                                <button
-                                    type="button"
-                                    onClick={() => { setQuery(ex); textareaRef.current?.focus(); }}
-                                    className={`${CARD} w-full px-4 py-3 text-left text-sm text-text-primary transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)]`}
-                                >
-                                    {ex}
-                                </button>
+                    <ol className="space-y-4">
+                        {results.map(res => (
+                            <li key={res.record.id}>
+                                <ResultCard
+                                    result={res}
+                                    blankFields={filters.includeBlank ? blankFields(res.record, filters) : []}
+                                    statusBusy={!!statusBusy[res.record.id]}
+                                    onStatus={changeStatus}
+                                    onOpen={record => setDetails({ record, open: true })}
+                                />
                             </li>
                         ))}
-                    </ul>
-                </div>
-            )}
+                    </ol>
 
-            {/* Results */}
-            {!searching && response && (
-                <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22, ease: EASE_PATIENT }} className="space-y-6" aria-label="Search results">
-                    <div className="space-y-4">
-                        {response.notices.length > 0 && (
-                            <ul className="space-y-2" aria-live="polite">
-                                {response.notices.map((n, i) => (
-                                    <li key={i} className={`${WELL} flex gap-2.5 border-l-2 border-warning px-4 py-3 text-sm text-text-primary`}>
-                                        <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />{n}
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-
-                        <div className={`${CARD} p-4 sm:p-6`}>
-                            <p className={LABEL}>What the search understood</p>
-                            {response.understood.summary && <p className="mt-2 text-sm leading-relaxed text-text-primary">{response.understood.summary}</p>}
-                            {response.understood.chips.length > 0 && (
-                                <div className="mt-4 space-y-3">
-                                    {CHIP_GROUPS.map(([kind, title]) => {
-                                        const chips = response.understood.chips.filter(c => c.kind === kind);
-                                        if (!chips.length) return null;
-                                        const { cls, icon: Icon } = CHIP_STYLE[kind];
-                                        return (
-                                            <div key={kind} className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-                                                <span className="w-28 shrink-0 pt-1 text-xs font-semibold text-text-secondary">{title}</span>
-                                                <ul className="flex min-w-0 flex-wrap gap-1.5">
-                                                    {chips.map((c, i) => (
-                                                        <li key={i} className={`inline-flex max-w-full items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${cls}`}>
-                                                            <Icon className="h-3 w-3 shrink-0" aria-hidden /><span className="break-words">{c.label}</span>
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                            <p className="mt-4 border-t border-border-subtle pt-3 text-xs text-text-secondary">
-                                <span className="font-semibold tabular-nums text-text-primary">{formatCount(response.matchingCount)}</span> {response.matchingCount === 1 ? 'record' : 'records'} matched the must-haves
-                                {' · '}AI compared <span className="font-semibold tabular-nums text-text-primary">{formatCount(response.comparedCount)}</span>
-                                {' · '}showing top <span className="font-semibold tabular-nums text-text-primary">{formatCount(response.results.length)}</span>
-                            </p>
+                    {canShowMore && (
+                        <div className="flex justify-center">
+                            <button type="button" onClick={() => setPage(p => p + 1)} disabled={loading} className={BTN_SECONDARY}>
+                                {loading && <Spinner />}Show more ({formatCount((total ?? 0) - records.length)} left)
+                            </button>
                         </div>
-                    </div>
-
-                    {response.results.length === 0 ? (
-                        <div className={`${CARD} px-4 py-10 text-center`}>
-                            <p className="font-display text-base font-semibold text-text-primary">No candidates matched</p>
-                            <p className="mt-1 text-sm text-text-secondary">Try loosening a must-have, such as the location, notice period or salary.</p>
-                        </div>
-                    ) : (
-                        <ol className="space-y-4">
-                            {response.results.map(res => (
-                                <li key={res.record.id}>
-                                    <ResultCard
-                                        result={res}
-                                        aiRanked={response.aiRanked}
-                                        statusBusy={!!statusBusy[res.record.id]}
-                                        onStatus={changeStatus}
-                                        onOpen={rec => { setEditor(e => ({ record: rec, key: (e?.key ?? 0) + 1 })); setEditorOpen(true); }}
-                                    />
-                                </li>
-                            ))}
-                        </ol>
                     )}
-                </motion.section>
-            )}
+                </section>
+            </div>
 
+            {details && (
+                <CandidateDetails
+                    record={details.record}
+                    open={details.open}
+                    onClose={() => setDetails(d => (d ? { ...d, open: false } : d))}
+                    onEdit={() => {
+                        setDetails(d => (d ? { ...d, open: false } : d));
+                        setEditor(e => ({ record: details.record, key: (e?.key ?? 0) + 1, open: true }));
+                    }}
+                />
+            )}
             {editor && (
                 <RecordForm
                     key={editor.key}
                     orgId={orgId}
                     record={editor.record}
-                    open={editorOpen}
-                    onClose={() => setEditorOpen(false)}
-                    onSaved={rec => { replaceRecord(rec); setEditorOpen(false); onDataChanged(); }}
+                    open={editor.open}
+                    onClose={() => setEditor(e => (e ? { ...e, open: false } : e))}
+                    onSaved={record => {
+                        replaceRecord(record);
+                        setEditor(e => (e ? { ...e, open: false } : e));
+                        setDetails({ record, open: true });
+                        onDataChanged();
+                    }}
                 />
             )}
         </div>

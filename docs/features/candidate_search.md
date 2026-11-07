@@ -32,6 +32,24 @@ Every HR login may use it: `hr`, `hr_head`, `hr_manager`, `hr_ops`, plus `org_su
 
 Confirmation: permanent deletes need the typed word `DELETE`; Clear all needs `DELETE ALL` (checked by the server too).
 
+## Decisions (owner, 2026-11-06): the filter panel
+
+HR asked for Naukri-style filters (meeting with Roohi Idrishi, 5 Nov). Approved on a clickable mockup.
+
+| Question | Answer |
+|---|---|
+| How search works | Keywords and filters change the list at once, straight from the database. AI is optional: it reads a job description into the filters, and ranks the current list when HR clicks **Rank with AI** |
+| Compulsory keywords | Star a keyword. A record needs every starred keyword and at least one of the others. Exclude words leave records out |
+| Filters live now | Keywords, exclude, location, experience (total or relevant), notice, salary (current or expected, lacs a year or ₹K a month), role, company, designation, status, sourced in |
+| Resume filters (owner 2026-11-07, option A) | Education (UG / PG / PPG: any, specific, none; institute; type; degree year), industry, preferred location ("include candidates who would relocate", "change preferred location"), career break, defence background, "currently serving notice". Built and shown greyed out ("Available once resumes are added") until records hold that data; each switches on by itself once any record does. Data lives in migration `20261107000001` (its own view, `candidate_filter_records`); before it is applied the panel works without them |
+| Gender, age, disability | Shown greyed out ("Needs HR and legal approval"). No column stores them: that data is not collected until HR / legal sign off |
+| Blank fields | A filter hides a record blank on that field, and the page says how many, with a link to show them |
+| Layout | Filters left of the list, sticky under the 64 px header, resizable (260-520 px), collapsible to a strip; a slide-over when the list would not fit beside them. Worked out from the space on the row, so the Tech console's collapsible sidebar counts |
+| Sticky (owner 2026-11-07, fix B) | `<body>` has `overflow-x: hidden` app-wide, which stops `position: sticky` against the page. The Tech console therefore scrolls inside its own `<main id="main-scroll-container">` (the other consoles' pattern); the rest of the app is unchanged. The Escalation tab's drag now scrolls whatever really scrolls |
+| Opening a candidate | A read-only panel first, so a click cannot change anything; **Edit details** opens the existing form |
+
+Salary caution: the stored figure is monthly in hand, while Naukri's annual salary is usually CTC. "8 Lacs" here means about ₹66.7K in hand a month.
+
 ## Architecture
 
 ```
@@ -43,7 +61,14 @@ Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
       ─► hybrid_search_candidates() SQL: must-have filters → structured + keyword (FTS) + meaning (pgvector) → RRF
       ─► rerank.ts (LLM evidence-only scores + code-computed location / notice / salary) → top N
       ─► candidate_search_logs
+
+Filter panel ─► filter-search.ts: filters on the candidate_records view, no AI and no embedding, no migration
+   Rank with AI ─► search.ts rankFiltered: the first 45 in the visible order ─► rerank.ts ─► candidate_search_logs
+   Paste a job description ─► query-spec.ts parseQuery ─► filters.ts filtersFromSpec ─► filters HR can change
+   AI suggested keywords ─► keyword-suggest.ts: model proposes terms ─► code keeps those found on the records
 ```
+
+`POST /api/candidates/search` (the plain-English search with hybrid retrieval) stays in place and tested, but the screen no longer calls it.
 
 - **One record = one retrieval unit** (one Excel row, never chunked). Its search text (`profile.ts`) holds no email,
   phone or salary.
@@ -92,7 +117,7 @@ Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
 
 | Area | Path |
 |---|---|
-| Migration (apply by hand) | `supabase/migrations/20261102000003_candidate_search.sql`, then `…000004_candidate_search_ai_models.sql`, then `20261103000001_candidate_search_purge_and_ai_fix.sql` |
+| Migration (apply by hand) | `supabase/migrations/20261102000003_candidate_search.sql`, then `…000004_candidate_search_ai_models.sql`, then `20261103000001_candidate_search_purge_and_ai_fix.sql`. `20261106000002_candidate_search_suggest_job.sql` is needed only to save a different model for keyword suggestions. `20261107000001_candidate_search_resume_fields.sql` adds the resume fields and the `candidate_filter_records` view (the resume filters stay greyed out without it) |
 | Server logic | `backend/lib/candidates/` |
 | API | `app/api/candidates/` |
 | UI | `frontend/components/candidates/` |
@@ -209,8 +234,90 @@ Query ─► query-spec.ts (LLM → validated JSON: must / prefer / keywords)
    - **L14**: no per-call token count (`models.ts` does not return `usage` yet).
    - **L2**: no A/B against an alternative; the deterministic rules run first and the AI only handles their leftovers.
 
+## Agent Spec — Candidate Search keyword suggestions
+
+**1. Workflow or agent?** workflow `[BAA p.104]`
+   Justification `[BAA p.115]`: the pathway is fixed (read keywords → propose terms → code checks them against the
+   records → HR picks), so neither (a) nor (b) applies. One structured call; no tools, no loop.
+   Head-to-head vs. the deterministic path `[BAA pp.94–95, 99]`: the deterministic path is the job titles beside the
+   keyword on the records, and it runs when no model answers. No A/B yet: which of the two HR clicks more is not
+   recorded, so L2 is listed below.
+
+**2. Context** `[BAA p.112]`
+   Only the keywords already in the search. A keyword that looks like a phone number or email is dropped first (search
+   finds people by those). A typed name cannot be told from a skill, so it would be sent as a keyword.
+
+**3. Cost of a false positive** `[BAA p.112]`
+   Low: a wrong term is only an offer, HR chooses what to use, and code drops every term not found on a record. By L10
+   a fast tier fits, and the panel shows while HR types → default **Claude Haiku 5.5** (Control Center job
+   `candidate_suggest`), effort low.
+
+**4. Tools** — none. The model fills a JSON shape; the code decides what is shown.
+   | tool | when-not-to-use reviewed `[BAA p.107]` | errors as text `[BAA p.94]` | args validated `[BAA p.93]` | MCP `[BAA p.106]` |
+   |---|---|---|---|---|
+   | (none: structured output only) | N/A | N/A: JSON-schema output, re-validated with zod; a bad reply goes to the next model, then the fallback | yes (`parseSuggestReply`) | N/A |
+
+**5. Prompt** `[BAA pp.105, 114]`
+   Numbered ordered steps: yes (5). Explicit no-skip clause: yes. Single-shot example: yes (one keyword → terms). A rule
+   against terms naming a person, gender, age, religion or caste: yes. Terminal state written to data: not to a table;
+   a server log line per call (see 9).
+
+**6. Memory** `[BAA pp.100–103]`
+   Does this workload repeat? Yes (the same keywords recur), and an in-process cache answers repeats for an hour per
+   organisation and keyword set, keeping only complete answers. That is a cache of results, not a learning store → no
+   write tool `[BAA p.101]`.
+
+**7. Multi-agent?** `[BAA p.116]` Its own Control Center job and prompt, apart from parse / rank / fix: different context
+   and a different model tier (per-task model).
+
+**8. Evaluation — all four axes** `[BAA pp.118–119]`
+   System: a server log line per call (terms kept, terms proposed, model, ms); the chain falls back on error, timeout or
+   bad shape (`models.ts`), then to the records.
+   Quality assurance (rubric) `[BAA pp.96–98]`: **NOT BUILT.** A proxy exists by construction: the share of proposed
+   terms found on the records (in the log). A rubric grader must be a non-Claude family (L6).
+   Tool interaction `[BAA p.95]`: N/A (no tools). Call count fixed: 1 per new keyword set (+ backups on failure).
+   Agent efficiency `[BAA p.119]`: one call per new keyword set; the cache makes a repeat free. Tokens are not recorded
+   (same gap as search, see L14 below).
+
+**9. Trace** `[BAA pp.119–120]`
+   Run telemetry: server log only, because a table would need a migration for a low-stakes step. Ad-hoc testing
+   `[BAA p.116]`: PGlite integration tests with a scripted model (`tests/candidates/filter-search.test.ts`); **no
+   live-model run yet**.
+
+**10. Laws knowingly violated, and why**
+   - **L6 / L5 quality axis**: no rubric grader; a wrong suggestion costs one ignored pill.
+   - **L14**: no per-call token count and no table row, only a log line (`models.ts` does not return `usage` yet).
+   - **L2**: no A/B against the record-based fallback; it needs click data the page does not record yet.
+
+## Agent Spec change — ranking from the filter panel (2026-11-06)
+
+The ranker's prompt, reply shape and model job (`candidate_rank`) are unchanged; only where its records come from is new.
+`rankFiltered` hands it the first 45 filtered records in the order HR sees them, with no parse call and no embedding, so
+line 1 of the Candidate Search spec still holds as a fixed workflow `[BAA p.104]`, one step shorter.
+- **Context** `[BAA p.112]`: unchanged. Up to 45 records as work facts under short ids; no name, email or phone
+  (asserted in `filter-search.test.ts`).
+- **Cost of a false positive** `[BAA p.112]`: unchanged. HR reviews everything; must-haves are enforced by the filters.
+- **Evaluation** `[BAA pp.118–119]`: logged in `candidate_search_logs` with `ai_parsed` false and `parse_ms` 0. Same gaps
+  as above (no rubric, no tokens).
+- **Limit**: with more than 45 matches, the ranker sees only the first 45 in the current order, and the page says so.
+- **Laws knowingly violated**: as for Candidate Search (L6 / L5, L14, L2). Added to L2: filter order versus hybrid
+  retrieval as the source of the ranking pool has not been compared.
+
+`POST /api/candidates/understand` calls the existing parser unchanged, so that spec stands. Its one gap: the parser has no
+"exclude these words" output, so a job description fills everything except Exclude.
+
 ## Known limits
 
+- **The filter panel's keywords and Exclude see only sheet data** (name, contact details, company, designation, location,
+  role, source, remark). A starred keyword hides anyone whose row does not say it, until resumes are added.
+- The filter panel uses "contains" matching, not word forms: `manager` finds `Senior Manager`, `lease` does not find
+  `leasing`. It also matches inside words: the keyword `MBA` finds everyone in **Mumbai**. For qualifications use the
+  Education filter (exact), not a keyword.
+- Nothing fills the resume fields yet: there is no resume import and the edit form does not have them. Until one of those
+  exists, those filters stay greyed out.
+- The typing dropdown counts from up to 1,000 rows per column per keystroke, so its counts are a guide on very large
+  organisations. Spellings are not merged beyond case: "Thane" and "Thane West" are listed separately.
+- Saving a different model for keyword suggestions needs migration `20261106000002`; without it they run on the default.
 - No skills data yet (the Excel has none): matching leans on role, designation, organisation and remarks. Resume
   parsing is the next big quality jump.
 - Permanent delete and Clear all need migration `20261103000001`; before it is applied they answer "needs a database

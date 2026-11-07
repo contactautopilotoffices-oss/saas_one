@@ -38,7 +38,10 @@ export const PURGE_AI_FIX_MIGRATION = readFileSync(path.join("supabase", "migrat
 export const AUTO_INDEXING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261103000002_candidate_search_auto_indexing.sql"), "utf8")
   .replace(/extensions\.vector\(768\)/g, "extensions.vector");
 
-export async function freshDb(): Promise<PGlite> {
+/** The fields resumes will fill (owner 2026-11-07); the filter panel must also work before it is applied. */
+export const RESUME_FIELDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000001_candidate_search_resume_fields.sql"), "utf8");
+
+export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(STUBS);
   await db.exec(MIGRATION);
@@ -46,6 +49,7 @@ export async function freshDb(): Promise<PGlite> {
   await db.exec(AI_MODELS_MIGRATION);
   await db.exec(PURGE_AI_FIX_MIGRATION);
   await db.exec(AUTO_INDEXING_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(RESUME_FIELDS_MIGRATION);
   return db;
 }
 

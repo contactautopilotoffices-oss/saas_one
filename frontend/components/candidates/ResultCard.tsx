@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown, CircleHelp, FileSpreadsheet, Mail, PencilLine, Phone, UserPlus } from 'lucide-react';
 import type { CandidateRecord, RecordStatus, SearchResult } from '@/backend/lib/candidates/types';
 import { formatInr, formatMonths, formatNotice } from './format';
-import { BTN_GHOST, CARD, CARD_HOVER, CopyButton, EASE_PATIENT, LABEL, NUM_LG, NUM_MD, NUM_SM, StatusSelect, WELL } from './ui';
+import { BTN_GHOST, CARD, CARD_HOVER, CopyButton, Dropdown, EASE_PATIENT, LABEL, NUM_LG, NUM_MD, NUM_SM, Spinner, STATUS_OPTIONS, WELL } from './ui';
 
 /** Score bar fill. The bar length carries the value; colour stays the brand primary (no traffic-light fills). */
 function CriterionBar({ label, score, weight }: { label: string; score: number; weight: number }) {
@@ -34,13 +34,14 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 export default function ResultCard({
-    result, aiRanked, onStatus, statusBusy, onOpen,
+    result, onStatus, statusBusy, onOpen, blankFields = [],
 }: {
     result: SearchResult;
-    aiRanked: boolean;
     onStatus: (record: CandidateRecord, status: RecordStatus) => void;
     statusBusy: boolean;
     onOpen: (record: CandidateRecord) => void;
+    /** Filtered fields this record has no value for (shown through "blank details"). */
+    blankFields?: string[];
 }) {
     const [open, setOpen] = useState(false);
     const r = result.record;
@@ -56,7 +57,10 @@ export default function ResultCard({
                     {result.rank}
                 </span>
                 <div className="min-w-0 flex-1 space-y-1">
-                    <h3 className="break-words font-display text-base font-semibold leading-snug text-text-primary">{r.fullName}</h3>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <h3 className="min-w-0 break-words font-display text-base font-semibold leading-snug text-text-primary">{r.fullName}</h3>
+                        {blankFields.length > 0 && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-amber-800">Missing {blankFields.join(', ')}</span>}
+                    </div>
                     {r.role && <p className="text-sm font-medium text-primary-dark">For {r.role}</p>}
                     {(where || r.location) && (
                         <p className="break-words text-sm text-text-secondary">
@@ -64,19 +68,12 @@ export default function ResultCard({
                         </p>
                     )}
                 </div>
-                <div className="shrink-0 text-right">
-                    {result.matchPercent !== null ? (
-                        <>
-                            <p className={`${NUM_LG} text-text-primary`}>{Math.round(result.matchPercent)}<span className="text-base font-semibold text-text-tertiary">%</span></p>
-                            <p className={`${LABEL} mt-0.5`}>Match</p>
-                        </>
-                    ) : (
-                        <>
-                            <p className={`${NUM_LG} text-text-tertiary`} title={aiRanked ? 'No score for this record' : 'AI ranking was unavailable, so results are in search order'}>—</p>
-                            <p className="mt-0.5 max-w-[7rem] text-[11px] leading-tight text-text-tertiary">{aiRanked ? 'Not scored' : 'Search order, not scored'}</p>
-                        </>
-                    )}
-                </div>
+                {result.matchPercent !== null && (
+                    <div className="shrink-0 text-right">
+                        <p className={`${NUM_LG} text-text-primary`}>{Math.round(result.matchPercent)}<span className="text-base font-semibold text-text-tertiary">%</span></p>
+                        <p className={`${LABEL} mt-0.5`}>Match</p>
+                    </div>
+                )}
             </div>
 
             {result.summary && <p className="mt-4 text-sm leading-relaxed text-text-secondary">{result.summary}</p>}
@@ -121,7 +118,8 @@ export default function ResultCard({
 
             {/* Actions */}
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border-subtle pt-4">
-                <StatusSelect value={r.status} busy={statusBusy} onChange={s => onStatus(r, s)} label={`Status of ${r.fullName}`} />
+                <Dropdown variant="pill" value={r.status} options={STATUS_OPTIONS} onChange={s => onStatus(r, s)} label={`Status of ${r.fullName}`} />
+                {statusBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                 <button type="button" onClick={() => onOpen(r)} className={BTN_GHOST}><PencilLine className="h-4 w-4" />Open</button>
                 {hasDetails && (
                     <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-controls={detailsId} className={`${BTN_GHOST} ml-auto`}>

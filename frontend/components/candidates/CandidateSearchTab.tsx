@@ -13,8 +13,8 @@ import SheetsView from './SheetsView';
 import { CARD, EASE_PATIENT, EmptyState, UiProvider } from './ui';
 
 /**
- * Candidate Search (Tech console, owner 2026-11-02): find people in the uploaded sourcing sheets with a plain-English
- * query, keep the records tidy, and manage the sheets. Three views behind one segmented control. Each view mounts on
+ * Candidate Search (Tech console, owner 2026-11-02): find people in the uploaded sourcing sheets with the filter panel
+ * (owner 2026-11-06), keep the records tidy, and manage the sheets. Three views behind one segmented control. Each view mounts on
  * first visit and then stays mounted (hidden), so switching views never throws away a search or a half-typed filter.
  */
 
@@ -64,7 +64,7 @@ export default function CandidateSearchTab({ orgId }: { orgId: string }) {
 
     return (
         <UiProvider value={ui}>
-            <div className="mx-auto w-full max-w-6xl min-w-0 space-y-6">
+            <div className={`mx-auto w-full min-w-0 space-y-6 ${view === 'search' ? 'max-w-[1440px]' : 'max-w-6xl'}`}>
                 {/* Segmented control: L1 recessed track, active segment lifted to L2 (Linear: adjacent steps only). */}
                 <div role="tablist" aria-label="Candidate Search views" className="grid w-full grid-cols-3 gap-1 rounded-xl bg-surface-elevated p-1 ring-1 ring-inset ring-border-subtle sm:inline-grid sm:w-auto">
                     {VIEWS.map(({ id, label, icon: Icon }) => {
@@ -97,7 +97,7 @@ export default function CandidateSearchTab({ orgId }: { orgId: string }) {
 
                 {VIEWS.map(({ id }) => visited[id] && (
                     <div key={id} role="tabpanel" id={`cand-panel-${id}`} aria-labelledby={`cand-tab-${id}`} hidden={view !== id} className="min-w-0">
-                        {id === 'search' && <SearchView orgId={orgId} onDataChanged={onDataChanged} />}
+                        {id === 'search' && <SearchView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
                         {id === 'candidates' && <RecordsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
                         {id === 'sheets' && <SheetsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
                     </div>
