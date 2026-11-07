@@ -10,9 +10,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { JsonCaller } from "./models";
-import { comparePoolSize, EMBEDDING_MODEL, MAX_QUERY_LENGTH } from "./config";
+import { comparePoolSize, EMBEDDING_MODEL, MAX_QUERY_LENGTH, RANK_POOL } from "./config";
 import { embedQuery } from "./embeddings";
-import { compact, parseQuery, searchTextFor, specChips, type SearchSpec } from "./query-spec";
+import { filterRecords } from "./filter-search";
+import { describeFilters, specFromFilters, type SearchFilters } from "./filters";
+import { compact, parseQuery, searchTextFor, specChips, type Preferences, type SearchSpec } from "./query-spec";
 import { CandidateActionError, getRecordRows, toRecord } from "./records";
 import { rerank } from "./rerank";
 import { TOP_N_MAX, TOP_N_MIN, type SearchResponse } from "./types";
@@ -137,6 +139,63 @@ export async function searchCandidates(
     topN,
     matchingCount,
     comparedCount: records.length,
+    aiRanked,
+    notices,
+    searchId,
+  };
+}
+
+/**
+ * "Rank with AI" on the filter panel (owner 2026-11-06): the same ranking step as a plain-English search, on the records
+ * the filters matched, in the order HR sees them. No parse call and no embedding: the filters already say what is wanted.
+ */
+export async function rankFiltered(
+  client: SupabaseClient,
+  orgId: string,
+  userId: string,
+  filters: SearchFilters,
+  prefer: Preferences,
+  jobText: string,
+  deps: SearchDeps = {},
+): Promise<SearchResponse> {
+  const started = Date.now();
+  const notices: string[] = [];
+  const matched = await filterRecords(client, orgId, filters, 1, RANK_POOL, deps.today);
+  const retrievedAt = Date.now();
+
+  const spec = specFromFilters(filters, prefer);
+  const query = jobText.trim() || spec.summary;
+  const { results, aiRanked, model } = await rerank(query, spec, matched.records, TOP_N_MAX, deps.caller);
+  if (matched.records.length && !aiRanked) notices.push("AI ranking is unavailable right now. Please try again in a moment.");
+  if (matched.total > matched.records.length) notices.push(`AI compared the first ${matched.records.length} of ${matched.total} in the current order. Add a filter or change the sort to compare others.`);
+  const done = Date.now();
+
+  const searchId = await logSearch(client, {
+    organization_id: orgId,
+    user_id: userId,
+    query: query.slice(0, MAX_QUERY_LENGTH),
+    top_n: TOP_N_MAX,
+    spec,
+    matching_count: matched.total,
+    compared_count: matched.records.length,
+    result_ids: results.map((r) => r.record.id),
+    ai_parsed: false,
+    ai_ranked: aiRanked,
+    notices,
+    parse_ms: 0,
+    retrieve_ms: retrievedAt - started,
+    rerank_ms: done - retrievedAt,
+    total_ms: done - started,
+    parse_model: null,
+    rank_model: model,
+  });
+
+  return {
+    results,
+    understood: { summary: describeFilters(filters), chips: [] },
+    topN: TOP_N_MAX,
+    matchingCount: matched.total,
+    comparedCount: matched.records.length,
     aiRanked,
     notices,
     searchId,

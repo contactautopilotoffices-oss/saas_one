@@ -66,6 +66,14 @@ export const RERANK_CALL = { effort: "medium", maxTokens: 16_000, otherMaxTokens
 export const AI_FIX_CALL = { effort: "low", maxTokens: 12_000, otherMaxTokens: 4000, timeoutMs: 40_000, budgetMs: 50_000 } as const;
 export const AI_FIX_BATCH = 15;
 
+/** AI keyword suggestions (job 'candidate_suggest'): shown beside the box as HR types, so they stay small and quick. */
+export const SUGGEST_CALL = { effort: "low", maxTokens: 2000, otherMaxTokens: 400, timeoutMs: 8000, budgetMs: 12_000 } as const;
+export const SUGGEST_MAX = 10;
+/** Terms checked against the records per call: each one is a count query. */
+export const SUGGEST_CHECK_MAX = 16;
+/** The AI ranking compares this many filtered records, in the order HR sees them (one prompt stays small and fast). */
+export const RANK_POOL = 45;
+
 export const MAX_QUERY_LENGTH = 4000;
 
 /** Records the search hands to the ranker: about 3 x N, at least 20, at most 45 (one prompt stays small and fast). */
@@ -105,6 +113,11 @@ export const MAX_SHEET_ROWS = 10_000;
 
 // Requests per user per minute.
 export const SEARCH_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 };
+// The filter panel answers every click and the dropdown every pause in typing (both debounced); neither calls a model.
+export const FILTER_RATE_LIMIT = { maxRequests: 180, windowMs: 60_000 };
+export const OPTIONS_RATE_LIMIT = { maxRequests: 120, windowMs: 60_000 };
+// AI keyword suggestions: one small model call per new keyword set.
+export const SUGGEST_RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
 export const UPLOAD_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
 // The Sheets page nudges the background worker about every 20 s while records are being prepared.
 export const REINDEX_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };

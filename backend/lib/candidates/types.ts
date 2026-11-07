@@ -74,6 +74,23 @@ export interface CandidateRecord {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  /** The fields resumes will fill (migration 20261107000001). Only the filter panel loads them; absent before the migration. */
+  extras?: CandidateExtras;
+}
+
+/** Owner 2026-11-07: filled from resumes. A qualification of "none" means the CV shows none; null means not known. */
+export interface CandidateExtras {
+  industry: string | null;
+  preferredLocations: string[];
+  ugQualification: string | null;
+  pgQualification: string | null;
+  ppgQualification: string | null;
+  institute: string | null;
+  educationType: "full_time" | "part_time" | "correspondence" | null;
+  degreeYear: number | null;
+  careerBreak: boolean | null;
+  defenceBackground: "army" | "navy" | "air_force" | "paramilitary" | null;
+  servingNotice: boolean | null;
 }
 
 /** Body of POST /api/candidates and PATCH /api/candidates/[id]. On PATCH every field is optional. */

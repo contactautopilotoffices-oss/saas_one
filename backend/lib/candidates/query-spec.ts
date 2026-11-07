@@ -28,7 +28,7 @@ const MustSchema = z.object({
   sourced_before: optional(isoDate),
 });
 
-const PreferSchema = z.object({
+export const PreferSchema = z.object({
   roles: optional(names),
   locations: optional(names),
   min_relevant_exp_months: optional(z.number().int().min(0).max(600)),

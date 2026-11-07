@@ -19,6 +19,31 @@ function bind(value: unknown): unknown {
   return value;
 }
 
+/** Split on the commas that are outside quotes and brackets. */
+function splitTerms(text: string): string[] {
+  const terms: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let term = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quoted && c === "\\") {
+      term += c + text[i + 1];
+      i += 1;
+      continue;
+    }
+    if (c === '"') quoted = !quoted;
+    if (!quoted && c === "(") depth += 1;
+    if (!quoted && c === ")") depth -= 1;
+    if (c === "," && !quoted && depth === 0) {
+      terms.push(term);
+      term = "";
+    } else term += c;
+  }
+  terms.push(term);
+  return terms;
+}
+
 class Query implements PromiseLike<Result> {
   private op: "select" | "insert" | "upsert" | "update" = "select";
   private columns = "*";
@@ -84,18 +109,53 @@ class Query implements PromiseLike<Result> {
     this.where.push(`${column} is null`);
     return this;
   }
-  not(column: string, operator: "is", value: null) {
-    void operator;
-    void value;
-    this.where.push(`${column} is not null`);
+  not(column: string, operator: "is" | "ilike" | "in", value: string | null) {
+    if (operator === "ilike") this.where.push(`${column} not ilike ${this.p(value)}`);
+    else if (operator === "in") this.where.push(`not (${column} = any(${this.p(String(value).replace(/[()]/g, "").split(","))}))`);
+    else this.where.push(`${column} is not null`);
     return this;
+  }
+  gte(column: string, value: unknown) {
+    this.where.push(`${column} >= ${this.p(value)}`);
+    return this;
+  }
+  lte(column: string, value: unknown) {
+    this.where.push(`${column} <= ${this.p(value)}`);
+    return this;
+  }
+  /** PostgREST's or() grammar, as far as the filter panel uses it: col.is.null, col.gte.1, col.ilike."%a%", and(...). */
+  or(filters: string) {
+    this.where.push(`(${splitTerms(filters).map((term) => this.term(term)).join(" or ")})`);
+    return this;
+  }
+  private term(term: string): string {
+    if (term.startsWith("and(")) return `(${splitTerms(term.slice(4, -1)).map((t) => this.term(t)).join(" and ")})`;
+    // column.op.value or column.not.op.value; the value may itself hold dots ("B.Com"), so only the first parts split.
+    const column = term.slice(0, term.indexOf("."));
+    let rest = term.slice(column.length + 1);
+    const negate = rest.startsWith("not.");
+    if (negate) rest = rest.slice(4);
+    const op = rest.slice(0, rest.indexOf("."));
+    const raw = rest.slice(op.length + 1);
+    const sql = this.condition(column, op, raw);
+    return negate ? `not (${sql})` : sql;
+  }
+  private condition(column: string, op: string, raw: string): string {
+    if (op === "is") return raw === "null" ? `${column} is null` : `${column} is ${raw === "true" ? "true" : "false"}`;
+    if (op === "in") return `${column} = any(${this.p(raw.replace(/^\(|\)$/g, "").split(","))})`;
+    const value = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
+    const sql = { ilike: "ilike", gte: ">=", lte: "<=" }[op];
+    if (!sql) throw new Error(`or(): unsupported operator ${op}`);
+    if (op === "ilike") return `${column} ilike ${this.p(value)}`;
+    return `${column} ${sql} ${this.p(/^\d+$/.test(value) ? Number(value) : value)}`;
   }
   ilike(column: string, pattern: string) {
     this.where.push(`${column} ilike ${this.p(pattern)}`);
     return this;
   }
-  order(column: string, options?: { ascending?: boolean }) {
-    this.orderBy.push(`${column} ${options?.ascending === false ? "desc" : "asc"}`);
+  order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) {
+    const nulls = options?.nullsFirst === false ? " nulls last" : "";
+    this.orderBy.push(`${column} ${options?.ascending === false ? "desc" : "asc"}${nulls}`);
     return this;
   }
   limit(n: number) {

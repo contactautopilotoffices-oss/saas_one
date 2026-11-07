@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { parseEmail, parsePhone } from "./normalize";
 import { buildSearchText } from "./profile";
-import { RECORD_STATUSES, type CandidateListResponse, type CandidateRecord } from "./types";
+import { RECORD_STATUSES, type CandidateExtras, type CandidateListResponse, type CandidateRecord } from "./types";
 
 export class CandidateActionError extends Error {
   constructor(
@@ -47,12 +47,29 @@ export interface RecordRow {
   updated_at: string;
   deleted_at: string | null;
   sheet_live: boolean;
+  // Migration 20261107000001; present only when RESUME_COLUMNS were selected.
+  industry?: string | null;
+  preferred_locations?: string[] | null;
+  ug_qualification?: string | null;
+  pg_qualification?: string | null;
+  ppg_qualification?: string | null;
+  institute?: string | null;
+  education_type?: CandidateExtras["educationType"];
+  degree_year?: number | null;
+  career_break?: boolean | null;
+  defence_background?: CandidateExtras["defenceBackground"];
+  serving_notice?: boolean | null;
 }
 
 export const RECORD_COLUMNS =
   "id, organization_id, candidate_id, sheet_id, sheet_name, source_row, full_name, email, phone, current_organization, " +
   "current_designation, location, total_exp_months, role, candidate_source, sourcing_date, relevant_exp_months, " +
   "notice_period_days, current_inhand, expected_inhand, remark, status, indexed, created_at, updated_at, deleted_at, sheet_live";
+
+/** The fields resumes will fill (migration 20261107000001). Selected only by the filter panel, which copes without them. */
+export const RESUME_COLUMNS =
+  "industry, preferred_locations, ug_qualification, pg_qualification, ppg_qualification, institute, education_type, " +
+  "degree_year, career_break, defence_background, serving_notice";
 
 export function toRecord(row: RecordRow): CandidateRecord {
   return {
@@ -81,6 +98,21 @@ export function toRecord(row: RecordRow): CandidateRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
+    ...(row.industry === undefined ? {} : {
+      extras: {
+        industry: row.industry ?? null,
+        preferredLocations: row.preferred_locations ?? [],
+        ugQualification: row.ug_qualification ?? null,
+        pgQualification: row.pg_qualification ?? null,
+        ppgQualification: row.ppg_qualification ?? null,
+        institute: row.institute ?? null,
+        educationType: row.education_type ?? null,
+        degreeYear: row.degree_year ?? null,
+        careerBreak: row.career_break ?? null,
+        defenceBackground: row.defence_background ?? null,
+        servingNotice: row.serving_notice ?? null,
+      },
+    }),
   };
 }
 
