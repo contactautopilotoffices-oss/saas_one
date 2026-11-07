@@ -11,12 +11,12 @@ import type { ApprovalItem, Notice, QueueId } from './sample';
  *
  * The app ships in two palettes that share every screen: Cobalt (light page, white cards,
  * one blue accent) and Slate (deep navy built from #06141B, #11212D, #253745, #4A5C6A,
- * #9BA8AB and #CCD0CF, with white as its primary colour). Components read colours as CSS variables
+ * #9BA8AB and #CCD0CF, with white as its primary colour), plus Slate Light, its bright version. Components read colours as CSS variables
  * through `C`, so a palette is one set of variables on the app root. Red stays reserved for
  * SLA breaches and late rounds in both.
  */
 
-export type PaletteName = 'cobalt' | 'slate';
+export type PaletteName = 'cobalt' | 'slate' | 'slateLight';
 
 interface PaletteValues {
     page: string; card: string; tint: string; accent: string; accentDeep: string; bar: string; barWarn: string;
@@ -76,6 +76,23 @@ const SLATE: PaletteValues = {
     heroLine: '#06141B', heroGrid: 'rgba(6,20,27,0.14)', heroBtn: 'rgba(6,20,27,0.1)', heroChip: '#06141B', heroChipText: '#FF9C9F',
 };
 
+/**
+ * Slate Light: the bright version of Slate. White page and cards, the same six colours for text,
+ * bars and borders, deep navy #11212D as the primary colour, and a navy hero card for contrast.
+ */
+const SLATE_LIGHT: PaletteValues = {
+    page: '#F3F4F4', card: '#FFFFFF', tint: '#E6E8E8', accent: '#11212D', accentDeep: '#253745', bar: '#9BA8AB', barWarn: '#4A5C6A',
+    text: '#06141B', text2: '#4A5C6A', text3: '#5A6B77', border: '#E1E4E4', track: '#ECEEEE', muted: '#CCD0CF', scrim: 'rgba(6,20,27,0.42)',
+    onAccent: '#FFFFFF', onInk: '#FFFFFF', onInkSoft: 'rgba(255,255,255,0.72)', ink: '#06141B',
+    topBar: 'rgba(243,244,244,0.92)', dot: '#CCD0CF', placeholder: '#62727D',
+    shadowTab: '0 -8px 24px rgba(6,20,27,0.06)', shadowAccent: '0 10px 24px rgba(17,33,45,0.35)', shadowSheet: '0 -12px 40px rgba(6,20,27,0.18)',
+    red: '#E5484D', redText: '#C8282E', redBg: '#FDECEC', onRed: '#FFFFFF',
+    siteBar: '#CCD0CF', siteBarWarn: '#9BA8AB', onSiteBar: '#06141B', onSiteBarWarn: '#06141B',
+    q0: '#11212D', q1: '#4A5C6A', q2: '#9BA8AB', q3: '#CCD0CF',
+    heroBg: 'linear-gradient(150deg, #253745 0%, #11212D 50%, #06141B 100%)', heroText: '#FFFFFF', heroSoft: 'rgba(255,255,255,0.8)',
+    heroLine: '#FFFFFF', heroGrid: 'rgba(255,255,255,0.16)', heroBtn: 'rgba(255,255,255,0.14)', heroChip: '#FFFFFF', heroChipText: '#C8282E',
+};
+
 function labTheme(v: PaletteValues, extra: Pick<LabTheme, 'borderStrong' | 'grid' | 'skeletonA' | 'skeletonB' | 'tooltipBg' | 'tooltipFg' | 'focus'>): LabTheme {
     return {
         font: FONT, page: v.page, surface: v.card, tile: v.track, border: v.border, text: v.text, text2: v.text2, text3: v.text3,
@@ -92,6 +109,10 @@ export const PALETTES: Record<PaletteName, Palette> = {
     slate: {
         name: 'slate', values: SLATE, heroDark: false, scheme: 'dark',
         theme: labTheme(SLATE, { borderStrong: '#4A5C6A', grid: '#253745', skeletonA: '#1A2B38', skeletonB: '#253745', tooltipBg: '#FFFFFF', tooltipFg: '#06141B', focus: '#FFFFFF' }),
+    },
+    slateLight: {
+        name: 'slateLight', values: SLATE_LIGHT, heroDark: true, scheme: 'light',
+        theme: labTheme(SLATE_LIGHT, { borderStrong: '#CCD0CF', grid: '#ECEEEE', skeletonA: '#ECEEEE', skeletonB: '#E0E3E3', tooltipBg: '#06141B', tooltipFg: '#FFFFFF', focus: '#253745' }),
     },
 };
 

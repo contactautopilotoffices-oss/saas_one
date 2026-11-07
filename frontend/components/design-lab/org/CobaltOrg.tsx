@@ -39,6 +39,11 @@ export function SlateOrg(props: { m: OrgModel; start?: CobaltStart }) {
     return <CobaltOrg {...props} palette="slate" />;
 }
 
+/** The same app in Slate Light, the bright version. */
+export function SlateLightOrg(props: { m: OrgModel; start?: CobaltStart }) {
+    return <CobaltOrg {...props} palette="slateLight" />;
+}
+
 const TABS: ({ id: TabName; label: string; icon: LucideIcon } | null)[] = [
     { id: 'home', label: 'Home', icon: Home }, { id: 'tickets', label: 'Tickets', icon: Ticket }, null,
     { id: 'approvals', label: 'Approvals', icon: ListChecks }, { id: 'sites', label: 'Sites', icon: Building2 },

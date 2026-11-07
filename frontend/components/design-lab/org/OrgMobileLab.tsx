@@ -12,21 +12,21 @@ import IvoryOrg from './IvoryOrg';
 import OnyxOrg from './OnyxOrg';
 import GiltOrg from './GiltOrg';
 import PulseOrg, { type PulseTab } from './PulseOrg';
-import CobaltOrg, { SlateOrg, type CobaltStart } from './CobaltOrg';
+import CobaltOrg, { SlateLightOrg, SlateOrg, type CobaltStart } from './CobaltOrg';
 import TealOrg from './TealOrg';
 import PlumOrg from './PlumOrg';
 
 /**
  * /design-lab/org-mobile: the org super admin's mobile dashboard.
- * Cobalt is the chosen direction and opens first, as a gallery of its screens; Slate is the
- * same app in the six colour navy palette, opening on its dashboard and ticket screens. Each
- * phone is the whole app, started on a different screen, so every one can be tapped through.
- * "Compare" puts Cobalt, Slate, Teal and Plum side by side, and the earlier gold set (Pulse,
+ * Cobalt, Slate and Slate Light are one app in three palettes, each shown as a gallery of its
+ * screens; Slate Light (the bright version of the six colour palette) opens first. Each phone
+ * is the whole app, started on a different screen, so every one can be tapped through.
+ * "Compare" puts Cobalt, both Slates, Teal and Plum side by side, and the earlier gold set (Pulse,
  * Noir, Ivory, Onyx, Gilt) stays one click away. On a real phone the chosen design fills the
  * screen instead of sitting in a frame.
  */
 
-type OrgDesignId = 'cobalt' | 'slate' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
+type OrgDesignId = 'cobalt' | 'slate' | 'slatelight' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
 type View = OrgDesignId | 'all';
 
 const DEFAULT_ORDER = [
@@ -44,7 +44,17 @@ const PULSE_SCREENS: { tab: PulseTab; label: string }[] = [
 
 /** The app galleries: the same app started on a different screen in each phone. */
 type GalleryScreen = { label: string; start: (siteId: string) => CobaltStart };
-const GALLERIES: Record<'cobalt' | 'slate', GalleryScreen[]> = {
+const SLATE_SCREENS: GalleryScreen[] = [
+    { label: 'Dashboard', start: () => ({}) },
+    { label: 'Tickets', start: () => ({ route: { name: 'tickets' } }) },
+    { label: 'Tickets past SLA', start: () => ({ route: { name: 'tickets', view: 'sla' } }) },
+    { label: 'Ticket detail', start: () => ({ route: { name: 'ticket', id: 'tkt-151' } }) },
+    { label: 'Assign technician', start: () => ({ route: { name: 'ticket', id: 'tkt-151' }, sheet: { kind: 'assign', id: 'tkt-151' } }) },
+    { label: 'Raise a ticket', start: () => ({ route: { name: 'newTicket' } }) },
+    { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
+    { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
+];
+const GALLERIES: Record<'cobalt' | 'slate' | 'slatelight', GalleryScreen[]> = {
     cobalt: [
         { label: 'Home', start: () => ({}) },
         { label: 'Tickets', start: () => ({ route: { name: 'tickets' } }) },
@@ -55,16 +65,8 @@ const GALLERIES: Record<'cobalt' | 'slate', GalleryScreen[]> = {
         { label: 'Site page', start: id => ({ route: { name: 'site', id } }) },
         { label: 'Money', start: () => ({ route: { name: 'money' } }) },
     ],
-    slate: [
-        { label: 'Dashboard', start: () => ({}) },
-        { label: 'Tickets', start: () => ({ route: { name: 'tickets' } }) },
-        { label: 'Tickets past SLA', start: () => ({ route: { name: 'tickets', view: 'sla' } }) },
-        { label: 'Ticket detail', start: () => ({ route: { name: 'ticket', id: 'tkt-151' } }) },
-        { label: 'Assign technician', start: () => ({ route: { name: 'ticket', id: 'tkt-151' }, sheet: { kind: 'assign', id: 'tkt-151' } }) },
-        { label: 'Raise a ticket', start: () => ({ route: { name: 'newTicket' } }) },
-        { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
-        { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
-    ],
+    slate: SLATE_SCREENS,
+    slatelight: SLATE_SCREENS,
 };
 
 const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; sections?: { title: string; items: string[] }[]; Component: React.ComponentType<{ m: OrgModel; start?: CobaltStart }> }[] = [
@@ -108,6 +110,24 @@ const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: stri
                 'Primary colour is white: buttons, active pills, the + button, the active tab and the hero card, with #06141B text on it',
                 'Charts step through white, #9BA8AB, #4A5C6A',
                 'Red is only for SLA breaches and late rounds, lightened to read on navy',
+            ] },
+        ] },
+    { id: 'slatelight', name: 'Slate Light', group: 'new', dot: 'linear-gradient(135deg, #FFFFFF 0%, #FFFFFF 50%, #11212D 50%)', statusDark: false, Component: SlateLightOrg,
+        blurb: 'The bright version of Slate. White page and white cards, your six colours for text, bars and borders, deep navy #11212D as the primary colour, and a navy hero card so the one big number stands out. Same dashboard and ticket screens.',
+        sections: [
+            { title: 'Dashboard and tickets', items: [
+                'Dashboard: a navy hero card for active tickets, quick actions, Needs you, sites, at a glance',
+                'Tickets: 63 active across 5 sites, with past SLA, urgent and unassigned one tap away',
+                'Ticket page: SLA countdown, owner, description, activity and notes',
+                'Assign or reassign from a sheet: best fit for the skill first, then who is free',
+                'Raise a ticket: site, category, priority with its SLA, details, assign now or later',
+            ] },
+            { title: 'How the palette is used', items: [
+                'Page #F3F4F4, cards white, tiles and tracks a light tint of #CCD0CF',
+                'Text #06141B, second level #4A5C6A; every pair passes 4.5:1',
+                'Primary colour is #11212D: buttons, active pills, the + button and the active tab, with white text',
+                'Charts step through #11212D, #4A5C6A, #9BA8AB, #CCD0CF',
+                'Red is only for SLA breaches and late rounds',
             ] },
         ] },
     { id: 'teal', name: 'Teal', group: 'new', dot: '#0F766E', statusDark: false, Component: TealOrg,
@@ -190,7 +210,7 @@ function read<T extends string>(name: string, allowed: readonly T[], fallback: T
 }
 
 export default function OrgMobileLab() {
-    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'slate', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'cobalt'));
+    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'slate', 'slatelight', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'slatelight'));
     const [state, setState] = useState<PreviewState>(() => read('state', STATES.map(s => s.id), 'normal'));
     const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1440);
     const m = useOrgModel(state);
@@ -203,7 +223,7 @@ export default function OrgMobileLab() {
         window.history.replaceState(window.history.state, '', url.toString());
     }, [view, state]);
 
-    const shown = device && view === 'all' ? 'cobalt' : view;
+    const shown = device && view === 'all' ? 'slatelight' : view;
     const compared = DESIGNS.filter(d => d.group === 'new');
     const cols = width >= 1400 ? 4 : width >= 1000 ? 3 : width >= 760 ? 2 : 1;
     const pulseCols = width >= 1000 ? 3 : 1;
@@ -266,7 +286,7 @@ export default function OrgMobileLab() {
                         </div>
                     ))}
                 </main>
-            ) : one && (one.id === 'cobalt' || one.id === 'slate') ? (
+            ) : one && (one.id === 'cobalt' || one.id === 'slate' || one.id === 'slatelight') ? (
                 <main className="mx-auto flex flex-col items-center gap-[28px] px-[32px] py-[32px]">
                     <Notes design={one} wide />
                     <div className="grid justify-center gap-[28px]" style={{ gridTemplateColumns: `repeat(${cobaltCols}, max-content)` }}>
