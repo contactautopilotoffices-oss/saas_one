@@ -31,7 +31,8 @@ import type {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 interface TicketsPayload { tickets: any[]; total: number }
 
-function fromRow(r: any): LabTicket {
+/** Maps one row of GET /api/tickets to the lab's ticket shape. Also used by the org mobile lab. */
+export function fromRow(r: any): LabTicket {
     const escalations = Array.isArray(r.ticket_escalation_logs)
         ? r.ticket_escalation_logs
             .filter((l: any) => l?.escalated_at)

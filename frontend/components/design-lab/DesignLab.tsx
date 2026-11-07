@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { FlaskConical } from 'lucide-react';
 import { useLabModel } from './lab/useLabModel';
 import type { DesignId, PreviewState, ScreenId } from './lab/types';
@@ -11,6 +12,7 @@ import PlannerDesign from './designs/planner/PlannerDesign';
 import InboxDesign from './designs/inbox/InboxDesign';
 import SkylineDesign from './designs/skyline/SkylineDesign';
 import type { LabModel } from './lab/useLabModel';
+import { LAB_CSS } from './lab/css';
 
 /**
  * /design-lab: six complete UI directions, three screens each, switchable instantly.
@@ -49,20 +51,6 @@ const STATES: { id: PreviewState; label: string }[] = [
     { id: 'offline', label: 'Offline' },
 ];
 
-const LAB_CSS = `
-.lab-shell { --lab-bar-h: 100px; }
-@media (min-width: 1400px) { .lab-shell { --lab-bar-h: 56px; } }
-.lab-root p, .lab-root label, .lab-root button, .lab-root input, .lab-root select { font-family: inherit; }
-.lab-root :focus-visible { outline: 2px solid var(--lab-focus); outline-offset: 2px; }
-.lab-root label input:focus-visible { outline: none; }
-.lab-root label:has(input:focus-visible) { outline: 2px solid var(--lab-focus); outline-offset: 2px; }
-.lab-bar :focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }
-.lab-skeleton { background: linear-gradient(90deg, var(--lab-skel-a) 0%, var(--lab-skel-b) 50%, var(--lab-skel-a) 100%); background-size: 200% 100%; animation: lab-shimmer 1.4s ease-in-out infinite; }
-@keyframes lab-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
-@media (prefers-reduced-motion: reduce) { .lab-skeleton { animation: none; } .lab-root * { transition-duration: 0ms !important; } }
-.lab-scroll-x { scrollbar-width: none; }
-.lab-scroll-x::-webkit-scrollbar { display: none; }
-`;
 
 function readParam<T extends string>(name: string, allowed: readonly T[], fallback: T): T {
     if (typeof window === 'undefined') return fallback;
@@ -147,6 +135,7 @@ export default function DesignLab() {
                             );
                         })}
                     </div>
+                    <Link href="/design-lab/org-mobile" className="inline-flex h-8 shrink-0 items-center rounded-full border border-white/15 px-[12px] text-[12.5px] font-semibold text-white/90 hover:bg-white/10">Org admin mobile</Link>
                     <label className="flex shrink-0 items-center gap-[8px] text-[12px] text-white/70">
                         <span className="min-[1400px]:sr-only">State</span>
                         <select
