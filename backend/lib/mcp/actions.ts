@@ -1,4 +1,4 @@
-import { createCode, verifyCode, confirmKey, consumeNonce, paramsHash, remainingActions, actionLimits, CONFIRM_TTL_SECONDS, type ActionName, type NonceStore } from './confirm';
+import { createCode, verifyCode, confirmKey, consumeNonce, repeatHash, remainingActions, actionLimits, CONFIRM_TTL_SECONDS, type ActionName, type NonceStore } from './confirm';
 import { fetchAsUser } from './fetchAsUser';
 import { logMcpCall } from './log';
 import type { McpCaller } from './token';
@@ -18,7 +18,7 @@ import { EXTERNAL_ROLES } from '@/backend/lib/auth/callerAccess';
  *  - one record per action: no tool accepts a list, and every body sent holds exactly one record;
  *  - every action needs its own preview and the user's own yes; each code works once;
  *  - per-user limits (default 10 per hour, 30 per day, all actions together) and no identical
- *    repeat within 15 minutes, checked and recorded in one locked database step
+ *    repeat within 15 minutes (except raising a service ticket), checked and recorded in one locked database step
  *    (mcp_consume_action), so parallel confirmations cannot slip past;
  *  - text fields have length caps; lists inside a record are not accepted.
  *
@@ -266,7 +266,7 @@ export async function confirmAction(ctx: ActionContext, code: string): Promise<A
         return { ok: false, text: `Not done: ${stale}. Nothing was changed. Ask for a new preview if it is still needed.` };
     }
 
-    const used = await (ctx.deps?.nonceStore || consumeNonce)(v.payload.n, ctx.caller.userId, action, paramsHash(action, p));
+    const used = await (ctx.deps?.nonceStore || consumeNonce)(v.payload.n, ctx.caller.userId, action, repeatHash(action, p));
     if (!used.ok) {
         await log(false, `confirm_action:${action}`, path, null, used.reason, p);
         return { ok: false, text: `Not done: ${used.reason}.` };
