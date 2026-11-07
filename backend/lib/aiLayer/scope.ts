@@ -96,7 +96,8 @@ export async function loadActor(admin: SupabaseClient, userId: string, orgId: st
     for (const r of [profile, orgMems, propMems, props]) if (r.error) throw new Error(r.error.message);
     const orgProperties: Record<string, string> = {};
     for (const p of (props.data || []) as Array<{ id: string; name: string | null; is_active: boolean | null; deleted_at: string | null }>) {
-        if (p.is_active !== false && !p.deleted_at) orgProperties[p.id] = p.name || 'Property';
+        // Names are shown in replies: drop stray trailing punctuation ("D Mafatlal Chambers ,").
+        if (p.is_active !== false && !p.deleted_at) orgProperties[p.id] = (p.name || 'Property').replace(/[\s,;.:-]+$/, '') || 'Property';
     }
     const u = profile.data as { is_approved?: boolean | null; approval_status?: string | null } | null;
     return computeActor(userId, orgId, {

@@ -126,6 +126,8 @@ export async function POST(req: NextRequest) {
     // doesn't understand or may not do, and any error come back handled:false, so Smart chat and the old bot below answer
     // exactly as before. For everyone else it returns at once (no lookups while no org has WhatsApp on).
     const aiLayer = await claimAiLayerWhatsApp(input);
+    // Why the AI layer passed a message on (no number, no text): makes "it never reached the AI" traceable in the logs.
+    if (!aiLayer.handled && aiLayer.why !== 'off') console.info('[AiLayer] passed on', JSON.stringify({ why: aiLayer.why }));
     if (aiLayer.handled) {
         await remember();
         after(guarded(aiLayer.background));

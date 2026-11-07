@@ -13,6 +13,7 @@ import type { AiData, ConsumptionRow, ReadingsStatusRow, TicketCountRow, TicketL
 import type { AuditRow, AuditStore } from './audit';
 import type { InterpretLlm } from './interpret';
 import { parseSettings, type AiSettings } from './settings';
+import { maskText, type LearningContext, type ReviewFlag } from './learning';
 import { BRAIN_INTERPRET_MODELS, HEDGE_UNDERSTAND_MS, engyBrainLlm, withModelFallback } from '@/task-manager/brain/llm';
 
 const CLOSED_STATUSES = ['resolved', 'completed', 'closed'];
@@ -191,6 +192,47 @@ export function supabaseStateStore(admin: SupabaseClient) {
                 { organization_id: orgId, user_id: userId, channel, state, updated_at: new Date().toISOString() },
                 { onConflict: 'organization_id,user_id,channel' });
             if (error) throw new Error(error.message);
+        },
+    };
+}
+
+// ── Learning loop (backend/lib/aiLayer/learning.ts) ─────────────────────────────────────────────────────────────
+
+const learningCache = new Map<string, { at: number; value: LearningContext }>();
+export const clearLearningCache = (orgId: string) => learningCache.delete(orgId);
+
+/**
+ * What an org has taught the AI: its examples (latest 200) and the live instruction version. Cached 60 s per org, and
+ * cleared at once when an admin teaches or activates something. A missing table (migration not run) = nothing taught.
+ */
+export function supabaseLearning(admin: SupabaseClient) {
+    return {
+        /** fresh = skip the cache (training chat: a just-taught example applies to the very next message). */
+        async load(orgId: string, fresh = false): Promise<LearningContext> {
+            const hit = learningCache.get(orgId);
+            if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.value;
+            const [ex, pv] = await Promise.all([
+                admin.from('ai_examples').select('id, message_text, entry_id, fields').eq('organization_id', orgId).order('created_at', { ascending: false }).limit(200),
+                admin.from('ai_prompt_versions').select('instructions').eq('organization_id', orgId).eq('status', 'active').maybeSingle(),
+            ]);
+            const value: LearningContext = {
+                enabled: true,
+                examples: ex.error ? [] : ((ex.data || []) as Array<{ id: string; message_text: string; entry_id: string; fields: Record<string, unknown> | null }>)
+                    .map(r => ({ id: r.id, messageText: r.message_text, entryId: r.entry_id, fields: r.fields ?? {} })),
+                instructions: pv.error ? null : ((pv.data as { instructions?: string } | null)?.instructions ?? null),
+            };
+            learningCache.set(orgId, { at: Date.now(), value });
+            return value;
+        },
+        async flag(f: ReviewFlag): Promise<void> {
+            const { error } = await admin.from('ai_review_items').insert({
+                organization_id: f.orgId, user_id: f.userId, channel: f.channel,
+                message_text: maskText(f.messageText) || '(empty)',
+                follow_up_text: f.followUpText ? maskText(f.followUpText) : null,
+                bot_reply: f.botReply ? maskText(f.botReply) : null,
+                entry_id: f.entryId ?? null, triggers: f.triggers,
+            });
+            if (error) console.warn('[AiLayer] review flag skipped', error.message);
         },
     };
 }

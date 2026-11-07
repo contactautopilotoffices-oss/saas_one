@@ -5,8 +5,9 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { findWhatsAppUser } from '@/backend/lib/whatsapp/assistant/access';
 import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from './scope';
+import { gate } from './settings';
 import { handleTurn } from './pipeline';
-import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseStateStore, whatsappAiData } from './server';
+import { brainInterpretLlm, loadSettings, supabaseAuditStore, supabaseLearning, supabaseStateStore, whatsappAiData } from './server';
 import { claimWhatsApp, resolveWhatsAppPerson, type WhatsAppDeps, type WhatsAppInbound, type WhatsAppPerson } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
@@ -56,6 +57,7 @@ export function liveWhatsAppDeps(): WhatsAppDeps {
             data: whatsappAiData(supabaseAdmin, phone, userId),
             llm: brainInterpretLlm(),
             audit: supabaseAuditStore(supabaseAdmin),
+            learning: supabaseLearning(supabaseAdmin),
             now: () => new Date(),
             allowMessage: (key, perHour) => checkRateLimit(key, { maxRequests: perHour, windowMs: 3_600_000 }).allowed,
         }, input),
@@ -96,6 +98,17 @@ export async function aiLayerWhatsAppUserFor(phone: string): Promise<string | nu
     } catch {
         return null;
     }
+}
+
+/** For "Check this person": in how many orgs WhatsApp AI is on for this user (the AI only answers when exactly one). */
+export async function whatsappOrgCountFor(userId: string): Promise<number> {
+    const deps = liveWhatsAppDeps();
+    let n = 0;
+    for (const orgId of await orgsForUser(userId)) {
+        const actor = await deps.loadActor(userId, orgId);
+        if (actor && gate(actor, await deps.loadSettings(orgId), 'whatsapp').ok) n++;
+    }
+    return n;
 }
 
 /** Called by the AiSensy webhook. Never throws; { handled: false } = carry on exactly as before. */
