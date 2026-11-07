@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { resolveCaller, isCallerError, forbidden } from '@/backend/lib/auth/callerAccess';
+import { inTicketOrg, mayActOnHrTicket } from '@/backend/lib/auth/hrTicketAccess';
+import { isHrAdmin } from '@/backend/lib/auth/hrAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -14,7 +17,10 @@ export async function GET(
         const { id } = await params;
         const { searchParams } = new URL(request.url);
         const includeInternal = searchParams.get('includeInternal') === 'true';
-        const reqUserId = searchParams.get('userId');
+        // The signed-in caller, never a ?userId= from the URL.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const reqUserId: string | null = caller.userId;
         const orgSuperAdminRoles = ['org_super_admin', 'master_admin', 'super_admin'];
         const hrRoles = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
 
@@ -28,6 +34,7 @@ export async function GET(
         if (!ticket) {
             return NextResponse.json({ success: false, error: 'Ticket not found' }, { status: 404 });
         }
+        if (!(await inTicketOrg(caller, ticket))) return forbidden('Forbidden: no access to this HR ticket');
 
         let isSuperAdmin = false;
         let isHrRole = false;
@@ -169,7 +176,11 @@ export async function POST(
     try {
         const { id } = await params;
         const body = await request.json();
-        const { sender_user_id, sender_name, content, attachment_urls = [], is_internal = false } = body;
+        const { sender_name, content, attachment_urls = [], is_internal = false } = body;
+        // The person posting is the signed-in caller, never a sender_user_id from the request.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const sender_user_id = caller.userId;
 
         if (!content) {
             return NextResponse.json({ success: false, error: 'Comment content is required' }, { status: 400 });
@@ -181,6 +192,15 @@ export async function POST(
             .select('id, is_confidential, is_anonymous, ticket_type, assigned_to_user_id, assigned_history, raised_by_user_id, organization_id, manager_user_id, employee_snapshot')
             .eq('id', id)
             .maybeSingle();
+
+        if (!ticket) return NextResponse.json({ success: false, error: 'Ticket not found' }, { status: 404 });
+        if (!(await inTicketOrg(caller, ticket))) return forbidden('Forbidden: no access to this HR ticket');
+        {
+            const confOrAnonTicket = Boolean(ticket.is_confidential) || Boolean(ticket.is_anonymous)
+                || ['confidential_feedback', 'confidential', 'anonymous_feedback'].includes(ticket.ticket_type);
+            // Normal tickets: the people who may open it (anonymous and confidential rules follow below).
+            if (!confOrAnonTicket && !(await mayActOnHrTicket(caller, ticket))) return forbidden('Forbidden: you cannot comment on this HR ticket');
+        }
 
         let isSuperAdmin = false;
         if (ticket && sender_user_id) {
@@ -227,6 +247,15 @@ export async function POST(
 
             if (isConfidential && !isSuperAdmin && !isAssigned && !isSubmitter) {
                 return NextResponse.json({ success: false, error: 'Cannot post comments to confidential ticket without authorization.' }, { status: 403 });
+            }
+
+            // Internal notes: super admins, the handlers and HR, never the person who raised the ticket
+            // (the same people the ticket screen lets add an internal note).
+            if (is_internal) {
+                const isHr = await isHrAdmin(caller, ticket.organization_id);
+                if (isSubmitter || !(isSuperAdmin || isAssigned || isHr)) {
+                    return forbidden('Forbidden: you cannot add an internal note to this ticket');
+                }
             }
         }
 

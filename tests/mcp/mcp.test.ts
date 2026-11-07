@@ -122,9 +122,12 @@ test('catalogue: HR tickets are reachable only as the reviewed exception', async
     const { catalog } = await mods();
     assert.ok(catalog.matchRoute('/api/hr/tickets'), 'reviewed route is allowed');
     assert.deepEqual(catalog.REVIEWED_ROUTES.map(r => r.path), ['/api/hr/tickets', '/api/hr/admin/categories']);
-    // One HR ticket is readable since its route checks sign-in; its comments route does not yet, so it stays out.
+    // One HR ticket and its comments are readable: both routes check sign-in and the ticket's own rules.
     assert.ok(catalog.matchRoute(`/api/hr/tickets/${PROP}`));
-    assert.equal(catalog.matchRoute(`/api/hr/tickets/${PROP}/comments`), null);
+    assert.ok(catalog.matchRoute(`/api/hr/tickets/${PROP}/comments`));
+    // Routes kept away from the assistant by hand stay out.
+    assert.equal(catalog.matchRoute('/api/ppm/audit'), null);
+    assert.equal(catalog.matchRoute('/api/ppm/debug'), null);
 });
 
 test('list_hr_tickets: sends the org id as the HR route expects, and refuses another organisation', async () => {

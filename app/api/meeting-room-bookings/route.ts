@@ -114,6 +114,11 @@ export async function POST(request: NextRequest) {
         const [startH, startM] = startTime.split(':').map(Number);
         const [endH, endM] = endTime.split(':').map(Number);
         const durationHours = (endH * 60 + endM - startH * 60 - startM) / 60;
+        // As on the booking screens: the end must be after the start (otherwise the hours, and the
+        // credits taken, would be zero or negative).
+        if (!Number.isFinite(durationHours) || durationHours <= 0) {
+            return NextResponse.json({ error: 'The end time must be after the start time' }, { status: 400 });
+        }
 
         // 3. Fetch organization_id and property name
         const { data: property } = await supabaseAdmin

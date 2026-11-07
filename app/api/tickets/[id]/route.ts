@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { logAudit } from '@/backend/lib/audit';
+import { resolveCaller, isCallerError, canUseProperty } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/tickets/[id]
@@ -251,6 +252,24 @@ export async function PATCH(
 
         if (!currentTicket) {
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
+        // Status, assignee and priority (without an `action`) are staff work, as on the ticket screen:
+        // tenants, clients and vendors cannot change them. Staff means an internal member of the
+        // ticket's property or its organisation. The person the ticket is assigned to may start work on it.
+        if (!action) {
+            const changesStatus = status !== undefined && status !== currentTicket.status;
+            const changesAssignee = assigned_to !== undefined && assigned_to !== currentTicket.assigned_to;
+            const changesPriority = !!priority && priority !== currentTicket.priority;
+            if (changesStatus || changesAssignee || changesPriority) {
+                const caller = await resolveCaller(request);
+                if (isCallerError(caller)) return caller;
+                const isStaff = canUseProperty(caller, currentTicket.property_id, currentTicket.organization_id ?? null);
+                const assigneeStartsWork = currentTicket.assigned_to === user.id && status === 'in_progress' && !changesAssignee && !changesPriority;
+                if (!isStaff && !assigneeStartsWork) {
+                    return NextResponse.json({ error: 'Only staff can change a ticket\'s status, assignee or priority' }, { status: 403 });
+                }
+            }
         }
 
         const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };

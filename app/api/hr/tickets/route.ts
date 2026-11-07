@@ -679,6 +679,20 @@ export async function POST(request: Request) {
             return NextResponse.json({ success: false, error: 'Invalid category' }, { status: 404 });
         }
 
+        // The HR form's rules, held by the server too:
+        //  - priority is one the database accepts (otherwise the insert failed with a server error);
+        //  - anonymous or confidential only with a category offered under that tab on the form
+        //    (its type, or the category marked as such).
+        if (!['low', 'medium', 'high', 'critical'].includes(String(priority))) {
+            return NextResponse.json({ success: false, error: 'priority must be low, medium, high or critical' }, { status: 400 });
+        }
+        if (is_anonymous && !(category.ticket_type === 'anonymous_feedback' || category.is_anonymous)) {
+            return NextResponse.json({ success: false, error: 'Anonymous feedback needs an anonymous category' }, { status: 400 });
+        }
+        if (is_confidential && !(category.ticket_type === 'confidential_feedback' || category.is_confidential)) {
+            return NextResponse.json({ success: false, error: 'Confidential feedback needs a confidential category' }, { status: 400 });
+        }
+
         // 2. Fetch employee profile & reporting manager
         let empProfile: any = null;
         let submitterUser: any = null;

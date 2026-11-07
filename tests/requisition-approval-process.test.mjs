@@ -83,6 +83,13 @@ function loadRoute(path, records, actor, sent = [], failId = '', uuid = '6666666
                 records.__emails ? { enabled: true, emails: contextualEmails.length ? contextualEmails : ['team@example.test'] } : { enabled: false, emails: [] } } };
             if (name.endsWith('EmailService')) return { EmailService: { sendGenericNotificationEmail: async email => { records.__emails?.push(email); } } };
             if (name.endsWith('catalogAccess')) return { isMissingSchemaError: () => false };
+            // The single-requisition GET checks sign-in and membership; the PATCH and DELETE tested here keep their own checks.
+            if (name.endsWith('/auth/callerAccess')) return {
+                resolveCaller: async () => actor ? { userId: actor, isMasterAdmin: false, orgMemberships: [], propertyMemberships: [] } : Response.json({ error: 'Unauthorized' }, { status: 401 }),
+                isCallerError: value => value instanceof Response,
+                forbidden: (message = 'Forbidden') => Response.json({ error: message }, { status: 403 }),
+                guardOrg: async () => null, propertyOrgId: async () => null, canUseProperty: () => false,
+            };
             throw new Error('Unexpected import ' + name);
         }
     });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { resolveCaller, isCallerError, canUseProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
 
 /**
  * POST /api/tickets/reassign
@@ -33,6 +34,29 @@ export async function POST(request: NextRequest) {
 
         if (ticketError || !ticket) {
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
+        }
+
+        // Reassigning is staff work (the ticket screen shows it to staff and admins), and the ticket can
+        // only go to an active member of its property or organisation who is not a tenant or client
+        // (the same people the screen's list offers).
+        {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            const orgId = await propertyOrgId(ticket.property_id);
+            if (!canUseProperty(caller, ticket.property_id, orgId)) {
+                return NextResponse.json({ error: 'Only staff can reassign a ticket' }, { status: 403 });
+            }
+            if (newAssigneeId) {
+                const [{ data: pm }, { data: om }] = await Promise.all([
+                    adminSupabase.from('property_memberships').select('role, is_active').eq('user_id', newAssigneeId).eq('property_id', ticket.property_id),
+                    orgId ? adminSupabase.from('organization_memberships').select('role, is_active').eq('user_id', newAssigneeId).eq('organization_id', orgId) : Promise.resolve({ data: [] as { role: string; is_active: boolean | null }[] }),
+                ]);
+                const active = [...(pm || []), ...(om || [])].filter(m => m.is_active !== false);
+                if (!active.length) return NextResponse.json({ error: 'The new assignee is not an active member of this property' }, { status: 400 });
+                if (active.every(m => ['tenant', 'client'].includes(String(m.role || '').toLowerCase().trim()))) {
+                    return NextResponse.json({ error: 'A ticket cannot be assigned to a tenant or client' }, { status: 400 });
+                }
+            }
         }
 
         // If assigning to a new MST, check skill match (unless forced)

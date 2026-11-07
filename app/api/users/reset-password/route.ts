@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import nodemailer from 'nodemailer';
+import { resolveCaller, isCallerError, forbidden, isOrgAdmin } from '@/backend/lib/auth/callerAccess';
 
 // Configure email transporter
 const transporter = nodemailer.createTransport({
@@ -19,6 +20,11 @@ export async function POST(req: NextRequest) {
 
         if (!email) {
             return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+        }
+        {
+            const caller = await resolveCaller(req);
+            if (isCallerError(caller)) return caller;
+            if (!(await mayResetFor(caller, String(email)))) return forbidden('Forbidden: only an admin of this user can send a reset email');
         }
 
         // Use service role client for admin operations
@@ -95,4 +101,19 @@ export async function GET(req: NextRequest) {
         console.error('Token verification error:', err);
         return NextResponse.json({ valid: false, error: 'Verification failed' }, { status: 500 });
     }
+}
+
+/** An admin of the person: master admin, an org admin of one of their organisations, or a property admin of one of their properties. */
+async function mayResetFor(caller: Exclude<Awaited<ReturnType<typeof resolveCaller>>, NextResponse>, email: string): Promise<boolean> {
+    if (caller.isMasterAdmin) return true;
+    const { supabaseAdmin } = await import('@/backend/lib/supabase/admin');
+    const { data: target } = await supabaseAdmin.from('users').select('id').ilike('email', email.trim()).maybeSingle();
+    if (!target) return false;
+    const [{ data: orgs }, { data: props }] = await Promise.all([
+        supabaseAdmin.from('organization_memberships').select('organization_id').eq('user_id', target.id),
+        supabaseAdmin.from('property_memberships').select('property_id').eq('user_id', target.id),
+    ]);
+    if ((orgs || []).some(o => isOrgAdmin(caller, o.organization_id))) return true;
+    const adminProps = new Set(caller.propertyMemberships.filter(m => ['property_admin', 'ops_super_admin'].includes(m.role)).map(m => m.property_id));
+    return (props || []).some(p => adminProps.has(p.property_id));
 }

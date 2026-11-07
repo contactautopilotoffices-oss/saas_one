@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { PROPERTY_ROUTED_TICKET_TYPES, getPropertyRules, validatePropertyRules } from '@/backend/lib/hr/levelAssignees';
+import { resolveCaller, isCallerError, forbidden, isInternalOrgMember, internalOrgIds } from '@/backend/lib/auth/callerAccess';
+import { isHrAdmin } from '@/backend/lib/auth/hrAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -9,7 +11,16 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const orgId = searchParams.get('orgId') || searchParams.get('organization_id') || '211e1330-ad83-446d-941f-dcea48396798';
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        let orgId = searchParams.get('orgId') || searchParams.get('organization_id') || '';
+        if (!orgId) {
+            // No organisation named: the caller's own (only when there is exactly one).
+            const mine = internalOrgIds(caller);
+            if (mine.length !== 1) return NextResponse.json({ success: false, error: 'orgId is required' }, { status: 400 });
+            orgId = mine[0];
+        }
+        if (!(await isInternalOrgMember(caller, orgId))) return forbidden('Forbidden: no access to this organization');
 
         // 1. Fetch employee_profiles
         let query = supabaseAdmin
@@ -318,6 +329,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
+        // Changing who handles HR escalations: HR admins of that organisation only.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!body?.organization_id) return NextResponse.json({ success: false, error: 'organization_id is required' }, { status: 400 });
+        if (!(await isHrAdmin(caller, String(body.organization_id)))) return forbidden('Forbidden: HR admins only');
         const {
             hr_manager_profile_ids,
             hr_head_profile_ids,
