@@ -12,16 +12,17 @@ import IvoryOrg from './IvoryOrg';
 import OnyxOrg from './OnyxOrg';
 import GiltOrg from './GiltOrg';
 import PulseOrg, { type PulseTab } from './PulseOrg';
-import CobaltOrg from './CobaltOrg';
+import CobaltOrg, { type CobaltStart } from './CobaltOrg';
 import TealOrg from './TealOrg';
 import PlumOrg from './PlumOrg';
 
 /**
  * /design-lab/org-mobile: the org super admin's mobile dashboard.
- * Current round: Cobalt, Teal and Plum, three colours with their own components each.
- * "Compare" puts those three side by side. The earlier gold set (Pulse, Noir, Ivory, Onyx,
- * Gilt) stays one click away for reference. Pulse shows three of its screens at once.
- * On a real phone the chosen design fills the screen instead of sitting in a frame.
+ * Cobalt is the chosen direction and opens first, as a gallery of its screens. Each phone is
+ * the whole app, started on a different screen, so every one of them can be tapped through.
+ * "Compare" still puts Cobalt, Teal and Plum side by side, and the earlier gold set (Pulse,
+ * Noir, Ivory, Onyx, Gilt) stays one click away. On a real phone the chosen design fills the
+ * screen instead of sitting in a frame.
  */
 
 type OrgDesignId = 'cobalt' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
@@ -40,18 +41,40 @@ const PULSE_SCREENS: { tab: PulseTab; label: string }[] = [
     { tab: 'home', label: 'Home' }, { tab: 'approvals', label: 'Approvals' }, { tab: 'sites', label: 'Sites' },
 ];
 
-const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
+/** Cobalt's gallery: the same app started on a different screen in each phone. */
+const COBALT_SCREENS: { label: string; start: (siteId: string) => CobaltStart }[] = [
+    { label: 'Home', start: () => ({}) },
+    { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
+    { label: 'Approval detail', start: () => ({ route: { name: 'approvals', queue: 'mr' }, sheet: { kind: 'approval', id: 'mr-118' } }) },
+    { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
+    { label: 'Site page', start: id => ({ route: { name: 'site', id } }) },
+    { label: 'Money', start: () => ({ route: { name: 'money' } }) },
+    { label: 'Compliance', start: () => ({ route: { name: 'compliance' } }) },
+    { label: 'Notifications', start: () => ({ route: { name: 'notifications' } }) },
+];
+
+const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; sections?: { title: string; items: string[] }[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
     { id: 'cobalt', name: 'Cobalt', group: 'new', dot: '#2B59E8', statusDark: false, Component: CobaltOrg,
-        blurb: 'Light and friendly with one blue accent. Swipe through three hero cards, act from round quick buttons, and work one filterable list that holds every approval and risk.',
-        order: [
-            'Hero deck you swipe: active tickets, waiting on you, budget',
-            'Round quick actions: approve, assign, raise, report',
-            'Needs you: one list, filter by all, approvals or risks',
-            'Sites as thick bars, worst first, name inside the bar',
-            'People on shift as a split bar: on time, late, absent',
-            'Compliance: PPM against its target, AMC renewals as chips',
-            'This month: budget, electricity, diesel, vendor revenue',
-            'Today: visitors, rooms, water',
+        blurb: 'The chosen direction, now a full app. Light page, white cards, one blue accent. Every card, row and number opens the screen behind it, and every phone here can be tapped through.',
+        sections: [
+            { title: 'Screens', items: [
+                'Home: hero deck, quick actions, Needs you, worst 3 sites, at a glance, today',
+                'Approvals: every queue, approve from the card, select several, sort',
+                'Approval detail: amount, budget impact, quotes, history, reject with a reason',
+                'Sites: portfolio score, search, filter, sort, a card per site with its trend',
+                'Site page: score, 14 day trend, what waits on you there, risks, team',
+                'Money, People and Compliance, each opened from Home or More',
+                'Notifications, Search, and a Create sheet behind the + button',
+            ] },
+            { title: 'What got better', items: [
+                'Nothing is a dead end: hero cards, rows, legends and chips all navigate',
+                'Approve in one tap with Undo for 6 seconds; rejecting always asks why',
+                'Approve several at once; counts on Home and the tab badge update straight away',
+                'Back returns to where you were, scroll position included',
+                'Offline: approvals queue and say so instead of failing',
+                'Freshness and refresh on Home; unread count on the bell',
+                'Home is shorter: detail moved to its own screens',
+            ] },
         ] },
     { id: 'teal', name: 'Teal', group: 'new', dot: '#0F766E', statusDark: false, Component: TealOrg,
         blurb: 'Calm and roomy in mint and white. A 14 day line opens the screen, approvals are a card stack you flip one queue at a time, sites sit in a grid, and the rest folds into an accordion so the page stays short.',
@@ -101,16 +124,23 @@ const STATES: { id: PreviewState; label: string }[] = [
     { id: 'error', label: 'Error' }, { id: 'offline', label: 'Offline' },
 ];
 
-function Notes({ design, sticky }: { design: (typeof DESIGNS)[number]; sticky?: boolean }) {
+function Notes({ design, sticky, wide }: { design: (typeof DESIGNS)[number]; sticky?: boolean; wide?: boolean }) {
+    const sections = design.sections ?? [{ title: 'In this order', items: design.order ?? DEFAULT_ORDER }];
     return (
-        <section className={`max-w-[380px] rounded-[20px] bg-white p-[24px] text-[#17171A]${sticky ? ' lg:sticky lg:top-[88px]' : ''}`}>
+        <section className={`${wide ? 'w-full max-w-[1100px]' : 'max-w-[380px]'} rounded-[20px] bg-white p-[24px] text-[#17171A]${sticky ? ' lg:sticky lg:top-[88px]' : ''}`}>
             <div role="heading" aria-level={1} className="text-[22px] font-semibold">{design.name}</div>
-            <p className="mt-[8px] text-[14px] leading-relaxed text-[#4A4A50]">{design.blurb}</p>
-            <div role="heading" aria-level={2} className="mt-[18px] text-[13px] font-semibold uppercase tracking-[0.1em] text-[#6B6B70]">In this order</div>
-            <ol className="mt-[8px] list-decimal pl-[18px] text-[13.5px] leading-[1.7] text-[#2A2A2E]">
-                {(design.order ?? DEFAULT_ORDER).map(line => <li key={line}>{line}</li>)}
-            </ol>
-            <p className="mt-[16px] text-[12.5px] leading-relaxed text-[#6B6B70]">Blocks marked Sample are not wired to a data hook yet. Every button is preview only.</p>
+            <p className="mt-[8px] max-w-[720px] text-[14px] leading-relaxed text-[#4A4A50]">{design.blurb}</p>
+            <div className={wide ? 'grid gap-x-[32px] md:grid-cols-2' : ''}>
+                {sections.map(sec => (
+                    <div key={sec.title}>
+                        <div role="heading" aria-level={2} className="mt-[18px] text-[13px] font-semibold uppercase tracking-[0.1em] text-[#6B6B70]">{sec.title}</div>
+                        <ol className="mt-[8px] list-decimal pl-[18px] text-[13.5px] leading-[1.7] text-[#2A2A2E]">
+                            {sec.items.map(line => <li key={line}>{line}</li>)}
+                        </ol>
+                    </div>
+                ))}
+            </div>
+            <p className="mt-[16px] text-[12.5px] leading-relaxed text-[#6B6B70]">Blocks marked Sample are not wired to a data hook yet. Every button is preview only: approving or rejecting changes the screen, nothing is saved.</p>
         </section>
     );
 }
@@ -126,7 +156,7 @@ function read<T extends string>(name: string, allowed: readonly T[], fallback: T
 }
 
 export default function OrgMobileLab() {
-    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'all'));
+    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'cobalt'));
     const [state, setState] = useState<PreviewState>(() => read('state', STATES.map(s => s.id), 'normal'));
     const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1440);
     const m = useOrgModel(state);
@@ -145,6 +175,9 @@ export default function OrgMobileLab() {
     const pulseCols = width >= 1000 ? 3 : 1;
     const pulseScale = Math.min(1, (width - 64 - (pulseCols - 1) * 28) / pulseCols / 414);
     const allScale = Math.min(1, (width - 64 - (cols - 1) * 28) / cols / 414);
+    const cobaltCols = width >= 1400 ? 4 : width >= 1000 ? 3 : width >= 760 ? 2 : 1;
+    const cobaltScale = Math.min(1, (width - 64 - (cobaltCols - 1) * 28) / cobaltCols / 414);
+    const worstSite = m.sites.data?.[0]?.id ?? 'site-hp';
     const one = DESIGNS.find(d => d.id === shown);
 
     return (
@@ -189,7 +222,7 @@ export default function OrgMobileLab() {
             </header>
 
             {device && one ? (
-                <div style={{ ['--org-safe-top' as string]: '0px' } as React.CSSProperties}><one.Component m={m} /></div>
+                <div style={{ ['--org-safe-top' as string]: '0px', ['--org-app-h' as string]: '100dvh' } as React.CSSProperties}><one.Component m={m} /></div>
             ) : shown === 'all' ? (
                 <main className="mx-auto flex flex-wrap justify-center gap-[28px] px-[32px] py-[32px]">
                     {compared.map(d => (
@@ -198,6 +231,20 @@ export default function OrgMobileLab() {
                             <button type="button" onClick={() => setView(d.id)} className="h-10 rounded-full bg-white px-[16px] text-[13px] font-semibold text-[#111113] shadow-sm">{d.name}</button>
                         </div>
                     ))}
+                </main>
+            ) : one?.id === 'cobalt' ? (
+                <main className="mx-auto flex flex-col items-center gap-[28px] px-[32px] py-[32px]">
+                    <Notes design={one} wide />
+                    <div className="grid justify-center gap-[28px]" style={{ gridTemplateColumns: `repeat(${cobaltCols}, max-content)` }}>
+                        {COBALT_SCREENS.map(s => (
+                            <div key={s.label} className="flex flex-col items-center gap-[12px]">
+                                <PhoneFrame label={`Cobalt, ${s.label}`} scale={cobaltScale} statusDark={false}>
+                                    <CobaltOrg key={s.label === 'Site page' ? worstSite : s.label} m={m} start={s.start(worstSite)} />
+                                </PhoneFrame>
+                                <span className="text-[13px] font-semibold text-[#3A3A3F]">{s.label}</span>
+                            </div>
+                        ))}
+                    </div>
                 </main>
             ) : one?.id === 'pulse' ? (
                 <main className="mx-auto flex flex-col items-center gap-[28px] px-[32px] py-[32px]">

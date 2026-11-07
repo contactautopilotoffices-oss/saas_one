@@ -89,7 +89,7 @@ interface VendorPayload { total_revenue: number; properties: Array<{ property_na
 
 const noop = () => undefined;
 
-function sampleFeed<T>(data: T): Feed<T> {
+export function sampleFeed<T>(data: T): Feed<T> {
     return { state: 'ready', data, sample: true, retry: noop };
 }
 
@@ -104,7 +104,7 @@ function liveFeed<P, T>(q: WidgetDataState<P>, map: (p: P) => T | null): Feed<T>
 }
 
 /** Preview states from the lab bar override every feed, so each design shows them. */
-function preview<T>(f: Feed<T>, p: PreviewState, empty: T | null): Feed<T> {
+export function preview<T>(f: Feed<T>, p: PreviewState, empty: T | null): Feed<T> {
     if (p === 'loading') return { ...f, state: 'loading', data: null };
     if (p === 'error') return { ...f, state: 'error', data: null };
     if (p === 'empty') return empty === null ? { ...f, state: 'off', data: null, offReason: 'Nothing recorded yet' } : { ...f, state: 'ready', data: empty };
