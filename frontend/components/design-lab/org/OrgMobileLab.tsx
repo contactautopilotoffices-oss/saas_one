@@ -12,20 +12,21 @@ import IvoryOrg from './IvoryOrg';
 import OnyxOrg from './OnyxOrg';
 import GiltOrg from './GiltOrg';
 import PulseOrg, { type PulseTab } from './PulseOrg';
-import CobaltOrg, { type CobaltStart } from './CobaltOrg';
+import CobaltOrg, { SlateOrg, type CobaltStart } from './CobaltOrg';
 import TealOrg from './TealOrg';
 import PlumOrg from './PlumOrg';
 
 /**
  * /design-lab/org-mobile: the org super admin's mobile dashboard.
- * Cobalt is the chosen direction and opens first, as a gallery of its screens. Each phone is
- * the whole app, started on a different screen, so every one of them can be tapped through.
- * "Compare" still puts Cobalt, Teal and Plum side by side, and the earlier gold set (Pulse,
+ * Cobalt is the chosen direction and opens first, as a gallery of its screens; Slate is the
+ * same app in the six colour navy palette, opening on its dashboard and ticket screens. Each
+ * phone is the whole app, started on a different screen, so every one can be tapped through.
+ * "Compare" puts Cobalt, Slate, Teal and Plum side by side, and the earlier gold set (Pulse,
  * Noir, Ivory, Onyx, Gilt) stays one click away. On a real phone the chosen design fills the
  * screen instead of sitting in a frame.
  */
 
-type OrgDesignId = 'cobalt' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
+type OrgDesignId = 'cobalt' | 'slate' | 'teal' | 'plum' | 'pulse' | 'noir' | 'ivory' | 'onyx' | 'gilt';
 type View = OrgDesignId | 'all';
 
 const DEFAULT_ORDER = [
@@ -41,24 +42,38 @@ const PULSE_SCREENS: { tab: PulseTab; label: string }[] = [
     { tab: 'home', label: 'Home' }, { tab: 'approvals', label: 'Approvals' }, { tab: 'sites', label: 'Sites' },
 ];
 
-/** Cobalt's gallery: the same app started on a different screen in each phone. */
-const COBALT_SCREENS: { label: string; start: (siteId: string) => CobaltStart }[] = [
-    { label: 'Home', start: () => ({}) },
-    { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
-    { label: 'Approval detail', start: () => ({ route: { name: 'approvals', queue: 'mr' }, sheet: { kind: 'approval', id: 'mr-118' } }) },
-    { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
-    { label: 'Site page', start: id => ({ route: { name: 'site', id } }) },
-    { label: 'Money', start: () => ({ route: { name: 'money' } }) },
-    { label: 'Compliance', start: () => ({ route: { name: 'compliance' } }) },
-    { label: 'Notifications', start: () => ({ route: { name: 'notifications' } }) },
-];
+/** The app galleries: the same app started on a different screen in each phone. */
+type GalleryScreen = { label: string; start: (siteId: string) => CobaltStart };
+const GALLERIES: Record<'cobalt' | 'slate', GalleryScreen[]> = {
+    cobalt: [
+        { label: 'Home', start: () => ({}) },
+        { label: 'Tickets', start: () => ({ route: { name: 'tickets' } }) },
+        { label: 'Ticket detail', start: () => ({ route: { name: 'ticket', id: 'tkt-151' } }) },
+        { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
+        { label: 'Approval detail', start: () => ({ route: { name: 'approvals', queue: 'mr' }, sheet: { kind: 'approval', id: 'mr-118' } }) },
+        { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
+        { label: 'Site page', start: id => ({ route: { name: 'site', id } }) },
+        { label: 'Money', start: () => ({ route: { name: 'money' } }) },
+    ],
+    slate: [
+        { label: 'Dashboard', start: () => ({}) },
+        { label: 'Tickets', start: () => ({ route: { name: 'tickets' } }) },
+        { label: 'Tickets past SLA', start: () => ({ route: { name: 'tickets', view: 'sla' } }) },
+        { label: 'Ticket detail', start: () => ({ route: { name: 'ticket', id: 'tkt-151' } }) },
+        { label: 'Assign technician', start: () => ({ route: { name: 'ticket', id: 'tkt-151' }, sheet: { kind: 'assign', id: 'tkt-151' } }) },
+        { label: 'Raise a ticket', start: () => ({ route: { name: 'newTicket' } }) },
+        { label: 'Approvals', start: () => ({ route: { name: 'approvals' } }) },
+        { label: 'Sites', start: () => ({ route: { name: 'sites' } }) },
+    ],
+};
 
-const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; sections?: { title: string; items: string[] }[]; Component: React.ComponentType<{ m: OrgModel }> }[] = [
+const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: string; statusDark: boolean; blurb: string; order?: string[]; sections?: { title: string; items: string[] }[]; Component: React.ComponentType<{ m: OrgModel; start?: CobaltStart }> }[] = [
     { id: 'cobalt', name: 'Cobalt', group: 'new', dot: '#2B59E8', statusDark: false, Component: CobaltOrg,
         blurb: 'The chosen direction, now a full app. Light page, white cards, one blue accent. Every card, row and number opens the screen behind it, and every phone here can be tapped through.',
         sections: [
             { title: 'Screens', items: [
                 'Home: hero deck, quick actions, Needs you, worst 3 sites, at a glance, today',
+                'Tickets: every site, cut by past SLA, urgent, unassigned, waitlist, resolved; ticket page with the SLA clock, owner, activity and notes; raise a ticket; assign or reassign',
                 'Approvals: every queue, approve from the card, select several, sort',
                 'Approval detail: amount, budget impact, quotes, history, reject with a reason',
                 'Sites: portfolio score, search, filter, sort, a card per site with its trend',
@@ -74,6 +89,25 @@ const DESIGNS: { id: OrgDesignId; name: string; group: 'new' | 'gold'; dot: stri
                 'Offline: approvals queue and say so instead of failing',
                 'Freshness and refresh on Home; unread count on the bell',
                 'Home is shorter: detail moved to its own screens',
+            ] },
+        ] },
+    { id: 'slate', name: 'Slate', group: 'new', dot: 'linear-gradient(135deg, #06141B 0%, #253745 50%, #CCD0CF 100%)', statusDark: true, Component: SlateOrg,
+        blurb: 'Your six colour palette on the same app as Cobalt, with white as the primary colour: deep navy page (#06141B), cards in #11212D, tiles and tracks in #253745 and #4A5C6A, #CCD0CF and #9BA8AB for text, and white for every action and the hero card. Dashboard and ticketing come first here.',
+        sections: [
+            { title: 'Dashboard and tickets', items: [
+                'Dashboard: a light hero card for active tickets, quick actions, Needs you, sites, at a glance',
+                'Tickets: 63 active across 5 sites, with past SLA, urgent and unassigned one tap away',
+                'Filter by view, site and search; sort by SLA, priority or newest',
+                'Ticket page: SLA countdown, owner, description, activity and notes',
+                'Assign or reassign from a sheet: best fit for the skill first, then who is free',
+                'Raise a ticket: site, category, priority with its SLA, details, assign now or later',
+            ] },
+            { title: 'How the palette is used', items: [
+                'Page #06141B, cards #11212D, tiles and tracks #253745',
+                'Text #CCD0CF, second level #9BA8AB; every pair passes 4.5:1',
+                'Primary colour is white: buttons, active pills, the + button, the active tab and the hero card, with #06141B text on it',
+                'Charts step through white, #9BA8AB, #4A5C6A',
+                'Red is only for SLA breaches and late rounds, lightened to read on navy',
             ] },
         ] },
     { id: 'teal', name: 'Teal', group: 'new', dot: '#0F766E', statusDark: false, Component: TealOrg,
@@ -156,7 +190,7 @@ function read<T extends string>(name: string, allowed: readonly T[], fallback: T
 }
 
 export default function OrgMobileLab() {
-    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'cobalt'));
+    const [view, setView] = useState<View>(() => read('design', ['all', 'cobalt', 'slate', 'teal', 'plum', 'pulse', 'noir', 'ivory', 'onyx', 'gilt'] as const, 'cobalt'));
     const [state, setState] = useState<PreviewState>(() => read('state', STATES.map(s => s.id), 'normal'));
     const width = useSyncExternalStore(subscribeResize, () => window.innerWidth, () => 1440);
     const m = useOrgModel(state);
@@ -171,7 +205,7 @@ export default function OrgMobileLab() {
 
     const shown = device && view === 'all' ? 'cobalt' : view;
     const compared = DESIGNS.filter(d => d.group === 'new');
-    const cols = width >= 1000 ? 3 : width >= 760 ? 2 : 1;
+    const cols = width >= 1400 ? 4 : width >= 1000 ? 3 : width >= 760 ? 2 : 1;
     const pulseCols = width >= 1000 ? 3 : 1;
     const pulseScale = Math.min(1, (width - 64 - (pulseCols - 1) * 28) / pulseCols / 414);
     const allScale = Math.min(1, (width - 64 - (cols - 1) * 28) / cols / 414);
@@ -232,14 +266,14 @@ export default function OrgMobileLab() {
                         </div>
                     ))}
                 </main>
-            ) : one?.id === 'cobalt' ? (
+            ) : one && (one.id === 'cobalt' || one.id === 'slate') ? (
                 <main className="mx-auto flex flex-col items-center gap-[28px] px-[32px] py-[32px]">
                     <Notes design={one} wide />
                     <div className="grid justify-center gap-[28px]" style={{ gridTemplateColumns: `repeat(${cobaltCols}, max-content)` }}>
-                        {COBALT_SCREENS.map(s => (
+                        {GALLERIES[one.id].map(s => (
                             <div key={s.label} className="flex flex-col items-center gap-[12px]">
-                                <PhoneFrame label={`Cobalt, ${s.label}`} scale={cobaltScale} statusDark={false}>
-                                    <CobaltOrg key={s.label === 'Site page' ? worstSite : s.label} m={m} start={s.start(worstSite)} />
+                                <PhoneFrame label={`${one.name}, ${s.label}`} scale={cobaltScale} statusDark={one.statusDark}>
+                                    <one.Component key={s.label === 'Site page' ? worstSite : s.label} m={m} start={s.start(worstSite)} />
                                 </PhoneFrame>
                                 <span className="text-[13px] font-semibold text-[#3A3A3F]">{s.label}</span>
                             </div>

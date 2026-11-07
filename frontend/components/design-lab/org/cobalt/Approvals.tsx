@@ -48,7 +48,7 @@ export function ApprovalCard({ item, selecting, picked, onPick, compact }: {
                 {pickable && (
                     <button type="button" role="checkbox" aria-checked={!!picked} aria-label={`Select ${item.ref}`} onClick={onPick}
                         className="grid h-11 w-11 shrink-0 place-items-center rounded-full">
-                        <span className="grid h-6 w-6 place-items-center rounded-full" style={picked ? { background: C.accent, color: '#FFFFFF' } : { boxShadow: `inset 0 0 0 2px ${C.muted}` }}>
+                        <span className="grid h-6 w-6 place-items-center rounded-full" style={picked ? { background: C.accent, color: C.onAccent } : { boxShadow: `inset 0 0 0 2px ${C.muted}` }}>
                             {picked && <Check className="h-4 w-4" aria-hidden />}
                         </span>
                     </button>
@@ -85,7 +85,7 @@ export function ApprovalCard({ item, selecting, picked, onPick, compact }: {
                                 <X className="h-4 w-4" aria-hidden />Reject
                             </button>
                             <button type="button" onClick={() => decide([item.id], 'approved')} aria-label={`Approve ${item.ref}`}
-                                className="inline-flex h-11 items-center justify-center gap-[6px] rounded-full text-[13.5px] font-bold text-white" style={{ background: C.accent }}>
+                                className="inline-flex h-11 items-center justify-center gap-[6px] rounded-full text-[13.5px] font-bold" style={{ background: C.accent, color: C.onAccent }}>
                                 <Check className="h-4 w-4" aria-hidden />Approve
                             </button>
                         </>
@@ -94,7 +94,7 @@ export function ApprovalCard({ item, selecting, picked, onPick, compact }: {
                             <button type="button" onClick={() => m.previewAction(`Reassign ${item.ref}`)} className="inline-flex h-11 items-center justify-center gap-[6px] rounded-full text-[13.5px] font-bold" style={{ background: C.track, color: C.text }}>
                                 <UserCog className="h-4 w-4" aria-hidden />Reassign
                             </button>
-                            <button type="button" onClick={() => openSheet({ kind: 'approval', id: item.id })} className="inline-flex h-11 items-center justify-center gap-[6px] rounded-full text-[13.5px] font-bold text-white" style={{ background: C.accent }}>
+                            <button type="button" onClick={() => openSheet({ kind: 'approval', id: item.id })} className="inline-flex h-11 items-center justify-center gap-[6px] rounded-full text-[13.5px] font-bold" style={{ background: C.accent, color: C.onAccent }}>
                                 <ExternalLink className="h-4 w-4" aria-hidden />Open
                             </button>
                         </>
@@ -130,7 +130,7 @@ export function ApprovalsScreen({ initialQueue }: { initialQueue?: QueueId }) {
             <LargeTitle title="Approvals" sub={pendingTotal === null ? 'Checking your queues' : pendingTotal === 0 ? 'Nothing is waiting on you' : 'Waiting on you across all sites'}
                 right={pickable.length > 0 && items.state === 'ready' && (
                     <button type="button" onClick={() => (selecting ? stopSelecting() : setSelecting(true))} aria-pressed={selecting}
-                        className="inline-flex h-10 items-center rounded-full px-[14px] text-[13px] font-bold" style={selecting ? { background: C.text, color: '#FFFFFF' } : { background: C.card, color: C.accentDeep }}>
+                        className="inline-flex h-10 items-center rounded-full px-[14px] text-[13px] font-bold" style={selecting ? { background: C.ink, color: C.onInk } : { background: C.card, color: C.accentDeep }}>
                         {selecting ? 'Done' : 'Select'}
                     </button>
                 )} />
@@ -196,13 +196,13 @@ export function ApprovalsScreen({ initialQueue }: { initialQueue?: QueueId }) {
             </div>
 
             {selecting && (
-                <div className="sticky bottom-0 z-10 mt-auto px-[12px] pb-[10px] pt-[14px]" style={{ background: `linear-gradient(180deg, rgba(242,244,249,0) 0%, ${C.page} 40%)` }}>
-                    <div className="flex items-center gap-[8px] rounded-[22px] p-[8px]" style={{ background: C.text }}>
-                        <span className="min-w-0 flex-1 pl-[10px] text-[13px] font-semibold text-white">
-                            {picked.length === 0 ? 'Pick items to approve' : <>{picked.length} selected<span className="block text-[12px] font-medium text-white/70">{inrCompact(pickedValue)} in total</span></>}
+                <div className="sticky bottom-0 z-10 mt-auto px-[12px] pb-[10px] pt-[14px]" style={{ background: `linear-gradient(180deg, transparent 0%, ${C.page} 40%)` }}>
+                    <div className="flex items-center gap-[8px] rounded-[22px] p-[8px]" style={{ background: C.ink }}>
+                        <span className="min-w-0 flex-1 pl-[10px] text-[13px] font-semibold" style={{ color: C.onInk }}>
+                            {picked.length === 0 ? 'Pick items to approve' : <>{picked.length} selected<span className="block text-[12px] font-medium" style={{ color: C.onInkSoft }}>{inrCompact(pickedValue)} in total</span></>}
                         </span>
                         <button type="button" disabled={picked.length === 0} onClick={approvePicked}
-                            className="inline-flex h-11 items-center gap-[6px] rounded-full px-[16px] text-[13.5px] font-bold disabled:opacity-40" style={{ background: '#FFFFFF', color: C.text }}>
+                            className="inline-flex h-11 items-center gap-[6px] rounded-full px-[16px] text-[13.5px] font-bold disabled:opacity-40" style={{ background: C.card, color: C.text }}>
                             <Check className="h-4 w-4" aria-hidden />Approve {picked.length || ''}
                         </button>
                     </div>

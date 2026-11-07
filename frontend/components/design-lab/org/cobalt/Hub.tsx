@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import { LineArea, Ring, SegmentBar } from '../../lab/charts';
 import { inrCompact, initials, num } from '../../lab/format';
-import { RED, RED_TEXT } from '../../lab/status';
 import { listKeys } from '../../lab/ui';
 import { inr } from '@/frontend/lib/dashboard/useWidgetData';
 import { Fed, Sample } from '../parts';
@@ -15,7 +14,7 @@ import { ORG_SAMPLE } from '../orgSample';
 import { sampleFeed, preview } from '../useOrgModel';
 import { C, fig, useApp } from './core';
 import { PPM_OVERDUE, SITE_EXTRAS } from './sample';
-import { Bars, Card, GhostButton, LargeTitle, Row, Section, Tag, TargetMeter, TopBar } from './ui';
+import { Bars, Card, GhostButton, Row, Section, Tag, TargetMeter, TopBar } from './ui';
 
 /** More, and the three screens it leads to: Money, People and Compliance. */
 
@@ -26,9 +25,9 @@ export function MoreScreen() {
     const p = m.ppm.data;
     return (
         <div>
-            <LargeTitle title="More" />
-            <Card className="mx-[16px] mt-[8px] flex items-center gap-[12px] p-[16px]">
-                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full text-[18px] font-bold text-white" style={{ background: C.accent }}>{initials(m.user.name)}</span>
+            <TopBar title="Profile and more" />
+            <Card className="mx-[16px] flex items-center gap-[12px] p-[16px]">
+                <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full text-[18px] font-bold" style={{ background: C.accent, color: C.onAccent }}>{initials(m.user.name)}</span>
                 <span className="min-w-0 flex-1">
                     <span className="block truncate text-[16px] font-bold">{m.user.name}</span>
                     <span className="block truncate text-[12.5px]" style={{ color: C.text3 }}>{m.user.roleLabel}, {m.orgName}</span>
@@ -267,9 +266,9 @@ export function ComplianceScreen() {
                         ? <Card className="px-[16px] py-[16px] text-[13px]" style={{ color: C.text2 }}>Every round is on time.</Card>
                         : (
                             <Card className="flex items-start gap-[12px] p-[16px]">
-                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full" style={{ background: '#FDECEC' }}><ClipboardX className="h-[18px] w-[18px]" style={{ color: RED }} aria-hidden /></span>
+                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full" style={{ background: C.redBg }}><ClipboardX className="h-[18px] w-[18px]" style={{ color: C.red }} aria-hidden /></span>
                                 <span className="min-w-0 flex-1">
-                                    <span className="block text-[14px] font-bold" style={{ color: RED_TEXT }}>{r.missed} {r.missed === 1 ? 'round' : 'rounds'} late at {r.sites} {r.sites === 1 ? 'site' : 'sites'}</span>
+                                    <span className="block text-[14px] font-bold" style={{ color: C.redText }}>{r.missed} {r.missed === 1 ? 'round' : 'rounds'} late at {r.sites} {r.sites === 1 ? 'site' : 'sites'}</span>
                                     <span className="block text-[12.5px]" style={{ color: C.text3 }}>Latest: {r.worst}</span>
                                 </span>
                             </Card>

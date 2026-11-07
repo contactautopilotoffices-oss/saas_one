@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import {
-    AlertTriangle, CheckCircle2, ClipboardX, Fuel, MessageSquare, Phone, Plus, Search, Timer, Wallet, Wrench, X, type LucideIcon,
+    AlertTriangle, CheckCircle2, ClipboardX, Fuel, MessageSquare, Phone, Plus, Search, Ticket, Timer, Wallet, Wrench, X, type LucideIcon,
 } from 'lucide-react';
 import { LineArea, Ring, SegmentBar, Sparkline } from '../../lab/charts';
 import { inrCompact, num } from '../../lab/format';
@@ -13,7 +13,7 @@ import { healthOf, type OrgModel, type OrgSite } from '../useOrgModel';
 import { C, fig, useApp, type SiteFilter, type SiteSort } from './core';
 import { ApprovalCard } from './Approvals';
 import { SITE_EXTRAS } from './sample';
-import { Card, LargeTitle, Pills, PrimaryButton, Row, Section, Tag, TopBar } from './ui';
+import { Card, GhostButton, LargeTitle, Pills, PrimaryButton, Row, Section, Tag, TopBar } from './ui';
 
 /**
  * Sites: the portfolio at one glance, then every property as a card you can search, filter
@@ -98,7 +98,7 @@ export function SitesScreen({ initialSort, initialFilter }: { initialSort?: Site
                 <label className="flex h-12 items-center gap-[8px] rounded-full px-[14px]" style={{ background: C.card, boxShadow: `inset 0 0 0 1px ${C.border}` }}>
                     <Search className="h-[18px] w-[18px] shrink-0" style={{ color: C.text3 }} aria-hidden />
                     <span className="sr-only">Search sites</span>
-                    <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name or code" className="min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[#7A8197]" />
+                    <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name or code" className="min-w-0 flex-1 bg-transparent text-[14px] outline-none placeholder:text-[color:var(--cb-placeholder)]" />
                     {query && <button type="button" onClick={() => setQuery('')} aria-label="Clear search" className="-mr-[8px] grid h-10 w-10 place-items-center rounded-full"><X className="h-4 w-4" aria-hidden /></button>}
                 </label>
             </div>
@@ -155,7 +155,7 @@ function risksAt(m: OrgModel, s: OrgSite): SiteRisk[] {
 }
 
 export function SiteScreen({ id }: { id: string }) {
-    const { m, items, push, back } = useApp();
+    const { m, items, push, go, back } = useApp();
     const site = m.sites.data?.find(s => s.id === id) ?? null;
     const all = m.sites.data ?? [];
     const rank = site ? all.findIndex(s => s.id === site.id) + 1 : 0;
@@ -244,7 +244,10 @@ export function SiteScreen({ id }: { id: string }) {
                     )}
 
                     <div className="px-[16px] pt-[18px]">
-                        <PrimaryButton icon={Plus} className="w-full" onClick={() => m.previewAction(`Raise a ticket at ${site.name}`)}>Raise a ticket here</PrimaryButton>
+                        <div className="grid grid-cols-2 gap-[8px]">
+                            <GhostButton icon={Ticket} onClick={() => go({ name: 'tickets', site: site.name })}>Its tickets</GhostButton>
+                            <PrimaryButton icon={Plus} onClick={() => push({ name: 'newTicket', site: site.name })}>Raise one</PrimaryButton>
+                        </div>
                     </div>
                 </>
             )}

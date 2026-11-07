@@ -3,7 +3,6 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { ChevronLeft, ChevronRight, X, type LucideIcon } from 'lucide-react';
 import { TipBox, useTip } from '../../lab/charts';
-import { RED, RED_BG } from '../../lab/status';
 import { H, cx } from '../../lab/ui';
 import { C, useApp } from './core';
 
@@ -13,7 +12,7 @@ import { C, useApp } from './core';
 export function TopBar({ title, right }: { title: string; right?: React.ReactNode }) {
     const { back } = useApp();
     return (
-        <header className="sticky top-0 z-20 flex h-[56px] items-center gap-[6px] px-[10px]" style={{ background: 'rgba(242,244,249,0.92)', backdropFilter: 'blur(12px)' }}>
+        <header className="sticky top-0 z-20 flex h-[56px] items-center gap-[6px] px-[10px]" style={{ background: C.topBar, backdropFilter: 'blur(12px)' }}>
             <button type="button" onClick={back} aria-label="Back" className="grid h-11 w-11 shrink-0 place-items-center rounded-full" style={{ background: C.card }}>
                 <ChevronLeft className="h-5 w-5" aria-hidden />
             </button>
@@ -66,8 +65,8 @@ export function Card({ children, className, style }: { children: React.ReactNode
 /** Round icon. Red only when the caller says the item is an SLA breach or a late round. */
 export function IconDot({ icon: Icon, red, size = 40, solid }: { icon: LucideIcon; red?: boolean; size?: number; solid?: boolean }) {
     return (
-        <span className="grid shrink-0 place-items-center rounded-full" style={{ width: size, height: size, background: red ? RED_BG : solid ? C.accent : C.tint }}>
-            <Icon className="h-[18px] w-[18px]" style={{ color: red ? RED : solid ? '#FFFFFF' : C.accentDeep }} aria-hidden />
+        <span className="grid shrink-0 place-items-center rounded-full" style={{ width: size, height: size, background: red ? C.redBg : solid ? C.accent : C.tint }}>
+            <Icon className="h-[18px] w-[18px]" style={{ color: red ? C.red : solid ? C.onAccent : C.accentDeep }} aria-hidden />
         </span>
     );
 }
@@ -83,7 +82,7 @@ export function Pills<T extends string>({ options, value, onChange, label, class
                 return (
                     <button key={o.id} type="button" role="radio" aria-checked={on} onClick={() => onChange(o.id)}
                         className="inline-flex h-10 shrink-0 items-center gap-[6px] rounded-full px-[14px] text-[13px] font-semibold"
-                        style={on ? { background: C.text, color: '#FFFFFF' } : { background: C.card, color: C.text2, boxShadow: `inset 0 0 0 1px ${C.border}` }}>
+                        style={on ? { background: C.ink, color: C.onInk } : { background: C.card, color: C.text2, boxShadow: `inset 0 0 0 1px ${C.border}` }}>
                         {o.label}
                         {o.count != null && <span className="tabular-nums" style={{ opacity: on ? 0.75 : 0.8 }}>{o.count}</span>}
                     </button>
@@ -102,7 +101,7 @@ export function Row({ icon, red, title, sub, right, onClick, label, chevron = tr
             className="flex min-h-[60px] w-full items-center gap-[12px] rounded-[16px] px-[10px] py-[8px] text-left">
             <IconDot icon={icon} red={red} />
             <span className="min-w-0 flex-1">
-                <span className="block text-[13.5px] font-semibold leading-snug" style={{ color: red ? '#C8282E' : C.text }}>{title}</span>
+                <span className="block text-[13.5px] font-semibold leading-snug" style={{ color: red ? C.redText : C.text }}>{title}</span>
                 {sub && <span className="block truncate text-[12px]" style={{ color: C.text3 }}>{sub}</span>}
             </span>
             {right}
@@ -174,8 +173,8 @@ export function SheetFrame({ title, onClose, children, footer, tall }: {
             <div aria-hidden className="lab-fade-in absolute inset-0" style={{ background: C.scrim }} onClick={onClose} />
             <div ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
                 className={cx('lab-sheet-in absolute inset-x-0 bottom-0 flex flex-col rounded-t-[28px] outline-none', tall ? 'max-h-[92%]' : 'max-h-[86%]')}
-                style={{ background: C.page, boxShadow: '0 -12px 40px rgba(14,20,36,0.18)' }}>
-                <div aria-hidden className="mx-auto mt-[8px] h-[5px] w-[40px] shrink-0 rounded-full" style={{ background: '#C3CAD9' }} />
+                style={{ background: C.page, boxShadow: C.shadowSheet }}>
+                <div aria-hidden className="mx-auto mt-[8px] h-[5px] w-[40px] shrink-0 rounded-full" style={{ background: C.dot }} />
                 <div className="flex shrink-0 items-center gap-[8px] px-[16px] pb-[6px] pt-[6px]">
                     <H level={2} id={titleId} className="min-w-0 flex-1 truncate text-[17px] font-bold tracking-[-0.02em]">{title}</H>
                     <button type="button" onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full" style={{ background: C.card }}>
@@ -193,8 +192,8 @@ export function SheetFrame({ title, onClose, children, footer, tall }: {
 export function PrimaryButton({ children, onClick, disabled, className, icon: Icon, tone = 'accent' }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; className?: string; icon?: LucideIcon; tone?: 'accent' | 'ink' }) {
     return (
         <button type="button" onClick={onClick} disabled={disabled}
-            className={cx('inline-flex h-12 items-center justify-center gap-[8px] rounded-full px-[18px] text-[14.5px] font-bold text-white disabled:opacity-50', className)}
-            style={{ background: tone === 'ink' ? C.text : C.accent }}>
+            className={cx('inline-flex h-12 items-center justify-center gap-[8px] rounded-full px-[18px] text-[14.5px] font-bold disabled:opacity-50', className)}
+            style={tone === 'ink' ? { background: C.ink, color: C.onInk } : { background: C.accent, color: C.onAccent }}>
             {Icon && <Icon className="h-[18px] w-[18px]" aria-hidden />}{children}
         </button>
     );
@@ -212,13 +211,13 @@ export function GhostButton({ children, onClick, className, icon: Icon }: { chil
 
 /** Small label chip: ink for "critical", red only for a breach. */
 export function Tag({ children, tone = 'tint', icon: Icon }: { children: React.ReactNode; tone?: 'tint' | 'ink' | 'red' | 'plain'; icon?: LucideIcon }) {
-    const style = tone === 'ink' ? { background: C.text, color: '#FFFFFF' }
-        : tone === 'red' ? { background: RED_BG, color: '#C8282E' }
+    const style = tone === 'ink' ? { background: C.ink, color: C.onInk }
+        : tone === 'red' ? { background: C.redBg, color: C.redText }
             : tone === 'plain' ? { background: C.track, color: C.text2 }
                 : { background: C.tint, color: C.accentDeep };
     return (
         <span className="inline-flex h-[24px] shrink-0 items-center gap-[4px] rounded-full px-[8px] text-[11.5px] font-semibold" style={style}>
-            {Icon && <Icon className="h-3 w-3" aria-hidden style={tone === 'red' ? { color: RED } : undefined} />}{children}
+            {Icon && <Icon className="h-3 w-3" aria-hidden style={tone === 'red' ? { color: C.red } : undefined} />}{children}
         </span>
     );
 }

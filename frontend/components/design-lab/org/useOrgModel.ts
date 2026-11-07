@@ -8,16 +8,20 @@ import {
 } from '@/frontend/components/dashboard/command-center/mockData';
 import type { ElecPacePayload } from '@/frontend/components/dashboard/command-center/IntelligenceRow';
 import { ORG_WIDE_ROLES, ROLE_LABELS } from '../lab/nav';
+import { RAW_ACTIVE, RAW_CLOSED, RAW_WAITLIST } from '../lab/status';
+import { fromRow } from '../lab/useLabModel';
 import { SAMPLE_NOW } from '../lab/sample';
 import { initials } from '../lab/format';
 import type { PreviewState } from '../lab/types';
 import { ORG_SAMPLE } from './orgSample';
+import { ORG_SAMPLE_TICKETS, type OrgTicketRow } from './orgTickets';
 
 /**
  * Data for the org super admin mobile dashboard.
  *
  * LIVE (read only): the same org feeds the Command Center already reads, through the same
- * useWidgetData hook and the same URLs, so the two share one cache. SAMPLE: everything the
+ * useWidgetData hook and the same URLs, so the two share one cache, plus the org wide ticket
+ * list from GET /api/tickets (the call the lab's ticket screens already make). SAMPLE: everything the
  * app has data for but no hook wires up yet (petty cash approvals, escalations, AMC expiry,
  * missed rounds, grievances, generators, water, meeting rooms), flagged so the design can
  * show a Sample badge. A viewer who is not signed in with an org-wide role sees sample data
@@ -85,6 +89,7 @@ interface TrackerPayload {
     };
 }
 interface VmsPayload { total_visitors: number; total_checked_in: number; properties: unknown[] }
+interface TicketsPayload { tickets: Record<string, unknown>[]; total: number }
 interface VendorPayload { total_revenue: number; properties: Array<{ property_name: string; total_revenue: number }> }
 
 const noop = () => undefined;
@@ -167,6 +172,11 @@ export function useOrgModel(previewState: PreviewState) {
     const trackerQ = useWidgetData<TrackerPayload>(orgId ? `/api/electricity/tracker?org_id=${orgId}` : null, 5 * 60_000);
     const vmsQ = useWidgetData<VmsPayload>(base ? `${base}/vms-summary?period=today` : null, 5 * 60_000);
     const vendorQ = useWidgetData<VendorPayload>(base ? `${base}/vendor-summary?period=month` : null, 5 * 60_000);
+    // The same tickets endpoint the lab's ticket screens read, across every property of the org.
+    const scope = orgId ? `/api/tickets?propertyId=all&organizationId=${orgId}` : null;
+    const ticketsActiveQ = useWidgetData<TicketsPayload>(scope ? `${scope}&status=${RAW_ACTIVE}&limit=200` : null, 60_000);
+    const ticketsWaitQ = useWidgetData<TicketsPayload>(scope ? `${scope}&status=${RAW_WAITLIST}&limit=50` : null, 60_000);
+    const ticketsDoneQ = useWidgetData<TicketsPayload>(scope ? `${scope}&status=${RAW_CLOSED}&limit=30` : null, 60_000);
 
     const S = ORG_SAMPLE;
     const p = previewState;
@@ -256,10 +266,24 @@ export function useOrgModel(previewState: PreviewState) {
             ? liveFeed(vendorQ, v => (Array.isArray(v.properties) ? { revenue: v.total_revenue, leader: v.properties.find(x => x.total_revenue > 0)?.property_name ?? null } : null))
             : sampleFeed(S.vendor);
 
+        // Org wide ticket list: live from three status slices, or the org sample.
+        const toRows = (q: WidgetDataState<TicketsPayload>) => (q.data?.tickets ?? []).map(r => ({ ...fromRow(r), site: (r.property as { name?: string } | null)?.name ?? 'Unknown site' }));
+        const ticketQs = [ticketsActiveQ, ticketsWaitQ, ticketsDoneQ];
+        const ticketList: Feed<OrgTicketRow[]> = !live
+            ? sampleFeed(ORG_SAMPLE_TICKETS)
+            : ticketQs.some(q => q.loading)
+                ? { state: 'loading', data: null, sample: false, retry: () => ticketQs.forEach(q => q.refresh()) }
+                : ticketsActiveQ.error === 'forbidden'
+                    ? { state: 'off', data: null, sample: false, retry: ticketsActiveQ.refresh, offReason: 'Not available to your role' }
+                    : ticketsActiveQ.error
+                        ? { state: 'error', data: null, sample: false, retry: () => ticketQs.forEach(q => q.refresh()) }
+                        : { state: 'ready', data: ticketQs.flatMap(toRows), sample: false, retry: () => ticketQs.forEach(q => q.refresh()) };
+
         const emptyApproval = (a: Feed<Approval>): Approval | null => (a.data ? { ...a.data, count: 0, value: null, urgent: false, detail: 'Nothing waiting' } : null);
         return {
             sites: preview(sites, p, []),
             tickets: preview(tickets, p, { breached: 0, urgent: 0, active: 0 }),
+            ticketList: preview(ticketList, p, []),
             raised: preview(raised, p, 0),
             approvals: [po, mr, petty, escalation].map(a => preview(a, p, emptyApproval(a) as Approval)),
             budget: preview(budget, p, { pct: 0, spent: 0, total: 0, overSites: [] }),
@@ -279,7 +303,7 @@ export function useOrgModel(previewState: PreviewState) {
             water: preview(sampleFeed(S.water), p, { tankers: 0, sites: 0 }),
             rooms: preview(sampleFeed(S.rooms), p, { pct: 0 }),
         };
-    }, [live, p, period, S, ticketsQ, raisedQ, accountsQ, mrQ, aopQ, rosterQ, ppmQ, paceQ, trackerQ, vmsQ, vendorQ]);
+    }, [live, p, period, S, ticketsQ, raisedQ, accountsQ, mrQ, aopQ, rosterQ, ppmQ, paceQ, trackerQ, vmsQ, vendorQ, ticketsActiveQ, ticketsWaitQ, ticketsDoneQ]);
 
     const [toastMessage, setToastMessage] = useState<string | null>(null);
     const timer = useRef<number | null>(null);

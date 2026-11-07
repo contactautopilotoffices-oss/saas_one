@@ -74,7 +74,7 @@ export const APPROVAL_ITEMS: ApprovalItem[] = [
     pc(314, 'Taxi for night shift', 'Lakeside One', 3_500, 1, 'Rahul Menon'),
 
     esc(148, 'AC not cooling in Conference Room 3', 'SS Plaza Tower A', 'Level 2', 3, 0, 'Rohan Shah'),
-    esc(131, 'Lift B making grinding noise', 'Metro Hub', 'Lift lobby', 26, 2, 'Facility team'),
+    esc(131, 'Basement exhaust fan not running', 'Metro Hub', 'Basement parking', 26, 1, 'Facility team'),
     esc(151, 'Water leak near 2nd floor washroom', 'Harbour Point', 'Level 2, washroom', 2, 0, 'Meera Pillai'),
     esc(144, 'Parking boom barrier stuck open', 'Lakeside One', 'Basement entry', 5, 1, 'Security desk'),
 ];
@@ -104,11 +104,11 @@ export interface Notice {
     ago: number;
     unread: boolean;
     /** Where tapping it goes. */
-    to: { name: 'approval'; id: string } | { name: 'site'; site: string } | { name: 'compliance' } | { name: 'money' } | { name: 'none' };
+    to: { name: 'approval'; id: string } | { name: 'ticket'; id: string } | { name: 'site'; site: string } | { name: 'compliance' } | { name: 'money' } | { name: 'none' };
 }
 
 export const NOTICES: Notice[] = [
-    { id: 'n1', kind: 'sla', title: 'Past SLA: water leak, Level 2', body: 'Harbour Point. Meera Pillai raised it 2 hours ago.', ago: 9, unread: true, to: { name: 'approval', id: 'esc-151' } },
+    { id: 'n1', kind: 'sla', title: 'Past SLA: water leak, Level 2', body: 'Harbour Point. Meera Pillai raised it 2 hours ago.', ago: 9, unread: true, to: { name: 'ticket', id: 'tkt-151' } },
     { id: 'n2', kind: 'approval', title: 'PO-2240 sent to you', body: 'Fire pump controller, 4.2L, SS Plaza Tower A.', ago: 31, unread: true, to: { name: 'approval', id: 'po-2240' } },
     { id: 'n3', kind: 'round', title: 'Fire safety round is late', body: 'SS Plaza Tower A, Floor 6. Due at 9:15 AM.', ago: 26, unread: true, to: { name: 'compliance' } },
     { id: 'n4', kind: 'diesel', title: 'Diesel low at Harbour Point', body: 'DG-2 is at 22%. Order a refill.', ago: 81, unread: false, to: { name: 'money' } },

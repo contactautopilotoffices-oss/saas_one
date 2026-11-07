@@ -31,6 +31,7 @@ export function NotificationsScreen() {
         markRead([n.id]);
         const to = n.to;
         if (to.name === 'approval') openSheet({ kind: 'approval', id: to.id });
+        else if (to.name === 'ticket') push({ name: 'ticket', id: to.id });
         else if (to.name === 'site') { const s = siteByName(to.site); if (s) push({ name: 'site', id: s.id }); }
         else if (to.name === 'compliance' || to.name === 'money') push({ name: to.name });
         else m.previewAction(n.title);
@@ -81,6 +82,7 @@ export function NotificationsScreen() {
 /* ------------------------------------------------------------ search */
 
 const JUMPS: { label: string; words: string; icon: LucideIcon; to: Route }[] = [
+    { label: 'Tickets', words: 'tickets complaints issues sla breach overdue', icon: Ticket, to: { name: 'tickets' } },
     { label: 'Money and utilities', words: 'money budget electricity power diesel fuel bills vendor', icon: Wallet, to: { name: 'money' } },
     { label: 'People', words: 'people staff roster shift attendance hr grievance', icon: Users, to: { name: 'people' } },
     { label: 'Compliance', words: 'compliance ppm rounds amc renewal maintenance', icon: ShieldCheck, to: { name: 'compliance' } },
@@ -88,13 +90,14 @@ const JUMPS: { label: string; words: string; icon: LucideIcon; to: Route }[] = [
 ];
 
 export function SearchScreen() {
-    const { m, items, push, openSheet } = useApp();
+    const { m, items, tickets, push, go, openSheet } = useApp();
     const [query, setQuery] = useState('');
     const q = query.trim().toLowerCase();
     const sites = q ? (m.sites.data ?? []).filter(s => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)) : [];
     const approvals = q ? (items.data ?? []).filter(i => [i.ref, i.title, i.site, i.party, i.by].some(t => t.toLowerCase().includes(q))).slice(0, 6) : [];
+    const ticketHits = q ? (tickets.data ?? []).filter(t => [t.number, t.title, t.site, t.assignee ?? ''].some(x => x.toLowerCase().includes(q))).slice(0, 6) : [];
     const jumps = q ? JUMPS.filter(j => j.label.toLowerCase().includes(q) || j.words.includes(q)) : JUMPS;
-    const none = q && sites.length === 0 && approvals.length === 0 && jumps.length === 0;
+    const none = q && sites.length === 0 && approvals.length === 0 && ticketHits.length === 0 && jumps.length === 0;
 
     return (
         <div>
@@ -103,7 +106,7 @@ export function SearchScreen() {
                 <label className="flex h-12 items-center gap-[8px] rounded-full px-[14px]" style={{ background: C.card, boxShadow: `inset 0 0 0 2px ${C.accent}` }}>
                     <Search className="h-[18px] w-[18px] shrink-0" style={{ color: C.accentDeep }} aria-hidden />
                     <span className="sr-only">Search sites, approvals and screens</span>
-                    <input data-screen-focus value={query} onChange={e => setQuery(e.target.value)} placeholder="Sites, POs, people, screens" className="min-w-0 flex-1 bg-transparent text-[14.5px] outline-none placeholder:text-[#7A8197]" />
+                    <input data-screen-focus value={query} onChange={e => setQuery(e.target.value)} placeholder="Sites, tickets, POs, screens" className="min-w-0 flex-1 bg-transparent text-[14.5px] outline-none placeholder:text-[color:var(--cb-placeholder)]" />
                     {query && <button type="button" onClick={() => setQuery('')} aria-label="Clear search" className="-mr-[8px] grid h-10 w-10 place-items-center rounded-full"><X className="h-4 w-4" aria-hidden /></button>}
                 </label>
             </div>
@@ -128,6 +131,11 @@ export function SearchScreen() {
                         {sites.map(s => <li key={s.id}><Row icon={Building2} title={s.name} sub={`${s.code}, score ${s.score}, ${s.active} active`} onClick={() => push({ name: 'site', id: s.id })} /></li>)}
                     </ResultGroup>
                 )}
+                {ticketHits.length > 0 && (
+                    <ResultGroup title="Tickets" right={<Sample feed={tickets} />}>
+                        {ticketHits.map(t => <li key={t.id}><Row icon={Ticket} title={`${t.number}, ${t.title}`} sub={`${t.site}${t.assignee ? `, ${t.assignee}` : ', nobody assigned'}`} onClick={() => push({ name: 'ticket', id: t.id })} /></li>)}
+                    </ResultGroup>
+                )}
                 {approvals.length > 0 && (
                     <ResultGroup title="Waiting on you" right={<Sample feed={items} />}>
                         {approvals.map(i => <li key={i.id}><Row icon={APPROVAL_ICONS[i.queue] ?? FileText} title={`${i.ref}, ${i.title}`} sub={`${i.site}${i.amount !== null ? `, ${inrCompact(i.amount)}` : ''}`} onClick={() => openSheet({ kind: 'approval', id: i.id })} /></li>)}
@@ -135,7 +143,7 @@ export function SearchScreen() {
                 )}
                 {jumps.length > 0 && (
                     <ResultGroup title={q ? 'Screens' : 'Jump to'}>
-                        {jumps.map(j => <li key={j.label}><Row icon={j.icon} title={j.label} onClick={() => push(j.to)} /></li>)}
+                        {jumps.map(j => <li key={j.label}><Row icon={j.icon} title={j.label} onClick={() => (j.to.name === 'tickets' ? go(j.to) : push(j.to))} /></li>)}
                     </ResultGroup>
                 )}
             </div>
@@ -155,9 +163,9 @@ function ResultGroup({ title, right, children }: { title: string; right?: React.
 /* ------------------------------------------------------- create sheet */
 
 export function CreateSheet() {
-    const { m, closeSheet, go } = useApp();
+    const { m, closeSheet, go, push } = useApp();
     const actions: { label: string; sub: string; icon: LucideIcon; run: () => void; primary?: boolean }[] = [
-        { label: 'Raise a ticket', sub: 'For any site', icon: Ticket, primary: true, run: () => m.previewAction('Raise a ticket') },
+        { label: 'Raise a ticket', sub: 'For any site', icon: Ticket, primary: true, run: () => push({ name: 'newTicket' }) },
         { label: 'Approve POs', sub: 'Open the queue', icon: Stamp, run: () => { closeSheet(); go({ name: 'approvals', queue: 'po' }); } },
         { label: 'Announce', sub: 'To all sites', icon: Megaphone, run: () => m.previewAction('Announce to all sites') },
         { label: 'Add a visitor', sub: 'Pre-register a guest', icon: UserPlus, run: () => m.previewAction('Add a visitor') },
@@ -170,13 +178,13 @@ export function CreateSheet() {
                 {actions.map(a => (
                     <li key={a.label}>
                         <button type="button" onClick={a.run} className="flex h-[112px] w-full flex-col justify-between rounded-[22px] p-[14px] text-left"
-                            style={a.primary ? { background: C.accent, color: '#FFFFFF' } : { background: C.card, color: C.text }}>
-                            <span className="grid h-10 w-10 place-items-center rounded-full" style={{ background: a.primary ? 'rgba(255,255,255,0.18)' : C.tint }}>
-                                <a.icon className="h-[18px] w-[18px]" style={{ color: a.primary ? '#FFFFFF' : C.accentDeep }} aria-hidden />
+                            style={a.primary ? { background: C.accent, color: C.onAccent } : { background: C.card, color: C.text }}>
+                            <span className="grid h-10 w-10 place-items-center rounded-full" style={{ background: a.primary ? 'rgba(127,127,127,0.18)' : C.tint }}>
+                                <a.icon className="h-[18px] w-[18px]" style={{ color: a.primary ? C.onAccent : C.accentDeep }} aria-hidden />
                             </span>
                             <span>
                                 <span className="block text-[14px] font-bold">{a.label}</span>
-                                <span className="block text-[12px]" style={{ color: a.primary ? 'rgba(255,255,255,0.85)' : C.text3 }}>{a.sub}</span>
+                                <span className="block text-[12px]" style={{ color: a.primary ? C.onAccent : C.text3, opacity: a.primary ? 0.8 : 1 }}>{a.sub}</span>
                             </span>
                         </button>
                     </li>

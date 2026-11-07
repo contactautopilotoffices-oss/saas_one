@@ -5,6 +5,8 @@ export const LAB_CSS = `
 .lab-root p, .lab-root label, .lab-root button, .lab-root input, .lab-root select { font-family: inherit; }
 .lab-root :focus-visible { outline: 2px solid var(--lab-focus); outline-offset: 2px; }
 .lab-root label input:focus-visible { outline: none; }
+/* Cobalt and Slate: typed text uses the palette's text colour, not the app's grey label colour it would inherit. */
+.cb-root input, .cb-root textarea { color: var(--cb-text); }
 .lab-root label:has(input:focus-visible) { outline: 2px solid var(--lab-focus); outline-offset: 2px; }
 .lab-bar :focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }
 .lab-skeleton { background: linear-gradient(90deg, var(--lab-skel-a) 0%, var(--lab-skel-b) 50%, var(--lab-skel-a) 100%); background-size: 200% 100%; animation: lab-shimmer 1.4s ease-in-out infinite; }

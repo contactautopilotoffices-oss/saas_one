@@ -2,18 +2,17 @@
 
 import React, { useRef, useState } from 'react';
 import {
-    AlertTriangle, Bell, CheckCircle2, ChevronRight, Droplets, FileBarChart, Plus, Presentation, RotateCw, Search, ShieldAlert,
-    ShieldCheck, Siren, Stamp, Users, Wallet,
+    AlertTriangle, Bell, CheckCircle2, ChevronRight, Droplets, FileBarChart, Plus, Presentation, RotateCw, Search,
+    ShieldCheck, Siren, Stamp, Ticket, Users, Wallet,
 } from 'lucide-react';
 import { Donut, LineArea, Ring, SegmentBar, TipBox, useTip } from '../../lab/charts';
 import { greeting, initials, num } from '../../lab/format';
-import { RED, RED_TEXT } from '../../lab/status';
 import { EmptyState, H, OfflineBanner, SkeletonRows, cx, listKeys } from '../../lab/ui';
 import { inr } from '@/frontend/lib/dashboard/useWidgetData';
 import { APPROVAL_ICONS, Fed, InlineError, Sample } from '../parts';
 import { dayLabels, portfolioTrend, riskItems, type RiskItem } from '../derive';
 import { healthOf, type Feed, type OrgSite } from '../useOrgModel';
-import { C, QUEUES, QUEUE_COLORS, QUEUE_SHORT, fig, useApp, type Route } from './core';
+import { C, QUEUES, QUEUE_COLORS, QUEUE_SHORT, fig, heroLabVars, useApp, type Route } from './core';
 import { Card, Pills, Row, Section } from './ui';
 
 /**
@@ -22,12 +21,13 @@ import { Card, Pills, Row, Section } from './ui';
  * screens, so Home stays a short read.
  */
 
-function CardHead({ title, onOpen, dark, feed }: { title: string; onOpen: () => void; dark?: boolean; feed: { sample: boolean } }) {
+function CardHead({ title, onOpen, hero, feed }: { title: string; onOpen: () => void; hero?: boolean; feed: { sample: boolean } }) {
+    const { p } = useApp();
     return (
         <div className="flex items-center justify-between gap-[6px]">
-            <span className="flex items-center gap-[6px] text-[13px] font-semibold" style={{ color: dark ? 'rgba(255,255,255,0.85)' : C.text2 }}>{title}<Sample feed={feed} dark={dark} /></span>
+            <span className="flex items-center gap-[6px] text-[13px] font-semibold" style={{ color: hero ? C.heroSoft : C.text2 }}>{title}<Sample feed={feed} dark={hero && p.heroDark} /></span>
             <button type="button" onClick={onOpen} aria-label={`Open ${title}`} className="-mr-[6px] -mt-[6px] grid h-10 w-10 place-items-center rounded-full"
-                style={{ background: dark ? 'rgba(255,255,255,0.16)' : C.track, color: dark ? '#FFFFFF' : C.accentDeep }}>
+                style={{ background: hero ? C.heroBtn : C.track, color: hero ? C.heroText : C.accentDeep }}>
                 <ChevronRight className="h-[18px] w-[18px]" aria-hidden />
             </button>
         </div>
@@ -35,7 +35,7 @@ function CardHead({ title, onOpen, dark, feed }: { title: string; onOpen: () => 
 }
 
 function HeroDeck() {
-    const { m, pending, pendingTotal, push, go } = useApp();
+    const { m, p, pending, pendingTotal, push, go } = useApp();
     const scroller = useRef<HTMLDivElement>(null);
     const [index, setIndex] = useState(0);
     const days = dayLabels(m.now, 7);
@@ -57,30 +57,30 @@ function HeroDeck() {
     return (
         <div>
             <div ref={scroller} onScroll={onScroll} className="lab-scroll-x flex snap-x snap-mandatory gap-[10px] overflow-x-auto px-[16px] pb-[4px]" aria-label="Highlights" role="group">
-                <section aria-label={cards[0]} className="flex w-[84%] shrink-0 snap-center flex-col rounded-[24px] p-[16px] text-white" style={{ background: `linear-gradient(150deg, #3D6BF0 0%, ${C.accent} 45%, ${C.accentDeep} 100%)` }}>
-                    <CardHead title={cards[0]} dark feed={m.sites} onOpen={() => go({ name: 'sites', sort: 'active' })} />
-                    <Fed feed={m.sites} dark rows={3} height={30} className="mt-[10px]">
+                <section aria-label={cards[0]} className="flex w-[84%] shrink-0 snap-center flex-col rounded-[24px] p-[16px]" style={{ background: C.heroBg, color: C.heroText, ...heroLabVars(p) }}>
+                    <CardHead title={cards[0]} hero feed={m.sites} onOpen={() => go({ name: 'tickets' })} />
+                    <Fed feed={m.sites} dark={p.heroDark} rows={3} height={30} className="mt-[10px]">
                         {sites => {
-                            if (sites.length === 0) return <p className="mt-[10px] text-[14px] text-white/85">No properties yet.</p>;
+                            if (sites.length === 0) return <p className="mt-[10px] text-[14px]" style={{ color: C.heroSoft }}>No properties yet.</p>;
                             const week = portfolioTrend(sites, 7);
                             const change = week[6] - week[0];
                             return (
                                 <>
                                     <span className="mt-[2px] flex items-end gap-[10px]">
                                         <span className="text-[52px] leading-none" style={fig}>{num(week[6])}</span>
-                                        <span className="pb-[6px] text-[12.5px] font-semibold text-white/85">{change === 0 ? 'same as a week ago' : `${change > 0 ? '+' : ''}${change} in 7 days`}</span>
+                                        <span className="pb-[6px] text-[12.5px] font-semibold" style={{ color: C.heroSoft }}>{change === 0 ? 'same as a week ago' : `${change > 0 ? '+' : ''}${change} in 7 days`}</span>
                                     </span>
-                                    <Fed feed={m.tickets} dark compact rows={1} height={14}>
+                                    <Fed feed={m.tickets} dark={p.heroDark} compact rows={1} height={14}>
                                         {t => t.breached > 0 ? (
-                                            <button type="button" onClick={() => go({ name: 'approvals', queue: 'escalation' })}
-                                                className="mt-[10px] inline-flex h-9 w-fit items-center gap-[6px] rounded-full bg-white px-[12px] text-[12.5px] font-semibold" style={{ color: RED_TEXT }}>
-                                                <Siren className="h-3.5 w-3.5" style={{ color: RED }} aria-hidden />{t.breached} past SLA<ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                                            <button type="button" onClick={() => go({ name: 'tickets', view: 'sla' })}
+                                                className="mt-[10px] inline-flex h-9 w-fit items-center gap-[6px] rounded-full px-[12px] text-[12.5px] font-semibold" style={{ background: C.heroChip, color: C.heroChipText }}>
+                                                <Siren className="h-3.5 w-3.5" aria-hidden />{t.breached} past SLA<ChevronRight className="h-3.5 w-3.5" aria-hidden />
                                             </button>
-                                        ) : <span className="mt-[10px] inline-flex items-center gap-[6px] text-[12.5px] text-white/85"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden />Nothing past SLA</span>}
+                                        ) : <span className="mt-[10px] inline-flex items-center gap-[6px] text-[12.5px]" style={{ color: C.heroSoft }}><CheckCircle2 className="h-3.5 w-3.5" aria-hidden />Nothing past SLA</span>}
                                     </Fed>
                                     <div className="mt-[8px]">
-                                        <LineArea data={week.map((v, i) => ({ label: days[i].long, value: v }))} color="#FFFFFF" height={88} fillOpacity={0.14} fitRange
-                                            gridColor="rgba(255,255,255,0.18)" textColor="rgba(255,255,255,0.85)" keyColor="#FFFFFF"
+                                        <LineArea data={week.map((v, i) => ({ label: days[i].long, value: v }))} color={C.heroLine} height={88} fillOpacity={0.14} fitRange
+                                            gridColor={C.heroGrid} textColor={C.heroSoft} keyColor={C.heroLine}
                                             xLabels={[{ index: 0, text: days[0].short }, { index: 6, text: 'Today' }]}
                                             ariaLabel={`Active tickets, last 7 days, today ${week[6]}`} />
                                     </div>
@@ -137,7 +137,7 @@ function HeroDeck() {
             <div className="flex justify-center" role="tablist" aria-label="Highlight cards">
                 {cards.map((c, i) => (
                     <button key={c} type="button" role="tab" aria-selected={index === i} aria-label={c} onClick={() => goTo(i)} className="grid h-10 place-items-center px-[3px]">
-                        <span className="block h-[6px] rounded-full transition-all" style={{ width: index === i ? 22 : 6, background: index === i ? C.accent : '#C3CAD9' }} />
+                        <span className="block h-[6px] rounded-full transition-all" style={{ width: index === i ? 22 : 6, background: index === i ? C.accent : C.dot }} />
                     </button>
                 ))}
             </div>
@@ -150,7 +150,7 @@ function HeroDeck() {
 type Filter = 'all' | 'approvals' | 'risks';
 
 function riskRoute(r: RiskItem, site: (name: string) => OrgSite | null, oldestSite: string | null): Route | null {
-    if (r.key === 'sla') return { name: 'approvals', queue: 'escalation' };
+    if (r.key === 'sla') return { name: 'tickets', view: 'sla' };
     if (r.key === 'rounds' || r.key === 'amc') return { name: 'compliance' };
     if (r.key === 'diesel' || r.key === 'bills') return { name: 'money' };
     if (r.key === 'oldest' && oldestSite) { const s = site(oldestSite); return s ? { name: 'site', id: s.id } : null; }
@@ -189,7 +189,7 @@ function NeedsYou() {
                             return (
                                 <li key={r.key}>
                                     <Row icon={r.icon} red={r.red} title={r.title} sub={r.meta} label={r.title}
-                                        onClick={() => (to ? (to.name === 'approvals' ? go(to) : push(to)) : m.previewAction(`Open ${r.title}`))} />
+                                        onClick={() => (to ? (to.name === 'tickets' || to.name === 'approvals' ? go(to) : push(to)) : m.previewAction(`Open ${r.title}`))} />
                                 </li>
                             );
                         })}
@@ -230,8 +230,8 @@ export function SiteBars({ sites, onOpen }: { sites: OrgSite[]; onOpen: (s: OrgS
                             <button type="button" data-lab-item onClick={() => onOpen(s)} aria-label={`${s.name}, score ${s.score}${weak ? ', needs attention' : ''}`}
                                 className="relative flex h-11 w-full items-center rounded-full text-left" style={{ background: C.card }}
                                 onMouseEnter={e => show(e.currentTarget, <span>{s.name}: <b>{s.score}</b>, {s.active} active, {s.urgent} urgent</span>)}>
-                                <span aria-hidden className="absolute inset-y-[8px] left-[8px] rounded-full" style={{ width: `calc(${s.score}% - 16px)`, background: weak ? C.barWarn : C.bar }} />
-                                <span className="relative flex min-w-0 flex-1 items-center gap-[6px] pl-[18px] text-[13px] font-semibold">
+                                <span aria-hidden className="absolute inset-y-[8px] left-[8px] rounded-full" style={{ width: `calc(${s.score}% - 16px)`, background: weak ? C.siteBarWarn : C.siteBar }} />
+                                <span className="relative flex min-w-0 flex-1 items-center gap-[6px] pl-[18px] text-[13px] font-semibold" style={{ color: weak ? C.onSiteBarWarn : C.onSiteBar }}>
                                     {weak && <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />}
                                     <span className="truncate">{s.name}</span>
                                 </span>
@@ -326,12 +326,12 @@ function Cell<T>({ feed, icon: Icon, value, sub, divider }: { feed: Feed<T>; ico
 /* ------------------------------------------------------------ screen */
 
 export function HomeScreen() {
-    const { m, push, go, openSheet, unread, refresh, refreshing, updatedLabel } = useApp();
+    const { m, push, go, unread, refresh, refreshing, updatedLabel } = useApp();
     const health = m.sites.data ? healthOf(m.sites.data) : null;
     return (
         <div>
             <header className="flex items-center gap-[10px] px-[16px] pb-[6px] pt-[10px]">
-                <button type="button" onClick={() => go({ name: 'more' })} aria-label="Your profile" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[14px] font-bold text-white" style={{ background: C.accent }}>{initials(m.user.name)}</button>
+                <button type="button" onClick={() => push({ name: 'more' })} aria-label="Your profile and more" className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[14px] font-bold" style={{ background: C.accent, color: C.onAccent }}>{initials(m.user.name)}</button>
                 <span className="min-w-0 flex-1">
                     <H level={1} className="truncate text-[17px] font-bold tracking-[-0.02em]"><span data-screen-title tabIndex={-1} className="outline-none">{greeting(m.now)}, {m.user.firstName}</span></H>
                     <span className="block truncate text-[12px]" style={{ color: C.text3 }}>{m.orgName}</span>
@@ -339,7 +339,7 @@ export function HomeScreen() {
                 <button type="button" aria-label="Search" onClick={() => push({ name: 'search' })} className="grid h-11 w-11 place-items-center rounded-full" style={{ background: C.card }}><Search className="h-[18px] w-[18px]" aria-hidden /></button>
                 <button type="button" aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'} onClick={() => push({ name: 'notifications' })} className="relative grid h-11 w-11 place-items-center rounded-full" style={{ background: C.card }}>
                     <Bell className="h-[18px] w-[18px]" aria-hidden />
-                    {unread > 0 && <span aria-hidden className="absolute right-[5px] top-[5px] grid h-[18px] min-w-[18px] place-items-center rounded-full px-[4px] text-[10.5px] font-bold text-white" style={{ background: C.accent, boxShadow: `0 0 0 2px ${C.page}` }}>{unread}</span>}
+                    {unread > 0 && <span aria-hidden className="absolute right-[5px] top-[5px] grid h-[18px] min-w-[18px] place-items-center rounded-full px-[4px] text-[10.5px] font-bold" style={{ background: C.accent, color: C.onAccent, boxShadow: `0 0 0 2px ${C.page}` }}>{unread}</span>}
                 </button>
             </header>
 
@@ -356,12 +356,12 @@ export function HomeScreen() {
             <nav aria-label="Quick actions" className="mt-[4px] grid grid-cols-4 gap-[8px] px-[16px]">
                 {([
                     ['Approve', Stamp, () => go({ name: 'approvals' })],
-                    ['Escalations', ShieldAlert, () => go({ name: 'approvals', queue: 'escalation' })],
-                    ['Raise', Plus, () => openSheet({ kind: 'create' })],
+                    ['Tickets', Ticket, () => go({ name: 'tickets' })],
+                    ['Raise', Plus, () => push({ name: 'newTicket' })],
                     ['Report', FileBarChart, () => m.previewAction('Share the morning report')],
                 ] as const).map(([label, Icon, onClick], i) => (
                     <button key={label} type="button" onClick={onClick} className="flex flex-col items-center gap-[6px] text-[12px] font-semibold" style={{ color: C.text2 }}>
-                        <span className="grid h-14 w-14 place-items-center rounded-full" style={i === 0 ? { background: C.accent, color: '#FFFFFF' } : { background: C.card, color: C.accentDeep, boxShadow: `inset 0 0 0 1px ${C.border}` }}>
+                        <span className="grid h-14 w-14 place-items-center rounded-full" style={i === 0 ? { background: C.accent, color: C.onAccent } : { background: C.card, color: C.accentDeep, boxShadow: `inset 0 0 0 1px ${C.border}` }}>
                             <Icon className="h-5 w-5" aria-hidden />
                         </span>
                         {label}
