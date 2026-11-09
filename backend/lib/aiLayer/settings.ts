@@ -32,6 +32,10 @@ export const settingsSchema = z.object({
     grid: z.record(z.string().min(1).max(64), moduleGrid).default({}),
     /** catalog entry id → off / shadow / live. Missing = the entry's default (writes start in shadow). */
     entryModes: z.record(z.string().min(1).max(64), entryMode).default({}),
+    /** Learning loop (owner 2026-11-04): flag likely mistakes for review, so an org super admin can teach the AI. */
+    learning: z.object({ enabled: z.boolean().default(false) }).strict().default({ enabled: false }),
+    /** Property nicknames: property id → other names people use for it ("DMC", "Mafatlal"). */
+    aliases: z.record(z.string().uuid(), z.array(z.string().trim().min(2).max(40)).max(10)).default({}),
     limits: z.object({
         perUserPerHour: z.number().int().min(1).max(1000).default(30),
         actionsPerUserPerDay: z.number().int().min(1).max(1000).default(50),
@@ -54,6 +58,26 @@ export const PLATFORM_LIMITS = { perUserPerHour: 60, actionsPerUserPerDay: 100 }
 export function parseSettings(raw: unknown): AiSettings {
     const parsed = settingsSchema.safeParse(raw ?? {});
     return parsed.success ? parsed.data : DEFAULT_SETTINGS;
+}
+
+/**
+ * Training chat (org super admin only): the admin talks to the AI as themselves, with every capability their OWN app
+ * access allows (the grid and the org switches only narrow, so lifting them never widens what the app allows), ticket
+ * creation forced to test mode so nothing real is created, and no mistake-flagging (the admin teaches directly).
+ */
+export function trainingSettings(s: AiSettings, actorRoles: string[], userId: string): AiSettings {
+    return {
+        ...s,
+        enabled: true,
+        channels: { ...s.channels, app_chat: true },
+        access: { mode: 'selected_people', userIds: [userId], roles: [] },
+        blockedUserIds: [],
+        propertyIds: null,
+        grid: Object.fromEntries(actorRoles.map(r => [r, { tickets: 'questions_actions' as const, electricity_readings: 'questions' as const }])),
+        entryModes: { 'ticket.create': 'shadow' },
+        learning: { enabled: false },
+        limits: { ...s.limits, perUserPerHour: PLATFORM_LIMITS.perUserPerHour },
+    };
 }
 
 export function effectiveLimits(s: AiSettings) {

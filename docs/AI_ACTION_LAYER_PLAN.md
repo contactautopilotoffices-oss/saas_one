@@ -35,6 +35,18 @@ What is built:
 
 Not built yet: WhatsApp and voice channels, rooms / visitors / HR / material requests / petty cash entries, the per-entry database RPCs (reads are scoped in code with the service-role client for now), and the remaining Phase 0 fixes.
 
+### Learning loop (owner request 2026-11-04)
+
+Modelled on the Task Manager's learning loop (`task-manager/LearningLoop.ts`, `BotLearningService.ts`), per organization, in Settings → AI Assistant (org super admin):
+
+- **Learning loop switch** (`learning.enabled` in AI Access settings). While on, likely mistakes are kept 30 days in `ai_review_items`: didn't understand, "no / galat / I meant…" and asking again within 2 minutes (the Task Manager's own rules, reused), and going in circles. Phone numbers and emails are masked; HR complaints are never kept.
+- **Review mistakes → Teach**: pick what it should have done; saved in `ai_examples` (validated against the catalog, unknown answers rejected, doctrine L7) and shown to the AI as examples for similar messages.
+- **Taught examples**: list and remove.
+- **Instructions**: versions in `ai_prompt_versions`; a version goes live only after a test run against the taught examples and only if it scores at least as well as the live one. Safety rules stay in code.
+- **Property nicknames** (`aliases` in AI Access settings) and spelling-tolerant property matching with "Did you mean…?".
+- Follow-ups: the last answer is remembered 10 minutes, so "what is missing" follows a meter status answer.
+- Migration: `supabase/migrations/20261104000003_ai_learning.sql` (run by a human).
+
 ### What changed in v2 (owner feedback)
 
 | Feedback | Change in this plan |

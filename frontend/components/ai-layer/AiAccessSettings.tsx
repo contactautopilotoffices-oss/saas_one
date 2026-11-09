@@ -6,6 +6,7 @@
  * already gives their role.
  */
 import { useEffect, useMemo, useState } from 'react';
+import AiLearningPanel from './AiLearningPanel';
 
 type GridLevel = 'off' | 'questions' | 'questions_actions';
 type ModuleId = 'tickets' | 'electricity_readings';
@@ -18,9 +19,13 @@ interface Config {
     grid: Record<string, Partial<Record<ModuleId, GridLevel>>>;
     entryModes: Record<string, 'off' | 'shadow' | 'live'>;
     limits: { perUserPerHour: number; actionsPerUserPerDay: number };
+    learning: { enabled: boolean };
+    aliases: Record<string, string[]>;
 }
 interface Entry { id: string; kind: 'question' | 'write'; module: ModuleId; defaultMode: 'off' | 'shadow' | 'live'; label: string }
 interface Person { id: string; name: string; email: string }
+interface CheckLine { ok: boolean; label: string; detail: string }
+type CheckState = { loading: true } | { loading: false; lines?: CheckLine[]; error?: string };
 interface ActivityRow { id: string; created_at: string; actor_name: string | null; entry_id: string | null; decision: string; refusal_reason: string | null; topic: string | null; result_ref: string | null }
 
 const MODULES: Array<{ id: ModuleId; label: string }> = [{ id: 'tickets', label: 'Tickets' }, { id: 'electricity_readings', label: 'Meter readings' }];
@@ -50,6 +55,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
     const [busy, setBusy] = useState(false);
     const [search, setSearch] = useState('');
     const [blockSearch, setBlockSearch] = useState('');
+    const [checks, setChecks] = useState<Record<string, CheckState>>({});
 
     useEffect(() => {
         const controller = new AbortController();
@@ -85,7 +91,20 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
         finally { setBusy(false); }
     }
 
-    const picker = (selected: string[], onChange: (ids: string[]) => void, query: string, setQuery: (q: string) => void, label: string) => {
+    /** "Check": why the WhatsApp AI does or doesn't answer this person, from the SAVED settings. */
+    async function runCheck(userId: string) {
+        setChecks(c => ({ ...c, [userId]: { loading: true } }));
+        try {
+            const r = await fetch(`/api/ai-layer/settings?organizationId=${encodeURIComponent(organizationId)}&view=check&userId=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || 'Check failed');
+            setChecks(c => ({ ...c, [userId]: { loading: false, lines: d.lines } }));
+        } catch (err) {
+            setChecks(c => ({ ...c, [userId]: { loading: false, error: err instanceof Error ? err.message : 'Check failed' } }));
+        }
+    }
+
+    const picker = (selected: string[], onChange: (ids: string[]) => void, query: string, setQuery: (q: string) => void, label: string, withCheck = false) => {
         const ql = query.trim().toLowerCase();
         const matches = ql ? people.filter(p => !selected.includes(p.id) && `${p.name} ${p.email}`.toLowerCase().includes(ql)).slice(0, 8) : [];
         return (
@@ -100,10 +119,30 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                     {selected.map(id => (
                         <span key={id} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
                             {byId.get(id)?.name || 'Unavailable account'}
+                            {withCheck && <button type="button" onClick={() => runCheck(id)} className="ml-1 rounded-full bg-white px-2 text-[11px] font-bold text-primary border border-slate-200 hover:bg-slate-50" title="Check whether the WhatsApp AI will answer this person (uses the saved settings)">Check</button>}
                             <button type="button" aria-label="Remove" onClick={() => onChange(selected.filter(x => x !== id))} className="text-slate-400 hover:text-slate-700">×</button>
                         </span>
                     ))}
                 </div>
+                {withCheck && selected.map(id => {
+                    const c = checks[id];
+                    if (!c) return null;
+                    return (
+                        <div key={`check-${id}`} className="mt-3 rounded-xl border border-slate-200 p-3 text-sm">
+                            <p className="font-bold text-slate-900">WhatsApp check: {byId.get(id)?.name || 'this person'} <span className="font-normal text-xs text-slate-500">(saved settings)</span></p>
+                            {c.loading ? <p className="text-slate-500 mt-1">Checking…</p> : c.error ? <p className="text-rose-600 mt-1">{c.error}</p> : (
+                                <ul className="mt-2 space-y-1">
+                                    {c.lines!.map(l => (
+                                        <li key={l.label} className="flex gap-2">
+                                            <span className={l.ok ? 'text-emerald-600' : 'text-rose-600'}>{l.ok ? '✓' : '✗'}</span>
+                                            <span><span className="font-semibold">{l.label}:</span> {l.detail}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         );
     };
@@ -113,10 +152,20 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
 
     return (
         <div className="space-y-4">
-            <div>
-                <h2 className="text-lg font-black text-slate-900">AI Assistant access</h2>
-                <p className="text-sm text-slate-500">Choose who can use the AI assistant and for what. People never get more than their role already allows in the app.</p>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <h2 className="text-lg font-black text-slate-900">AI Assistant access</h2>
+                    <p className="text-sm text-slate-500">Choose who can use the AI assistant and for what. People never get more than their role already allows in the app.</p>
+                </div>
+                <a href={`/${organizationId}/ai-assistant/train`} className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90">💬 Open training chat</a>
             </div>
+
+            {!config.enabled && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                    <b>The AI assistant is OFF for this organization</b>, so nobody gets it, whatever else is set below.
+                    Tick <b>&ldquo;AI assistant for this organization&rdquo;</b> and click <b>Save AI settings</b> to turn it on.
+                </div>
+            )}
 
             {tableMissing && (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -126,7 +175,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
 
             <section className={card}>
                 <label className="flex items-center justify-between gap-4">
-                    <span><span className={h}>AI assistant for this organization</span><span className={`block ${sub}`}>Off by default. Turning it off stops it for everyone at once.</span></span>
+                    <span><span className={h}>AI assistant for this organization <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-black ${config.enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>{config.enabled ? 'ON' : 'OFF'}</span></span><span className={`block ${sub}`}>Off by default. This is the main switch: turning it off stops it for everyone at once.</span></span>
                     <input type="checkbox" className="h-5 w-5" checked={config.enabled} onChange={e => set({ enabled: e.target.checked })} />
                 </label>
                 <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -153,7 +202,7 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                         ))}
                     </div>
                 )}
-                {showPeople && picker(config.access.userIds, ids => set({ access: { ...config.access, userIds: ids } }), search, setSearch, 'allow')}
+                {showPeople && picker(config.access.userIds, ids => set({ access: { ...config.access, userIds: ids } }), search, setSearch, 'allow', true)}
                 <p className={`${h} mt-5`}>Blocked people</p>
                 <p className={sub}>Always refused, whatever else is set.</p>
                 {picker(config.blockedUserIds, ids => set({ blockedUserIds: ids }), blockSearch, setBlockSearch, 'block')}
@@ -168,6 +217,33 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                         {properties.map(p => <label key={p.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.propertyIds!.includes(p.id)} onChange={() => set({ propertyIds: toggleIn(config.propertyIds!, p.id) })} /> {p.name}</label>)}
                     </div>
                 )}
+            </section>
+
+            <section className={card}>
+                <p className={h}>Property nicknames</p>
+                <p className={sub}>Other names people use for a property, separated by commas (e.g. &ldquo;DMC, Mafatlal&rdquo;). The AI then recognises them, and small spelling mistakes too.</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {properties.map(p => (
+                        <label key={p.id} className="text-sm">
+                            <span className="text-slate-700">{p.name}</span>
+                            <input className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm" placeholder="Nicknames…"
+                                defaultValue={(config.aliases?.[p.id] || []).join(', ')}
+                                onBlur={e => {
+                                    const list = e.target.value.split(',').map(x => x.trim()).filter(x => x.length >= 2).slice(0, 10).map(x => x.slice(0, 40));
+                                    const next = { ...(config.aliases || {}) };
+                                    if (list.length) next[p.id] = list; else delete next[p.id];
+                                    set({ aliases: next });
+                                }} />
+                        </label>
+                    ))}
+                </div>
+            </section>
+
+            <section className={card}>
+                <label className="flex items-center justify-between gap-4">
+                    <span><span className={h}>Learning loop</span><span className={`block ${sub}`}>When on, messages the AI probably got wrong (didn&apos;t understand, &ldquo;no, I meant…&rdquo;, asked again, going in circles) are kept for 30 days in <b>Review mistakes</b> below, so you can teach it. Phone numbers are masked; HR complaints are never kept.</span></span>
+                    <input type="checkbox" className="h-5 w-5" checked={config.learning?.enabled === true} onChange={e => set({ learning: { enabled: e.target.checked } })} />
+                </label>
             </section>
 
             <section className={card}>
@@ -254,6 +330,8 @@ export default function AiAccessSettings({ organizationId }: { organizationId: s
                     </div>
                 )}
             </section>
+
+            <AiLearningPanel organizationId={organizationId} />
         </div>
     );
 }
