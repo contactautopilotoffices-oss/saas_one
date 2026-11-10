@@ -63,9 +63,9 @@ owner or master admin) can narrow that, person by person:
 
 1. Open **Settings** in the FMS and choose the **Claude tools** tab.
 2. Pick a person on the left. Choose **All tools** or **Only the tools ticked below**, tick the
-   tools, and click **Save**. Tools are grouped by area (tickets, sites, maintenance, purchasing,
-   sales, work, create records, change records) with a badge saying whether each one reads,
-   creates or changes data. "Tick all read tools" gives a read-only connection in one click.
+   tools, and click **Save**. Tools are grouped under the same names as the sidebar and dashboard
+   tabs (Tickets, HR & Grievances, Business Development, Payment Tracker, Inventory and so on),
+   with a badge saying whether each one reads, creates or changes data. "Tick all read tools" gives a read-only connection in one click.
 3. Claude gets the new list on its next request. Reconnecting the FMS connector in Claude
    refreshes it at once.
 
