@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { verifyMcpToken } from '@/backend/lib/mcp/token';
 import { loadUserScope } from '@/backend/lib/mcp/scope';
+import { loadToolAccess } from '@/backend/lib/mcp/toolAccess';
 import { buildMcpServer } from '@/backend/lib/mcp/tools';
 import { allowRequest } from '@/backend/lib/mcp/rateLimit';
 import { internalOrigin, publicOrigin, rateLimitPerMinute, supabaseUrl } from '@/backend/lib/mcp/config';
@@ -11,7 +12,8 @@ import { logMcpCall } from '@/backend/lib/mcp/log';
  * POST /api/mcp — the FMS MCP server (Model Context Protocol, Streamable HTTP, stateless).
  *
  * Who: any FMS user who connected an assistant (e.g. Claude) through the FMS OAuth consent
- * screen. Every call runs AS that user and is read only. See docs/MCP_CONNECT_GUIDE.md.
+ * screen. Every call runs AS that user. An organisation super admin can limit which tools a
+ * person gets (Settings > Claude tools, mcp_tool_access). See docs/MCP_CONNECT_GUIDE.md.
  *
  * Auth: Authorization: Bearer <Supabase OAuth access token>. A missing or bad token gets 401
  * with a WWW-Authenticate header pointing to /.well-known/oauth-protected-resource, which is
@@ -69,14 +71,15 @@ export async function POST(request: NextRequest) {
     }
 
     let scope;
+    let toolAccess;
     try {
-        scope = await loadUserScope(caller.userId);
+        [scope, toolAccess] = await Promise.all([loadUserScope(caller.userId), loadToolAccess(caller.userId)]);
     } catch (e) {
         console.error('[mcp] scope load failed:', e instanceof Error ? e.message : e);
         return NextResponse.json({ jsonrpc: '2.0', error: { code: -32603, message: 'Could not load your FMS access. Try again shortly.' }, id: null }, { status: 500 });
     }
 
-    const server = buildMcpServer({ caller, scope, origin: callOrigin, supabaseUrl: sbUrl });
+    const server = buildMcpServer({ caller, scope, toolAccess, origin: callOrigin, supabaseUrl: sbUrl });
     const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless: every request is authenticated on its own
         enableJsonResponse: true,

@@ -365,6 +365,87 @@ test('MCP: a real client lists the read-only tools and gets readable errors', as
     await server.close();
 });
 
+// ---------- per-person tool access (Settings > Claude tools) ----------
+
+async function listNames(ctx: ReturnType<typeof ctxOf> & { toolAccess?: import('../../backend/lib/mcp/toolAccess').McpToolAccess }) {
+    const { tools } = await mods();
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const server = tools.buildMcpServer(ctx);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const names = (await client.listTools()).tools.map(t => t.name).sort();
+    return { names, client, server };
+}
+
+test('tool catalogue: lists exactly the tools the server registers', async () => {
+    const { MCP_TOOL_CATALOG, MCP_TOOL_NAMES } = await import('../../backend/lib/mcp/toolCatalog');
+    const { names, client, server } = await listNames(ctxOf());
+    assert.deepEqual([...MCP_TOOL_NAMES].sort(), names, 'toolCatalog.ts must list every registered tool, and nothing else');
+    assert.equal(new Set(MCP_TOOL_NAMES).size, MCP_TOOL_NAMES.length, 'no duplicate names');
+    for (const t of MCP_TOOL_CATALOG) assert.ok(t.title.length > 3 && t.group.length > 2, `${t.name} needs a title and a group`);
+    // Every preview tool is marked create/update so confirm_action follows it automatically.
+    for (const t of MCP_TOOL_CATALOG) {
+        const looksLikeAction = /^(create_|raise_|add_|log_|assign_|record_|draft_|book_|cancel_|update_|reassign_)/.test(t.name);
+        assert.equal(t.kind === 'create' || t.kind === 'update', looksLikeAction, `${t.name}: kind ${t.kind} does not match its name`);
+    }
+    await client.close();
+    await server.close();
+});
+
+test('tool access: effective set always has whoami, adds confirm_action with actions, drops unknown names', async () => {
+    const { effectiveTools } = await import('../../backend/lib/mcp/toolCatalog');
+    const { accessFromRow, isToolAllowed } = await import('../../backend/lib/mcp/toolAccess');
+    assert.deepEqual([...effectiveTools([])], ['whoami']);
+    assert.deepEqual([...effectiveTools(['list_tickets', 'not_a_tool'])].sort(), ['list_tickets', 'whoami']);
+    assert.deepEqual([...effectiveTools(['create_ticket'])].sort(), ['confirm_action', 'create_ticket', 'whoami']);
+    assert.deepEqual([...effectiveTools(['confirm_action'])], ['whoami'], 'confirm_action alone is pointless and is not kept');
+
+    assert.equal(accessFromRow(null).mode, 'all');
+    assert.equal(accessFromRow({ mode: 'all', tools: ['list_tickets'] }).mode, 'all');
+    const limited = accessFromRow({ mode: 'selected', tools: ['list_tickets'] });
+    assert.equal(isToolAllowed(limited, 'list_tickets'), true);
+    assert.equal(isToolAllowed(limited, 'whoami'), true);
+    assert.equal(isToolAllowed(limited, 'create_ticket'), false);
+    assert.equal(isToolAllowed(undefined, 'create_ticket'), true, 'no setting means every tool');
+});
+
+test('tool access: a limited person only sees and can only call the chosen tools', async () => {
+    const { accessFromRow } = await import('../../backend/lib/mcp/toolAccess');
+    const toolAccess = accessFromRow({ mode: 'selected', tools: ['list_tickets', 'update_ticket'] });
+    const { names, client, server } = await listNames({ ...ctxOf(), toolAccess });
+    assert.deepEqual(names, ['confirm_action', 'list_tickets', 'update_ticket', 'whoami']);
+
+    const who = await client.callTool({ name: 'whoami', arguments: {} });
+    assert.match((who.content as { text: string }[])[0].text, /Limited/);
+
+    // A hidden tool cannot be called either, not just hidden from the list. The SDK answers with
+    // an error result (or, in older versions, a thrown error); either way nothing runs.
+    const callHidden = async (name: string, args: Record<string, unknown>) => {
+        try {
+            const r = await client.callTool({ name, arguments: args });
+            assert.equal(r.isError, true, `${name} must not run`);
+            assert.match((r.content as { text: string }[])[0].text, /not found/i);
+        } catch (e) {
+            assert.match(String(e), /not found/i);
+        }
+    };
+    await callHidden('list_assets', {});
+    await callHidden('create_ticket', { property_id: PROP, description: 'AC leaking on 3rd floor' });
+
+    await client.close();
+    await server.close();
+});
+
+test('tool access: mode all keeps every tool, as before the setting existed', async () => {
+    const all = await listNames(ctxOf());
+    const explicit = await listNames({ ...ctxOf(), toolAccess: { mode: 'all' } });
+    assert.deepEqual(explicit.names, all.names);
+    assert.ok(all.names.includes('list_assets') && all.names.includes('create_ticket'));
+    await Promise.all([all.client.close(), all.server.close(), explicit.client.close(), explicit.server.close()]);
+});
+
 // ---------- HTTP endpoint ----------
 
 test('POST /api/mcp: no token gets 401 with the discovery header; GET is 405', async () => {

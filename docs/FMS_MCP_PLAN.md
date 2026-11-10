@@ -100,6 +100,7 @@ This is the "build intelligence and route to frontier models" part.
 - 2026-11-05 — Owner widened access: every FMS user (clients included) can connect, each scoped to their own data. Design section added.
 - 2026-11-05 — Phase 1 and 2 built, read only: `/api/mcp`, OAuth consent screen, route catalogue (227 of 440 GET routes), membership fence, call log migration (**not applied**), 8 tools, tests (`npm run test:mcp`). Setup steps in `docs/MCP_CONNECT_GUIDE.md`. Not yet tested against the real Supabase OAuth server, which an admin has to switch on first.
 - 2026-11-06 — First write actions, owner approved: raise a ticket, book a meeting room, cancel a booking. Preview plus a signed one-time confirm code (10 minutes, one use), then the app's own route runs as the user. Open to every user the app itself allows. Tests: 27 passing.
+- 2026-11-10 — Per-person tool access (the "switch tools off" part of Phase 5): Settings > Claude tools lets an organisation admin choose, for each person, which MCP tools Claude may use. Stored in `mcp_tool_access` (migration written, **not applied**), with a history table. Unlisted tools are not registered for that person, so they are neither listed nor callable. Default stays "all tools". Tests: 65 passing (`npm run test:mcp`).
 
 ## Design for "every user, their own data" (proposed 2026-11-05)
 
