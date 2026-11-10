@@ -65,6 +65,7 @@ const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/component
 const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
+const PropertyOverviewReport = dynamic(() => import('@/frontend/components/reports/PropertyOverviewReport'), { loading: TabLoading });
 const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
@@ -355,6 +356,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // State
     const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    // Reports tab: the property-wide report (default) or the ticket import history.
+    const [reportsView, setReportsView] = useState<'overview' | 'imports'>('overview');
     const activeTabFromSearch = searchParams?.get('tab');
     const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
@@ -1167,10 +1170,29 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             />
                         )}
                         {openTab === 'reports' && property && (
-                            <ImportReportsView
-                                propertyId={property.id}
-                                organizationId={property.organization_id}
-                            />
+                            <div className="space-y-6">
+                                <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                    {([['overview', 'Property report'], ['imports', 'Import reports']] as const).map(([id, label]) => (
+                                        <button
+                                            key={id}
+                                            type="button"
+                                            onClick={() => setReportsView(id)}
+                                            aria-pressed={reportsView === id}
+                                            className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                                {reportsView === 'overview' ? (
+                                    <PropertyOverviewReport propertyId={property.id} propertyName={property.name} />
+                                ) : (
+                                    <ImportReportsView
+                                        propertyId={property.id}
+                                        organizationId={property.organization_id}
+                                    />
+                                )}
+                            </div>
                         )}
                         {openTab === 'grievance' && (
                             <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />

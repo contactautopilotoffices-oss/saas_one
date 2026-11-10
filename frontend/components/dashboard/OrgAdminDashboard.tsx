@@ -74,6 +74,7 @@ const RosterDashboard = dynamic(() => import('@/frontend/components/roster/Roste
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
 const AppUsageReport = dynamic(() => import('@/frontend/components/dashboard/AppUsageReport'), { loading: TabLoading });
+const PropertyOverviewReport = dynamic(() => import('@/frontend/components/reports/PropertyOverviewReport'), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -210,11 +211,14 @@ const OrgAdminDashboard = () => {
     // Owner 2026-10-29: the Super Admin's own Meeting Assistant. Kept mounted once opened, so switching tabs never stops a recording.
     const [assistantOpened, setAssistantOpened] = useState(false);
     if (activeTab === 'meeting_assistant' && isOrgSuperAdmin && !assistantOpened) setAssistantOpened(true);
-    const reportsView: 'imports' | 'app_usage' = isOrgSuperAdmin && searchParams.get('report') === 'app_usage' ? 'app_usage' : 'imports';
-    const setReportsView = (next: 'imports' | 'app_usage') => {
+    // Reports tab views: the property-wide overview (default), ticket import history, and App usage (org super admins).
+    type ReportsView = 'overview' | 'imports' | 'app_usage';
+    const reportParam = searchParams.get('report');
+    const reportsView: ReportsView = reportParam === 'app_usage' && isOrgSuperAdmin ? 'app_usage' : reportParam === 'imports' ? 'imports' : 'overview';
+    const setReportsView = (next: ReportsView) => {
         const params = new URLSearchParams(window.location.search);
-        if (next === 'app_usage') params.set('report', 'app_usage');
-        else params.delete('report');
+        if (next === 'overview') params.delete('report');
+        else params.set('report', next);
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
     const [isSelectorOpen, setIsSelectorOpen] = useState(false); // Global toggle state
@@ -1637,23 +1641,39 @@ const OrgAdminDashboard = () => {
 
                         {activeTab === 'reports' && org && (
                             <div key="reports-tab" className="space-y-6">
-                                {isOrgSuperAdmin && (
-                                    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
-                                        {([['imports', 'Import reports'], ['app_usage', 'App usage']] as const).map(([id, label]) => (
-                                            <button
-                                                key={id}
-                                                type="button"
-                                                onClick={() => setReportsView(id)}
-                                                aria-pressed={reportsView === id}
-                                                className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                                            >
-                                                {label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
+                                <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                    {([
+                                        ['overview', 'Property report'],
+                                        ['imports', 'Import reports'],
+                                        ...(isOrgSuperAdmin ? [['app_usage', 'App usage']] : []),
+                                    ] as [ReportsView, string][]).map(([id, label]) => (
+                                        <button
+                                            key={id}
+                                            type="button"
+                                            onClick={() => setReportsView(id)}
+                                            aria-pressed={reportsView === id}
+                                            className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
                                 {reportsView === 'app_usage' ? (
                                     <AppUsageReport orgId={org.id} />
+                                ) : reportsView === 'overview' ? (
+                                    selectedPropertyId === 'all' ? (
+                                        <div className="bg-white rounded-2xl border border-border shadow-sm p-12 flex flex-col items-center justify-center text-center">
+                                            <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
+                                                <FileBarChart className="w-8 h-8 text-primary" />
+                                            </div>
+                                            <h3 className="text-xl font-black text-slate-900 mb-2">choose property to view its report</h3>
+                                            <p className="text-sm text-slate-500 max-w-sm">
+                                                select a specific property from the <strong>property selector</strong> in the top header to see every service and module for it in one report.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <PropertyOverviewReport propertyId={selectedPropertyId} propertyName={activeProperty?.name} />
+                                    )
                                 ) : (
                                     <>
                                         <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.reports} consoleTab="agent_console" />
