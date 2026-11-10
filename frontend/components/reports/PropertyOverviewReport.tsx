@@ -283,7 +283,8 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
                                     <Building2 className="w-5 h-5" />
                                 </div>
                                 <div>
-                                    <h2 className="text-xl font-black leading-tight">{report.property.name}</h2>
+                                    {/* Inline colour: a global heading rule otherwise paints this dark on the dark banner. */}
+                                    <h2 className="text-xl font-black leading-tight" style={{ color: '#ffffff' }}>{report.property.name}</h2>
                                     <p className="text-xs text-slate-300 mt-0.5">
                                         {[report.property.code, report.property.city, report.property.address].filter(Boolean).join(' · ')}
                                     </p>
