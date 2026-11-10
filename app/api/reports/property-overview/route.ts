@@ -70,6 +70,20 @@ function countBy(rows: Row[], pick: (r: Row) => string): { name: string; count: 
     }
     return Array.from(m.entries()).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 }
+/** One zeroed bucket per calendar day in the range, in order, so every trend has the same x axis. */
+function dayBuckets<T extends object>(from: string, to: string, make: () => T): Map<string, { date: string } & T> {
+    const m = new Map<string, { date: string } & T>();
+    for (let d = from; d <= to; d = addDays(d, 1)) m.set(d, { date: d, ...make() });
+    return m;
+}
+/** IST weekday (0 = Sunday) and hour of a timestamp, for the "when do requests come in" heatmap. */
+function istSlot(v: unknown): { weekday: number; hour: number } | null {
+    if (typeof v !== 'string' || !v) return null;
+    const t = Date.parse(v);
+    if (isNaN(t)) return null;
+    const d = new Date(t + IST_OFFSET_MS);
+    return { weekday: d.getUTCDay(), hour: d.getUTCHours() };
+}
 /** A joined one-to-one relation comes back as an object or a one-element array. */
 function rel(v: unknown): Row | null {
     if (Array.isArray(v)) return (v[0] as Row) || null;
@@ -170,13 +184,26 @@ export async function GET(request: NextRequest) {
                 .filter(h => Number.isFinite(h) && h >= 0);
             const breached = list.filter(t => t.sla_breached === true || (str(t.sla_deadline) && str(t.sla_deadline) < nowIso && !TICKET_CLOSED.includes(str(t.status)))).length;
 
-            const daily = new Map<string, { date: string; raised: number; closed: number }>();
-            for (let d = from; d <= to; d = addDays(d, 1)) daily.set(d, { date: d, raised: 0, closed: 0 });
+            const daily = dayBuckets(from, to, () => ({ raised: 0, closed: 0 }));
+            // 7 weekdays x 24 hours, IST, counting when tickets were raised.
+            const heatmap: number[][] = Array.from({ length: 7 }, () => Array<number>(24).fill(0));
             for (const t of list) {
                 const r = istDay(t.created_at);
                 if (r && daily.has(r)) daily.get(r)!.raised++;
                 const c = istDay(t.resolved_at);
                 if (c && daily.has(c) && TICKET_CLOSED.includes(str(t.status))) daily.get(c)!.closed++;
+                const slot = istSlot(t.created_at);
+                if (slot) heatmap[slot.weekday][slot.hour]++;
+            }
+            // Time to close, bucketed, for the resolution-speed distribution.
+            const buckets = [
+                { name: 'Under 4 h', max: 4 }, { name: '4 to 24 h', max: 24 }, { name: '1 to 3 d', max: 72 },
+                { name: '3 to 7 d', max: 168 }, { name: 'Over 7 d', max: Infinity },
+            ];
+            const resolution_buckets = buckets.map(b => ({ name: b.name, count: 0 }));
+            for (const h of hours) {
+                const i = buckets.findIndex(b => h < b.max);
+                resolution_buckets[i === -1 ? buckets.length - 1 : i].count++;
             }
             return {
                 truncated: list.length >= ROW_CAP,
@@ -194,6 +221,8 @@ export async function GET(request: NextRequest) {
                 by_status: countBy(list, t => str(t.status)),
                 by_floor: countBy(list, t => (t.floor_number === null || t.floor_number === undefined) ? 'Unspecified' : `Floor ${t.floor_number}`).slice(0, 10),
                 daily: Array.from(daily.values()),
+                heatmap,
+                resolution_buckets,
             };
         }),
 
@@ -238,6 +267,16 @@ export async function GET(request: NextRequest) {
                     .gte('due_at', fromTs).lt('due_at', toTsExclusive).range(0, ROW_CAP - 1),
             );
             const completed = list.filter(r => str(r.status) === 'completed');
+            const sopDaily = dayBuckets(from, to, () => ({ on_time: 0, late: 0, missed: 0, pending: 0 }));
+            for (const r of list) {
+                const d = istDay(r.due_at);
+                const b = d ? sopDaily.get(d) : undefined;
+                if (!b) continue;
+                const st = str(r.status);
+                if (st === 'completed') { if (r.is_late === true) b.late++; else b.on_time++; }
+                else if (st === 'missed') b.missed++;
+                else b.pending++;
+            }
             const templates = await count(
                 supabaseAdmin.from('sop_templates').select('id', { count: 'exact', head: true }).eq('property_id', propertyId),
             ).catch(() => 0);
@@ -250,6 +289,7 @@ export async function GET(request: NextRequest) {
                 pending: list.filter(r => !['completed', 'missed'].includes(str(r.status))).length,
                 completion_rate: pct(completed.length, list.length),
                 templates,
+                daily: Array.from(sopDaily.values()),
             };
         }),
 
@@ -302,6 +342,13 @@ export async function GET(request: NextRequest) {
                 byMeter.set(k, e);
             }
             const daysLogged = new Set(list.map(r => str(r.reading_date))).size;
+            const elecDaily = dayBuckets(from, to, () => ({ units: 0, cost: 0 }));
+            for (const r of main) {
+                const b = elecDaily.get(str(r.reading_date));
+                if (!b) continue;
+                b.units += units(r);
+                b.cost += Math.max(0, num(r.computed_cost));
+            }
             const meters = await count(
                 supabaseAdmin.from('electricity_meters').select('id', { count: 'exact', head: true }).eq('property_id', propertyId),
             ).catch(() => byMeter.size);
@@ -310,6 +357,7 @@ export async function GET(request: NextRequest) {
                 units: round1(main.reduce((s, r) => s + units(r), 0)),
                 cost: Math.round(main.reduce((s, r) => s + Math.max(0, num(r.computed_cost)), 0)),
                 unit_label: 'kVAh',
+                daily: Array.from(elecDaily.values()).map(d => ({ ...d, units: round1(d.units), cost: Math.round(d.cost) })),
                 by_meter: Array.from(byMeter.values()).map(m => ({ ...m, units: round1(m.units), cost: Math.round(m.cost) })).sort((a, b) => b.units - a.units),
             };
         }),
@@ -331,8 +379,16 @@ export async function GET(request: NextRequest) {
                 e.cost += Math.max(0, num(r.computed_cost));
                 byGen.set(k, e);
             }
+            const dieselDaily = dayBuckets(from, to, () => ({ litres: 0, cost: 0 }));
+            for (const r of list) {
+                const b = dieselDaily.get(str(r.reading_date));
+                if (!b) continue;
+                b.litres += Math.max(0, num(r.computed_consumed_litres));
+                b.cost += Math.max(0, num(r.computed_cost));
+            }
             return {
                 readings: list.length, days_logged: new Set(list.map(r => str(r.reading_date))).size, days_in_range: dayCount,
+                daily: Array.from(dieselDaily.values()).map(d => ({ ...d, litres: round1(d.litres), cost: Math.round(d.cost) })),
                 litres: round1(list.reduce((s, r) => s + Math.max(0, num(r.computed_consumed_litres)), 0)),
                 cost: Math.round(list.reduce((s, r) => s + Math.max(0, num(r.computed_cost)), 0)),
                 by_generator: Array.from(byGen.values()).map(g => ({ ...g, litres: round1(g.litres), cost: Math.round(g.cost) })).sort((a, b) => b.litres - a.litres),
@@ -359,8 +415,16 @@ export async function GET(request: NextRequest) {
                 e.cost += Math.max(0, num(r.computed_cost));
                 bySource.set(k, e);
             }
+            const waterDaily = dayBuckets(from, to, () => ({ quantity: 0, cost: 0 }));
+            for (const r of list) {
+                const b = waterDaily.get(str(r.reading_date));
+                if (!b) continue;
+                b.quantity += Math.max(0, num(r.quantity));
+                b.cost += Math.max(0, num(r.computed_cost));
+            }
             return {
                 sources: sources.length, readings: list.length,
+                daily: Array.from(waterDaily.values()).map(d => ({ ...d, quantity: round1(d.quantity), cost: Math.round(d.cost) })),
                 days_logged: new Set(list.map(r => str(r.reading_date))).size, days_in_range: dayCount,
                 quantity: round1(list.reduce((s, r) => s + Math.max(0, num(r.quantity)), 0)),
                 cost: Math.round(list.reduce((s, r) => s + Math.max(0, num(r.computed_cost)), 0)),
@@ -379,7 +443,15 @@ export async function GET(request: NextRequest) {
                     .gte('created_at', fromTs).lt('created_at', toTsExclusive).range(0, ROW_CAP - 1),
             );
             const low = items.filter(i => num(i.quantity) < (num(i.min_threshold) || 10));
+            const stockDaily = dayBuckets(from, to, () => ({ added: 0, removed: 0 }));
+            for (const m of moves) {
+                const b = stockDaily.get(istDay(m.created_at) || '');
+                if (!b) continue;
+                if (str(m.action) === 'add') b.added += num(m.quantity_change);
+                else if (str(m.action) === 'remove') b.removed += Math.abs(num(m.quantity_change));
+            }
             return {
+                daily: Array.from(stockDaily.values()),
                 items: items.length,
                 low_stock: low.length,
                 low_stock_items: low.slice(0, 8).map(i => ({ name: str(i.name), quantity: num(i.quantity), min: num(i.min_threshold) || 10 })),
@@ -436,16 +508,31 @@ export async function GET(request: NextRequest) {
         section('visitors', async () => {
             const base = () => supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true })
                 .eq('property_id', propertyId).gte('checkin_time', fromTs).lt('checkin_time', toTsExclusive);
-            const [total, inside, out] = await Promise.all([
+            const [total, inside, out, logs] = await Promise.all([
                 count(base()), count(base().is('checkout_time', null)), count(base().not('checkout_time', 'is', null)),
+                rows(supabaseAdmin.from('visitor_logs').select('id, checkin_time')
+                    .eq('property_id', propertyId).gte('checkin_time', fromTs).lt('checkin_time', toTsExclusive)
+                    .order('checkin_time', { ascending: true }).range(0, ROW_CAP - 1)),
             ]);
-            return { total, checked_in: inside, checked_out: out, per_day: dayCount > 0 ? round1(total / dayCount) : 0 };
+            const visitorDaily = dayBuckets(from, to, () => ({ visitors: 0 }));
+            const byWeekday = Array<number>(7).fill(0);
+            for (const l of logs) {
+                const b = visitorDaily.get(istDay(l.checkin_time) || '');
+                if (b) b.visitors++;
+                const slot = istSlot(l.checkin_time);
+                if (slot) byWeekday[slot.weekday]++;
+            }
+            return {
+                truncated: logs.length >= ROW_CAP,
+                total, checked_in: inside, checked_out: out, per_day: dayCount > 0 ? round1(total / dayCount) : 0,
+                daily: Array.from(visitorDaily.values()), by_weekday: byWeekday,
+            };
         }),
 
         // ── Meeting rooms ────────────────────────────────────────────────────
         section('meeting_rooms', async () => {
             const list = await rows(
-                supabaseAdmin.from('meeting_room_bookings').select('id, status, booking_date, start_time, end_time, meeting_room_id')
+                supabaseAdmin.from('meeting_room_bookings').select('id, status, booking_date, start_time, end_time, meeting_room_id, meeting_room:meeting_rooms(name)')
                     .eq('property_id', propertyId)
                     .gte('booking_date', from).lte('booking_date', to).range(0, ROW_CAP - 1),
             );
@@ -458,7 +545,21 @@ export async function GET(request: NextRequest) {
                 const d = mins(str(b.end_time)) - mins(str(b.start_time));
                 return s + (d > 0 ? d / 60 : 0);
             }, 0);
+            const roomDaily = dayBuckets(from, to, () => ({ bookings: 0, hours: 0 }));
+            const byRoom = new Map<string, { name: string; bookings: number; hours: number }>();
+            for (const b of confirmed) {
+                const d = mins(str(b.end_time)) - mins(str(b.start_time));
+                const h = d > 0 ? d / 60 : 0;
+                const day = roomDaily.get(str(b.booking_date));
+                if (day) { day.bookings++; day.hours += h; }
+                const k = str(b.meeting_room_id) || 'unknown';
+                const e = byRoom.get(k) || { name: str(rel(b.meeting_room)?.name) || 'Room', bookings: 0, hours: 0 };
+                e.bookings++; e.hours += h;
+                byRoom.set(k, e);
+            }
             return {
+                daily: Array.from(roomDaily.values()).map(d => ({ ...d, hours: round1(d.hours) })),
+                by_room: Array.from(byRoom.values()).map(r => ({ ...r, hours: round1(r.hours) })).sort((a, b) => b.hours - a.hours),
                 rooms: roomsCount, bookings: list.length, confirmed: confirmed.length,
                 cancelled: list.filter(b => str(b.status) === 'cancelled').length,
                 hours_booked: round1(hours),
