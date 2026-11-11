@@ -1662,15 +1662,7 @@ const OrgAdminDashboard = () => {
                                     <AppUsageReport orgId={org.id} />
                                 ) : reportsView === 'overview' ? (
                                     selectedPropertyId === 'all' ? (
-                                        <div className="bg-white rounded-2xl border border-border shadow-sm p-12 flex flex-col items-center justify-center text-center">
-                                            <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
-                                                <FileBarChart className="w-8 h-8 text-primary" />
-                                            </div>
-                                            <h3 className="text-xl font-black text-slate-900 mb-2">choose property to view its report</h3>
-                                            <p className="text-sm text-slate-500 max-w-sm">
-                                                select a specific property from the <strong>property selector</strong> in the top header to see every service and module for it in one report.
-                                            </p>
-                                        </div>
+                                        <PropertyOverviewReport orgId={org.id} propertyName="all properties" />
                                     ) : (
                                         <PropertyOverviewReport propertyId={selectedPropertyId} propertyName={activeProperty?.name} />
                                     )

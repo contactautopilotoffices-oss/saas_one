@@ -25,8 +25,15 @@ import { jsPDF } from 'jspdf';
 type Count = { name: string; count: number };
 type Section<T> = ({ available: true; truncated?: boolean } & T) | { available: false; reason: string };
 
+type MetricUnit = 'pct' | 'count' | 'inr' | 'hours' | 'units' | 'days';
+interface ComparativeMetric { key: string; label: string; module: string; unit: MetricUnit; higherIsBetter: boolean }
+
 interface Report {
+    scope: 'property' | 'organization';
     property: { id: string; name: string; code: string | null; address: string | null; city: string | null; is_active: boolean | null };
+    properties: { id: string; name: string; city: string | null }[];
+    /** Per-property figures, only in organisation scope. */
+    comparative: { metrics: ComparativeMetric[]; values: Record<string, Record<string, number | null>> } | null;
     range: { from: string; to: string; days: number };
     generated_at: string;
     sections: {
@@ -382,8 +389,26 @@ function buildFindings(r: Report): Finding[] {
     if (s.audit.available && s.audit.missing > 0) push('bad', 'Audit', `${n0.format(s.audit.missing)} statutory audit item${s.audit.missing === 1 ? ' is' : 's are'} missing.`);
     if (s.hr_tickets.available && s.hr_tickets.escalated > 0) push('bad', 'HR', `${n0.format(s.hr_tickets.escalated)} HR grievance${s.hr_tickets.escalated === 1 ? '' : 's'} escalated.`);
 
+    // Organisation scope: where properties differ most on a rate, name the leader and the laggard.
+    if (r.comparative && r.properties.length > 1) {
+        const nameOf = (id: string) => r.properties.find(p => p.id === id)?.name || id;
+        const spreads = r.comparative.metrics
+            .filter(m => m.unit === 'pct')
+            .map(m => ({ m, rk: rankMetric(m, r.properties, r.comparative!.values) }))
+            .filter(x => x.rk.spread >= 15)
+            .sort((a, b) => b.rk.spread - a.rk.spread)
+            .slice(0, 3);
+        for (const { m, rk } of spreads) {
+            const best = Array.from(rk.best)[0];
+            const worst = Array.from(rk.worst)[0];
+            const bv = r.comparative.values[best]?.[m.key] ?? null;
+            const wv = r.comparative.values[worst]?.[m.key] ?? null;
+            push('warn', m.module, `${m.label} ranges from ${fmtMetric(wv, m.unit)} at ${nameOf(worst)} to ${fmtMetric(bv, m.unit)} at ${nameOf(best)}.`);
+        }
+    }
+
     const order = { bad: 0, warn: 1, good: 2, info: 3 };
-    return out.sort((a, b) => order[a.level] - order[b.level]).slice(0, 12);
+    return out.sort((a, b) => order[a.level] - order[b.level]).slice(0, 14);
 }
 
 function buildScorecard(r: Report): { name: string; value: number; detail: string }[] {
@@ -406,6 +431,149 @@ function buildScorecard(r: Report): { name: string; value: number; detail: strin
     return rows;
 }
 
+// ── property comparison (organisation scope) ────────────────────────────────
+
+function fmtMetric(v: number | null, unit: MetricUnit): string {
+    if (v === null || v === undefined) return 'n/a';
+    switch (unit) {
+        case 'pct': return `${n1.format(v)}%`;
+        case 'inr': return inr.format(v);
+        case 'hours': return fmtHours(v);
+        case 'days': return `${n0.format(v)} d`;
+        default: return n0.format(v);
+    }
+}
+
+type Standing = { id: string; name: string; leads: number; lags: number; scored: number };
+
+/** For each metric, which properties are best and worst; ties share the place. Needs at least two values to rank. */
+function rankMetric(metric: ComparativeMetric, properties: { id: string }[], values: Record<string, Record<string, number | null>>) {
+    const vals = properties.map(p => ({ id: p.id, v: values[p.id]?.[metric.key] ?? null })).filter(x => x.v !== null) as { id: string; v: number }[];
+    if (vals.length < 2) return { best: new Set<string>(), worst: new Set<string>(), spread: 0, vals };
+    const max = Math.max(...vals.map(x => x.v));
+    const min = Math.min(...vals.map(x => x.v));
+    if (max === min) return { best: new Set<string>(), worst: new Set<string>(), spread: 0, vals };
+    const bestV = metric.higherIsBetter ? max : min;
+    const worstV = metric.higherIsBetter ? min : max;
+    return {
+        best: new Set(vals.filter(x => x.v === bestV).map(x => x.id)),
+        worst: new Set(vals.filter(x => x.v === worstV).map(x => x.id)),
+        spread: max - min,
+        vals,
+    };
+}
+
+function buildStandings(properties: { id: string; name: string }[], comparative: NonNullable<Report['comparative']>): Standing[] {
+    const st: Standing[] = properties.map(p => ({ id: p.id, name: p.name, leads: 0, lags: 0, scored: 0 }));
+    for (const m of comparative.metrics) {
+        const r = rankMetric(m, properties, comparative.values);
+        for (const s of st) {
+            if (r.vals.some(x => x.id === s.id)) s.scored++;
+            if (r.best.has(s.id)) s.leads++;
+            if (r.worst.has(s.id)) s.lags++;
+        }
+    }
+    return st.sort((a, b) => b.leads - a.leads || a.lags - b.lags);
+}
+
+function PropertyComparison({ properties, comparative }: { properties: { id: string; name: string }[]; comparative: NonNullable<Report['comparative']> }) {
+    const [moduleFilter, setModuleFilter] = useState<string>('all');
+    const standings = useMemo(() => buildStandings(properties, comparative), [properties, comparative]);
+    const modules = useMemo(() => Array.from(new Set(comparative.metrics.map(m => m.module))), [comparative]);
+    const metrics = moduleFilter === 'all' ? comparative.metrics : comparative.metrics.filter(m => m.module === moduleFilter);
+    const ranked = useMemo(() => metrics.map(m => ({ m, r: rankMetric(m, properties, comparative.values) })), [metrics, properties, comparative]);
+    const nameOf = (id: string) => properties.find(p => p.id === id)?.name || id;
+
+    // Leader per module: the first metric of each module is its headline figure.
+    const leaders = modules.map(mod => {
+        const m = comparative.metrics.find(x => x.module === mod)!;
+        const r = rankMetric(m, properties, comparative.values);
+        const best = Array.from(r.best)[0];
+        const worst = Array.from(r.worst)[0];
+        return { module: mod, metric: m, best: best ? { name: nameOf(best), value: comparative.values[best]?.[m.key] ?? null } : null, worst: worst ? { name: nameOf(worst), value: comparative.values[worst]?.[m.key] ?? null } : null };
+    }).filter(l => l.best);
+
+    return (
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            <header className="flex items-center gap-2 mb-1">
+                <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center"><Building2 className="w-4 h-4 text-slate-700" /></div>
+                <h3 className="text-sm font-black text-slate-900">Property comparison</h3>
+            </header>
+            <p className="text-[11px] text-slate-500 mb-4">Which property does better in which module. A property leads a measure when it has the best figure among those that report it; ties share the lead.</p>
+
+            <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
+                <div className="xl:col-span-2">
+                    <ChartTitle note="ranking">Measures led by each property</ChartTitle>
+                    <Ranking rows={standings.map(s => ({ name: s.name, count: s.leads }))} color={C.blue} height={Math.max(120, standings.length * 28 + 8)} />
+                    <ul className="mt-2 grid grid-cols-1 gap-1">
+                        {standings.map(s => (
+                            <li key={s.id} className="flex items-center justify-between text-[11px] text-slate-600 gap-2">
+                                <span className="truncate">{s.name}</span>
+                                <span className="shrink-0 tabular-nums"><span className="font-bold text-emerald-700">{s.leads} lead</span> · <span className="font-bold text-red-700">{s.lags} lag</span> · {s.scored} measured</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+                <div className="xl:col-span-3">
+                    <ChartTitle note="headline measure per module">Leaders and laggards by module</ChartTitle>
+                    <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-1.5">
+                        {leaders.map(l => (
+                            <li key={l.module} className="text-xs flex items-baseline gap-2 min-w-0">
+                                <span className="w-28 shrink-0 font-bold text-slate-900 truncate">{l.module}</span>
+                                <span className="min-w-0 truncate text-slate-700">
+                                    <span className="text-emerald-700 font-bold">{l.best!.name}</span> {fmtMetric(l.best!.value, l.metric.unit)}
+                                    {l.worst && <span className="text-slate-400"> · lowest <span className="text-red-700 font-bold">{l.worst.name}</span> {fmtMetric(l.worst.value, l.metric.unit)}</span>}
+                                </span>
+                            </li>
+                        ))}
+                        {leaders.length === 0 && <li className="text-xs text-slate-400 italic">no measure has figures for two or more properties yet</li>}
+                    </ul>
+                </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+                <ChartTitle note="green leads, red lags, grey in between">Module scorecard by property</ChartTitle>
+                <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 bg-white" aria-label="Filter by module">
+                    <option value="all">All modules</option>
+                    {modules.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+            </div>
+            <div className="overflow-x-auto -mx-1 px-1">
+                <table className="min-w-full text-[11px] border-separate border-spacing-y-1">
+                    <thead>
+                        <tr>
+                            <th className="text-left font-bold text-slate-400 uppercase tracking-wide pr-3 py-1 whitespace-nowrap sticky left-0 bg-white">Measure</th>
+                            {properties.map(p => <th key={p.id} className="text-right font-bold text-slate-700 px-2 py-1 whitespace-nowrap">{p.name}</th>)}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {ranked.map(({ m, r }, i) => {
+                            const firstOfModule = i === 0 || ranked[i - 1].m.module !== m.module;
+                            return (
+                                <React.Fragment key={m.key}>
+                                    {firstOfModule && moduleFilter === 'all' && (
+                                        <tr><td colSpan={properties.length + 1} className="pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400 sticky left-0 bg-white">{m.module}</td></tr>
+                                    )}
+                                    <tr>
+                                        <td className="pr-3 py-0.5 text-slate-700 whitespace-nowrap sticky left-0 bg-white">
+                                            {m.label}<span className="text-slate-400"> {m.higherIsBetter ? '↑ better' : '↓ better'}</span>
+                                        </td>
+                                        {properties.map(p => {
+                                            const v = comparative.values[p.id]?.[m.key] ?? null;
+                                            const cls = v === null ? 'text-slate-300 bg-slate-50' : r.best.has(p.id) ? 'bg-emerald-50 text-emerald-800 font-bold' : r.worst.has(p.id) ? 'bg-red-50 text-red-800 font-bold' : 'bg-slate-50 text-slate-700';
+                                            return <td key={p.id} className={`px-2 py-1 text-right tabular-nums rounded-md ${cls}`}>{fmtMetric(v, m.unit)}</td>;
+                                        })}
+                                    </tr>
+                                </React.Fragment>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    );
+}
+
 const LEVEL_ICON: Record<Finding['level'], { icon: React.ElementType; cls: string }> = {
     bad: { icon: AlertCircle, cls: 'text-red-600' },
     warn: { icon: AlertTriangle, cls: 'text-amber-600' },
@@ -416,12 +584,15 @@ const LEVEL_ICON: Record<Finding['level'], { icon: React.ElementType; cls: strin
 // ── report ───────────────────────────────────────────────────────────────────
 
 interface Props {
-    propertyId: string;
-    /** Shown while the report loads, before the API returns the property's own name. */
+    /** One property. Leave out and pass `orgId` for the cumulative report across every property. */
+    propertyId?: string;
+    /** Organisation scope: every active property, with a property comparison. */
+    orgId?: string;
+    /** Shown while the report loads, before the API returns the scope's own name. */
     propertyName?: string;
 }
 
-export default function PropertyOverviewReport({ propertyId, propertyName }: Props) {
+export default function PropertyOverviewReport({ propertyId, orgId, propertyName }: Props) {
     const [preset, setPreset] = useState<Preset>('mtd');
     const [custom, setCustom] = useState<{ from: string; to: string }>(() => presetRange('30'));
     const [report, setReport] = useState<Report | null>(null);
@@ -433,11 +604,12 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
     const range = useMemo(() => preset === 'custom' ? custom : presetRange(preset), [preset, custom]);
 
     const load = useCallback(async () => {
-        if (!propertyId) return;
+        if (!propertyId && !orgId) return;
         setIsLoading(true);
         setError(null);
         try {
-            const res = await fetch(`/api/reports/property-overview?propertyId=${propertyId}&from=${range.from}&to=${range.to}`, { cache: 'no-store' });
+            const scope = propertyId ? `propertyId=${propertyId}` : `orgId=${orgId}`;
+            const res = await fetch(`/api/reports/property-overview?${scope}&from=${range.from}&to=${range.to}`, { cache: 'no-store' });
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error || 'Failed to load the property report');
             setReport(data as Report);
@@ -446,7 +618,7 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, range.from, range.to]);
+    }, [propertyId, orgId, range.from, range.to]);
 
     useEffect(() => {
         if (preset === 'custom' && custom.from > custom.to) return;
@@ -546,12 +718,14 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
                                     {/* Inline colour: a global heading rule otherwise paints this dark on the dark banner. */}
                                     <h2 className="text-xl font-black leading-tight" style={{ color: '#ffffff' }}>{report.property.name}</h2>
                                     <p className="text-xs text-slate-300 mt-0.5">
-                                        {[report.property.code, report.property.city, report.property.address].filter(Boolean).join(' · ')}
+                                        {report.scope === 'organization'
+                                            ? `All properties · cumulative across ${report.properties.length} ${report.properties.length === 1 ? 'property' : 'properties'}`
+                                            : [report.property.code, report.property.city, report.property.address].filter(Boolean).join(' · ')}
                                     </p>
                                 </div>
                             </div>
                             <div className="text-right">
-                                <div className="text-[11px] uppercase tracking-wide text-slate-300 font-bold">property report</div>
+                                <div className="text-[11px] uppercase tracking-wide text-slate-300 font-bold">{report.scope === 'organization' ? 'portfolio report' : 'property report'}</div>
                                 <div className="text-sm font-bold">{fmtRange(report.range.from, report.range.to)}</div>
                                 <div className="text-[11px] text-slate-300">{report.range.days} days · generated {new Date(report.generated_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</div>
                             </div>
@@ -608,6 +782,10 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
                         </section>
                     </div>
 
+                    {report.comparative && report.properties.length > 1 && (
+                        <PropertyComparison properties={report.properties} comparative={report.comparative} />
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         {/* Requests */}
                         <ModuleCard icon={Ticket} title="Requests & tickets" section={s.tickets} span={3}>
@@ -640,7 +818,7 @@ export default function PropertyOverviewReport({ propertyId, propertyName }: Pro
                                             <Ranking rows={s.tickets.by_category} />
                                         </div>
                                         <div>
-                                            <ChartTitle note="ranking">By floor</ChartTitle>
+                                            <ChartTitle note="ranking">{report.scope === 'organization' ? 'By property' : 'By floor'}</ChartTitle>
                                             <Ranking rows={s.tickets.by_floor} color={C.violet} />
                                         </div>
                                         <div className="space-y-5">
