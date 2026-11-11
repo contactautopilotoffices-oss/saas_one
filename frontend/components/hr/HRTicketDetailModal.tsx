@@ -874,7 +874,7 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
                 ) : (
                     <div className="flex-1 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden min-h-0">
                         {/* Left Main Section: Context, Attachments & Discussion Thread */}
-                        <div className="flex-1 flex flex-col gap-4 p-3.5 sm:p-6 md:overflow-y-auto min-h-0 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800">
+                        <div className="shrink-0 md:shrink md:flex-1 flex flex-col gap-4 p-3.5 sm:p-6 md:overflow-y-auto md:min-h-0 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800">
                             {/* Badges & Meta Bar */}
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className="px-2.5 py-1 bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20 text-[11px] font-black rounded-lg uppercase tracking-wider">
@@ -933,12 +933,12 @@ export default function HRTicketDetailModal({ isOpen, ticketId, initialTicket, o
 
                                 return (
                                     <div className="p-4 bg-slate-50/70 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/80 rounded-2xl space-y-3 shadow-2xs">
-                                        <div className="flex items-center justify-between text-xs px-0.5">
+                                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs px-0.5">
                                             <span className="uppercase tracking-wider text-[11px] font-black text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                                                <ShieldCheck className="w-4 h-4 text-[#587e85]" />
+                                                <ShieldCheck className="w-4 h-4 text-[#587e85] shrink-0" />
                                                 ESCALATION HIERARCHY & LEVEL OWNERS
                                             </span>
-                                            <span className="text-xs font-black text-[#486b72] dark:text-[#6c9a9e]">
+                                            <span className="text-xs font-black text-[#486b72] dark:text-[#6c9a9e] whitespace-nowrap">
                                                 Level {curLvl} of {maxLvl} Active
                                             </span>
                                         </div>
