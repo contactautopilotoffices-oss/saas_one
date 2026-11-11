@@ -14,6 +14,7 @@ import {
     type ActionContext,
 } from './actions';
 import { registerDomainTools } from './domainTools';
+import { isToolAllowed, type McpToolAccess } from './toolAccess';
 
 /**
  * The FMS MCP tools. Reads are GETs to the FMS's own routes, made as the connected user.
@@ -31,6 +32,12 @@ export type McpContext = {
     scope: UserScope;
     origin: string;      // where FMS routes are called
     supabaseUrl: string;
+    /**
+     * Which tools this person may use (Settings > Claude tools, see toolAccess.ts). Missing means
+     * every tool. A tool outside the list is never registered, so the assistant neither sees it in
+     * tools/list nor can call it.
+     */
+    toolAccess?: McpToolAccess;
     /** Test seams for the write actions. */
     deps?: ActionContext['deps'];
 };
@@ -150,6 +157,16 @@ export function buildMcpServer(ctx: McpContext): McpServer {
         },
     );
 
+    // Per-person tool access: every tool below is registered as usual, then dropped straight away
+    // when it is not on this person's list. Done here, in one place, so domainTools.ts and the
+    // registrations below stay unaware of the setting.
+    const registerAll = server.registerTool.bind(server);
+    server.registerTool = ((name: string, config: unknown, cb: unknown) => {
+        const tool = (registerAll as unknown as (n: string, c: unknown, f: unknown) => { remove(): void })(name, config, cb);
+        if (!isToolAllowed(ctx.toolAccess, name)) tool.remove();
+        return tool;
+    }) as typeof server.registerTool;
+
     server.registerTool(
         'whoami',
         {
@@ -167,6 +184,9 @@ export function buildMcpServer(ctx: McpContext): McpServer {
                 user: { id: ctx.caller.userId, email: ctx.caller.email },
                 organisations: ctx.scope.orgs,
                 properties: ctx.scope.properties,
+                tool_access: ctx.toolAccess?.mode === 'selected'
+                    ? 'Limited: an FMS admin chose which tools this connection may use. The tool list shows exactly those. If something the user asks for needs a tool that is not listed, say an FMS admin can allow it under Settings > Claude tools.'
+                    : 'All tools',
                 note: hasAnyMembership(ctx.scope) ? undefined : 'No active memberships: this account cannot read any FMS data.',
             }));
         },

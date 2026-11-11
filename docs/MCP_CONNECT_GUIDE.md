@@ -26,6 +26,9 @@ If your FMS access is removed, Claude's access stops with it.
 
 **To disconnect:** remove the connector in Claude's settings.
 
+**If Claude says a tool is not available:** an FMS admin may have limited which tools Claude can
+use for you (see "Limiting tools per person" below). Ask them to allow it under Settings > Claude tools.
+
 **Claude Code / desktop config:** `claude mcp add --transport http autopilot-fms https://<your FMS domain>/api/mcp`
 then sign in when asked.
 
@@ -33,7 +36,9 @@ then sign in when asked.
 
 1. **Apply the migrations, in order:** `supabase/migrations/20261105000001_mcp_call_log.sql` (call log
    and used codes), then `supabase/migrations/20261106000001_mcp_action_limits.sql` (the per-person
-   limits and duplicate check). Without the second one, every create action is refused.
+   limits and duplicate check), then `supabase/migrations/20261110000001_mcp_tool_access.sql` (which
+   tools each person may use). Without the second one, every create action is refused. Without the
+   third, everyone keeps every tool and the Claude tools screen cannot save.
 2. **Supabase dashboard → Authentication → OAuth Server:**
    - Turn on **OAuth 2.1 server**.
    - Turn on **Dynamic client registration** (Claude registers itself).
@@ -50,6 +55,37 @@ then sign in when asked.
      separated. Default: `claude.ai, claude.com`, plus localhost.
    - `MCP_RATE_LIMIT_PER_MINUTE`: default 60 per user.
 6. Deploy, then connect one account and check that `mcp_call_log` gets rows.
+
+## Limiting tools per person (Settings > Claude tools)
+
+By default a connected person gets every tool. An organisation admin (org super admin, org admin,
+owner or master admin) can narrow that, person by person:
+
+1. Open **Settings** in the FMS and choose the **Claude tools** tab.
+2. Pick a person on the left. Choose **All tools** or **Only the tools ticked below**, tick the
+   tools, and click **Save**. Tools are grouped under the same names as the sidebar and dashboard
+   tabs (Tickets, HR & Grievances, Business Development, Payment Tracker, Inventory and so on),
+   with a badge saying whether each one reads, creates or changes data. "Tick all read tools" gives a read-only connection in one click.
+3. Claude gets the new list on its next request. Reconnecting the FMS connector in Claude
+   refreshes it at once.
+
+Rules the screen applies, which the server applies too:
+
+- `whoami` is always on: it only describes the connected person, and Claude's instructions start with it.
+- `confirm_action` is switched on automatically when any create or change tool is ticked, because
+  those tools only preview. With no create or change tool ticked, nothing can create or change data.
+- Limiting tools never grants anything. Every tool still runs as the person through the app's own
+  routes, so their role and property checks are unchanged. A person with no saved setting, or set
+  to "All tools", behaves exactly as before this screen existed.
+- A tool outside the list is not registered for that person's requests: Claude does not see it in
+  the tool list and a call to it is refused as "not found". `whoami` tells Claude the connection is
+  limited and what to say to the user.
+- One setting per person, across organisations. If someone belongs to two organisations, the
+  admin who saved last decides. Every change is kept in `mcp_tool_access_history` (who, before, after).
+
+Code: `backend/lib/mcp/toolCatalog.ts` (the list the screen shows; a test checks it matches the
+registered tools), `backend/lib/mcp/toolAccess.ts` (reads the setting), `app/api/mcp/tool-access/route.ts`
+(the screen's API), `frontend/components/mcp/McpToolAccessSettings.tsx` (the screen).
 
 ## How it works
 
