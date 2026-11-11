@@ -7,10 +7,11 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, PanelLeftClose, PanelLeftOpen, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
+import PanelToggle from '@/frontend/components/ui/PanelToggle';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import TabLoading from './TabLoading';
 import { isRequestsView, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
@@ -250,10 +251,8 @@ export default function TechDashboard() {
                 <div className="flex shrink-0 flex-col items-center gap-1 p-5 pb-3">
                     <img src="/autopilot-logo-new.png" alt="Autopilot" className={`h-10 w-auto object-contain ${hideCollapsed}`} />
                     <p className={`text-[10px] font-black uppercase tracking-[0.2em] text-text-tertiary ${hideCollapsed}`}>Tech Console</p>
-                    <button type="button" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!sidebarCollapsed}
-                        className={`hidden h-9 w-9 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-muted hover:text-text-primary lg:flex ${sidebarCollapsed ? '' : 'lg:absolute lg:right-3 lg:top-3'}`}>
-                        {sidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
-                    </button>
+                    <PanelToggle collapsed={sidebarCollapsed} onToggle={toggleSidebar} label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                        className={`hidden lg:flex ${sidebarCollapsed ? '' : 'lg:absolute lg:right-3 lg:top-3'}`} />
                 </div>
                 <nav className={`custom-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 ${sidebarCollapsed ? 'lg:px-3' : ''}`} aria-label="Tech console">
                     {/* Quick Actions: the Super Admin console's "New" ticket button (OrgAdminDashboard), same look */}

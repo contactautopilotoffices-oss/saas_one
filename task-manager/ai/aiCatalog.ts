@@ -17,7 +17,9 @@ export type AiJob =
     // Owner 2026-11-03: the AI fix for flagged sheet rows (HR approves every change)
     | 'candidate_fix'
     // Owner 2026-11-06: "AI suggested keywords" under the Candidate Search bar
-    | 'candidate_suggest';
+    | 'candidate_suggest'
+    // Owner 2026-11-11: reading details (education, skills, employers) out of uploaded resumes
+    | 'candidate_extract';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech';
@@ -71,6 +73,8 @@ const CANDIDATE_DEFAULT = ['anthropic:claude-opus-5-5'] as const;
 const CANDIDATE_FIX_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:claude-sonnet-5-5'] as const;
 /** Keyword suggestions: HR picks what to use and code drops terms not on any record, and they show while typing: fast tier. */
 const CANDIDATE_SUGGEST_DEFAULT = ['anthropic:claude-haiku-5-5'] as const;
+// Owner 2026-11-11: fills only empty fields and HR reviews everything, so the fast tier first (doctrine L10)
+const CANDIDATE_EXTRACT_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:claude-sonnet-5-5'] as const;
 
 export const AI_JOBS: readonly JobInfo[] = [
     { key: 'wa_understand', label: 'Understanding the message', hint: 'Reads what the person wants (the step that decides actions)', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
@@ -86,7 +90,8 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'candidate_parse', label: 'Reading the search', hint: 'Turns an HR request or job description into filters (experience, notice, salary, location)', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
     { key: 'candidate_rank', label: 'Ranking candidates', hint: 'Scores the shortlisted records against the request and explains each pick', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_DEFAULT },
     { key: 'candidate_fix', label: 'Fixing flagged rows', hint: 'Suggests corrected values for sheet rows with problems; HR approves each change', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_FIX_DEFAULT },
-    { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box; only terms found on your records are shown', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
+    { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
+    { key: 'candidate_extract', label: 'Reading resumes', hint: 'Reads education, industry, skills and employers out of each uploaded resume into the candidate\'s empty fields; one call per resume. A scanned PDF is typed out first by the Claude model in this list', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_EXTRACT_DEFAULT },
 ];
 
 export const jobInfo = (job: AiJob): JobInfo | undefined => AI_JOBS.find(j => j.key === job);

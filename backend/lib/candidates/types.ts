@@ -8,6 +8,9 @@
  *   sheet     = one uploaded Excel file (re-uploading the same file name asks Replace or Merge)
  */
 
+import type { InferableField } from "./infer";
+import type { SnippetPart } from "./snippet";
+
 export const RECORD_STATUSES = [
   "new",
   "in_process",
@@ -76,6 +79,30 @@ export interface CandidateRecord {
   deletedAt: string | null;
   /** The fields resumes will fill (migration 20261107000001). Only the filter panel loads them; absent before the migration. */
   extras?: CandidateExtras;
+  /** A stored resume is linked to this candidate (migration 20261110000001). Absent before that migration. */
+  hasResume?: boolean;
+  /** The lines of the resume around the search keywords, keywords marked (filter search with keywords only). */
+  resumeSnippet?: SnippetPart[];
+  /**
+   * Fields whose value was worked out from the employers the resume lists, not stated on it (owner 2026-11-11,
+   * migration 20261111000004). The screens mark them; a value HR types in is no longer listed.
+   */
+  inferred?: InferableField[];
+}
+
+/** `candidate_source` of a candidate the system created from an uploaded resume (phase 4). */
+export const RESUME_SOURCE = "Resume";
+
+/** Where a record came from: a sheet, an uploaded resume, or typed in by someone. */
+export type RecordOrigin = "sheet" | "resume" | "manual";
+export function recordOrigin(record: Pick<CandidateRecord, "sheetId" | "sheetName" | "candidateSource">): RecordOrigin {
+  if (record.sheetId || record.sheetName) return "sheet";
+  return record.candidateSource === RESUME_SOURCE ? "resume" : "manual";
+}
+/** The sheet's name, "From resume" or "Added manually" (owner 2026-11-11). */
+export function originLabel(record: Pick<CandidateRecord, "sheetId" | "sheetName" | "candidateSource">): string {
+  const origin = recordOrigin(record);
+  return origin === "sheet" ? record.sheetName ?? "A sheet" : origin === "resume" ? "From resume" : "Added manually";
 }
 
 /** Owner 2026-11-07: filled from resumes. A qualification of "none" means the CV shows none; null means not known. */
@@ -91,6 +118,18 @@ export interface CandidateExtras {
   careerBreak: boolean | null;
   defenceBackground: "army" | "navy" | "air_force" | "paramilitary" | null;
   servingNotice: boolean | null;
+  /** Phase 4 (owner 2026-11-11): read from the resume by the model; empty before migration 20261111000002. */
+  skills: string[];
+  pastCompanies: PastCompany[];
+  resumeSummary: string | null;
+}
+
+/** One employer read from a resume (phase 4). Dates as YYYY-MM or YYYY when the resume gives them. */
+export interface PastCompany {
+  company: string;
+  designation: string | null;
+  from: string | null;
+  to: string | null;
 }
 
 /** Body of POST /api/candidates and PATCH /api/candidates/[id]. On PATCH every field is optional. */
@@ -111,6 +150,16 @@ export interface CandidateInput {
   expectedInhand?: number | null;
   remark?: string | null;
   status?: RecordStatus;
+  // What a resume fills (owner 2026-11-11: HR can correct these by hand). Person fields, shared by all their records.
+  industry?: string | null;
+  ugQualification?: string | null;
+  pgQualification?: string | null;
+  ppgQualification?: string | null;
+  institute?: string | null;
+  educationType?: CandidateExtras["educationType"];
+  degreeYear?: number | null;
+  skills?: string[];
+  preferredLocations?: string[];
 }
 
 export interface CandidateListResponse {
@@ -167,6 +216,8 @@ export interface ImportSummary {
   rowsAutoFixed: number;
   newCandidates: number;
   matchedCandidates: number;
+  /** Candidates with a record in this sheet who have a stored resume (phase 2); null before migration 20261110000001. */
+  candidatesWithResume: number | null;
 }
 
 /** 409 from POST /api/candidates/sheets when a live sheet with the same file name exists and no mode was sent. */
@@ -331,6 +382,129 @@ export interface SearchResponse {
 }
 
 /** POST /api/candidates/reindex: the Sheets page's quiet nudge to the background worker (always 200). */
+// Resume files (owner 2026-11-07, phase 1) --------------------------------------------------------------------------------
+
+/** Phase 2 (owner 2026-11-10): has the file's text been read yet, and how was it linked to a candidate. */
+/** 'scan' / 'scanning' (owner 2026-11-11): a PDF with no text layer, waiting for or being typed out by the model. */
+export type ResumeTextStatus = "pending" | "working" | "ready" | "unreadable" | "failed" | "scan" | "scanning";
+export type ResumeMatchReason = "email" | "phone" | "both" | "manual" | "detached" | "resume";
+/** Phase 4: has the model read the details out of the file yet. */
+export type ResumeExtractStatus = "pending" | "working" | "done" | "failed" | "skipped";
+
+export const EXTRACT_STATUS_LABELS: Record<ResumeExtractStatus, string> = {
+  pending: "Details soon",
+  working: "Reading details",
+  done: "Details read",
+  failed: "Details failed",
+  skipped: "",
+};
+
+export const TEXT_STATUS_LABELS: Record<ResumeTextStatus, string> = {
+  pending: "Reading soon",
+  working: "Reading",
+  ready: "Read",
+  unreadable: "Couldn't read",
+  failed: "Couldn't read",
+  scan: "Scan: reading soon",
+  scanning: "Reading the scan",
+};
+
+export const MATCH_REASON_LABELS: Record<ResumeMatchReason, string> = {
+  email: "Email",
+  phone: "Phone",
+  both: "Email and phone",
+  manual: "Attached by HR",
+  detached: "Detached by HR",
+  resume: "Candidate created from this resume",
+};
+
+/** One stored resume file (GET /api/candidates/resumes). */
+export interface ResumeFile {
+  id: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  /** The file's modified date on the laptop: for a file in Downloads, the day it was downloaded. Null when unknown. */
+  downloadedAt: string | null;
+  /** The laptop name HR typed when uploading, if any. */
+  deviceLabel: string | null;
+  folderPath: string | null;
+  uploadedByEmail: string | null;
+  createdAt: string;
+  /** Read, found not to be a resume, and removed (owner 2026-11-10): no bytes any more; textError says why. */
+  removed: boolean;
+  /** Read and kept as another document (a portfolio): never matched, out of the Excel; textError says why. */
+  other: boolean;
+  textStatus: ResumeTextStatus;
+  extractStatus: ResumeExtractStatus;
+  extractError: string | null;
+  /** Why the text could not be read, in HR's words. */
+  textError: string | null;
+  /** The candidate this file belongs to, once matched or attached. */
+  candidateId: string | null;
+  candidateName: string | null;
+  matchReason: ResumeMatchReason | null;
+}
+
+export interface ResumeFilesResponse {
+  files: ResumeFile[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ResumeSummary {
+  total: number;
+  totalBytes: number;
+  /** Per laptop: files, bytes, oldest / newest download, and when it last uploaded (phase 3's "since last time"). */
+  devices: { label: string | null; count: number; bytes: number; oldest: string | null; newest: string | null; lastUploadedAt: string | null }[];
+  oldest: string | null;
+  newest: string | null;
+  /** Phase 2: linked to a candidate / not linked / text still being read / text could not be read. */
+  linked: number;
+  unlinked: number;
+  textPending: number;
+  /** The part of textPending that is scanned PDFs waiting for the model to type them out. */
+  scanPending: number;
+  unreadable: number;
+  /** Files read and removed as not resumes (not counted in `total`). */
+  rejected: number;
+  /** Files kept as other documents, e.g. portfolios (not counted in `total`). */
+  other: number;
+  /** Phase 4: resumes whose details the model has not read yet. */
+  extractPending: number;
+  /** The signed-in person's name, which their uploads are filed under (set by the summary route, owner 2026-11-11). */
+  uploader?: string | null;
+}
+
+/** One answer per file sent to POST /api/candidates/resumes (prepare), in the order sent. */
+export interface PreparedUpload {
+  index: number;
+  /** upload: send the bytes to signedUrl; duplicate: already stored (any laptop); rejected: see reason. */
+  outcome: "upload" | "duplicate" | "rejected";
+  id?: string;
+  signedUrl?: string;
+  /** The stored file type, from the extension; the browser sends the bytes with it. */
+  contentType?: string;
+  reason?: string;
+}
+
+export interface ResumeConfirmResponse {
+  ready: string[];
+  /** Ids whose bytes never reached storage (the browser retries those). */
+  missing: string[];
+}
+
+export interface ResumeLinksResponse {
+  links: { id: string; url: string; fileName: string }[];
+}
+
+export interface ResumeManifestResponse {
+  files: { id: string; fileName: string; fileSize: number; downloadedAt: string | null }[];
+  /** True when more files matched than the export limit. */
+  truncated: boolean;
+}
+
 export interface ReindexResponse {
   indexed: number;
   /** Still waiting (counted up to 500; -1 when unknown). */

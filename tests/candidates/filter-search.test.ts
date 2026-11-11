@@ -15,7 +15,8 @@ import {
   blankFields, describeFilters, EMPTY_FILTERS, filterChips, hasActiveFilter, hasBlankableFilter, noticeBucketsUpTo, salaryRupees, sourcedSince, specFromFilters,
   type SearchFilters,
 } from "../../backend/lib/candidates/filters";
-import { clearSuggestCache, parseSuggestReply, suggestKeywords, SUGGEST_JSON_SCHEMA, SUGGEST_SYSTEM } from "../../backend/lib/candidates/keyword-suggest";
+import { SUGGEST_COUNT_MAX, SUGGEST_MAX } from "../../backend/lib/candidates/config";
+import { clearSuggestCache, countKeywords, parseSuggestReply, suggestKeywords, SUGGEST_JSON_SCHEMA, SUGGEST_SYSTEM } from "../../backend/lib/candidates/keyword-suggest";
 import type { JsonCaller } from "../../backend/lib/candidates/models";
 import { createRecord } from "../../backend/lib/candidates/records";
 import { rankFiltered } from "../../backend/lib/candidates/search";
@@ -181,11 +182,49 @@ describe("filter panel against the real schema", () => {
   describe("keyword suggestions", () => {
     beforeEach(() => clearSuggestCache());
 
-    it("keeps only terms found on the records and leaves out what is already searched", async () => {
-      const caller: JsonCaller = async () => ({ text: JSON.stringify({ terms: ["Real Estate", "Quantum Physics", "Leasing", "COMMERCIAL"] }), model: "m" });
+    // Owner 2026-11-11: the terms are shown as soon as the model answers; none is dropped for not being on a record.
+    it("offers every term the model proposes, on the records or not, uncounted, and leaves out what is already searched", async () => {
+      const caller: JsonCaller = async () => ({ text: JSON.stringify({ terms: ["Real Estate", "Quantum Physics", "Leasing", "COMMERCIAL", "real estate"] }), model: "m" });
       const res = await suggestKeywords(client, ORG, ["leasing"], caller);
-      assert.deepEqual(res.map((s) => s.text).sort(), ["COMMERCIAL", "Real Estate"]);
-      assert.ok(res.every((s) => s.count > 0));
+      assert.deepEqual(res.map((s) => s.text), ["real estate", "Quantum Physics", "COMMERCIAL"]);
+      assert.ok(res.every((s) => s.count === null));
+    });
+
+    it("offers at most SUGGEST_MAX terms", async () => {
+      const caller: JsonCaller = async () => ({ text: JSON.stringify({ terms: Array.from({ length: 16 }, (_, i) => `Term ${i}`) }), model: "m" });
+      assert.equal((await suggestKeywords(client, ORG, ["bms"], caller)).length, Math.min(16, SUGGEST_MAX));
+    });
+
+    it("the model's terms are shared between organisations: they come from the keywords alone", async () => {
+      let calls = 0;
+      const caller: JsonCaller = async () => { calls += 1; return { text: '{"terms": ["Coworking"]}', model: "m" }; };
+      await suggestKeywords(client, ORG, ["leasing"], caller);
+      const other = await suggestKeywords(client, OTHER_ORG, ["leasing"], caller);
+      assert.equal(calls, 1);
+      assert.deepEqual(other, [{ text: "Coworking", count: null }]);
+    });
+
+    it("counts each term afterwards, exactly as the list would match it as the only keyword", async () => {
+      const terms = ["Real Estate", "Quantum Physics", "COMMERCIAL"];
+      const counts = await countKeywords(client, ORG, terms);
+      assert.deepEqual(counts.map((c) => c.text), terms);
+      for (const c of counts) {
+        const listed = await filterRecords(client, ORG, f({ keywords: [{ text: c.text, required: true }] }), 1, 50, TODAY);
+        assert.equal(c.count, listed.total, c.text);
+      }
+      const by = new Map(counts.map((c) => [c.text, c.count]));
+      assert.equal(by.get("Quantum Physics"), 0);
+      assert.ok((by.get("Real Estate") ?? 0) > 0);
+    });
+
+    it("counts only this organisation's records, never a phone number or email, and at most SUGGEST_COUNT_MAX terms", async () => {
+      const mine = await countKeywords(client, ORG, ["Real Estate"]);
+      const theirs = await countKeywords(client, OTHER_ORG, ["Real Estate"]);
+      assert.ok((mine[0].count ?? 0) > 0);
+      assert.notEqual(theirs[0].count, mine[0].count);
+      assert.deepEqual((await countKeywords(client, ORG, ["98765 43210", "asha@example.com", " bms ", "BMS"])).map((c) => c.text), ["BMS"]);
+      assert.equal((await countKeywords(client, ORG, Array.from({ length: 40 }, (_, i) => `Term ${i}`))).length, SUGGEST_COUNT_MAX);
+      assert.deepEqual(await countKeywords(client, ORG, []), []);
     });
 
     it("asks once per keyword set", async () => {

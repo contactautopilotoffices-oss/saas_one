@@ -144,7 +144,8 @@ export interface ImportArgs {
   existing: SheetRowDb | null;
 }
 
-export interface ImportResult extends Omit<ImportSummary, "sheet"> {
+/** The route adds `sheet` and, after matching resumes, `candidatesWithResume`. */
+export interface ImportResult extends Omit<ImportSummary, "sheet" | "candidatesWithResume"> {
   sheetId: string;
 }
 

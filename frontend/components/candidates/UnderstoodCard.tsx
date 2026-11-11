@@ -20,8 +20,8 @@ function ChipRow({ title, kind, chips }: { title: string; kind: ChipKind; chips:
     if (!chips.length) return null;
     const { cls, icon: Icon } = CHIP_STYLE[kind];
     return (
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
-            <span className="w-28 shrink-0 pt-1 text-xs font-semibold text-text-secondary">{title}</span>
+        <div className="flex flex-col gap-x-2 gap-y-2 sm:flex-row sm:items-start sm:gap-3">
+            <span className="w-24 shrink-0 pt-1 text-xs font-semibold text-text-secondary">{title}</span>
             <ul className="flex min-w-0 flex-wrap gap-1.5">
                 {chips.map(c => (
                     <li key={c.id} className={`inline-flex max-w-full items-center gap-1.5 rounded-full py-0.5 pl-2.5 pr-1 text-xs font-semibold ${cls}`}>
@@ -59,19 +59,22 @@ export default function UnderstoodCard({ filters, update, preferred, onRemovePre
     const terms: Chip[] = filters.keywords.filter(k => !k.required).map(k => ({ id: k.text, label: k.text, onRemove: () => update({ keywords: filters.keywords.filter(x => x !== k) }) }));
 
     return (
-        <section aria-label="What the search understood" className={`${CARD} p-4 sm:p-6`}>
-            <p className={LABEL}>What the search understood</p>
-            <p className="mt-2 text-sm leading-relaxed text-text-primary">{describeFilters(filters)}</p>
-            <div className="mt-4 space-y-3">
+        <section aria-label="What the search understood" className={`${CARD} px-4 py-3`}>
+            {/* Redesign (owner 2026-11-11): one compact block, so the first results stay on the first screen. */}
+            <p className="text-sm leading-relaxed text-text-primary"><span className={`${LABEL} mr-2`}>What the search understood</span>{describeFilters(filters)}</p>
+            <div className="mt-2.5 space-y-2">
                 <ChipRow title="Must have" kind="must" chips={must} />
                 <ChipRow title="Preferred" kind="prefer" chips={prefer} />
                 <ChipRow title="Search terms" kind="keyword" chips={terms} />
             </div>
-            <p className="mt-4 border-t border-border-subtle pt-3 text-xs text-text-secondary">
-                <Num>{formatCount(total)}</Num> {total === 1 ? 'record' : 'records'} matched the must-haves
-                {comparedCount !== null && <>{' · '}AI compared <Num>{formatCount(comparedCount)}</Num></>}
-                {' · '}{comparedCount !== null ? 'showing top' : 'showing'} <Num>{formatCount(shown)}</Num>
-            </p>
+            {/* The count of an unranked list is the heading above it; this line says what AI did with it. */}
+            {comparedCount !== null && (
+                <p className="mt-3 border-t border-border-subtle pt-2.5 text-xs text-text-secondary">
+                    <Num>{formatCount(total)}</Num> {total === 1 ? 'record' : 'records'} matched the must-haves
+                    {' · '}AI compared <Num>{formatCount(comparedCount)}</Num>
+                    {' · '}showing top <Num>{formatCount(shown)}</Num>
+                </p>
+            )}
         </section>
     );
 }

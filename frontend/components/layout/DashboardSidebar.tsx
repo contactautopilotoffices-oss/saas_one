@@ -9,7 +9,7 @@ import {
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen, Mic, ClipboardCheck
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen, Mic, ClipboardCheck, UserSearch
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -22,10 +22,20 @@ import SignOutModal from '../ui/SignOutModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from '@/frontend/components/dashboard/NotificationBell';
 import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
+import PanelToggle from '@/frontend/components/ui/PanelToggle';
+import ResumeReminderBadge from '@/frontend/components/candidates/ResumeReminderBadge';
+
+/**
+ * Owner 2026-11-09: for these logins a collapsed sidebar is an icon rail (the Tech console's pattern), not hidden.
+ * The dashboard layout reads the same list to leave room for the rail.
+ */
+export const HR_SIDEBAR_ROLES = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
 
 interface DashboardSidebarProps {
     isOpen?: boolean;
     onClose?: () => void;
+    /** Expands the sidebar again from its icon rail (HR logins). */
+    onOpen?: () => void;
     isMobileOpen?: boolean;
     onMobileClose?: () => void;
 }
@@ -33,6 +43,7 @@ interface DashboardSidebarProps {
 export default function DashboardSidebar({
     isOpen = true,
     onClose,
+    onOpen,
     isMobileOpen,
     onMobileClose
 }: DashboardSidebarProps) {
@@ -75,7 +86,8 @@ export default function DashboardSidebar({
     // Finance (Petty Cash + Payment Tracker) now lives in its own Accounts
     // workspace chrome — it is no longer injected into this shared sidebar.
 
-    const NAV_ITEMS = React.useMemo(() => {
+    type NavItem = { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain; beta?: boolean; badge?: 'resumes' };
+    const NAV_ITEMS = React.useMemo((): NavItem[] => {
         const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin' || membership?.org_role === 'org_super_admin';
 
         if (isBDRole) return [];
@@ -93,11 +105,14 @@ export default function DashboardSidebar({
                 // Owner 2026-10-29: the HR team's own Meeting Assistant (separate from Tech's and the Super Admin's)
                 { label: 'Meeting Assistant', href: '/hr-tickets?tab=meeting_assistant', icon: Mic, domain: 'tickets' as const },
                 { label: 'Assessments', href: '/hr-tickets?tab=assessments', icon: ClipboardCheck, domain: 'tickets' as const },
+                // Owner 2026-11-07: Candidate Search (sourcing sheets, filters, resumes) for every HR login, marked beta
+                // The badge (phase 3) reminds this laptop when its resumes have not been uploaded for a week.
+                { label: 'Candidate Search', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, beta: true, badge: 'resumes' },
             ];
         }
 
         const dashPath = '/dashboard';
-        const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
+        const items: NavItem[] = [
             { label: 'Overview', href: dashPath, icon: LayoutDashboard, domain: 'dashboards' as const },
             { label: 'Tickets', href: `${dashPath}?tab=requests`, icon: Ticket, domain: 'tickets' as const },
             { label: 'Flow Map', href: orgId ? `/${orgId}/flow-map` : '/flow-map', icon: GitMerge, domain: 'tickets' as const },
@@ -200,7 +215,12 @@ export default function DashboardSidebar({
     };
 
     // HR roles see Petty Cash and Book Meeting Room under HR OPERATIONS; everyone else under SYSTEM & PERSONAL.
-    const isHrRole = ['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole);
+    const isHrRole = HR_SIDEBAR_ROLES.includes(userRole);
+    // Owner 2026-11-09: the HR logins' collapsed sidebar is an icon rail, like the Tech console's. Desktop only: every
+    // rail class is lg:-prefixed, so the phone drawer is always the full menu. In the rail a link keeps its label for
+    // screen readers (sr-only) and shows it as a tooltip (title).
+    const rail = isHrRole && !isOpen;
+    const hideInRail = rail ? 'lg:hidden' : '';
     const pettyCashAndBookRoomLinks = (
         <>
             <PettyCashNavLink onNavigate={handleLinkClick} />
@@ -209,6 +229,7 @@ export default function DashboardSidebar({
             {(isCreditFreeBookingRole(userRole) || isCreditFreeBookingRole(membership?.org_role)) && (
                 <Link
                     href={`/${orgId}/book-room`}
+                    title={rail ? 'Book Meeting Room' : undefined}
                     onClick={handleLinkClick}
                     className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
                         pathname?.endsWith('/book-room')
@@ -241,27 +262,31 @@ export default function DashboardSidebar({
 
             {/* Sidebar */}
             <aside className={`
-                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-transform duration-300 ease-in-out
-                ${isOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full'}
+                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-[transform,width] duration-300 ease-in-out
+                ${isOpen ? 'lg:translate-x-0' : isHrRole ? 'lg:translate-x-0 lg:w-20' : 'lg:-translate-x-full'}
                 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
                 flex flex-col overflow-hidden shadow-xl lg:shadow-none
             `}>
-                {/* Collapse / Close Button (Desktop & Mobile) */}
+                {/* Collapse / Close Button (Desktop & Mobile). In the HR logins' icon rail it is hidden on desktop and the
+                    same button, pointing right, sits at the top of the rail to expand it again. */}
                 <button
                     type="button"
                     onClick={() => {
                         onClose?.();
                         onMobileClose?.();
                     }}
-                    className="absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group"
+                    className={`absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group ${rail ? 'lg:hidden' : ''}`}
                     title="Collapse Sidebar"
                     aria-label="Collapse Sidebar"
                 >
                     <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
                 </button>
+                {rail && (
+                    <PanelToggle variant="chevron" collapsed onToggle={() => onOpen?.()} label="Expand Sidebar" className="hidden lg:inline-flex mx-auto mt-4" />
+                )}
 
-                <div className="p-6 pb-2 shrink-0">
-                    <div className="flex flex-col items-center gap-1.5 mb-4">
+                <div className={`p-6 pb-2 shrink-0 ${rail ? 'lg:px-3 lg:pt-2' : ''}`}>
+                    <div className={`flex flex-col items-center gap-1.5 mb-4 ${hideInRail}`}>
                         <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
                         <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
                             {(() => {
@@ -285,13 +310,14 @@ export default function DashboardSidebar({
 
                     {!isExternalRole && (
                         <div className="mt-3 space-y-2">
-                            <div className="flex items-center gap-1.5 px-1">
+                            <div className={`flex items-center gap-1.5 px-1 ${hideInRail}`}>
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">
                                     QUICK ACTIONS
                                 </p>
                             </div>
-                            <div className="grid grid-cols-3 gap-2">
+                            {/* In the rail only the first action (raise a request) is kept, like the Tech console's "New" */}
+                            <div className={`grid grid-cols-3 gap-2 ${rail ? 'lg:grid-cols-1 lg:[&>*:not(:first-child)]:hidden' : ''}`}>
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&action=create` : `/${orgId}/hr-tickets?action=create`}
                                     className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[10px] font-bold text-center gap-1 shadow-xs active:scale-95 border border-[#48686e]/40 h-13 min-w-0"
@@ -383,11 +409,11 @@ export default function DashboardSidebar({
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
+                <nav className={`flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2 ${rail ? 'lg:px-3 lg:overflow-x-hidden lg:[&_a]:justify-center lg:[&_a]:px-0 lg:[&_button]:justify-center lg:[&_button]:px-0 lg:[&_a>span]:sr-only lg:[&_button>span]:sr-only' : ''}`}>
                     {/* 1. CORE OPERATIONS / HR OPERATIONS Section (For non-BD roles) */}
                     {!isBDRole && (
                         <>
-                            <div className="flex items-center gap-2 px-2 py-1 mb-1">
+                            <div className={`flex items-center gap-2 px-2 py-1 mb-1 ${hideInRail}`}>
                                 <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
                                     {['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) ? 'HR OPERATIONS' : 'CORE OPERATIONS'}
@@ -414,6 +440,7 @@ export default function DashboardSidebar({
                                 const linkElement = (
                                     <Link
                                         href={item.href}
+                                        title={rail ? item.label : undefined}
                                         onClick={handleLinkClick}
                                         className={`
                                             flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
@@ -425,6 +452,10 @@ export default function DashboardSidebar({
                                     >
                                         <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                                         <span className="truncate">{item.label}</span>
+                                        {item.badge === 'resumes' && orgId && <ResumeReminderBadge orgId={orgId} />}
+                                        {item.beta && (
+                                            <span className={`ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'}`}>Beta</span>
+                                        )}
                                     </Link>
                                 );
 
@@ -485,7 +516,7 @@ export default function DashboardSidebar({
 
                     {/* 3. CRM Section (for BD roles, or when visiting CRM routes) */}
                     {(isCrmRoute || isBDRole) && !showBdChrome && !['hr', 'hr_head', 'property_admin', 'building_admin', 'ops_super_admin'].includes(userRole) && (
-                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
+                        <div className={`${isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'} ${hideInRail}`}>
                             <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
                                 CRM
                             </p>
@@ -519,7 +550,7 @@ export default function DashboardSidebar({
                     {/* 4. SYSTEM & PERSONAL Section (Always below primary role navigation) */}
                     {!isExternalRole && (
                         <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
-                            <div className="flex items-center gap-2 px-2 py-1 mb-2">
+                            <div className={`flex items-center gap-2 px-2 py-1 mb-2 ${hideInRail}`}>
                                 <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
                                     SYSTEM & PERSONAL
@@ -575,6 +606,7 @@ export default function DashboardSidebar({
 
                             <button
                                 type="button"
+                                title={rail ? 'Feedback / Bug' : undefined}
                                 onClick={() => {
                                     setShowFeedbackModal(true);
                                     handleLinkClick();
@@ -587,6 +619,7 @@ export default function DashboardSidebar({
 
                             <Link
                                 href={isCrmRoute ? `/${orgId}/crm/settings` : `/${orgId}/settings`}
+                                title={rail ? 'Settings' : undefined}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
                                     (isCrmRoute
@@ -602,6 +635,7 @@ export default function DashboardSidebar({
 
                             <Link
                                 href={isCrmRoute ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings?tab=profile`}
+                                title={rail ? 'Profile' : undefined}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
                                     (isCrmRoute
@@ -623,7 +657,7 @@ export default function DashboardSidebar({
                     {/* User Profile */}
                     {!showBdChrome && (
                         <div className="px-1.5 py-1">
-                            <div className="flex items-center gap-2.5">
+                            <div className={`flex items-center gap-2.5 ${rail ? 'lg:justify-center' : ''}`} title={rail ? (user?.user_metadata?.full_name || user?.email || undefined) : undefined}>
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
                                     <img
                                         src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
@@ -635,7 +669,7 @@ export default function DashboardSidebar({
                                         {getUserInitials(user?.email || 'User')}
                                     </div>
                                 )}
-                                <div className="flex flex-col flex-1 min-w-0">
+                                <div className={`flex flex-col flex-1 min-w-0 ${hideInRail}`}>
                                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                                         {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'}
                                     </span>
@@ -647,13 +681,15 @@ export default function DashboardSidebar({
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-0.5">
+                    <div className={`flex items-center justify-between pt-0.5 ${rail ? 'lg:justify-center' : ''}`}>
                         <button
                             onClick={() => setShowSignOutModal(true)}
+                            title={rail ? 'Sign Out' : undefined}
+                            aria-label="Sign Out"
                             className="flex items-center gap-1.5 px-1.5 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30"
                         >
                             <LogOut className="w-3.5 h-3.5 shrink-0" />
-                            <span>Sign Out</span>
+                            <span className={hideInRail}>Sign Out</span>
                         </button>
                     </div>
                 </div>

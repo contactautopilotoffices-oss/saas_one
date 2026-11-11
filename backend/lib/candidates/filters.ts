@@ -23,12 +23,22 @@ export type NoticeBucket = (typeof NOTICE_BUCKETS)[number]["id"];
 export const SOURCED_MONTHS = [3, 6, 12] as const;
 export type SourcedMonths = (typeof SOURCED_MONTHS)[number];
 
-export const SORTS = ["recent", "experience", "notice"] as const;
+/**
+ * How the list can be ordered. Owner 2026-11-11: the first three did not suit candidates that come from resumes (no
+ * notice period, no salary on any of them), so the list can also go by when a candidate was added or last changed, by
+ * name, by relevant experience and by expected salary. A record with no value for the chosen order comes last.
+ */
+export const SORTS = ["recent", "added", "updated", "name", "experience", "relevant", "notice", "salary"] as const;
 export type FilterSort = (typeof SORTS)[number];
 export const SORT_LABELS: Record<FilterSort, string> = {
   recent: "Recently sourced",
+  added: "Recently added",
+  updated: "Recently updated",
+  name: "Name A to Z",
   experience: "Most experience",
+  relevant: "Most relevant experience",
   notice: "Shortest notice",
+  salary: "Lowest expected salary",
 };
 
 export const EDUCATION_LEVELS = [
@@ -103,6 +113,8 @@ export interface SearchFilters {
   careerBreak: boolean;
   /** "" = no filter, "any" = any defence background. */
   defence: DefenceBackground | "any" | "";
+  /** Phase 2: only candidates with a stored resume ("yes") or without one ("no"). */
+  hasResume: "" | "yes" | "no";
   /** Show records that are blank on a field a filter uses. */
   includeBlank: boolean;
   sort: FilterSort;
@@ -142,6 +154,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   degreeYearTo: null,
   careerBreak: false,
   defence: "",
+  hasResume: "",
   includeBlank: false,
   sort: "recent",
 };
@@ -149,6 +162,7 @@ export const EMPTY_FILTERS: SearchFilters = {
 // The fields resumes will fill ---------------------------------------------------------------------------------------
 export const RESUME_FIELDS = [
   "industry", "preferredLocations", "ug", "pg", "ppg", "institute", "educationType", "degreeYear", "careerBreak", "defence", "servingNotice",
+  "hasResume",
 ] as const;
 export type ResumeField = (typeof RESUME_FIELDS)[number];
 
@@ -165,6 +179,7 @@ export const RESUME_FIELD_COLUMNS: Record<ResumeField, string> = {
   careerBreak: "career_break",
   defence: "defence_background",
   servingNotice: "serving_notice",
+  hasResume: "has_resume",
 };
 
 /** GET /api/candidates/filter-fields: which of those filters have data yet. A filter with none is shown greyed out. */
@@ -190,6 +205,7 @@ export function withoutResumeFields(f: SearchFilters): SearchFilters {
     degreeYearTo: null,
     careerBreak: false,
     defence: "",
+    hasResume: "",
   };
 }
 
@@ -268,6 +284,7 @@ export function filterChips(f: SearchFilters): FilterChip[] {
     const label = f.defence === "any" ? "Defence background" : `Defence: ${DEFENCE_OPTIONS.find((d) => d.id === f.defence)?.label}`;
     add("defence", label, { defence: "" });
   }
+  if (f.hasResume) add("resume", f.hasResume === "yes" ? "Has a resume" : "No resume yet", { hasResume: "" });
   return chips;
 }
 
@@ -435,5 +452,6 @@ export interface UnderstandResponse {
 /** POST /api/candidates/suggest-keywords */
 export interface KeywordSuggestion {
   text: string;
-  count: number;
+  /** Records that carry the term; null until they have been counted (the terms are shown first, owner 2026-11-11). */
+  count: number | null;
 }

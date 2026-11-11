@@ -42,11 +42,11 @@ function OptionMenu({ rows, active, label, onPick, onStar }: {
     rows: MenuRow[]; active: number; label: string; onPick: (text: string) => void; onStar?: (text: string) => void;
 }) {
     return (
-        <ul aria-label={label} className={`${OVERLAY} absolute inset-x-0 top-full z-40 mt-1 max-h-72 overflow-y-auto rounded-xl p-1`}>
+        <ul aria-label={label} className={`${OVERLAY} absolute inset-x-0 top-full z-40 mt-1 max-h-72 overflow-y-auto rounded-xl px-1 py-1`}>
             {rows.map((row, i) => (
-                <li key={row.text} className={`flex items-center gap-1 rounded-lg ${i === active ? 'bg-muted' : 'hover:bg-muted'}`}>
+                <li key={row.text} className={`flex items-center gap-x-1 gap-y-1 rounded-lg ${i === active ? 'bg-muted' : 'hover:bg-muted'}`}>
                     {/* Mouse down, not click: the input keeps focus, so its blur does not take the half-typed word first. */}
-                    <button type="button" tabIndex={-1} onMouseDown={e => { e.preventDefault(); onPick(row.text); }} className="flex h-9 min-w-0 flex-1 items-center gap-2 px-2.5 text-left text-sm text-text-primary">
+                    <button type="button" tabIndex={-1} onMouseDown={e => { e.preventDefault(); onPick(row.text); }} className="flex h-9 min-w-0 flex-1 items-center gap-x-2 gap-y-2 px-2.5 text-left text-sm text-text-primary">
                         <span className="min-w-0 flex-1 truncate">{row.before}<strong className="font-bold">{row.match}</strong>{row.after}</span>
                         {row.meta && <span className="shrink-0 text-xs text-text-tertiary">{row.meta}</span>}
                     </button>
@@ -76,7 +76,7 @@ export interface Token { text: string; required?: boolean }
 
 /** A box that turns what is typed into chips, with the dropdown under it. Enter, a comma or leaving the box adds a chip. */
 export function TokenField({
-    id, orgId, field, tokens, onAdd, onRemove, onToggle, placeholder, icon, panel, focusRef, compact,
+    id, orgId, field, tokens, onAdd, onRemove, onToggle, placeholder, icon, panel, focusRef, compact, onTyping,
 }: {
     id: string;
     orgId: string;
@@ -92,8 +92,11 @@ export function TokenField({
     panel?: React.ReactNode;
     focusRef?: React.RefObject<HTMLInputElement | null>;
     compact?: boolean;
+    /** Told what is in the box as it is typed ('' once it becomes a chip), so the keyword bar can get suggestions ready early. */
+    onTyping?: (typed: string) => void;
 }) {
-    const [input, setInput] = useState('');
+    const [input, setInputState] = useState('');
+    const setInput = (value: string) => { setInputState(value); onTyping?.(value.trim()); };
     const [focused, setFocused] = useState(false);
     const [closed, setClosed] = useState(false);
     const [active, setActive] = useState(-1);

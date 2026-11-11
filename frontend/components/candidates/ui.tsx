@@ -31,6 +31,9 @@ import type { ApiFailure } from './api';
  *  - Warning amber (#F59E0B) is never a text colour: 2.07:1 on light (app/globals.css, glass-ambient note). Icons only.
  *  - Motion: monopo's cubic-bezier(0.19, 1, 0.22, 1) (repo token --w-ease-patient) at the Ops Board's UI durations
  *    (220ms entry, 360ms hover glide), not monopo's 0.8-1.25s marketing durations.
+ *  - Exact spacing (owner 2026-11-11, redesign): app/globals.css redefines Tailwind's .p-1 … .p-6 and .gap-1 … .gap-6
+ *    on an 8px scale (p-4 = 32px, gap-2 = 16px). In this folder use the two-axis utilities instead (px-4 py-4,
+ *    gap-x-2 gap-y-2): globals.css does not touch them, so a class means its standard size. Variants (sm:p-6) are safe.
  *  - Glass: none. Ops Board audit: "surfaces are essentially opaque; sharpness comes from a hairline edge + tight stacked
  *    shadow, not blur", and glass-ambient: blur is a no-op on our near-white canvas.
  */
@@ -42,22 +45,27 @@ export const CARD_HOVER = 'transition-shadow duration-[360ms] ease-[var(--w-ease
 export const OVERLAY = 'bg-surface shadow-[0_0_0_1px_rgba(0,0,0,0.08),var(--w-shadow-drag)]';
 export const WELL = 'rounded-xl bg-surface-elevated';
 
-export const LABEL = 'text-xs font-medium text-text-tertiary';
+/** Owner 2026-11-11: small labels are in the secondary text colour; the tertiary one (42% ink) read as washed out and is kept for placeholders and dashes. */
+export const LABEL = 'text-xs font-medium text-text-secondary';
 export const NUM_LG = 'font-display text-[32px] font-bold leading-[1.1] tracking-[-0.3px] tabular-nums';
 export const NUM_MD = 'font-display text-base font-medium leading-[1.4] tabular-nums';
 export const NUM_SM = 'font-display text-sm font-medium leading-[1.4] tabular-nums';
 
 export const BTN_PRIMARY =
-    'inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_SECONDARY =
-    'inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-surface px-4 text-sm font-bold text-text-primary shadow-[var(--w-shadow)] transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)] disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-surface px-4 text-sm font-bold text-text-primary shadow-[var(--w-shadow)] transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)] disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_GHOST =
     'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_DANGER_GHOST =
     'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-semibold text-error transition-colors hover:bg-error/[.08] disabled:cursor-not-allowed disabled:opacity-50';
-/** 16px text below sm so iOS Safari does not zoom the page on focus. */
-export const INPUT =
-    'h-10 w-full min-w-0 rounded-xl border border-border bg-surface px-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
+/**
+ * 16px text below sm so iOS Safari does not zoom the page on focus. INPUT fills its row; FIELD is the same box at its
+ * own width, for a select or a date that sits beside others (adding `w-auto` to INPUT does not win over its `w-full`).
+ */
+export const FIELD =
+    'h-10 min-w-0 rounded-xl border border-border bg-surface px-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
+export const INPUT = `w-full ${FIELD}`;
 
 /* ------------------------------------------------------------------------------------------------------------------ */
 
@@ -141,6 +149,61 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     );
 }
 
+/* ---- Redesign (owner 2026-11-11): the pieces the denser screens share ------------------------------------------- */
+
+/** "Asha Rao" -> "AR", "asha" -> "A", "" -> "?". */
+export function initials(name: string): string {
+    const words = name.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '?';
+    const first = words[0][0] ?? '';
+    const last = words.length > 1 ? words[words.length - 1][0] ?? '' : '';
+    return (first + last).toUpperCase();
+}
+
+const AVATAR_SIZE = { sm: 'h-8 w-8 rounded-lg text-xs', md: 'h-10 w-10 rounded-xl text-sm', lg: 'h-12 w-12 rounded-xl text-base' } as const;
+
+/** Initials on a recessed tile (surface ladder L1), so rows are told apart at a glance without a photo. */
+export function Avatar({ name, size = 'md' }: { name: string; size?: keyof typeof AVATAR_SIZE }) {
+    return (
+        <span aria-hidden className={`${AVATAR_SIZE[size]} inline-flex shrink-0 select-none items-center justify-center bg-surface-elevated font-display font-semibold text-primary-dark ring-1 ring-inset ring-border-subtle`}>
+            {initials(name)}
+        </span>
+    );
+}
+
+/**
+ * A small label. Tones follow the tags the result card already used: a light tint with dark text of the same family
+ * (never the status colours as a fill, never amber as a text colour).
+ */
+const TAG_TONE = {
+    success: 'bg-success/15 text-emerald-800',
+    info: 'bg-info/10 text-blue-800',
+    warn: 'bg-warning/15 text-amber-800',
+    neutral: 'bg-muted text-text-secondary',
+} as const;
+
+export function Tag({ tone = 'neutral', icon: Icon, title, children }: {
+    tone?: keyof typeof TAG_TONE; icon?: React.ComponentType<{ className?: string }>; title?: string; children: React.ReactNode;
+}) {
+    return (
+        <span title={title} className={`inline-flex h-[22px] max-w-full items-center gap-x-1 gap-y-1 whitespace-nowrap rounded-full px-2 text-xs font-semibold ${TAG_TONE[tone]}`}>
+            {Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden />}
+            <span className="truncate">{children}</span>
+        </span>
+    );
+}
+
+/** Text with the search keywords marked (the brand's sand tint; the weight change is the second cue). */
+export function Marked({ parts }: { parts: { text: string; hit?: true }[] }) {
+    return (
+        <>
+            {parts.map((part, i) => (part.hit
+                ? <mark key={i} className="rounded-[3px] bg-secondary/25 px-0.5 font-semibold text-text-primary">{part.text}</mark>
+                : <React.Fragment key={i}>{part.text}</React.Fragment>))}
+        </>
+    );
+}
+
 /** Closes on Escape. */
 function useEscape(open: boolean, onClose: () => void) {
     useEffect(() => {
@@ -176,7 +239,7 @@ export function Dialog({
                             transition={{ duration: 0.22, ease: EASE_PATIENT }}
                             className={`${OVERLAY} flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl ${width}`}
                         >
-                            <div className="flex items-start gap-3 px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
+                            <div className="flex items-start gap-x-3 gap-y-3 px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
                                 <div className="min-w-0 flex-1">
                                     <h2 id={labelId} className="font-display text-lg font-semibold leading-snug text-text-primary">{title}</h2>
                                     {description && <div className="mt-1 text-sm text-text-secondary">{description}</div>}
@@ -186,7 +249,7 @@ export function Dialog({
                                 </button>
                             </div>
                             {children && <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 sm:px-6">{children}</div>}
-                            {footer && <div className="flex flex-col-reverse gap-2 border-t border-border-subtle px-4 py-3 sm:flex-row sm:justify-end sm:px-6 sm:py-4">{footer}</div>}
+                            {footer && <div className="flex flex-col-reverse gap-x-2 gap-y-2 border-t border-border-subtle px-4 py-3 sm:flex-row sm:justify-end sm:px-6 sm:py-4">{footer}</div>}
                         </motion.div>
                     </motion.div>
                 )}
@@ -195,10 +258,16 @@ export function Dialog({
     );
 }
 
-/** Right-hand drawer on sm and up, full screen on phones. */
+/**
+ * Right-hand drawer on sm and up, full screen on phones. `wide` is the candidate's workspace (owner 2026-11-11): room
+ * for the resume beside the details; its body does not scroll, so each pane inside can scroll on its own.
+ */
 export function Drawer({
-    open, onClose, title, children, footer, labelId,
-}: { open: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; labelId: string }) {
+    open, onClose, title, children, footer, labelId, wide = false, subtitle,
+}: {
+    open: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; labelId: string;
+    wide?: boolean; subtitle?: React.ReactNode;
+}) {
     useEscape(open, onClose);
     return (
         <ModalPortal>
@@ -214,16 +283,19 @@ export function Drawer({
                             role="dialog" aria-modal="true" aria-labelledby={labelId}
                             initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }}
                             transition={{ duration: 0.36, ease: EASE_PATIENT }}
-                            className={`${OVERLAY} flex h-[100dvh] w-full flex-col sm:max-w-xl sm:rounded-l-2xl`}
+                            className={`${OVERLAY} flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${wide ? 'sm:max-w-xl lg:max-w-[min(1360px,calc(100vw-4rem))]' : 'sm:max-w-xl'}`}
                         >
-                            <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border-subtle px-4 sm:h-16 sm:px-6">
-                                <h2 id={labelId} className="min-w-0 flex-1 truncate font-display text-lg font-semibold text-text-primary">{title}</h2>
+                            <div className="flex min-h-14 shrink-0 items-center gap-x-3 gap-y-3 border-b border-border-subtle px-4 py-2 sm:min-h-16 sm:px-6">
+                                <div className="min-w-0 flex-1">
+                                    <h2 id={labelId} className="truncate font-display text-lg font-semibold text-text-primary">{title}</h2>
+                                    {subtitle && <div className="truncate text-sm text-text-secondary">{subtitle}</div>}
+                                </div>
                                 <button type="button" onClick={onClose} aria-label="Close" className="-mr-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-tertiary hover:bg-muted hover:text-text-primary">
                                     <X className="h-5 w-5" />
                                 </button>
                             </div>
-                            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">{children}</div>
-                            {footer && <div className="flex shrink-0 gap-2 border-t border-border-subtle px-4 py-3 sm:justify-end sm:px-6">{footer}</div>}
+                            <div className={wide ? 'flex min-h-0 flex-1 flex-col overflow-y-auto lg:overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6'}>{children}</div>
+                            {footer && <div className="flex shrink-0 gap-x-2 gap-y-2 border-t border-border-subtle px-4 py-3 sm:justify-end sm:px-6">{footer}</div>}
                         </motion.aside>
                     </motion.div>
                 )}
@@ -259,6 +331,9 @@ export interface DropdownOption<T extends string> {
     /** A background class for the status dot. */
     dot?: string;
 }
+
+/** Tallest a dropdown's menu gets before it scrolls: nine rows, so the eight ways to sort the list show at once. */
+const MENU_MAX = 340;
 
 const DROPDOWN_TRIGGER = {
     field: 'h-10 w-full rounded-xl pl-3 pr-2.5 text-sm font-medium',
@@ -296,7 +371,7 @@ export function Dropdown<T extends string>({
     const show = () => {
         const box = buttonRef.current?.getBoundingClientRect();
         if (!box) return;
-        const height = Math.min(280, options.length * 36 + 8);
+        const height = Math.min(MENU_MAX, options.length * 36 + 8);
         const flip = box.bottom + height + 8 > window.innerHeight && box.top > height;
         setMenu({
             ...(flip ? { bottom: window.innerHeight - box.top + 4 } : { top: box.bottom + 4 }),
@@ -356,7 +431,7 @@ export function Dropdown<T extends string>({
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.16, ease: EASE_PATIENT }}
                         style={menu}
-                        className={`${OVERLAY} fixed z-[95] max-h-[280px] overflow-y-auto rounded-xl p-1`}
+                        className={`${OVERLAY} fixed z-[95] max-h-[340px] overflow-y-auto rounded-xl px-1 py-1`}
                     >
                         {options.map((o, i) => {
                             const on = o.value === value;
@@ -368,7 +443,7 @@ export function Dropdown<T extends string>({
                                         // Mouse down, not click: the button above keeps focus, so its blur does not close this first.
                                         onMouseDown={e => { e.preventDefault(); choose(o.value); }}
                                         onMouseEnter={() => setActive(i)}
-                                        className={`flex h-9 w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 text-left text-sm ${i === active ? 'bg-muted' : ''} ${on ? 'font-semibold text-primary-dark' : 'font-medium text-text-primary'}`}
+                                        className={`flex h-9 w-full items-center gap-x-2 gap-y-2 whitespace-nowrap rounded-lg px-2.5 text-left text-sm ${i === active ? 'bg-muted' : ''} ${on ? 'font-semibold text-primary-dark' : 'font-medium text-text-primary'}`}
                                     >
                                         {o.dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${o.dot}`} aria-hidden />}
                                         <span className="min-w-0 flex-1">{o.label}</span>

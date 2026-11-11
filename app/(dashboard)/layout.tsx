@@ -5,7 +5,7 @@ import { useRouter, useParams, usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 import { ContextBar } from "@/frontend/components/layout/ContextBar";
-import DashboardSidebar, { MobileHeader } from "@/frontend/components/layout/DashboardSidebar";
+import DashboardSidebar, { HR_SIDEBAR_ROLES, MobileHeader } from "@/frontend/components/layout/DashboardSidebar";
 import Loader from "@/frontend/components/ui/Loader";
 import PettyCashShell from '@/frontend/components/layout/PettyCashShell';
 import ModuleSwitch from "@/frontend/components/layout/ModuleSwitch";
@@ -109,8 +109,19 @@ export default function DashboardLayout({
     const hideContextBar = pathname?.endsWith('/crm')
         && isBdSuperAdmin(user?.email, membership?.org_role);
 
+    // Owner 2026-11-09: for the HR logins a collapsed sidebar stays as an 80px icon rail (see DashboardSidebar), so the
+    // content keeps that much room and the header's "open sidebar" button is not needed. Same role source as the sidebar.
+    const sidebarRole = (user?.user_metadata?.role || membership?.org_role || membership?.properties?.[0]?.role || 'employee').toLowerCase();
+    const hasSidebarRail = HR_SIDEBAR_ROLES.includes(sidebarRole);
+
+    // Owner 2026-11-09: on the HR console page (/hr-tickets) the content scrolls inside <main>, not the page, so the
+    // header bar stays put and Candidate Search's filters can stick. <body> has overflow-x: hidden app-wide, which stops
+    // position: sticky working against the page (the Tech console does the same for the same reason). Desktop only:
+    // phones keep the page scroll under the fixed mobile header. Other pages of this layout are unchanged.
+    const containedScroll = !!pathname && /\/hr-tickets$/.test(pathname);
+
     return (
-        <div className={`flex min-h-screen ${wallpaperActive ? '' : 'bg-[#fafbfc]'}`} style={tintStyle}>
+        <div className={`flex min-h-screen ${containedScroll ? 'lg:h-[calc(100dvh/var(--app-zoom,1))] lg:overflow-hidden' : ''} ${wallpaperActive ? '' : 'bg-[#fafbfc]'}`} style={tintStyle}>
             {/* Owner 2026-10-26: one consistent scale on every screen */}
             <AppZoom />
 
@@ -124,6 +135,7 @@ export default function DashboardLayout({
             <DashboardSidebar
                 isOpen={isSidebarOpen}
                 onClose={() => toggleSidebar(false)}
+                onOpen={() => toggleSidebar(true)}
                 isMobileOpen={isMobileSidebarOpen}
                 onMobileClose={() => setIsMobileSidebarOpen(false)}
             />
@@ -142,18 +154,20 @@ export default function DashboardLayout({
             )}
 
             {/* Main Content */}
-            <div className={`flex-1 flex flex-col min-w-0 pt-[56px] lg:pt-0 ${isSidebarOpen ? 'lg:pl-72' : 'lg:pl-0'} transition-[padding] duration-300 ease-in-out border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 ${wallpaperActive ? 'bg-transparent crm-chameleon' : 'bg-background'}`}>
+            <div className={`flex-1 flex flex-col min-w-0 pt-[56px] lg:pt-0 ${isSidebarOpen ? 'lg:pl-72' : hasSidebarRail ? 'lg:pl-20' : 'lg:pl-0'} ${containedScroll ? 'lg:min-h-0' : ''} transition-[padding] duration-300 ease-in-out border-l border-slate-300 shadow-[-4px_0_12px_-4px_rgba(0,0,0,0.05)] relative z-10 ${wallpaperActive ? 'bg-transparent crm-chameleon' : 'bg-background'}`}>
                 {/* Context Bar - Hidden on mobile, shown on desktop */}
                 {!hideContextBar && (
-                    <div className="hidden lg:block">
+                    <div className="hidden lg:block shrink-0">
                         <ContextBar
-                            isSidebarOpen={isSidebarOpen}
+                            isSidebarOpen={isSidebarOpen || hasSidebarRail}
                             onToggleSidebar={() => toggleSidebar(true)}
                         />
                     </div>
                 )}
 
-                <main className="flex-1 overflow-y-auto overflow-x-hidden max-w-full min-w-0 touch-scroll responsive-container py-4 lg:py-6">
+                {/* --panel-sticky-top: where a sticky side panel (Candidate Search's filters) rests. The header bar is
+                    outside this scroller, so 1rem; the Tech console keeps its header inside and uses the 5rem default. */}
+                <main className={`flex-1 overflow-y-auto overflow-x-hidden max-w-full min-w-0 touch-scroll responsive-container py-4 lg:py-6 ${containedScroll ? 'lg:min-h-0 lg:[--panel-sticky-top:1rem]' : ''}`}>
                     {children}
                 </main>
             </div>

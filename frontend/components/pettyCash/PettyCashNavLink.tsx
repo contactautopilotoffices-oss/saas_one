@@ -41,6 +41,7 @@ export default function PettyCashNavLink({ onNavigate, compact=false, fromCrm=fa
         <Link
             onClick={handleClick}
             aria-current={active ? 'page' : undefined}
+            title="Petty Cash"
             href={href}
             className={`flex items-center ${compact ? 'gap-2.5 px-2.5 rounded-lg' : 'gap-3 px-4 rounded-xl'} py-2.5 font-bold text-sm ${active ? 'bg-primary text-text-inverse shadow-sm' : 'text-text-secondary hover:bg-muted hover:text-text-primary'}`}
         >

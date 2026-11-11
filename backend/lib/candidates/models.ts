@@ -33,20 +33,30 @@ export interface JsonRequest {
   budgetMs: number;
   /** A reply that fails this moves on to the next model. */
   accept?: (text: string) => boolean;
+  /**
+   * A PDF sent with the message, pages as the model sees them (owner 2026-11-11: scanned resumes). Claude only: the
+   * other providers in a chain are skipped for a request that carries one.
+   */
+  document?: { mediaType: "application/pdf"; base64: string };
 }
 
 export interface JsonReply {
   text: string;
   /** The model that answered, as the Control Center names it (e.g. "anthropic:claude-opus-5-5"). */
   model: string;
+  /** Tokens billed, when the provider reports them (Claude does); doctrine L14. */
+  usage?: { input: number; output: number };
 }
 
 export type JsonCaller = (req: JsonRequest) => Promise<JsonReply>;
 
+/** A provider answers with the text, or the text plus its token counts. */
+export type ProviderReply = string | { text: string; usage?: JsonReply["usage"] };
+
 export interface ChainDeps {
   chain: (job: AiJob) => Promise<string[]>;
-  claude: (model: string, req: JsonRequest, timeoutMs: number) => Promise<string>;
-  other: (model: string, req: JsonRequest, timeoutMs: number) => Promise<string>;
+  claude: (model: string, req: JsonRequest, timeoutMs: number) => Promise<ProviderReply>;
+  other: (model: string, req: JsonRequest, timeoutMs: number) => Promise<ProviderReply>;
   now: () => number;
 }
 
@@ -55,7 +65,7 @@ const MIN_TRY_MS = 3000;
 
 let client: { key: string; sdk: Anthropic } | null = null;
 
-async function callClaude(model: string, req: JsonRequest, timeoutMs: number): Promise<string> {
+async function callClaude(model: string, req: JsonRequest, timeoutMs: number): Promise<ProviderReply> {
   const key = (process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
   if (!key) throw new Error("CLAUDE_API_KEY is not set");
   if (client?.key !== key) client = { key, sdk: new Anthropic({ apiKey: key }) };
@@ -65,7 +75,15 @@ async function callClaude(model: string, req: JsonRequest, timeoutMs: number): P
       max_tokens: req.maxTokens,
       system: req.system,
       output_config: { effort: req.effort, format: { type: "json_schema", schema: req.schema } },
-      messages: [{ role: "user", content: req.user }],
+      messages: [{
+        role: "user",
+        content: req.document
+          ? [
+            { type: "document", source: { type: "base64", media_type: req.document.mediaType, data: req.document.base64 } },
+            { type: "text", text: req.user },
+          ]
+          : req.user,
+      }],
     },
     // No SDK retry: the next model in the chain is the retry.
     { timeout: timeoutMs, maxRetries: 0 },
@@ -74,7 +92,7 @@ async function callClaude(model: string, req: JsonRequest, timeoutMs: number): P
   if (res.stop_reason === "max_tokens") throw new Error("Claude ran out of tokens");
   const text = res.content.find((block) => block.type === "text");
   if (!text || text.type !== "text" || !text.text.trim()) throw new Error("Claude returned no answer");
-  return text.text;
+  return { text: text.text, usage: { input: res.usage.input_tokens, output: res.usage.output_tokens } };
 }
 
 async function callOther(model: string, req: JsonRequest, timeoutMs: number): Promise<string> {
@@ -115,11 +133,13 @@ export async function callModels(job: AiJob, req: JsonRequest, deps: Partial<Cha
     }
     const timeoutMs = Math.min(req.timeoutMs, left);
     try {
-      const text = model.startsWith(ANTHROPIC)
+      if (req.document && !model.startsWith(ANTHROPIC)) throw new Error("this model cannot read a PDF");
+      const reply = model.startsWith(ANTHROPIC)
         ? await d.claude(model.slice(ANTHROPIC.length), req, timeoutMs)
         : await d.other(model, req, timeoutMs);
+      const text = typeof reply === "string" ? reply : reply.text;
       if (req.accept && !req.accept(text)) throw new Error("the reply did not have the expected shape");
-      return { text, model };
+      return { text, model, ...(typeof reply === "string" || !reply.usage ? {} : { usage: reply.usage }) };
     } catch (error) {
       const why = reason(error).slice(0, 160);
       problems.push(`${model}: ${why}`);

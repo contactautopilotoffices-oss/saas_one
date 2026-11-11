@@ -41,6 +41,20 @@ export const AUTO_INDEXING_MIGRATION = readFileSync(path.join("supabase", "migra
 /** The fields resumes will fill (owner 2026-11-07); the filter panel must also work before it is applied. */
 export const RESUME_FIELDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000001_candidate_search_resume_fields.sql"), "utf8");
 
+/** Resume files (owner 2026-11-07, phase 1). PGlite has no storage schema, so the bucket row is left out. */
+export const RESUME_FILES_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261107000002_candidate_resume_files.sql"), "utf8")
+  .replace(/insert into storage\.buckets[\s\S]*?on conflict \(id\) do nothing;/i, "");
+/** Resume text, contacts and the link to a candidate (owner 2026-11-10, phase 2); recreates the filter view with has_resume. */
+export const RESUME_LINKS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261110000001_candidate_resume_links.sql"), "utf8");
+/** Files removed as not resumes keep a row with status 'rejected' (owner 2026-11-10). */
+export const RESUME_REJECTS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261110000002_candidate_resume_rejects.sql"), "utf8");
+/** Details read from resumes by a model (owner 2026-11-11, phase 4): candidate columns, file columns, the view again. */
+export const RESUME_EXTRACTION_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261111000002_candidate_resume_extraction.sql"), "utf8");
+/** Scanned resumes typed out by a model (owner 2026-11-11): two more text statuses and the scan's cost columns. */
+export const RESUME_SCANS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261111000003_candidate_resume_scans.sql"), "utf8");
+/** Which of a person's fields were worked out from the resume's employers (owner 2026-11-11). */
+export const INFERRED_FIELDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261111000004_candidate_inferred_fields.sql"), "utf8");
+
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(STUBS);
@@ -50,6 +64,12 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   await db.exec(PURGE_AI_FIX_MIGRATION);
   await db.exec(AUTO_INDEXING_MIGRATION);
   if (options.resumeFields !== false) await db.exec(RESUME_FIELDS_MIGRATION);
+  await db.exec(RESUME_FILES_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(RESUME_LINKS_MIGRATION);
+  await db.exec(RESUME_REJECTS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(RESUME_EXTRACTION_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(RESUME_SCANS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(INFERRED_FIELDS_MIGRATION);
   return db;
 }
 

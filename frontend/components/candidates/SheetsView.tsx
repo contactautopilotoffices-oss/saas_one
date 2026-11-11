@@ -53,6 +53,21 @@ const MODE_LABEL: Record<UploadMode, string> = {
     merge: 'Merged into the existing sheet',
 };
 
+/** The numbers under an import. "With resume" (phase 2) only once the resume update is applied. */
+function summaryTiles(s: ImportSummary): [string, number][] {
+    const tiles: [string, number][] = [
+        ['Rows read', s.rowsRead],
+        ['Records added', s.recordsAdded],
+        ['Records updated', s.recordsUpdated],
+        ['Rows flagged', s.rowsFlagged],
+        ['Rows skipped', s.rowsSkipped],
+        ['New candidates', s.newCandidates],
+        ['Matched existing', s.matchedCandidates],
+    ];
+    if (s.candidatesWithResume !== null) tiles.push(['With resume', s.candidatesWithResume]);
+    return tiles;
+}
+
 /** `inlineError={false}`: the caller shows the failure text itself (phone cards put it on its own line). */
 function SheetStatus({ sheet, inlineError = true, preparing = false }: { sheet: CandidateSheet; inlineError?: boolean; preparing?: boolean }) {
     if (sheet.status === 'importing') {
@@ -69,8 +84,8 @@ function SheetStatus({ sheet, inlineError = true, preparing = false }: { sheet: 
     if (preparing && sheet.pendingIndexCount > 0) {
         const share = preparedShare(sheet);
         return (
-            <span className="inline-flex w-36 flex-col gap-1">
-                <span className="flex items-center justify-between gap-2 text-xs font-semibold text-text-secondary">
+            <span className="inline-flex w-36 flex-col gap-x-1 gap-y-1">
+                <span className="flex items-center justify-between gap-x-2 gap-y-2 text-xs font-semibold text-text-secondary">
                     <span className="inline-flex items-center gap-1.5"><Spinner className="h-3 w-3" />Preparing</span>
                     <span className="tabular-nums">{Math.floor(share * 100)}%</span>
                 </span>
@@ -327,9 +342,9 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                 {summary && (
                     <motion.section
                         initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.22, ease: EASE_PATIENT }}
-                        className={`${CARD} p-4 sm:p-6`} aria-label="Import summary"
+                        className={`${CARD} px-4 py-4 sm:p-6`} aria-label="Import summary"
                     >
-                        <div className="flex items-start gap-3">
+                        <div className="flex items-start gap-x-3 gap-y-3">
                             <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden />
                             <div className="min-w-0 flex-1">
                                 <p className="break-words font-display text-base font-semibold text-text-primary">{summary.sheet.name}</p>
@@ -339,16 +354,8 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
-                        <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4 lg:grid-cols-7">
-                            {([
-                                ['Rows read', summary.rowsRead],
-                                ['Records added', summary.recordsAdded],
-                                ['Records updated', summary.recordsUpdated],
-                                ['Rows flagged', summary.rowsFlagged],
-                                ['Rows skipped', summary.rowsSkipped],
-                                ['New candidates', summary.newCandidates],
-                                ['Matched existing', summary.matchedCandidates],
-                            ] as const).map(([label, n]) => (
+                        <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4">
+                            {summaryTiles(summary).map(([label, n]) => (
                                 <div key={label} className="min-w-0">
                                     <dt className={LABEL}>{label}</dt>
                                     <dd className={`${NUM_LG} mt-1 text-text-primary`}>{formatCount(n)}</dd>
@@ -358,6 +365,13 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                         <p className="mt-4 text-sm text-text-secondary">
                             The candidates are searchable now. Smart matching finishes on its own in the background; the progress shows in the list below.
                         </p>
+                        {summary.candidatesWithResume !== null && (
+                            <p className="mt-2 text-sm text-text-secondary">
+                                <span className="font-semibold tabular-nums text-text-primary">{formatCount(summary.candidatesWithResume)}</span> of the sheet&rsquo;s candidates
+                                {summary.candidatesWithResume === 1 ? ' has' : ' have'} a resume on file (matched by email or phone). The rest show &ldquo;No resume&rdquo; in Search,
+                                where the <em>Resume on file</em> filter lists them.
+                            </p>
+                        )}
                         {summary.rowsAutoFixed > 0 && (
                             <p className="mt-2 text-sm text-text-secondary">
                                 <span className="font-semibold tabular-nums text-text-primary">{formatCount(summary.rowsAutoFixed)}</span> more {summary.rowsAutoFixed === 1 ? 'row was' : 'rows were'} fixed automatically (e.g. &ldquo;30 in hand&rdquo; read as ₹30,000; &ldquo;Negotiable&rdquo; kept in the remark).
@@ -374,7 +388,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
 
             {/* Sheets list */}
             <section className="space-y-3" aria-labelledby="sheets-heading">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                     <h2 id="sheets-heading" className="font-display text-base font-semibold text-text-primary">{deleted ? 'Deleted sheets' : 'Sheets'}</h2>
                     <Toggle checked={deleted} onChange={setDeleted} label="Show deleted" />
                 </div>
@@ -387,7 +401,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                             <button type="button" onClick={reload} className={`${BTN_SECONDARY} mt-4`}>Try again</button>
                         </div>
                     ) : !loaded?.data && loading ? (
-                        <div className="space-y-3 p-4 sm:p-6">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+                        <div className="space-y-3 px-4 py-4 sm:p-6">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                     ) : sheets.length === 0 ? (
                         <EmptyState icon={FileSpreadsheet} title={deleted ? 'No deleted sheets' : 'No sheets yet'}>
                             {deleted ? 'Deleted sheets show up here so you can restore them.' : 'Upload your first sourcing sheet above.'}
@@ -398,12 +412,12 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                             <ul className="divide-y divide-border-subtle md:hidden">
                                 {sheets.map(s => (
                                     <li key={s.id} className="space-y-2 px-4 py-3">
-                                        <div className="flex items-start gap-2">
+                                        <div className="flex items-start gap-x-2 gap-y-2">
                                             <p className="min-w-0 flex-1 break-words font-semibold text-text-primary">{s.name}</p>
                                             <SheetStatus sheet={s} inlineError={false} preparing={!deleted} />
                                         </div>
                                         {s.status === 'failed' && s.error && <p className="break-words text-xs text-text-secondary">{s.error}</p>}
-                                        <dl className="grid grid-cols-4 gap-2">
+                                        <dl className="grid grid-cols-4 gap-x-2 gap-y-2">
                                             <div><dt className={LABEL}>Live</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.liveRecordCount)}</dd></div>
                                             <div><dt className={LABEL}>Flagged</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.flaggedCount)}</dd></div>
                                             <div><dt className={LABEL}>Skipped</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.skippedCount)}</dd></div>
@@ -412,7 +426,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                                         <p className="break-words text-xs text-text-tertiary">
                                             {s.uploadedByEmail ?? 'Unknown'} · <span className="tabular-nums">{formatDate(deleted ? s.deletedAt : s.updatedAt)}</span>
                                         </p>
-                                        <div className="flex justify-end gap-1">{actions(s, true)}</div>
+                                        <div className="flex justify-end gap-x-1 gap-y-1">{actions(s, true)}</div>
                                     </li>
                                 ))}
                             </ul>
@@ -468,7 +482,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             />
 
             {/* Danger zone */}
-            <section aria-labelledby="danger-heading" className={`${WELL} flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:px-6`}>
+            <section aria-labelledby="danger-heading" className={`${WELL} flex flex-col gap-x-3 gap-y-3 px-4 py-4 sm:flex-row sm:items-center sm:px-6`}>
                 <div className="min-w-0 flex-1">
                     <h2 id="danger-heading" className="font-display text-sm font-semibold text-text-primary">Clear all candidate data</h2>
                     <p className="mt-0.5 text-sm text-text-secondary">Permanently erase every sheet, record and candidate, including deleted ones. Search history is kept.</p>

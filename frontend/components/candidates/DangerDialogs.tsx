@@ -11,7 +11,7 @@ export const PERMANENT_PHRASE = 'DELETE';
 
 /** Red filled button (the tab's other buttons are neutral; this one marks the only irreversible actions). */
 export const BTN_DANGER =
-    'inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-error px-4 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-error px-4 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50';
 
 /** A text box that must match `phrase` exactly before the irreversible action is enabled. */
 function PhraseInput({ phrase, value, onChange, id, disabled }: { phrase: string; value: string; onChange: (v: string) => void; id: string; disabled?: boolean }) {
@@ -52,7 +52,7 @@ export function DeleteSheetDialog({
     const records = sheet?.liveRecordCount ?? 0;
 
     const option = (value: 'soft' | 'permanent', Icon: React.ComponentType<{ className?: string }>, title: string, body: string) => (
-        <label className={`${CARD} ${CARD_HOVER} flex cursor-pointer items-start gap-3 p-4 ${choice === value ? 'ring-2 ring-primary/40' : ''}`}>
+        <label className={`${CARD} ${CARD_HOVER} flex cursor-pointer items-start gap-x-3 gap-y-3 px-4 py-4 ${choice === value ? 'ring-2 ring-primary/40' : ''}`}>
             <input type="radio" name="delete-sheet-mode" value={value} checked={choice === value} onChange={() => setChoice(value)} disabled={!!busy} className="mt-1 h-4 w-4 accent-primary" />
             <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-elevated text-text-secondary">
                 <Icon className="h-4 w-4" />

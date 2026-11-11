@@ -28,7 +28,7 @@ export default function UploadConflictModal({
             type="button"
             onClick={() => onChoose(mode)}
             disabled={busy}
-            className={`${CARD} ${CARD_HOVER} flex w-full items-start gap-3 p-4 text-left disabled:cursor-not-allowed disabled:opacity-60`}
+            className={`${CARD} ${CARD_HOVER} flex w-full items-start gap-x-3 gap-y-3 px-4 py-4 text-left disabled:cursor-not-allowed disabled:opacity-60`}
         >
             <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-elevated text-primary-dark">
                 {busyMode === mode ? <Spinner /> : <Icon className="h-4 w-4" />}

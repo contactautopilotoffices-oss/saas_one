@@ -54,9 +54,13 @@ describe("resume filters, migration applied", () => {
     await db.close();
   });
 
-  it("leaves the earlier migrations safe to re-run, and is safe to re-run itself", async () => {
+  it("leaves the first migration safe to re-run; 20261107000001 must not be re-run after the resume links migration", async () => {
     await db.exec(MIGRATION);
-    await db.exec(RESUME_FIELDS_MIGRATION);
+    // 20261110000001 recreated candidate_filter_records with has_resume at the end; this older CREATE OR REPLACE
+    // would have to drop that column, so Postgres refuses loudly instead of silently removing the filter.
+    await assert.rejects(db.exec(RESUME_FIELDS_MIGRATION), /cannot drop columns from view/);
+    // The failed statement sat inside that file's BEGIN; end the aborted transaction so the rest of the suite can run.
+    await db.exec("rollback");
     assert.equal((await filterRecords(client, ORG, f(), 1, 50, TODAY)).total, 4);
   });
 
@@ -66,6 +70,7 @@ describe("resume filters, migration applied", () => {
     assert.deepEqual(res.records[0].extras, {
       industry: "Real estate", preferredLocations: [], ugQualification: "B.Arch", pgQualification: "M.Arch", ppgQualification: null,
       institute: null, educationType: null, degreeYear: 2012, careerBreak: false, defenceBackground: null, servingNotice: null,
+      skills: [], pastCompanies: [], resumeSummary: null,
     });
   });
 
