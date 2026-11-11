@@ -783,7 +783,7 @@ export async function GET(request: NextRequest) {
             );
             const monthOf = (r: Row) => `${r.requisition_year}-${String(r.requisition_month).padStart(2, '0')}`;
             const inRange = list.filter(r => months.includes(monthOf(r)));
-            for (const [pid, l] of byProperty(inRange, ids)) setCmp(pid, 'req_submitted', pct(l.length, months.length));
+            for (const [pid, l] of byProperty(inRange, ids)) setCmp(pid, 'req_submitted', Math.min(100, pct(l.length, months.length) ?? 0));
             const missing: string[] = [];
             for (const [pid, l] of byProperty(inRange, ids)) {
                 const have = new Set(l.map(monthOf));

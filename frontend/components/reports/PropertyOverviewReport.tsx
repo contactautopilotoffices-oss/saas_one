@@ -104,8 +104,8 @@ const n1 = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 1 });
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function fmtDay(d: string) { return new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }); }
 function fmtRange(from: string, to: string) { return `${fmtDay(from)} to ${fmtDay(to)} ${to.slice(0, 4)}`; }
-function fmtPct(v: number | null) { return v === null ? 'n/a' : `${n1.format(v)}%`; }
-function fmtHours(h: number | null) { if (h === null) return 'n/a'; return h < 48 ? `${n1.format(h)} h` : `${n1.format(h / 24)} d`; }
+function fmtPct(v: number | null) { return v === null ? 'no data' : `${n1.format(Math.min(100, v))}%`; }
+function fmtHours(h: number | null) { if (h === null) return 'no data'; return h < 48 ? `${n1.format(h)} h` : `${n1.format(h / 24)} d`; }
 function titleCase(s: string) { return s.replace(/\b\w/g, c => c.toUpperCase()); }
 function share(part: number, whole: number) { return whole > 0 ? Math.round((part / whole) * 100) : 0; }
 function maxBy<T>(arr: T[], f: (t: T) => number): T | null { return arr.length ? arr.reduce((a, b) => (f(b) > f(a) ? b : a)) : null; }
@@ -434,7 +434,7 @@ function buildScorecard(r: Report): { name: string; value: number; detail: strin
 // ── property comparison (organisation scope) ────────────────────────────────
 
 function fmtMetric(v: number | null, unit: MetricUnit): string {
-    if (v === null || v === undefined) return 'n/a';
+    if (v === null || v === undefined) return 'no data';
     switch (unit) {
         case 'pct': return `${n1.format(v)}%`;
         case 'inr': return inr.format(v);
@@ -443,8 +443,6 @@ function fmtMetric(v: number | null, unit: MetricUnit): string {
         default: return n0.format(v);
     }
 }
-
-type Standing = { id: string; name: string; leads: number; lags: number; scored: number };
 
 /** For each metric, which properties are best and worst; ties share the place. Needs at least two values to rank. */
 function rankMetric(metric: ComparativeMetric, properties: { id: string }[], values: Record<string, Record<string, number | null>>) {
@@ -463,116 +461,228 @@ function rankMetric(metric: ComparativeMetric, properties: { id: string }[], val
     };
 }
 
-function buildStandings(properties: { id: string; name: string }[], comparative: NonNullable<Report['comparative']>): Standing[] {
-    const st: Standing[] = properties.map(p => ({ id: p.id, name: p.name, leads: 0, lags: 0, scored: 0 }));
-    for (const m of comparative.metrics) {
-        const r = rankMetric(m, properties, comparative.values);
-        for (const s of st) {
-            if (r.vals.some(x => x.id === s.id)) s.scored++;
-            if (r.best.has(s.id)) s.leads++;
-            if (r.worst.has(s.id)) s.lags++;
+/** The one rate that tells a non-technical reader how a module is going at a property. Higher is always better here. */
+const MODULE_SCORES: { key: string; module: string; question: string }[] = [
+    { key: 'tickets_closure', module: 'Requests', question: 'share of requests closed' },
+    { key: 'guest_resolved', module: 'Guest requests', question: 'share of guest requests resolved' },
+    { key: 'sop_completion', module: 'Checklists', question: 'share of checklists completed' },
+    { key: 'ppm_compliance', module: 'Maintenance', question: 'share of planned maintenance done' },
+    { key: 'elec_logging', module: 'Electricity', question: 'days with a meter reading' },
+    { key: 'diesel_logging', module: 'Diesel', question: 'days with a diesel reading' },
+    { key: 'water_logging', module: 'Water', question: 'days with a water reading' },
+    { key: 'stock_activity', module: 'Stock', question: 'days stock was updated' },
+    { key: 'req_submitted', module: 'Requisitions', question: 'monthly requisitions submitted' },
+    { key: 'roster_coverage', module: 'Roster', question: 'days with a roster' },
+    { key: 'tasks_completion', module: 'Tasks', question: 'share of tasks completed' },
+    { key: 'audit_compliance', module: 'Audit', question: 'share of audit items compliant' },
+];
+/** Plain numbers shown without judgement: activity, not performance. */
+const ACTIVITY_COLUMNS: { key: string; label: string; unit: MetricUnit }[] = [
+    { key: 'tickets_total', label: 'Requests raised', unit: 'count' },
+    { key: 'tickets_open_now', label: 'Open now', unit: 'count' },
+    { key: 'tickets_hours', label: 'Avg time to close', unit: 'hours' },
+    { key: 'visitors_total', label: 'Visitors', unit: 'count' },
+    { key: 'rooms_hours', label: 'Room hours', unit: 'hours' },
+    { key: 'petty_paid', label: 'Petty cash paid', unit: 'inr' },
+    { key: 'assets_repair', label: 'Assets in repair', unit: 'count' },
+    { key: 'amc_expiring', label: 'AMC ending soon', unit: 'count' },
+    { key: 'team_members', label: 'Team', unit: 'count' },
+];
+
+type Status = 'good' | 'okay' | 'attention' | 'none';
+const STATUS: Record<Status, { label: string; cls: string; dot: string }> = {
+    good: { label: 'Good', cls: 'bg-emerald-50 text-emerald-800', dot: S.good },
+    okay: { label: 'Okay', cls: 'bg-amber-50 text-amber-800', dot: S.warn },
+    attention: { label: 'Needs attention', cls: 'bg-red-50 text-red-800', dot: S.bad },
+    none: { label: 'No data', cls: 'bg-slate-50 text-slate-400', dot: S.neutral },
+};
+function statusOf(v: number | null): Status {
+    if (v === null || v === undefined) return 'none';
+    return v >= 90 ? 'good' : v >= 70 ? 'okay' : 'attention';
+}
+function clampPct(v: number | null): number | null { return v === null || v === undefined ? null : Math.max(0, Math.min(100, v)); }
+
+type ReportCard = { id: string; name: string; overall: number | null; scored: number; good: number; attention: number; scores: Record<string, number | null> };
+
+function buildReportCards(properties: { id: string; name: string }[], values: Record<string, Record<string, number | null>>): ReportCard[] {
+    return properties.map(p => {
+        const scores: Record<string, number | null> = {};
+        let sum = 0, n = 0, good = 0, attention = 0;
+        for (const m of MODULE_SCORES) {
+            const v = clampPct(values[p.id]?.[m.key] ?? null);
+            scores[m.key] = v;
+            if (v === null) continue;
+            sum += v; n++;
+            const st = statusOf(v);
+            if (st === 'good') good++;
+            if (st === 'attention') attention++;
         }
-    }
-    return st.sort((a, b) => b.leads - a.leads || a.lags - b.lags);
+        return { id: p.id, name: p.name, overall: n ? Math.round(sum / n) : null, scored: n, good, attention, scores };
+    }).sort((a, b) => (b.overall ?? -1) - (a.overall ?? -1) || b.scored - a.scored);
+}
+
+function StatusPill({ value, compact }: { value: number | null; compact?: boolean }) {
+    const st = statusOf(value);
+    const s = STATUS[st];
+    return (
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums whitespace-nowrap ${s.cls}`} title={`${s.label}${value === null ? '' : ` · ${n0.format(value)}%`}`}>
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: s.dot }} />
+            {value === null ? (compact ? '–' : 'no data') : `${n0.format(value)}%`}
+        </span>
+    );
 }
 
 function PropertyComparison({ properties, comparative }: { properties: { id: string; name: string }[]; comparative: NonNullable<Report['comparative']> }) {
-    const [moduleFilter, setModuleFilter] = useState<string>('all');
-    const standings = useMemo(() => buildStandings(properties, comparative), [properties, comparative]);
-    const modules = useMemo(() => Array.from(new Set(comparative.metrics.map(m => m.module))), [comparative]);
-    const metrics = moduleFilter === 'all' ? comparative.metrics : comparative.metrics.filter(m => m.module === moduleFilter);
-    const ranked = useMemo(() => metrics.map(m => ({ m, r: rankMetric(m, properties, comparative.values) })), [metrics, properties, comparative]);
-    const nameOf = (id: string) => properties.find(p => p.id === id)?.name || id;
+    const [sortKey, setSortKey] = useState<string>('overall');
+    const [showActivity, setShowActivity] = useState(false);
+    const cards = useMemo(() => buildReportCards(properties, comparative.values), [properties, comparative]);
+    const sorted = useMemo(() => {
+        if (sortKey === 'overall') return cards;
+        return [...cards].sort((a, b) => ((b.scores[sortKey] ?? -1) - (a.scores[sortKey] ?? -1)));
+    }, [cards, sortKey]);
+    const withScore = cards.filter(c => c.overall !== null);
+    const best = withScore.slice(0, 3);
+    const weakest = [...withScore].filter(c => !best.some(b => b.id === c.id)).sort((a, b) => b.attention - a.attention || (a.overall ?? 0) - (b.overall ?? 0)).slice(0, 3);
+    const modulesInUse = MODULE_SCORES.filter(m => cards.some(c => c.scores[m.key] !== null));
 
-    // Leader per module: the first metric of each module is its headline figure.
-    const leaders = modules.map(mod => {
-        const m = comparative.metrics.find(x => x.module === mod)!;
-        const r = rankMetric(m, properties, comparative.values);
-        const best = Array.from(r.best)[0];
-        const worst = Array.from(r.worst)[0];
-        return { module: mod, metric: m, best: best ? { name: nameOf(best), value: comparative.values[best]?.[m.key] ?? null } : null, worst: worst ? { name: nameOf(worst), value: comparative.values[worst]?.[m.key] ?? null } : null };
-    }).filter(l => l.best);
+    // One plain sentence per module: who is best, who needs attention, how many are fine.
+    const moduleLines = modulesInUse.map(m => {
+        const have = cards.filter(c => c.scores[m.key] !== null);
+        const top = [...have].sort((a, b) => (b.scores[m.key] ?? 0) - (a.scores[m.key] ?? 0))[0];
+        const low = [...have].sort((a, b) => (a.scores[m.key] ?? 0) - (b.scores[m.key] ?? 0))[0];
+        const goodCount = have.filter(c => statusOf(c.scores[m.key]) === 'good').length;
+        const attentionCount = have.filter(c => statusOf(c.scores[m.key]) === 'attention').length;
+        return { m, top, low, goodCount, attentionCount, total: have.length };
+    });
 
     return (
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
             <header className="flex items-center gap-2 mb-1">
                 <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center"><Building2 className="w-4 h-4 text-slate-700" /></div>
-                <h3 className="text-sm font-black text-slate-900">Property comparison</h3>
+                <h3 className="text-sm font-black text-slate-900">How each property is doing</h3>
             </header>
-            <p className="text-[11px] text-slate-500 mb-4">Which property does better in which module. A property leads a measure when it has the best figure among those that report it; ties share the lead.</p>
+            <p className="text-[11px] text-slate-500 mb-4">
+                Each module gets a simple score out of 100 for every property, and the overall score is the average of the modules that property uses.
+                {' '}<span className="font-bold text-emerald-700">Good</span> is 90 or more, <span className="font-bold text-amber-700">Okay</span> is 70 to 89, <span className="font-bold text-red-700">Needs attention</span> is below 70.
+            </p>
 
-            <div className="grid grid-cols-1 xl:grid-cols-5 gap-5">
-                <div className="xl:col-span-2">
-                    <ChartTitle note="ranking">Measures led by each property</ChartTitle>
-                    <Ranking rows={standings.map(s => ({ name: s.name, count: s.leads }))} color={C.blue} height={Math.max(120, standings.length * 28 + 8)} />
-                    <ul className="mt-2 grid grid-cols-1 gap-1">
-                        {standings.map(s => (
-                            <li key={s.id} className="flex items-center justify-between text-[11px] text-slate-600 gap-2">
-                                <span className="truncate">{s.name}</span>
-                                <span className="shrink-0 tabular-nums"><span className="font-bold text-emerald-700">{s.leads} lead</span> · <span className="font-bold text-red-700">{s.lags} lag</span> · {s.scored} measured</span>
-                            </li>
-                        ))}
-                    </ul>
+            {/* Best and weakest, in sentences */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+                    <div className="flex items-center gap-2 text-xs font-black text-emerald-800 mb-2"><CheckCircle2 className="w-4 h-4" /> Doing best</div>
+                    {best.length ? (
+                        <ol className="space-y-1.5">
+                            {best.map((c, i) => (
+                                <li key={c.id} className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="text-slate-800 truncate"><span className="font-bold text-slate-400 mr-1.5">{i + 1}.</span>{c.name}</span>
+                                    <span className="shrink-0 text-xs text-slate-600"><span className="font-black text-slate-900 text-sm">{c.overall}</span> / 100 · good in {c.good} of {c.scored} modules</span>
+                                </li>
+                            ))}
+                        </ol>
+                    ) : <p className="text-xs text-slate-500">No property has enough data yet.</p>}
                 </div>
-                <div className="xl:col-span-3">
-                    <ChartTitle note="headline measure per module">Leaders and laggards by module</ChartTitle>
-                    <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-1.5">
-                        {leaders.map(l => (
-                            <li key={l.module} className="text-xs flex items-baseline gap-2 min-w-0">
-                                <span className="w-28 shrink-0 font-bold text-slate-900 truncate">{l.module}</span>
-                                <span className="min-w-0 truncate text-slate-700">
-                                    <span className="text-emerald-700 font-bold">{l.best!.name}</span> {fmtMetric(l.best!.value, l.metric.unit)}
-                                    {l.worst && <span className="text-slate-400"> · lowest <span className="text-red-700 font-bold">{l.worst.name}</span> {fmtMetric(l.worst.value, l.metric.unit)}</span>}
-                                </span>
-                            </li>
-                        ))}
-                        {leaders.length === 0 && <li className="text-xs text-slate-400 italic">no measure has figures for two or more properties yet</li>}
-                    </ul>
+                <div className="rounded-xl border border-red-100 bg-red-50/60 p-4">
+                    <div className="flex items-center gap-2 text-xs font-black text-red-800 mb-2"><AlertCircle className="w-4 h-4" /> Needs the most attention</div>
+                    {weakest.length ? (
+                        <ol className="space-y-1.5">
+                            {weakest.map((c, i) => (
+                                <li key={c.id} className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="text-slate-800 truncate"><span className="font-bold text-slate-400 mr-1.5">{i + 1}.</span>{c.name}</span>
+                                    <span className="shrink-0 text-xs text-slate-600"><span className="font-black text-slate-900 text-sm">{c.overall}</span> / 100 · {c.attention} of {c.scored} modules need attention</span>
+                                </li>
+                            ))}
+                        </ol>
+                    ) : <p className="text-xs text-slate-500">Nothing stands out.</p>}
                 </div>
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-                <ChartTitle note="green leads, red lags, grey in between">Module scorecard by property</ChartTitle>
-                <select value={moduleFilter} onChange={e => setModuleFilter(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 bg-white" aria-label="Filter by module">
-                    <option value="all">All modules</option>
-                    {modules.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+            {/* Module by module, in sentences */}
+            <ChartTitle>Module by module</ChartTitle>
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 mb-5">
+                {moduleLines.map(({ m, top, low, goodCount, attentionCount, total }) => (
+                    <li key={m.key} className="text-xs text-slate-700 leading-relaxed">
+                        <span className="font-bold text-slate-900">{m.module}</span>
+                        <span className="text-slate-400"> ({m.question})</span>: {' '}
+                        {goodCount === total
+                            ? <>all {total} properties are doing well.</>
+                            : <>
+                                best is <span className="font-bold text-emerald-700">{top.name}</span> at {n0.format(top.scores[m.key] ?? 0)}%
+                                {attentionCount > 0 && <>, while <span className="font-bold text-red-700">{attentionCount === 1 ? low.name : `${attentionCount} properties`}</span> need{attentionCount === 1 ? 's' : ''} attention{attentionCount > 1 ? `, lowest ${low.name} at ${n0.format(low.scores[m.key] ?? 0)}%` : ` at ${n0.format(low.scores[m.key] ?? 0)}%`}</>}
+                                {attentionCount === 0 && <>; {goodCount} of {total} are good and the rest are okay</>}.
+                            </>}
+                    </li>
+                ))}
+                {moduleLines.length === 0 && <li className="text-xs text-slate-400 italic">No module has data for more than one property yet.</li>}
+            </ul>
+
+            {/* Report card grid */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                <ChartTitle>Report card</ChartTitle>
+                <label className="flex items-center gap-2 text-[11px] text-slate-500">
+                    Sort by
+                    <select value={sortKey} onChange={e => setSortKey(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-700 bg-white" aria-label="Sort properties by">
+                        <option value="overall">Overall score</option>
+                        {modulesInUse.map(m => <option key={m.key} value={m.key}>{m.module}</option>)}
+                    </select>
+                </label>
             </div>
             <div className="overflow-x-auto -mx-1 px-1">
-                <table className="min-w-full text-[11px] border-separate border-spacing-y-1">
+                <table className="min-w-full text-xs border-separate border-spacing-y-1">
                     <thead>
                         <tr>
-                            <th className="text-left font-bold text-slate-400 uppercase tracking-wide pr-3 py-1 whitespace-nowrap sticky left-0 bg-white">Measure</th>
-                            {properties.map(p => <th key={p.id} className="text-right font-bold text-slate-700 px-2 py-1 whitespace-nowrap">{p.name}</th>)}
+                            <th className="text-left font-bold text-slate-500 pr-3 py-1 whitespace-nowrap sticky left-0 bg-white">Property</th>
+                            <th className="text-left font-bold text-slate-900 px-2 py-1 whitespace-nowrap">Overall</th>
+                            {modulesInUse.map(m => <th key={m.key} className="text-left font-bold text-slate-500 px-2 py-1 whitespace-nowrap">{m.module}</th>)}
                         </tr>
                     </thead>
                     <tbody>
-                        {ranked.map(({ m, r }, i) => {
-                            const firstOfModule = i === 0 || ranked[i - 1].m.module !== m.module;
-                            return (
-                                <React.Fragment key={m.key}>
-                                    {firstOfModule && moduleFilter === 'all' && (
-                                        <tr><td colSpan={properties.length + 1} className="pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400 sticky left-0 bg-white">{m.module}</td></tr>
+                        {sorted.map(c => (
+                            <tr key={c.id}>
+                                <td className="pr-3 py-1 text-slate-800 font-medium whitespace-nowrap sticky left-0 bg-white">{c.name}</td>
+                                <td className="px-2 py-1">
+                                    {c.overall === null ? <StatusPill value={null} /> : (
+                                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-black tabular-nums ${STATUS[statusOf(c.overall)].cls}`}>
+                                            {c.overall} / 100
+                                        </span>
                                     )}
-                                    <tr>
-                                        <td className="pr-3 py-0.5 text-slate-700 whitespace-nowrap sticky left-0 bg-white">
-                                            {m.label}<span className="text-slate-400"> {m.higherIsBetter ? '↑ better' : '↓ better'}</span>
-                                        </td>
-                                        {properties.map(p => {
-                                            const v = comparative.values[p.id]?.[m.key] ?? null;
-                                            const cls = v === null ? 'text-slate-300 bg-slate-50' : r.best.has(p.id) ? 'bg-emerald-50 text-emerald-800 font-bold' : r.worst.has(p.id) ? 'bg-red-50 text-red-800 font-bold' : 'bg-slate-50 text-slate-700';
-                                            return <td key={p.id} className={`px-2 py-1 text-right tabular-nums rounded-md ${cls}`}>{fmtMetric(v, m.unit)}</td>;
-                                        })}
-                                    </tr>
-                                </React.Fragment>
-                            );
-                        })}
+                                </td>
+                                {modulesInUse.map(m => <td key={m.key} className="px-2 py-1"><StatusPill value={c.scores[m.key]} compact /></td>)}
+                            </tr>
+                        ))}
                     </tbody>
                 </table>
             </div>
+            <p className="text-[10px] text-slate-400 mt-1">A dash means the property does not use that module, so it is left out of the overall score rather than counted against it.</p>
+
+            {/* Activity figures, no judgement */}
+            <button type="button" onClick={() => setShowActivity(v => !v)} className="mt-4 text-xs font-bold text-slate-600 hover:text-slate-900 underline underline-offset-2">
+                {showActivity ? 'Hide activity figures' : 'Show activity figures (requests, visitors, spend and more)'}
+            </button>
+            {showActivity && (
+                <div className="overflow-x-auto -mx-1 px-1 mt-2">
+                    <table className="min-w-full text-xs border-separate border-spacing-y-1">
+                        <thead>
+                            <tr>
+                                <th className="text-left font-bold text-slate-500 pr-3 py-1 whitespace-nowrap sticky left-0 bg-white">Property</th>
+                                {ACTIVITY_COLUMNS.map(a => <th key={a.key} className="text-right font-bold text-slate-500 px-2 py-1 whitespace-nowrap">{a.label}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sorted.map(c => (
+                                <tr key={c.id} className="odd:bg-slate-50/70">
+                                    <td className="pr-3 py-1 text-slate-800 font-medium whitespace-nowrap sticky left-0 bg-white">{c.name}</td>
+                                    {ACTIVITY_COLUMNS.map(a => <td key={a.key} className="px-2 py-1 text-right tabular-nums text-slate-700">{fmtMetric(comparative.values[c.id]?.[a.key] ?? null, a.unit)}</td>)}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <p className="text-[10px] text-slate-400 mt-1">These are plain counts for the period. A high or low number is not good or bad on its own: a quiet site raises fewer requests and sees fewer visitors.</p>
+                </div>
+            )}
         </section>
     );
 }
+
 
 const LEVEL_ICON: Record<Finding['level'], { icon: React.ElementType; cls: string }> = {
     bad: { icon: AlertCircle, cls: 'text-red-600' },
@@ -735,14 +845,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                     {/* Headline tiles */}
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
                         {[
-                            { label: 'requests raised', value: s.tickets.available ? n0.format(s.tickets.total) : 'n/a' },
-                            { label: 'open requests now', value: s.tickets.available ? n0.format(s.tickets.open_now) : 'n/a' },
-                            { label: 'checklist completion', value: s.sop.available ? fmtPct(s.sop.completion_rate) : 'n/a' },
-                            { label: 'ppm compliance', value: s.ppm.available ? fmtPct(s.ppm.compliance) : 'n/a' },
-                            { label: `electricity ${s.electricity.available ? s.electricity.unit_label : ''}`.trim(), value: s.electricity.available ? n0.format(s.electricity.units) : 'n/a' },
-                            { label: 'diesel litres', value: s.diesel.available ? n0.format(s.diesel.litres) : 'n/a' },
-                            { label: 'visitors', value: s.visitors.available ? n0.format(s.visitors.total) : 'n/a' },
-                            { label: 'petty cash paid', value: s.petty_cash.available ? inr.format(s.petty_cash.paid_amount) : 'n/a' },
+                            { label: 'requests raised', value: s.tickets.available ? n0.format(s.tickets.total) : 'no data' },
+                            { label: 'open requests now', value: s.tickets.available ? n0.format(s.tickets.open_now) : 'no data' },
+                            { label: 'checklist completion', value: s.sop.available ? fmtPct(s.sop.completion_rate) : 'no data' },
+                            { label: 'ppm compliance', value: s.ppm.available ? fmtPct(s.ppm.compliance) : 'no data' },
+                            { label: `electricity ${s.electricity.available ? s.electricity.unit_label : ''}`.trim(), value: s.electricity.available ? n0.format(s.electricity.units) : 'no data' },
+                            { label: 'diesel litres', value: s.diesel.available ? n0.format(s.diesel.litres) : 'no data' },
+                            { label: 'visitors', value: s.visitors.available ? n0.format(s.visitors.total) : 'no data' },
+                            { label: 'petty cash paid', value: s.petty_cash.available ? inr.format(s.petty_cash.paid_amount) : 'no data' },
                         ].map(t => (
                             <div key={t.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-3">
                                 <div className="text-lg font-black text-slate-900 tabular-nums truncate">{t.value}</div>
