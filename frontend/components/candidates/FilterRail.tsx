@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
+import PanelToggle, { PANEL_TOGGLE_LOOK, PanelToggleIcon, type PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
 import { STATUS_LABELS, RECORD_STATUSES, type RecordStatus } from '@/backend/lib/candidates/types';
 import {
     DEFENCE_OPTIONS, EDUCATION_LEVELS, EDUCATION_TYPES, NOTICE_BUCKETS, SOURCED_MONTHS,
@@ -93,7 +94,9 @@ const noop = () => {};
 type SectionId = 'employment' | 'education' | 'diversity';
 
 /** The panel's contents. `onCollapse` is the small icon that closes it (the strip beside the list, or the slide-over). */
-export default function FilterRail({ orgId, filters, update, availability, canClear, onClear, onCollapse, collapseLabel }: {
+export default function FilterRail({ orgId, filters, update, availability, canClear, onClear, onCollapse, collapseLabel, collapseStyle = 'panel' }: {
+    /** Which console's collapse button to show: the host's sidebar look ("panel" for Tech, "chevron" for the HR logins). */
+    collapseStyle?: PanelToggleVariant;
     orgId: string;
     filters: SearchFilters;
     update: (patch: Partial<SearchFilters>) => void;
@@ -122,13 +125,12 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
 
     return (
         <div>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-x-2 gap-y-2">
                 <h2 className="font-display text-[15px] font-semibold text-text-primary">Filters</h2>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-x-1 gap-y-1">
                     <button type="button" onClick={onClear} disabled={!canClear} className={`${BTN_GHOST} h-8 px-2 text-[13px]`}>Clear all</button>
-                    <button type="button" onClick={onCollapse} aria-label={collapseLabel} title={collapseLabel} className={`${BTN_GHOST} h-8 w-8 px-0`}>
-                        <PanelLeftClose className="h-[17px] w-[17px]" aria-hidden />
-                    </button>
+                    {/* The same collapse button as the sidebar of the console this is shown in (owner 2026-11-09) */}
+                    <PanelToggle variant={collapseStyle} collapsed={false} onToggle={onCollapse} label={collapseLabel} />
                 </div>
             </div>
 
@@ -146,7 +148,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                         placeholder="Add a city or area"
                     />
                     <Gate open={has('preferredLocations')} note={RESUME_NOTE}>
-                        <label className="flex cursor-pointer items-start gap-2 text-xs font-medium leading-snug text-text-secondary">
+                        <label className="flex cursor-pointer items-start gap-x-2 gap-y-2 text-xs font-medium leading-snug text-text-secondary">
                             <input type="checkbox" checked={f.relocate} onChange={e => update({ relocate: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
                             Include candidates who prefer to relocate to above locations
                         </label>
@@ -172,11 +174,11 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                 </div>
 
                 <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-x-2 gap-y-2">
                         <span className={FIELD_LABEL}>Experience</span>
                         <Segment label="Which experience" value={f.expBasis} options={[['total', 'Total'], ['relevant', 'Relevant']]} onChange={expBasis => update({ expBasis })} />
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-x-2 gap-y-2">
                         <NumberInput label="Minimum years of experience" placeholder="Min" value={f.expMin} onChange={expMin => update({ expMin })} />
                         <span className="text-sm text-text-secondary">to</span>
                         <NumberInput label="Maximum years of experience" placeholder="Max" value={f.expMax} onChange={expMax => update({ expMax })} />
@@ -198,7 +200,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                 </div>
 
                 <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-x-2 gap-y-2">
                         <span className={FIELD_LABEL}>Salary</span>
                         <Segment label="Which salary" value={f.salaryBasis} options={[['current', 'Current'], ['expected', 'Expected']]} onChange={salaryBasis => update({ salaryBasis })} />
                     </div>
@@ -209,11 +211,23 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                         <Dropdown variant="tight" align="right" label="Salary unit" value={f.salaryUnit} options={UNIT_OPTIONS} onChange={salaryUnit => update({ salaryUnit, salaryMin: null, salaryMax: null })} />
                     </div>
                     {inverted(f.salaryMin, f.salaryMax) && <BadRange />}
-                    <label className="flex cursor-pointer items-start gap-2 text-xs font-medium leading-snug text-text-secondary">
+                    <label className="flex cursor-pointer items-start gap-x-2 gap-y-2 text-xs font-medium leading-snug text-text-secondary">
                         <input type="checkbox" checked={f.includeNoSalary} onChange={e => update({ includeNoSalary: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
                         Include candidates who did not mention their salary
                     </label>
                 </div>
+
+                {/* Phase 2 (owner 2026-11-10): a stored resume linked to the candidate. Greyed out until the resume update is applied. */}
+                <Gate open={!!availability?.applied} note="Available once the resume update is applied">
+                    <div className="space-y-1.5">
+                        <span className={FIELD_LABEL}>Resume on file</span>
+                        <div role="group" aria-label="Resume on file" className="flex flex-wrap gap-1.5">
+                            <Pill on={f.hasResume === ''} onClick={() => update({ hasResume: '' })}>Any</Pill>
+                            <Pill on={f.hasResume === 'yes'} onClick={() => update({ hasResume: 'yes' })}>Has resume</Pill>
+                            <Pill on={f.hasResume === 'no'} onClick={() => update({ hasResume: 'no' })}>No resume</Pill>
+                        </div>
+                    </div>
+                </Gate>
 
                 <div className="space-y-1 border-t border-border-subtle pt-2.5">
                     <Section title="Employment details" count={employmentCount} open={section === 'employment'} onToggle={() => toggle('employment')}>
@@ -254,7 +268,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                                             ))}
                                         </div>
                                         <Reveal open={e.mode === 'specific'}>
-                                            <div role="group" aria-label={`Choose ${level.label} qualifications`} className="mt-1.5 flex flex-wrap gap-1.5 rounded-xl bg-surface-elevated p-2">
+                                            <div role="group" aria-label={`Choose ${level.label} qualifications`} className="mt-1.5 flex flex-wrap gap-1.5 rounded-xl bg-surface-elevated px-2 py-2">
                                                 {level.options.map(option => (
                                                     <Pill key={option} on={e.picks.includes(option)} onClick={() => setEducation(level.id, { picks: toggleIn(e.picks, option) })}>{option}</Pill>
                                                 ))}
@@ -285,7 +299,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                         </Gate>
                         <Gate open={has('degreeYear')} note={RESUME_NOTE}>
                             <Field label="Year of degree completion">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-x-2 gap-y-2">
                                     <NumberInput label="Degree completed from year" placeholder="From" value={f.degreeYearFrom} onChange={degreeYearFrom => update({ degreeYearFrom })} />
                                     <span className="text-sm text-text-secondary">to</span>
                                     <NumberInput label="Degree completed to year" placeholder="To" value={f.degreeYearTo} onChange={degreeYearTo => update({ degreeYearTo })} />
@@ -307,7 +321,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                         </Gate>
                         <Gate open={false} note={APPROVAL_NOTE}>
                             <Field label="Age">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-x-2 gap-y-2">
                                     <NumberInput label="Minimum age" placeholder="Min" value={null} onChange={noop} />
                                     <span className="text-sm text-text-secondary">to</span>
                                     <NumberInput label="Maximum age" placeholder="Max" value={null} onChange={noop} />
@@ -338,11 +352,12 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
 }
 
 /** The slim strip the panel collapses to. Filters stay applied, so the strip says how many are in use. */
-export function FilterStrip({ activeCount, onExpand }: { activeCount: number; onExpand: () => void }) {
+export function FilterStrip({ activeCount, onExpand, collapseStyle = 'panel' }: { activeCount: number; onExpand: () => void; collapseStyle?: PanelToggleVariant }) {
     return (
         <button type="button" onClick={onExpand} aria-label={activeCount ? `Show filters. ${activeCount} in use.` : 'Show filters'} title="Show filters"
             className="flex w-full flex-col items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary">
-            <PanelLeftOpen className="h-[18px] w-[18px]" aria-hidden />
+            {/* Looks like PanelToggle (the strip itself is the button, so it cannot hold another one) */}
+            <span className={`flex ${PANEL_TOGGLE_LOOK[collapseStyle]}`}><PanelToggleIcon variant={collapseStyle} collapsed /></span>
             {activeCount > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-dark px-1.5 text-xs font-bold text-white">{activeCount}</span>}
             <span className="rotate-180 [writing-mode:vertical-rl]">Filters</span>
         </button>

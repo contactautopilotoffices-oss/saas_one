@@ -5,9 +5,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
+import { INFERABLE_FIELDS, type InferableField } from "./infer";
 import { parseEmail, parsePhone } from "./normalize";
 import { buildSearchText } from "./profile";
-import { RECORD_STATUSES, type CandidateExtras, type CandidateListResponse, type CandidateRecord } from "./types";
+import { RECORD_STATUSES, RESUME_SOURCE, type CandidateExtras, type CandidateListResponse, type CandidateRecord, type PastCompany } from "./types";
 
 export class CandidateActionError extends Error {
   constructor(
@@ -59,6 +60,12 @@ export interface RecordRow {
   career_break?: boolean | null;
   defence_background?: CandidateExtras["defenceBackground"];
   serving_notice?: boolean | null;
+  // Migration 20261110000001; with RESUME_COLUMNS.
+  has_resume?: boolean;
+  // Migration 20261111000002 (phase 4); with RESUME_COLUMNS.
+  skills?: string[] | null;
+  past_companies?: PastCompany[] | null;
+  resume_summary?: string | null;
 }
 
 export const RECORD_COLUMNS =
@@ -66,10 +73,13 @@ export const RECORD_COLUMNS =
   "current_designation, location, total_exp_months, role, candidate_source, sourcing_date, relevant_exp_months, " +
   "notice_period_days, current_inhand, expected_inhand, remark, status, indexed, created_at, updated_at, deleted_at, sheet_live";
 
-/** The fields resumes will fill (migration 20261107000001). Selected only by the filter panel, which copes without them. */
+/**
+ * The fields resumes will fill (migration 20261107000001) and has_resume (20261110000001). Selected only by the filter
+ * panel, which copes without them (both migrations go together).
+ */
 export const RESUME_COLUMNS =
   "industry, preferred_locations, ug_qualification, pg_qualification, ppg_qualification, institute, education_type, " +
-  "degree_year, career_break, defence_background, serving_notice";
+  "degree_year, career_break, defence_background, serving_notice, has_resume, skills, past_companies, resume_summary";
 
 export function toRecord(row: RecordRow): CandidateRecord {
   return {
@@ -111,8 +121,12 @@ export function toRecord(row: RecordRow): CandidateRecord {
         careerBreak: row.career_break ?? null,
         defenceBackground: row.defence_background ?? null,
         servingNotice: row.serving_notice ?? null,
+        skills: row.skills ?? [],
+        pastCompanies: row.past_companies ?? [],
+        resumeSummary: row.resume_summary ?? null,
       },
     }),
+    ...(row.has_resume === undefined ? {} : { hasResume: Boolean(row.has_resume) }),
   };
 }
 
@@ -125,6 +139,21 @@ const text = (max: number) =>
     .max(max, `Must be ${max} characters or fewer`)
     .transform((value) => value.replace(/\s+/g, " ").trim() || null)
     .nullable()
+    .optional();
+/** A short list of words (skills, cities): trimmed, no blanks, no repeats (whatever the letter case). */
+const words = (max: number, each: number) =>
+  z
+    .array(z.string().max(each, `Each must be ${each} characters or fewer`))
+    .max(max, `At most ${max}`)
+    .transform((list) => {
+      const seen = new Set<string>();
+      return list.map((value) => value.replace(/\s+/g, " ").trim()).filter((value) => {
+        const key = value.toLowerCase();
+        if (!value || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    })
     .optional();
 const months = z.number().int().min(0).max(720).nullable().optional();
 const rupees = z.number().int().min(0).max(10_000_000).nullable().optional();
@@ -151,6 +180,16 @@ const InputSchema = z.object({
   expectedInhand: rupees,
   remark: text(1000),
   status: z.enum(RECORD_STATUSES).optional(),
+  // What a resume fills; HR corrects them in the same form (owner 2026-11-11). Need migration 20261107000001 (+ skills: 20261111000002).
+  industry: text(120),
+  ugQualification: text(120),
+  pgQualification: text(120),
+  ppgQualification: text(120),
+  institute: text(200),
+  educationType: z.enum(["full_time", "part_time", "correspondence"]).nullable().optional(),
+  degreeYear: z.number().int().min(1950).max(2100).nullable().optional(),
+  skills: words(40, 60),
+  preferredLocations: words(10, 80),
 });
 
 export type ValidInput = z.infer<typeof InputSchema>;
@@ -187,6 +226,15 @@ function personColumns(input: Partial<ValidInput>): Record<string, unknown> {
   if (input.currentDesignation !== undefined) out.current_designation = input.currentDesignation;
   if (input.location !== undefined) out.location = input.location;
   if (input.totalExpMonths !== undefined) out.total_exp_months = input.totalExpMonths;
+  if (input.industry !== undefined) out.industry = input.industry;
+  if (input.ugQualification !== undefined) out.ug_qualification = input.ugQualification;
+  if (input.pgQualification !== undefined) out.pg_qualification = input.pgQualification;
+  if (input.ppgQualification !== undefined) out.ppg_qualification = input.ppgQualification;
+  if (input.institute !== undefined) out.institute = input.institute;
+  if (input.educationType !== undefined) out.education_type = input.educationType;
+  if (input.degreeYear !== undefined) out.degree_year = input.degreeYear;
+  if (input.skills !== undefined) out.skills = input.skills;
+  if (input.preferredLocations !== undefined) out.preferred_locations = input.preferredLocations;
   return out;
 }
 
@@ -229,7 +277,7 @@ export function rpcFail(context: string, error: { code?: string; message?: strin
 export interface ListOptions {
   q?: string | null;
   status?: string | null;
-  /** a sheet id, or "manual" for hand-added records */
+  /** a sheet id, "manual" for records someone typed in, or "resume" for candidates created from an uploaded resume */
   sheetId?: string | null;
   deleted?: boolean;
   page?: number;
@@ -242,6 +290,7 @@ interface Filterable<T> {
   is(column: string, value: null): T;
   not(column: string, operator: "is", value: null): T;
   ilike(column: string, pattern: string): T;
+  or(filters: string): T;
 }
 
 /** The table's filters (visible records only), shared by the list and "Delete all matching". */
@@ -249,7 +298,9 @@ function applyFilters<T extends Filterable<T>>(query: T, options: ListOptions): 
   let q = query.eq("sheet_live", true);
   q = options.deleted ? q.not("deleted_at", "is", null) : q.is("deleted_at", null);
   if (options.status && (RECORD_STATUSES as readonly string[]).includes(options.status)) q = q.eq("status", options.status);
-  if (options.sheetId === "manual") q = q.is("sheet_id", null);
+  // Owner 2026-11-11: "added manually" no longer includes the candidates the system created from resumes.
+  if (options.sheetId === "manual") q = q.is("sheet_id", null).or(`candidate_source.is.null,candidate_source.neq.${RESUME_SOURCE}`);
+  else if (options.sheetId === "resume") q = q.is("sheet_id", null).eq("candidate_source", RESUME_SOURCE);
   else if (options.sheetId) q = q.eq("sheet_id", options.sheetId);
   const text = options.q?.trim().toLowerCase().slice(0, 100);
   if (text) q = q.ilike("lookup_text", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
@@ -271,7 +322,22 @@ export async function listRecords(client: SupabaseClient, orgId: string, options
     .order("id")
     .range(from, from + pageSize - 1);
   if (error) fail("load candidates", error);
-  return { records: ((data ?? []) as unknown as RecordRow[]).map(toRecord), total: count ?? 0, page, pageSize };
+  const records = ((data ?? []) as unknown as RecordRow[]).map(toRecord);
+  await markResumes(client, orgId, records);
+  return { records, total: count ?? 0, page, pageSize };
+}
+
+/**
+ * Sets `hasResume` on these records (owner 2026-11-11: the Candidates table shows it too). The table's view has no
+ * such column, so the stored files are asked once per page. Before the resume migrations the flag stays absent.
+ */
+export async function markResumes(client: SupabaseClient, orgId: string, records: CandidateRecord[]): Promise<void> {
+  const ids = [...new Set(records.map((r) => r.candidateId))];
+  if (!ids.length) return;
+  const { data, error } = await client.from("candidate_resume_files").select("candidate_id").eq("organization_id", orgId).eq("status", "ready").in("candidate_id", ids);
+  if (error) return;
+  const withResume = new Set((data ?? []).map((row) => row.candidate_id as string));
+  for (const record of records) record.hasResume = withResume.has(record.candidateId);
 }
 
 export async function getRecordRows(client: SupabaseClient, orgId: string, ids: string[]): Promise<RecordRow[]> {
@@ -303,19 +369,28 @@ export async function refreshSearchText(client: SupabaseClient, orgId: string, c
   return changed;
 }
 
+/** False once a read showed migration 20261111000002 (resume summary and skills) is not applied; checked again later. */
+let resumeProfileMissingAt = 0;
+const PERSON_SEARCH_COLUMNS = "id, current_organization, current_designation, location, total_exp_months";
+const PERSON_RESUME_COLUMNS = `${PERSON_SEARCH_COLUMNS}, resume_summary, skills`;
+
+type PeopleRows = { data: Record<string, unknown>[] | null; error: { code?: string; message?: string } | null };
+
 async function refreshSearchTextChunk(client: SupabaseClient, orgId: string, candidateIds: string[]): Promise<number> {
-  const [people, apps] = await Promise.all([
-    client
-      .from("candidates")
-      .select("id, current_organization, current_designation, location, total_exp_months")
-      .eq("organization_id", orgId)
-      .in("id", candidateIds),
-    client
-      .from("candidate_applications")
-      .select("id, candidate_id, role, candidate_source, relevant_exp_months, notice_period_days, remark, search_text")
-      .eq("organization_id", orgId)
-      .in("candidate_id", candidateIds),
-  ]);
+  const selectPeople = async (columns: string): Promise<PeopleRows> =>
+    (await client.from("candidates").select(columns).eq("organization_id", orgId).in("id", candidateIds)) as unknown as PeopleRows;
+  const withResume = Date.now() - resumeProfileMissingAt > 5 * 60 * 1000;
+  let people = await selectPeople(withResume ? PERSON_RESUME_COLUMNS : PERSON_SEARCH_COLUMNS);
+  if (withResume && people.error && (people.error.code === "42703" || people.error.code === "PGRST204")) {
+    // Phase 4's columns are not there yet: the profile text goes on without them.
+    resumeProfileMissingAt = Date.now();
+    people = await selectPeople(PERSON_SEARCH_COLUMNS);
+  }
+  const apps = await client
+    .from("candidate_applications")
+    .select("id, candidate_id, role, candidate_source, relevant_exp_months, notice_period_days, remark, search_text")
+    .eq("organization_id", orgId)
+    .in("candidate_id", candidateIds);
   if (people.error || apps.error) fail("update the search index", people.error ?? apps.error);
   const byId = new Map((people.data ?? []).map((p) => [p.id as string, p]));
   let changed = 0;
@@ -324,14 +399,16 @@ async function refreshSearchTextChunk(client: SupabaseClient, orgId: string, can
     if (!person) continue;
     const next = buildSearchText({
       role: app.role,
-      currentDesignation: person.current_designation,
-      currentOrganization: person.current_organization,
-      location: person.location,
-      totalExpMonths: person.total_exp_months,
+      currentDesignation: person.current_designation as string | null,
+      currentOrganization: person.current_organization as string | null,
+      location: person.location as string | null,
+      totalExpMonths: person.total_exp_months as number | null,
       relevantExpMonths: app.relevant_exp_months,
       noticePeriodDays: app.notice_period_days,
       candidateSource: app.candidate_source,
       remark: app.remark,
+      resumeSummary: (person.resume_summary as string | null | undefined) ?? null,
+      skills: (person.skills as string[] | null | undefined) ?? null,
     });
     if (next === app.search_text) continue;
     const { error } = await client
@@ -380,7 +457,8 @@ export async function findCandidateByContact(
 export async function createRecord(
   client: SupabaseClient,
   orgId: string,
-  userId: string,
+  /** Null when the system adds the record (a candidate created from a resume, phase 4). */
+  userId: string | null,
   body: unknown,
 ): Promise<{ record: CandidateRecord; matchedExisting: boolean }> {
   const input = validateInput(body, false);
@@ -395,7 +473,7 @@ export async function createRecord(
   let candidateId = existingId;
   if (existingId) {
     // Only overwrite with values that were actually typed.
-    const update = Object.fromEntries(Object.entries(person).filter(([, value]) => value !== null && value !== undefined));
+    const update = Object.fromEntries(Object.entries(person).filter(([, value]) => value !== null && value !== undefined && !(Array.isArray(value) && !value.length)));
     const { error } = await client
       .from("candidates")
       .update({ ...update, updated_at: new Date().toISOString() })
@@ -452,8 +530,56 @@ export async function updateRecord(
     .eq("organization_id", orgId);
   if (error) fail("save the changes", error);
 
+  // A value a person typed is theirs: it is no longer "worked out from the resume".
+  const typed = INFERABLE_FIELDS.filter((field) => input[field] !== undefined);
+  if (typed.length) await markInferred(client, orgId, current.candidateId, [], typed);
+
   await refreshSearchText(client, orgId, [current.candidateId]);
   return getRecord(client, orgId, id);
+}
+
+// ---------------------------------------------------------------------------
+// Values worked out from a resume's employers (infer.ts): which fields of a person are such values
+// ---------------------------------------------------------------------------
+/** When a read last showed that migration 20261111000004 (candidates.inferred_fields) is not applied; asked again later. */
+let inferredColumnMissingAt = 0;
+const inferredColumnMissing = (error: { code?: string; message?: string } | null) =>
+  Boolean(error) && (error?.code === "42703" || error?.code === "PGRST204" || /inferred_fields/.test(error?.message ?? ""));
+
+/**
+ * Adds and removes field names on a person's "worked out" list. Never fails the caller: before the migration there is
+ * no list, and the values themselves are saved all the same.
+ */
+export async function markInferred(client: SupabaseClient, orgId: string, candidateId: string, add: InferableField[], remove: InferableField[] = []): Promise<void> {
+  if (Date.now() - inferredColumnMissingAt < 5 * 60 * 1000) return;
+  const read = await client.from("candidates").select("inferred_fields").eq("organization_id", orgId).eq("id", candidateId).maybeSingle();
+  if (read.error) {
+    if (inferredColumnMissing(read.error)) inferredColumnMissingAt = Date.now();
+    else console.error("[candidates] worked-out fields: read failed", read.error);
+    return;
+  }
+  const before = ((read.data as { inferred_fields?: string[] | null } | null)?.inferred_fields ?? []) as string[];
+  const after = [...new Set([...before.filter((field) => !(remove as string[]).includes(field)), ...add])];
+  if (after.length === before.length && after.every((field) => before.includes(field))) return;
+  const { error } = await client.from("candidates").update({ inferred_fields: after }).eq("organization_id", orgId).eq("id", candidateId);
+  if (error) console.error("[candidates] worked-out fields: save failed", error);
+}
+
+/** Sets `inferred` on the records whose person has worked-out values. Absent before the migration; never fails a list. */
+export async function attachInferred(client: SupabaseClient, orgId: string, records: CandidateRecord[]): Promise<void> {
+  if (Date.now() - inferredColumnMissingAt < 5 * 60 * 1000) return;
+  const ids = [...new Set(records.map((r) => r.candidateId))];
+  if (!ids.length) return;
+  const { data, error } = await client.from("candidates").select("id, inferred_fields").eq("organization_id", orgId).in("id", ids);
+  if (error) {
+    if (inferredColumnMissing(error)) inferredColumnMissingAt = Date.now();
+    return;
+  }
+  const byId = new Map((data ?? []).map((row) => [row.id as string, ((row.inferred_fields as string[] | null) ?? []).filter((f): f is InferableField => (INFERABLE_FIELDS as readonly string[]).includes(f))]));
+  for (const record of records) {
+    const fields = byId.get(record.candidateId);
+    if (fields?.length) record.inferred = fields;
+  }
 }
 
 export async function deleteRecord(client: SupabaseClient, orgId: string, userId: string, id: string): Promise<void> {

@@ -4,6 +4,7 @@ import { MAX_UPLOAD_BYTES, SUPPORTED_SHEET_EXTENSIONS, UPLOAD_RATE_LIMIT } from 
 import { findLiveSheetByName, importSheet } from "@/backend/lib/candidates/import";
 import { indexPending } from "@/backend/lib/candidates/indexing";
 import { parseSheet } from "@/backend/lib/candidates/parse-sheet";
+import { linkUnmatched, sheetCandidatesWithResume } from "@/backend/lib/candidates/resume-text";
 import { getSheetSummary, listSheets } from "@/backend/lib/candidates/sheets";
 import type { ImportSummary, UploadConflict, UploadMode } from "@/backend/lib/candidates/types";
 
@@ -86,7 +87,11 @@ export async function POST(request: Request) {
     after(() => indexPending(auth.admin, auth.orgId));
 
     const { sheetId, ...counts } = result;
-    const summary: ImportSummary = { ...counts, sheet: await getSheetSummary(auth.admin, auth.orgId, sheetId) };
+    // Phase 2: stored resumes whose email or phone matches a new row are linked now, so the summary can say how many
+    // of the sheet's candidates have one. Quick (database only); never fails the import.
+    await linkUnmatched(auth.admin, auth.orgId);
+    const candidatesWithResume = await sheetCandidatesWithResume(auth.admin, auth.orgId, sheetId);
+    const summary: ImportSummary = { ...counts, candidatesWithResume, sheet: await getSheetSummary(auth.admin, auth.orgId, sheetId) };
     return NextResponse.json({ ...summary, warnings: parsed.warnings }, { status: 201 });
   } catch (error) {
     return errorResponse(error, "Couldn't import the sheet");

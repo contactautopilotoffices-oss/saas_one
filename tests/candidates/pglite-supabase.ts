@@ -45,7 +45,7 @@ function splitTerms(text: string): string[] {
 }
 
 class Query implements PromiseLike<Result> {
-  private op: "select" | "insert" | "upsert" | "update" = "select";
+  private op: "select" | "insert" | "upsert" | "update" | "delete" = "select";
   private columns = "*";
   private countMode = false;
   private head = false;
@@ -92,6 +92,10 @@ class Query implements PromiseLike<Result> {
     this.values = values;
     return this;
   }
+  delete() {
+    this.op = "delete";
+    return this;
+  }
   eq(column: string, value: unknown) {
     this.where.push(`${column} = ${this.p(value)}`);
     return this;
@@ -109,9 +113,10 @@ class Query implements PromiseLike<Result> {
     this.where.push(`${column} is null`);
     return this;
   }
-  not(column: string, operator: "is" | "ilike" | "in", value: string | null) {
+  not(column: string, operator: "is" | "ilike" | "in" | "plfts", value: string | null) {
     if (operator === "ilike") this.where.push(`${column} not ilike ${this.p(value)}`);
     else if (operator === "in") this.where.push(`not (${column} = any(${this.p(String(value).replace(/[()]/g, "").split(","))}))`);
+    else if (operator === "plfts") this.where.push(`not (${column} @@ plainto_tsquery('english', ${this.p(value)}))`);
     else this.where.push(`${column} is not null`);
     return this;
   }
@@ -121,6 +126,14 @@ class Query implements PromiseLike<Result> {
   }
   lte(column: string, value: unknown) {
     this.where.push(`${column} <= ${this.p(value)}`);
+    return this;
+  }
+  gt(column: string, value: unknown) {
+    this.where.push(`${column} > ${this.p(value)}`);
+    return this;
+  }
+  lt(column: string, value: unknown) {
+    this.where.push(`${column} < ${this.p(value)}`);
     return this;
   }
   /** PostgREST's or() grammar, as far as the filter panel uses it: col.is.null, col.gte.1, col.ilike."%a%", and(...). */
@@ -144,7 +157,8 @@ class Query implements PromiseLike<Result> {
     if (op === "is") return raw === "null" ? `${column} is null` : `${column} is ${raw === "true" ? "true" : "false"}`;
     if (op === "in") return `${column} = any(${this.p(raw.replace(/^\(|\)$/g, "").split(","))})`;
     const value = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
-    const sql = { ilike: "ilike", gte: ">=", lte: "<=" }[op];
+    if (op === "plfts") return `${column} @@ plainto_tsquery('english', ${this.p(value)})`;
+    const sql = { ilike: "ilike", gte: ">=", lte: "<=", neq: "<>", eq: "=" }[op];
     if (!sql) throw new Error(`or(): unsupported operator ${op}`);
     if (op === "ilike") return `${column} ilike ${this.p(value)}`;
     return `${column} ${sql} ${this.p(/^\d+$/.test(value) ? Number(value) : value)}`;
@@ -197,6 +211,8 @@ class Query implements PromiseLike<Result> {
     } else if (this.op === "update") {
       const sets = Object.entries(this.values).map(([k, v]) => `${k} = ${this.p(v)}`);
       sql = `update ${table} set ${sets.join(", ")}${this.whereSql()} returning ${this.returning ?? "*"}`;
+    } else if (this.op === "delete") {
+      sql = `delete from ${table}${this.whereSql()} returning ${this.returning ?? "*"}`;
     } else {
       if (!this.rows.length) return { data: [], error: null };
       const cols = columnsOf(this.rows);

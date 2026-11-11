@@ -15,8 +15,9 @@ import {
   type FieldAvailability, type FilterResponse, type OptionField, type OptionItem, type PreferredItem, type ResumeField, type SearchFilters,
 } from "./filters";
 import { specChips, type Preferences, type SearchSpec } from "./query-spec";
-import { CandidateActionError, RECORD_COLUMNS, RESUME_COLUMNS, toRecord, type RecordRow } from "./records";
-import { RECORD_STATUSES } from "./types";
+import { attachInferred, CandidateActionError, getRecord, markResumes, RECORD_COLUMNS, RESUME_COLUMNS, toRecord, type RecordRow } from "./records";
+import { resumeSnippet } from "./snippet";
+import { RECORD_STATUSES, type CandidateRecord } from "./types";
 
 const word = z.string().trim().min(1).max(60);
 const name = z.string().trim().max(80);
@@ -57,6 +58,7 @@ const FiltersSchema = z.object({
   degreeYearTo: year,
   careerBreak: z.boolean(),
   defence: z.enum(["", "any", ...DEFENCE_OPTIONS.map((d) => d.id)]),
+  hasResume: z.enum(["", "yes", "no"]),
   includeBlank: z.boolean(),
   sort: z.enum(SORTS),
 });
@@ -102,17 +104,22 @@ interface Filterable<T> {
  * is often incomplete; HR chooses to see those through "more have blank details"). Call with `withoutResumeFields(f)`
  * before migration 20261107000001.
  */
-export function applyFilters<T extends Filterable<T>>(query: T, f: SearchFilters, allowBlank: boolean, today: string): T {
+export function applyFilters<T extends Filterable<T>>(query: T, f: SearchFilters, allowBlank: boolean, today: string, resumeText = false): T {
   let q = query;
   const either = (column: string, terms: string[], blankOk = allowBlank) => {
     q = q.or((blankOk ? [`${column}.is.null`, ...terms] : terms).join(","));
   };
 
-  // Keywords are checked on the text HR can see on a record (no resume data yet), so a match is always explainable.
-  for (const k of f.keywords.filter((k) => k.required)) q = q.ilike("lookup_text", contains(k.text));
+  // Keywords are checked on the text HR can see on a record, so a match is always explainable; with phase 4's view
+  // (resumeText) a word that is only in the resume's text counts too (full-text search, whole words).
+  const keywordTerms = (k: string) => (resumeText ? [ilike("lookup_text", k), `resume_fts.plfts.${quoted(k)}`] : [ilike("lookup_text", k)]);
+  for (const k of f.keywords.filter((k) => k.required)) q = q.or(keywordTerms(k.text).join(","));
   const optional = f.keywords.filter((k) => !k.required);
-  if (optional.length) q = q.or(optional.map((k) => ilike("lookup_text", k.text)).join(","));
-  for (const word of f.excludes) q = q.not("lookup_text", "ilike", contains(word));
+  if (optional.length) q = q.or(optional.flatMap((k) => keywordTerms(k.text)).join(","));
+  for (const word of f.excludes) {
+    q = q.not("lookup_text", "ilike", contains(word));
+    if (resumeText) q = q.not("resume_fts", "plfts", word);
+  }
 
   // Location: where they are, or (ticked) where they would move to. "Change preferred location" names other places.
   const moveTo = f.preferredLocations.length ? f.preferredLocations : f.locations;
@@ -158,13 +165,20 @@ export function applyFilters<T extends Filterable<T>>(query: T, f: SearchFilters
   if (f.careerBreak) q = q.or("career_break.is.true");
   if (f.defence === "any") q = q.or("defence_background.not.is.null");
   else if (f.defence) q = q.eq("defence_background", f.defence);
+  // Phase 2: has_resume is never blank (true or false for every record).
+  if (f.hasResume) q = q.eq("has_resume", f.hasResume === "yes" ? "true" : "false");
   return q;
 }
 
 const SORT_COLUMNS: Record<SearchFilters["sort"], { column: string; ascending: boolean }> = {
   recent: { column: "sourcing_date", ascending: false },
+  added: { column: "created_at", ascending: false },
+  updated: { column: "updated_at", ascending: false },
+  name: { column: "full_name", ascending: true },
   experience: { column: "total_exp_months", ascending: false },
+  relevant: { column: "relevant_exp_months", ascending: false },
   notice: { column: "notice_period_days", ascending: true },
+  salary: { column: "expected_inhand", ascending: true },
 };
 
 /** candidate_records plus the resume columns (migration 20261107000001). */
@@ -197,7 +211,7 @@ export function resetResumeColumnsCheck(): void {
 }
 
 async function countMatching(client: SupabaseClient, orgId: string, f: SearchFilters, allowBlank: boolean, today: string, view: string): Promise<number> {
-  const { count, error } = await applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), f, allowBlank, today);
+  const { count, error } = await applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), f, allowBlank, today, view === FILTER_VIEW);
   if (error) failed(error);
   return count ?? 0;
 }
@@ -217,7 +231,7 @@ export async function filterRecords(
   const sort = SORT_COLUMNS[given.sort];
 
   const run = (f: SearchFilters, columns: string, view: string) =>
-    applyFilters(visible(client, orgId, columns, { count: "exact" }, view), f, f.includeBlank, today)
+    applyFilters(visible(client, orgId, columns, { count: "exact" }, view), f, f.includeBlank, today, view === FILTER_VIEW)
       .order(sort.column, { ascending: sort.ascending, nullsFirst: false })
       .order("id")
       .range(from, from + size - 1);
@@ -238,8 +252,11 @@ export async function filterRecords(
   const total = count ?? 0;
   const blankable = hasBlankableFilter(f);
   const other = blankable ? await countMatching(client, orgId, f, !f.includeBlank, today, resumeFields ? FILTER_VIEW : "candidate_records") : 0;
+  const records = ((data ?? []) as unknown as RecordRow[]).map(toRecord);
+  if (resumeFields && f.keywords.length) await attachSnippets(client, orgId, records, f.keywords.map((k) => k.text));
+  if (resumeFields) await attachInferred(client, orgId, records);
   return {
-    records: ((data ?? []) as unknown as RecordRow[]).map(toRecord),
+    records,
     total,
     blankCount: blankable ? Math.abs(other - total) : 0,
     page: current,
@@ -248,13 +265,67 @@ export async function filterRecords(
   };
 }
 
+/**
+ * How many visible records carry each of these keywords, each counted on its own exactly as the list would match it
+ * (keyword-suggest.ts shows the number beside a suggested term). A keyword that could not be counted gets null; this
+ * never throws.
+ */
+export async function keywordCounts(client: SupabaseClient, orgId: string, terms: string[], today = new Date().toISOString().slice(0, 10)): Promise<{ text: string; count: number | null }[]> {
+  const resumeFields = !resumeColumnsKnownMissing(Date.now());
+  const view = resumeFields ? FILTER_VIEW : "candidate_records";
+  return Promise.all(terms.map(async (text) => {
+    const f: SearchFilters = { ...EMPTY_FILTERS, keywords: [{ text, required: true }] };
+    const { count, error } = await applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), resumeFields ? f : withoutResumeFields(f), true, today, resumeFields);
+    if (error && resumeFields && isMissingResumeView(error)) resumeColumnsMissingAt = Date.now();
+    return { text, count: error ? null : count ?? 0 };
+  }));
+}
+
+/**
+ * Owner 2026-11-11: each result shows the lines of its resume around the keywords. One read of the page's resume
+ * texts; a candidate with no resume, or whose resume does not hold the words (they matched on the sheet), gets none.
+ * Never fails a search: before migration 20261111000002 there is no text to read and the cards go without.
+ */
+async function attachSnippets(client: SupabaseClient, orgId: string, records: CandidateRecord[], keywords: string[]): Promise<void> {
+  const ids = [...new Set(records.filter((r) => r.hasResume !== false).map((r) => r.candidateId))];
+  if (!ids.length) return;
+  const { data, error } = await client.from("candidates").select("id, resume_text").eq("organization_id", orgId).in("id", ids);
+  if (error) return;
+  const texts = new Map((data ?? []).map((row) => [row.id as string, row.resume_text as string | null]));
+  for (const record of records) {
+    const snippet = resumeSnippet(texts.get(record.candidateId), keywords);
+    if (snippet) record.resumeSnippet = snippet;
+  }
+}
+
+/**
+ * One record with everything the candidate's panel shows (the resume fields and "has a resume"), wherever it was
+ * opened from: the Candidates table lists records without them. Falls back to the plain record before the migrations.
+ */
+export async function getFullRecord(client: SupabaseClient, orgId: string, id: string): Promise<CandidateRecord> {
+  if (!resumeColumnsKnownMissing(Date.now())) {
+    const { data, error } = await client.from(FILTER_VIEW).select(`${RECORD_COLUMNS}, ${RESUME_COLUMNS}`).eq("organization_id", orgId).eq("id", id).maybeSingle();
+    if (!error && data) {
+      const full = toRecord(data as unknown as RecordRow);
+      await attachInferred(client, orgId, [full]);
+      return full;
+    }
+    if (error && !isMissingResumeView(error)) failed(error);
+    if (error) resumeColumnsMissingAt = Date.now();
+  }
+  const record = await getRecord(client, orgId, id);
+  await markResumes(client, orgId, [record]);
+  return record;
+}
+
 /** Which resume filters have data yet, so the panel greys out the rest. */
 export async function resumeFieldAvailability(client: SupabaseClient, orgId: string): Promise<FieldAvailability> {
   const empty = Object.fromEntries(RESUME_FIELDS.map((field) => [field, 0])) as Record<ResumeField, number>;
   const counted = await Promise.all(RESUME_FIELDS.map(async (field) => {
     const column = RESUME_FIELD_COLUMNS[field];
     const base = visible(client, orgId, "id", { count: "exact", head: true }, FILTER_VIEW);
-    const { count, error } = await (field === "preferredLocations" ? base.neq(column, "") : base.not(column, "is", null));
+    // hasResume counts the records that have one (the column itself is never null).
+    const { count, error } = await (field === "preferredLocations" ? base.neq(column, "") : field === "hasResume" ? base.eq(column, true) : base.not(column, "is", null));
     return { field, count: count ?? 0, error };
   }));
   const problem = counted.find((c) => c.error)?.error ?? null;

@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Info } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Info, X } from 'lucide-react';
+import { EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import {
-    RECORD_STATUSES, STATUS_LABELS,
-    type CandidateInput, type CandidateRecord, type RecordStatus,
+    originLabel, RECORD_STATUSES, STATUS_LABELS,
+    type CandidateExtras, type CandidateInput, type CandidateRecord, type RecordStatus,
 } from '@/backend/lib/candidates/types';
-import { api } from './api';
+import { api, qs } from './api';
 import { formatDateTime, monthsToParts, partsToMonths } from './format';
 import { BTN_PRIMARY, BTN_SECONDARY, Drawer, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
@@ -14,20 +15,30 @@ import { BTN_PRIMARY, BTN_SECONDARY, Drawer, INPUT, LABEL, Spinner, useUi, WELL 
  * Add / edit one record. The same drawer is opened from the Candidates table ("Add candidate", "Edit") and from a
  * search result ("Open"). On edit only the fields the user changed are sent (PATCH is partial per the contract), so
  * an edit never overwrites someone else's change to a field this user did not touch.
+ *
+ * Owner 2026-11-11: what a resume fills in (industry, education, skills, where they would move) can be corrected here
+ * too. The Candidates table hands over a record without those fields, so they are fetched before the form opens.
  */
+
+type EducationType = NonNullable<CandidateExtras['educationType']> | '';
 
 interface FormState {
     fullName: string; email: string; phone: string; currentOrganization: string; currentDesignation: string; location: string;
     totalYears: string; totalMonths: string; role: string; candidateSource: string; sourcingDate: string;
     relevantYears: string; relevantMonths: string; noticePeriodDays: string; currentInhand: string; expectedInhand: string;
     remark: string; status: RecordStatus;
+    industry: string; ugQualification: string; pgQualification: string; ppgQualification: string; institute: string;
+    educationType: EducationType; degreeYear: string; skills: string[]; preferredLocations: string[];
 }
 
 const str = (v: string | number | null | undefined) => (v === null || v === undefined ? '' : String(v));
+/** "none" is how a resume says "no such degree"; in the form that is an empty box. */
+const degree = (v: string | null | undefined) => (v && v.toLowerCase() !== NO_QUALIFICATION ? v : '');
 
 function toForm(r: CandidateRecord | null): FormState {
     const total = monthsToParts(r?.totalExpMonths);
     const relevant = monthsToParts(r?.relevantExpMonths);
+    const x = r?.extras;
     return {
         fullName: r?.fullName ?? '', email: str(r?.email), phone: str(r?.phone),
         currentOrganization: str(r?.currentOrganization), currentDesignation: str(r?.currentDesignation), location: str(r?.location),
@@ -35,6 +46,9 @@ function toForm(r: CandidateRecord | null): FormState {
         sourcingDate: str(r?.sourcingDate), relevantYears: relevant.years, relevantMonths: relevant.months,
         noticePeriodDays: str(r?.noticePeriodDays), currentInhand: str(r?.currentInhand), expectedInhand: str(r?.expectedInhand),
         remark: str(r?.remark), status: r?.status ?? 'new',
+        industry: str(x?.industry), ugQualification: degree(x?.ugQualification), pgQualification: degree(x?.pgQualification), ppgQualification: degree(x?.ppgQualification),
+        institute: str(x?.institute), educationType: x?.educationType ?? '', degreeYear: str(x?.degreeYear),
+        skills: x?.skills ?? [], preferredLocations: x?.preferredLocations ?? [],
     };
 }
 
@@ -48,9 +62,10 @@ function wholeNumber(v: string, max: number): number | null | 'invalid' {
     return Number.isInteger(n) && n >= 0 && n <= max ? n : 'invalid';
 }
 
-type Errors = Partial<Record<'fullName' | 'email' | 'totalExp' | 'relevantExp' | 'noticePeriodDays' | 'currentInhand' | 'expectedInhand', string>>;
+type Errors = Partial<Record<'fullName' | 'email' | 'totalExp' | 'relevantExp' | 'noticePeriodDays' | 'currentInhand' | 'expectedInhand' | 'degreeYear', string>>;
 
-function validate(f: FormState): { input: CandidateInput; errors: Errors } {
+/** `withResumeFields`: the record carries the fields a resume fills, so they are part of what is saved. */
+function validate(f: FormState, withResumeFields: boolean): { input: CandidateInput; errors: Errors } {
     const errors: Errors = {};
     if (!f.fullName.trim()) errors.fullName = 'Enter the candidate’s name.';
     if (f.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) errors.email = 'That does not look like an email address.';
@@ -64,6 +79,8 @@ function validate(f: FormState): { input: CandidateInput; errors: Errors } {
     if (current === 'invalid') errors.currentInhand = 'Rupees per month, as a whole number.';
     const expected = wholeNumber(f.expectedInhand, 100_000_000);
     if (expected === 'invalid') errors.expectedInhand = 'Rupees per month, as a whole number.';
+    const year = wholeNumber(f.degreeYear, 2100);
+    if (withResumeFields && (year === 'invalid' || (year !== null && year < 1950))) errors.degreeYear = 'A year from 1950 to 2100.';
 
     const input: CandidateInput = {
         fullName: f.fullName.trim(),
@@ -76,17 +93,34 @@ function validate(f: FormState): { input: CandidateInput; errors: Errors } {
         currentInhand: current === 'invalid' ? null : current,
         expectedInhand: expected === 'invalid' ? null : expected,
         remark: text(f.remark), status: f.status,
+        ...(withResumeFields ? {
+            industry: text(f.industry), ugQualification: text(f.ugQualification), pgQualification: text(f.pgQualification), ppgQualification: text(f.ppgQualification),
+            institute: text(f.institute), educationType: f.educationType || null, degreeYear: year === 'invalid' ? null : year,
+            skills: f.skills, preferredLocations: f.preferredLocations,
+        } : {}),
     };
     return { input, errors };
 }
+
+const same = (a: unknown, b: unknown) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a ?? []) === JSON.stringify(b ?? []) : a === b);
 
 /** The fields of `next` that differ from `prev` (for a partial PATCH). */
 function changedFields(prev: CandidateInput, next: CandidateInput): Partial<CandidateInput> {
     const out: Partial<CandidateInput> = {};
     (Object.keys(next) as (keyof CandidateInput)[]).forEach(k => {
-        if (next[k] !== prev[k]) (out as Record<string, unknown>)[k] = next[k];
+        if (!same(next[k], prev[k])) (out as Record<string, unknown>)[k] = next[k];
     });
     return out;
+}
+
+/** A new candidate: an empty resume field is left out, so nothing is sent that nobody typed. */
+function withoutEmpty(input: CandidateInput): CandidateInput {
+    const out: Record<string, unknown> = { ...input };
+    for (const key of ['industry', 'ugQualification', 'pgQualification', 'ppgQualification', 'institute', 'educationType', 'degreeYear', 'skills', 'preferredLocations'] as const) {
+        const value = out[key];
+        if (value === null || value === undefined || (Array.isArray(value) && !value.length)) delete out[key];
+    }
+    return out as unknown as CandidateInput;
 }
 
 function Field({ label, htmlFor, error, hint, children, className = '' }: {
@@ -107,7 +141,7 @@ function ExpField({ id, label, years, months, onYears, onMonths, error }: {
     return (
         <fieldset className="min-w-0">
             <legend className={`${LABEL} mb-1.5`}>{label}</legend>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-x-2 gap-y-2">
                 <div className="relative">
                     <input id={`${id}-y`} inputMode="numeric" type="number" min={0} max={60} step={1} value={years} onChange={e => onYears(e.target.value)}
                         aria-label={`${label}: years`} aria-invalid={!!error} className={`${INPUT} pr-11 tabular-nums`} placeholder="0" />
@@ -124,6 +158,42 @@ function ExpField({ id, label, years, months, onYears, onMonths, error }: {
     );
 }
 
+/** A box of small labels (skills, cities): Enter or a comma adds what is typed, the cross or Backspace removes one. */
+function ChipsField({ id, values, onChange, placeholder, max }: { id: string; values: string[]; onChange: (next: string[]) => void; placeholder: string; max: number }) {
+    const [typed, setTyped] = useState('');
+    const add = (raw: string) => {
+        const fresh = raw.split(',').map(v => v.replace(/\s+/g, ' ').trim()).filter(Boolean)
+            .filter((v, i, all) => all.findIndex(o => o.toLowerCase() === v.toLowerCase()) === i && !values.some(o => o.toLowerCase() === v.toLowerCase()));
+        if (fresh.length) onChange([...values, ...fresh].slice(0, max));
+        setTyped('');
+    };
+    return (
+        <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-xl border border-border bg-surface px-2 py-1.5 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
+            {values.map(value => (
+                <span key={value} className={`${WELL} inline-flex max-w-full items-center gap-0.5 rounded-lg py-0.5 pl-2 pr-0.5 text-xs font-medium text-text-primary`}>
+                    <span className="truncate">{value}</span>
+                    <button type="button" onClick={() => onChange(values.filter(v => v !== value))} aria-label={`Remove ${value}`} className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-tertiary hover:bg-muted hover:text-text-primary">
+                        <X className="h-3 w-3" aria-hidden />
+                    </button>
+                </span>
+            ))}
+            <input
+                id={id}
+                value={typed}
+                onChange={e => (e.target.value.includes(',') ? add(e.target.value) : setTyped(e.target.value))}
+                onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); add(typed); }
+                    else if (e.key === 'Backspace' && !typed && values.length) onChange(values.slice(0, -1));
+                }}
+                onBlur={() => { if (typed.trim()) add(typed); }}
+                disabled={values.length >= max}
+                placeholder={values.length >= max ? `At most ${max}` : values.length ? '' : placeholder}
+                className="h-7 min-w-[120px] flex-1 bg-transparent px-1 text-base text-text-primary outline-none placeholder:text-text-tertiary sm:text-sm"
+            />
+        </div>
+    );
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section className="space-y-4">
@@ -133,32 +203,66 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     );
 }
 
-/** Mount with a `key` per record so the form re-initialises when a different record is opened. */
-export default function RecordForm({
-    orgId, record, open, onClose, onSaved,
-}: {
+interface FormProps {
     orgId: string;
     /** null = add a new candidate. */
     record: CandidateRecord | null;
     open: boolean;
     onClose: () => void;
     onSaved: (record: CandidateRecord, created: boolean) => void;
-}) {
+}
+
+/**
+ * Mount with a `key` per record so the form re-initialises when a different record is opened. A record that comes
+ * without the resume fields (from the Candidates table) is fetched in full first, so the form can show and save them.
+ */
+export default function RecordForm(props: FormProps) {
+    const { orgId, record, open, onClose } = props;
+    const { reportError } = useUi();
+    const needsFull = record !== null && record.extras === undefined;
+    const recordId = record?.id ?? null;
+    const [full, setFull] = useState<{ record: CandidateRecord } | 'failed' | null>(null);
+    useEffect(() => {
+        if (!needsFull || !open || full || !recordId) return;
+        const ctrl = new AbortController();
+        void api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(recordId)}${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (res.ok) setFull({ record: res.data.record });
+            else { if (res.noAccess) reportError(res); setFull('failed'); }
+        });
+        return () => ctrl.abort();
+    }, [needsFull, open, full, recordId, orgId, reportError]);
+
+    if (needsFull && !full) {
+        return (
+            <Drawer open={open} onClose={onClose} labelId="candidate-form-title" title={`Edit ${record?.fullName ?? 'candidate'}`}>
+                <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading the details</p>
+            </Drawer>
+        );
+    }
+    // If the full record could not be fetched, the form still opens with what the table had (the resume fields stay out).
+    const loaded = needsFull && full && full !== 'failed' ? { ...full.record, ...record, extras: full.record.extras, hasResume: full.record.hasResume } : record;
+    return <RecordFormBody {...props} record={loaded} />;
+}
+
+function RecordFormBody({ orgId, record, open, onClose, onSaved }: FormProps) {
     const { notify, reportError } = useUi();
+    // A new candidate may be given the resume fields too; an existing record only when it carries them.
+    const withResumeFields = record === null || record.extras !== undefined;
     const [form, setForm] = useState<FormState>(() => toForm(record));
-    const [initial] = useState<CandidateInput>(() => validate(toForm(record)).input);
+    const [initial] = useState<CandidateInput>(() => validate(toForm(record), withResumeFields).input);
     const [errors, setErrors] = useState<Errors>({});
     const [saving, setSaving] = useState(false);
     const [serverError, setServerError] = useState('');
 
     const set = <K extends keyof FormState>(k: K) => (v: FormState[K]) => setForm(f => ({ ...f, [k]: v }));
-    const bind = (k: Exclude<keyof FormState, 'status'>) => ({
+    const bind = (k: Exclude<keyof FormState, 'status' | 'educationType' | 'skills' | 'preferredLocations'>) => ({
         value: form[k], onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => set(k)(e.target.value),
     });
 
     const submit = async (e?: React.FormEvent) => {
         e?.preventDefault();
-        const { input, errors: errs } = validate(form);
+        const { input, errors: errs } = validate(form, withResumeFields);
         setErrors(errs);
         setServerError('');
         if (Object.keys(errs).length) return;
@@ -174,7 +278,7 @@ export default function RecordForm({
             onSaved(res.data.record, false);
         } else {
             setSaving(true);
-            const res = await api<{ record: CandidateRecord }>('/api/candidates', { method: 'POST', json: { orgId, ...input } });
+            const res = await api<{ record: CandidateRecord }>('/api/candidates', { method: 'POST', json: { orgId, ...withoutEmpty(input) } });
             setSaving(false);
             if (!res.ok) { setServerError(res.error); if (res.noAccess) reportError(res); return; }
             notify('Candidate added', 'success');
@@ -203,7 +307,7 @@ export default function RecordForm({
 
                 {record && (
                     <p className="text-xs text-text-tertiary">
-                        {record.sheetName ? <>From sheet <span className="font-semibold text-text-secondary">{record.sheetName}</span>{record.sourceRow ? <>, row <span className="tabular-nums">{record.sourceRow}</span></> : null}</> : 'Added by hand'}
+                        {record.sheetName ? <>From sheet <span className="font-semibold text-text-secondary">{record.sheetName}</span>{record.sourceRow ? <>, row <span className="tabular-nums">{record.sourceRow}</span></> : null}</> : originLabel(record)}
                         {' · '}Updated <span className="tabular-nums">{formatDateTime(record.updatedAt)}</span>
                     </p>
                 )}
@@ -216,7 +320,7 @@ export default function RecordForm({
                     <Field label="Full name *" htmlFor="cf-name" error={errors.fullName}>
                         <input id="cf-name" autoFocus required autoComplete="off" {...bind('fullName')} aria-invalid={!!errors.fullName} className={INPUT} />
                     </Field>
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
                         <Field label="Email" htmlFor="cf-email" error={errors.email}>
                             <input id="cf-email" type="email" inputMode="email" autoComplete="off" {...bind('email')} aria-invalid={!!errors.email} className={INPUT} />
                         </Field>
@@ -238,7 +342,7 @@ export default function RecordForm({
                 </Section>
 
                 <Section title="This application">
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
                         <Field label="Role sourced for" htmlFor="cf-role">
                             <input id="cf-role" {...bind('role')} className={INPUT} placeholder="e.g. BMS Operator" />
                         </Field>
@@ -269,6 +373,47 @@ export default function RecordForm({
                         <textarea id="cf-remark" rows={3} {...bind('remark')} className={`${INPUT} h-auto resize-y py-2.5`} />
                     </Field>
                 </Section>
+
+                {withResumeFields && (
+                    <Section title="Education and skills">
+                        <div className={`${WELL} flex gap-2.5 px-3 py-2.5 text-xs leading-relaxed text-text-secondary`}>
+                            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />
+                            <p>These are filled in from the resume when one is read. Correct anything that is wrong: a resume read later only fills what is still empty, so your changes stay.</p>
+                        </div>
+                        <div className="grid gap-x-4 gap-y-4 sm:grid-cols-2">
+                            <Field label="Industry" htmlFor="cf-industry">
+                                <input id="cf-industry" {...bind('industry')} className={INPUT} placeholder="e.g. Real estate" />
+                            </Field>
+                            <Field label="Institute" htmlFor="cf-institute">
+                                <input id="cf-institute" {...bind('institute')} className={INPUT} placeholder="e.g. University of Mumbai" />
+                            </Field>
+                            <Field label="Graduation (UG)" htmlFor="cf-ug">
+                                <input id="cf-ug" {...bind('ugQualification')} className={INPUT} placeholder="e.g. B.Com" />
+                            </Field>
+                            <Field label="Post graduation (PG)" htmlFor="cf-pg">
+                                <input id="cf-pg" {...bind('pgQualification')} className={INPUT} placeholder="e.g. MBA" />
+                            </Field>
+                            <Field label="Doctorate (PPG)" htmlFor="cf-ppg">
+                                <input id="cf-ppg" {...bind('ppgQualification')} className={INPUT} placeholder="e.g. PhD" />
+                            </Field>
+                            <Field label="Year of the highest degree" htmlFor="cf-year" error={errors.degreeYear}>
+                                <input id="cf-year" inputMode="numeric" {...bind('degreeYear')} aria-invalid={!!errors.degreeYear} className={`${INPUT} tabular-nums`} placeholder="e.g. 2018" />
+                            </Field>
+                            <Field label="Education type" htmlFor="cf-edu-type">
+                                <select id="cf-edu-type" value={form.educationType} onChange={e => set('educationType')(e.target.value as EducationType)} className={INPUT}>
+                                    <option value="">Not known</option>
+                                    {EDUCATION_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                                </select>
+                            </Field>
+                        </div>
+                        <Field label="Skills" htmlFor="cf-skills" hint="Type a skill and press Enter or a comma.">
+                            <ChipsField id="cf-skills" values={form.skills} onChange={set('skills')} placeholder="e.g. BMS, HVAC" max={40} />
+                        </Field>
+                        <Field label="Would move to" htmlFor="cf-move" hint="Cities other than where they live now.">
+                            <ChipsField id="cf-move" values={form.preferredLocations} onChange={set('preferredLocations')} placeholder="e.g. Pune" max={10} />
+                        </Field>
+                    </Section>
+                )}
             </form>
         </Drawer>
     );

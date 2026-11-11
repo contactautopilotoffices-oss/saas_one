@@ -51,6 +51,14 @@ export function formatDate(iso: string | null | undefined): string {
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+/** A date in a table column: "11 Nov" this year, "11 Nov 2025" for another year. */
+export function formatDateShort(iso: string | null | undefined, now = new Date()): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.getFullYear() === now.getFullYear() ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : formatDate(iso);
+}
+
 export function formatDateTime(iso: string | null | undefined): string {
     if (!iso) return '—';
     const d = new Date(iso);

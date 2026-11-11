@@ -3,6 +3,7 @@ import { after, NextResponse } from "next/server";
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { indexPending } from "@/backend/lib/candidates/indexing";
 import { createRecord, listRecords } from "@/backend/lib/candidates/records";
+import { linkUnmatched } from "@/backend/lib/candidates/resume-text";
 
 import { errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "./_lib/auth";
 
@@ -49,6 +50,8 @@ export async function POST(request: Request) {
   try {
     const { record, matchedExisting } = await createRecord(auth.admin, auth.orgId, auth.user.id, fields);
     after(() => indexPending(auth.admin, auth.orgId));
+    // Phase 2: a stored resume with this person's email or phone is linked to them.
+    after(() => linkUnmatched(auth.admin, auth.orgId));
     return NextResponse.json({ record, matchedExisting }, { status: 201 });
   } catch (error) {
     return errorResponse(error, "Couldn't save the candidate");

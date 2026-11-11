@@ -1,28 +1,34 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, CircleAlert, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleAlert, Download, FileText, PanelRightOpen, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
 import {
-    RECORD_STATUSES, STATUS_LABELS,
+    originLabel, RECORD_STATUSES, recordOrigin, STATUS_LABELS,
     type BulkResponse, type CandidateListResponse, type CandidateRecord, type RecordStatus, type SheetsResponse,
 } from '@/backend/lib/candidates/types';
 import ConfirmModal from '@/frontend/components/ui/ConfirmModal';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, qs } from './api';
+import CandidateDetails from './CandidateDetails';
 import { PERMANENT_PHRASE, TypedConfirmDialog } from './DangerDialogs';
-import { formatCount, formatDate, formatInr, formatMonths, formatNotice } from './format';
+import { downloadCsv, recordsToCsv } from './export-csv';
+import { formatCount, formatDate, formatDateShort, formatInr, formatMonths, formatNotice } from './format';
 import RecordForm from './RecordForm';
 import {
-    BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, StatusBadge, Toggle, useUi, WELL,
+    BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, StatusBadge, Toggle, useUi, WELL,
 } from './ui';
 
 const PAGE_SIZE = 50;
 
 type Loaded<T> = { key: string; data: T | null; error: string };
 
+/** Status changes sent at the same time by "Set status" on the ticked records. */
+const BULK_PARALLEL = 4;
+
+/** The sheet's name, "From resume" or "Added manually" (owner 2026-11-11); only a sheet's name is in the full text colour. */
 function SourceCell({ r }: { r: CandidateRecord }) {
-    return <span className={r.sheetName ? 'text-text-primary' : 'italic text-text-tertiary'}>{r.sheetName ?? 'Added by hand'}</span>;
+    return <span className={recordOrigin(r) === 'sheet' ? 'text-text-primary' : 'text-text-secondary'}>{originLabel(r)}</span>;
 }
 
 export default function RecordsView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
@@ -45,6 +51,9 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     // Bulk delete (owner 2026-11-03): ticked rows or all matching -> deleted (restorable); purge -> erased for good.
     const [bulk, setBulk] = useState<{ kind: 'selected' | 'matching' | 'purge'; ids: string[]; count: number; open: boolean; key: number } | null>(null);
     const [bulkBusy, setBulkBusy] = useState(false);
+    // Redesign (owner 2026-11-11): a name opens the candidate's workspace (resume beside the details), as in Search.
+    const [details, setDetails] = useState<{ record: CandidateRecord; open: boolean } | null>(null);
+    const [statusBusy, setStatusBusy] = useState(false);
 
     // Debounced text search (300 ms); a new term starts again from page 1.
     useEffect(() => {
@@ -116,6 +125,36 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     };
     const openEditor = (record: CandidateRecord | null) => { setEditor(e => ({ record, key: (e?.key ?? 0) + 1 })); setEditorOpen(true); };
 
+    const selectedRecords = records.filter(r => selected.includes(r.id));
+    const exportSelected = () => {
+        if (!selectedRecords.length) return;
+        downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(selectedRecords));
+        notify(`${formatCount(selectedRecords.length)} ${selectedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
+    };
+    const setStatusOfSelected = async (next: RecordStatus) => {
+        const targets = selectedRecords.filter(r => r.status !== next);
+        if (!targets.length || statusBusy) return;
+        setStatusBusy(true);
+        let done = 0;
+        let failed = 0;
+        let at = 0;
+        const lane = async () => {
+            while (at < targets.length) {
+                const record = targets[at];
+                at += 1;
+                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status: next } });
+                if (res.ok) done += 1; else { failed += 1; if (res.noAccess) reportError(res); }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(BULK_PARALLEL, targets.length) }, lane));
+        setStatusBusy(false);
+        if (done) {
+            notify(`${formatCount(done)} ${done === 1 ? 'candidate' : 'candidates'} set to ${STATUS_LABELS[next]}${failed ? `; ${formatCount(failed)} could not be changed` : ''}`, failed ? 'info' : 'success');
+            setSelection({ key: '', ids: [] });
+            reload(); onDataChanged();
+        } else if (failed) notify('The status could not be changed. Please try again.', 'error');
+    };
+
     const doDelete = async () => {
         const r = confirmDelete;
         if (!r) return;
@@ -148,7 +187,10 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
         </>
     ) : (
         <>
-            <button type="button" onClick={() => openEditor(r)} className={BTN_GHOST} aria-label={`Edit ${r.fullName}`}>
+            <button type="button" onClick={() => setDetails({ record: r, open: true })} className={BTN_GHOST} aria-label={`Open ${r.fullName}`} title="Open the profile and resume">
+                <PanelRightOpen className="h-4 w-4" />{compact ? 'Open' : <span className="sr-only">Open</span>}
+            </button>
+            <button type="button" onClick={() => openEditor(r)} className={BTN_GHOST} aria-label={`Edit ${r.fullName}`} title="Edit">
                 <PencilLine className="h-4 w-4" />{compact ? 'Edit' : <span className="sr-only">Edit</span>}
             </button>
             <button type="button" onClick={() => setConfirmDelete(r)} disabled={busyId === r.id} className={BTN_DANGER_GHOST} aria-label={`Delete ${r.fullName}`}>
@@ -160,7 +202,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     return (
         <div className="space-y-4">
             {/* Toolbar */}
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="flex flex-col gap-x-3 gap-y-3 lg:flex-row lg:items-center">
                 <label className="relative flex min-w-0 flex-1 items-center">
                     <span className="sr-only">Search candidates</span>
                     <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-tertiary" aria-hidden />
@@ -171,15 +213,20 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         </button>
                     )}
                 </label>
-                <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:flex sm:flex-wrap sm:items-center">
                     <select aria-label="Filter by status" value={status} onChange={e => { setStatus(e.target.value as RecordStatus | ''); setPage(1); }} className={`${INPUT} sm:w-40`}>
                         <option value="">All statuses</option>
                         {RECORD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
                     </select>
-                    <select aria-label="Filter by sheet" value={sheetId} onChange={e => { setSheetId(e.target.value); setPage(1); }} className={`${INPUT} sm:w-48`}>
-                        <option value="">All sheets</option>
-                        <option value="manual">Added by hand</option>
-                        {sheets.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    <select aria-label="Filter by where the record came from" value={sheetId} onChange={e => { setSheetId(e.target.value); setPage(1); }} className={`${INPUT} sm:w-48`}>
+                        <option value="">All sources</option>
+                        <option value="manual">Added manually</option>
+                        <option value="resume">From resume</option>
+                        {sheets.length > 0 && (
+                            <optgroup label="Sheets">
+                                {sheets.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                            </optgroup>
+                        )}
                     </select>
                     <Toggle checked={deleted} onChange={v => { setDeleted(v); setPage(1); }} label="Show deleted" />
                     <button type="button" onClick={() => openEditor(null)} className={`${BTN_PRIMARY} col-span-2 sm:col-span-1`}>
@@ -191,10 +238,26 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
             {deleted && <p className="text-sm text-text-secondary">Showing deleted records. Restore a record to bring it back into search, or delete it permanently.</p>}
 
             {selected.length > 0 && (
-                <div className={`${WELL} flex flex-wrap items-center gap-2 px-4 py-2`} aria-live="polite">
+                <div className={`${WELL} flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-2`} aria-live="polite">
                     <p className="text-sm text-text-primary"><span className="font-semibold tabular-nums">{formatCount(selected.length)}</span> selected</p>
                     <button type="button" onClick={() => setSelection({ key: '', ids: [] })} className={BTN_GHOST}>Clear</button>
                     <span className="flex-1" />
+                    {!deleted && (
+                        <>
+                            {statusBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                            <select
+                                aria-label="Set the status of the selected candidates"
+                                value=""
+                                disabled={statusBusy}
+                                onChange={e => { if (e.target.value) void setStatusOfSelected(e.target.value as RecordStatus); }}
+                                className="h-9 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                            >
+                                <option value="">Set status…</option>
+                                {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
+                            </select>
+                            <button type="button" onClick={exportSelected} className={BTN_GHOST}><Download className="h-4 w-4" />Export to Excel</button>
+                        </>
+                    )}
                     {deleted ? (
                         <button type="button" onClick={() => openBulk('purge', selected, selected.length)} className={BTN_DANGER_GHOST}>
                             <Trash2 className="h-4 w-4" />Delete permanently
@@ -215,12 +278,12 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         <button type="button" onClick={reload} className={`${BTN_SECONDARY} mt-4`}>Try again</button>
                     </div>
                 ) : !data && loading ? (
-                    <div className="space-y-3 p-4 sm:p-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+                    <div className="space-y-3 px-4 py-4 sm:p-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                 ) : records.length === 0 ? (
                     <EmptyState icon={Users} title={deleted ? 'No deleted records' : filtering ? 'No matching candidates' : 'No candidates yet'}>
                         {deleted ? 'Deleted records show up here so you can restore them.'
                             : filtering ? 'Try a different search or clear the filters.'
-                            : 'Upload a sourcing sheet from the Sheets view, or add a candidate by hand.'}
+                            : 'Upload a sourcing sheet from the Sheets view, upload resumes from the Resumes view, or add a candidate here.'}
                     </EmptyState>
                 ) : (
                     <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
@@ -228,22 +291,22 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         <ul className="divide-y divide-border-subtle md:hidden">
                             {records.map(r => (
                                 <li key={r.id} className="space-y-2 px-4 py-3">
-                                    <div className="flex items-start gap-2">
+                                    <div className="flex items-start gap-x-2 gap-y-2">
                                         <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="mt-1 h-4 w-4 shrink-0 accent-primary" />
                                         <div className="min-w-0 flex-1">
-                                            <p className="break-words font-semibold text-text-primary">{r.fullName}</p>
+                                            <button type="button" onClick={() => setDetails({ record: r, open: true })} className="break-words text-left font-semibold text-text-primary underline-offset-2 hover:underline">{r.fullName}</button>
                                             {r.role && <p className="text-sm text-primary-dark">For {r.role}</p>}
                                             <p className="break-words text-xs text-text-secondary">{[r.currentDesignation, r.location].filter(Boolean).join(' · ') || '—'}</p>
                                         </div>
                                         <StatusBadge status={r.status} />
                                     </div>
-                                    <dl className="grid grid-cols-3 gap-2">
+                                    <dl className="grid grid-cols-3 gap-x-2 gap-y-2">
                                         <div><dt className={LABEL}>Relevant</dt><dd className={`${NUM_SM} text-text-primary`}>{formatMonths(r.relevantExpMonths)}</dd></div>
                                         <div><dt className={LABEL}>Notice</dt><dd className={`${NUM_SM} text-text-primary`}>{formatNotice(r.noticePeriodDays)}</dd></div>
                                         <div><dt className={LABEL}>Expects</dt><dd className={`${NUM_SM} text-text-primary`}>{formatInr(r.expectedInhand)}</dd></div>
                                     </dl>
-                                    <div className="flex items-center gap-1">
-                                        <p className="min-w-0 flex-1 truncate text-xs text-text-tertiary"><SourceCell r={r} /> · {formatDate(r.updatedAt)}</p>
+                                    <div className="flex items-center gap-x-1 gap-y-1">
+                                        <p className="min-w-0 flex-1 truncate text-xs text-text-tertiary"><SourceCell r={r} />{r.hasResume ? ' · Resume' : ''} · {formatDate(r.updatedAt)}</p>
                                         {rowActions(r, true)}
                                     </div>
                                 </li>
@@ -252,46 +315,54 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
 
                         {/* md and up: table, scrolling inside its own container */}
                         <div className="hidden overflow-x-auto md:block">
-                            <table className="w-full min-w-[1080px] border-collapse text-sm">
+                            <table className="w-full min-w-[1120px] border-collapse text-sm">
                                 <thead className="bg-surface-elevated">
                                     <tr className={`${LABEL} text-left`}>
                                         <th scope="col" className="w-10 py-3 pl-4">
                                             <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select every record on this page" className="h-4 w-4 accent-primary" />
                                         </th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Name</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Role sourced for</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Designation</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Location</th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">Candidate</th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">Current role</th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">Sourced for</th>
                                         <th scope="col" className="px-3 py-3 text-right font-semibold">Relevant exp</th>
                                         <th scope="col" className="px-3 py-3 text-right font-semibold">Notice</th>
                                         <th scope="col" className="px-3 py-3 text-right font-semibold">Expected</th>
                                         <th scope="col" className="px-3 py-3 font-semibold">Status</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Sheet</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Updated</th>
-                                        <th scope="col" className="sticky right-0 bg-surface-elevated px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">Came from</th>
+                                        <th scope="col" className="px-3 py-3 font-semibold">{deleted ? 'Deleted' : 'Updated'}</th>
+                                        <th scope="col" className="sticky right-0 bg-surface-elevated px-3 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border-subtle">
                                     {records.map(r => (
-                                        <tr key={r.id} className="group align-middle hover:bg-surface-elevated">
-                                            <td className="w-10 py-3 pl-4">
+                                        <tr key={r.id} className={`group align-middle hover:bg-surface-elevated ${selected.includes(r.id) ? 'bg-primary/[.04]' : ''}`}>
+                                            <td className="w-10 py-2.5 pl-4">
                                                 <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="h-4 w-4 accent-primary" />
                                             </td>
-                                            <td className="max-w-[220px] px-3 py-3">
-                                                <p className="truncate font-semibold text-text-primary" title={r.fullName}>{r.fullName}</p>
-                                                {(r.email || r.phone) && <p className="truncate text-xs tabular-nums text-text-tertiary">{r.email || r.phone}</p>}
+                                            <td className="max-w-[200px] px-3 py-2.5">
+                                                <button type="button" onClick={() => setDetails({ record: r, open: true })} className="block max-w-full truncate text-left font-semibold text-text-primary underline-offset-2 hover:underline" title={`Open ${r.fullName}`}>{r.fullName}</button>
+                                                {(r.email || r.phone) && <p className="truncate text-xs tabular-nums text-text-secondary" title={[r.email, r.phone].filter(Boolean).join(' · ')}>{r.email || r.phone}</p>}
                                             </td>
-                                            <td className="max-w-[180px] truncate px-3 py-3 text-text-primary" title={r.role ?? ''}>{r.role || '—'}</td>
-                                            <td className="max-w-[180px] truncate px-3 py-3 text-text-secondary" title={r.currentDesignation ?? ''}>{r.currentDesignation || '—'}</td>
-                                            <td className="max-w-[140px] truncate px-3 py-3 text-text-secondary" title={r.location ?? ''}>{r.location || '—'}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-3 text-right text-text-primary`}>{formatMonths(r.relevantExpMonths)}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-3 text-right text-text-primary`}>{formatNotice(r.noticePeriodDays)}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-3 text-right text-text-primary`}>{formatInr(r.expectedInhand)}</td>
-                                            <td className="px-3 py-3"><StatusBadge status={r.status} /></td>
-                                            <td className="max-w-[160px] truncate px-3 py-3" title={r.sheetName ?? 'Added by hand'}><SourceCell r={r} /></td>
-                                            <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-secondary">{formatDate(deleted ? r.deletedAt : r.updatedAt)}</td>
-                                            <td className="sticky right-0 whitespace-nowrap bg-surface px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
-                                                <div className="flex justify-end gap-0.5">{rowActions(r)}</div>
+                                            <td className="max-w-[180px] px-3 py-2.5">
+                                                <p className="truncate text-text-primary" title={r.currentDesignation ?? ''}>{r.currentDesignation || '—'}</p>
+                                                {(r.currentOrganization || r.location) && <p className="truncate text-xs text-text-secondary" title={[r.currentOrganization, r.location].filter(Boolean).join(' · ')}>{[r.currentOrganization, r.location].filter(Boolean).join(' · ')}</p>}
+                                            </td>
+                                            <td className="max-w-[140px] truncate px-3 py-2.5 text-text-primary" title={r.role ?? ''}>{r.role || '—'}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatMonths(r.relevantExpMonths)}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatNotice(r.noticePeriodDays)}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatInr(r.expectedInhand)}</td>
+                                            <td className="px-3 py-2.5"><StatusBadge status={r.status} /></td>
+                                            <td className="max-w-[170px] px-3 py-2.5">
+                                                <p className="truncate" title={originLabel(r)}><SourceCell r={r} /></p>
+                                                {r.hasResume !== undefined && (
+                                                    <p className={`flex items-center gap-x-1 text-xs ${r.hasResume ? 'font-medium text-emerald-800' : 'text-text-tertiary'}`}>
+                                                        {r.hasResume && <FileText className="h-3 w-3 shrink-0" aria-hidden />}{r.hasResume ? 'Resume on file' : 'No resume'}
+                                                    </p>
+                                                )}
+                                            </td>
+                                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-text-secondary" title={formatDate(deleted ? r.deletedAt : r.updatedAt)}>{formatDateShort(deleted ? r.deletedAt : r.updatedAt)}</td>
+                                            <td className="sticky right-0 whitespace-nowrap bg-surface px-3 py-2.5 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
+                                                <div className="flex justify-end gap-x-0.5">{rowActions(r)}</div>
                                             </td>
                                         </tr>
                                     ))}
@@ -302,7 +373,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 )}
 
                 {total > 0 && (
-                    <div className="flex items-center justify-between gap-3 border-t border-border-subtle px-4 py-3">
+                    <div className="flex items-center justify-between gap-x-3 gap-y-3 border-t border-border-subtle px-4 py-3">
                         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                             <p className="text-xs text-text-secondary">
                                 <span className="tabular-nums">{formatCount(from)}–{formatCount(to)}</span> of <span className="font-semibold tabular-nums text-text-primary">{formatCount(total)}</span>
@@ -313,7 +384,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                 </button>
                             )}
                         </div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-x-1 gap-y-1">
                             <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading} className={BTN_GHOST} aria-label="Previous page">
                                 <ChevronLeft className="h-4 w-4" /><span className="hidden sm:inline">Previous</span>
                             </button>
@@ -326,6 +397,19 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 )}
             </div>
 
+            {details && (
+                <CandidateDetails
+                    orgId={orgId}
+                    onChanged={() => { reload(); onDataChanged(); }}
+                    record={details.record}
+                    open={details.open}
+                    onClose={() => setDetails(d => (d ? { ...d, open: false } : d))}
+                    onEdit={() => {
+                        setDetails(d => (d ? { ...d, open: false } : d));
+                        openEditor(details.record);
+                    }}
+                />
+            )}
             {editor && (
                 <RecordForm
                     key={editor.key}

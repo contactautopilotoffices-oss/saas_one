@@ -1,27 +1,34 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleAlert, ListFilter, Sparkles } from 'lucide-react';
+import { CircleAlert, Download, ListFilter, Sparkles, X } from 'lucide-react';
 import {
     blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
     type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
 } from '@/backend/lib/candidates/filters';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
-import type { CandidateRecord, RecordStatus, SearchResponse, SearchResult } from '@/backend/lib/candidates/types';
+import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api } from './api';
 import CandidateDetails from './CandidateDetails';
+import { downloadCsv, recordsToCsv } from './export-csv';
+import type { PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
 import FilterRail, { FilterStrip } from './FilterRail';
 import { formatCount } from './format';
 import KeywordBar from './KeywordBar';
+import QuickView from './QuickView';
 import RecordForm from './RecordForm';
 import ResultCard from './ResultCard';
 import UnderstoodCard from './UnderstoodCard';
-import { BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
 
 /**
  * The search screen (owner 2026-11-06): keywords and filters change the list at once, straight from the database. AI is
  * optional: it can read a job description into these filters, and rank the current list on request.
+ *
+ * Redesign (owner 2026-11-11): the same filters, keyword bar and AI ranking, with denser result cards that show the
+ * resume lines around the keywords, tick boxes for bulk actions (status, export), and on a wide screen a quick view
+ * of the candidate whose name was clicked, beside the list. Opening a candidate shows the resume beside the details.
  */
 
 const PAGE_SIZE = 20;
@@ -34,6 +41,11 @@ const LIST_MIN = 416;
 const OVER_WIDTH = 698;
 const OPEN_WIDTH = 928;
 const RAIL_STORE = 'candidate-search-filters';
+/** The quick view beside the list: its width, and the row width from which there is room for it. */
+const QUICK_WIDTH = 380;
+const QUICK_FROM = 1160;
+/** Status changes sent at the same time by "Set status" on the ticked candidates. */
+const BULK_PARALLEL = 4;
 
 type SortValue = FilterSort | 'match';
 
@@ -57,7 +69,11 @@ function plainResult(record: CandidateRecord, index: number): SearchResult {
     return { rank: index + 1, record, matchPercent: null, criteria: [], reasons: [], missing: [], summary: record.remark ?? '' };
 }
 
-export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
+export default function SearchView({ orgId, dataVersion, onDataChanged, collapseStyle = 'panel' }: {
+    orgId: string; dataVersion: number; onDataChanged: () => void;
+    /** The filters' collapse button follows the host console's sidebar button (owner 2026-11-09). */
+    collapseStyle?: PanelToggleVariant;
+}) {
     const { notify, reportError } = useUi();
     const [filters, setFilters] = useState<SearchFilters>(EMPTY_FILTERS);
     const [page, setPage] = useState(1);
@@ -77,6 +93,11 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
     const [details, setDetails] = useState<{ record: CandidateRecord; open: boolean } | null>(null);
     const [editor, setEditor] = useState<{ record: CandidateRecord; key: number; open: boolean } | null>(null);
     const [availability, setAvailability] = useState<FieldAvailability | null>(null);
+    // Ticked candidates belong to one set of filters; another search starts with nothing ticked.
+    const [pickedState, setPickedState] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] });
+    const [bulkBusy, setBulkBusy] = useState(false);
+    /** The candidate shown in the quick view. Owner 2026-11-11: it is closed until a card is clicked. */
+    const [focusId, setFocusId] = useState<string | null>(null);
 
     const rowRef = useRef<HTMLDivElement | null>(null);
     const [rowWidth, setRowWidth] = useState<number | null>(null);
@@ -96,6 +117,8 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
 
     const over = rowWidth !== null && rowWidth < OVER_WIDTH;
     const collapsed = !over && (rail.collapsed ?? (rowWidth !== null && rowWidth < OPEN_WIDTH));
+    /** The row is wide enough for the quick view beside the list (on a narrow one a card opens the full profile). */
+    const canQuick = rowWidth !== null && rowWidth >= QUICK_FROM;
 
     const changeRail = (patch: Partial<RailPrefs>) => setRail(r => {
         const next = { ...r, ...patch };
@@ -206,10 +229,12 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
         if (res.data.aiRanked) setRanked(res.data);
     };
 
+    // The saved record replaces the one on screen; what only the list knows (the resume lines for these keywords) stays.
     const replaceRecord = (record: CandidateRecord) => {
-        setList(prev => prev && { ...prev, records: prev.records.map(r => (r.id === record.id ? record : r)) });
-        setRanked(prev => prev && { ...prev, results: prev.results.map(x => (x.record.id === record.id ? { ...x, record } : x)) });
-        setDetails(d => (d && d.record.id === record.id ? { ...d, record } : d));
+        const merge = (old: CandidateRecord): CandidateRecord => ({ ...old, ...record });
+        setList(prev => prev && { ...prev, records: prev.records.map(r => (r.id === record.id ? merge(r) : r)) });
+        setRanked(prev => prev && { ...prev, results: prev.results.map(x => (x.record.id === record.id ? { ...x, record: merge(x.record) } : x)) });
+        setDetails(d => (d && d.record.id === record.id ? { ...d, record: merge(d.record) } : d));
     };
 
     const changeStatus = async (record: CandidateRecord, status: RecordStatus) => {
@@ -226,7 +251,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
     const onHandleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.currentTarget.setPointerCapture(e.pointerId);
-        dragRef.current = { x: e.clientX, width: rail.width, max: Math.max(RAIL_DEFAULT, Math.min(RAIL_MAX, (rowWidth ?? 0) - LIST_MIN)) };
+        dragRef.current = { x: e.clientX, width: rail.width, max: Math.max(RAIL_DEFAULT, Math.min(RAIL_MAX, (rowWidth ?? 0) - LIST_MIN - (canQuick && focusId ? QUICK_WIDTH + 16 : 0))) };
         setDragging(true);
     };
     const onHandleMove = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -256,24 +281,60 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
     const canShowMore = !ranked && total !== null && records.length < total;
     const showBlanks = blankCount > 0 && !ranked;
 
+    // Bulk actions on the ticked candidates (owner 2026-11-11).
+    const picked = pickedState.key === filterKey ? pickedState.ids : [];
+    const pickedRecords = results.map(x => x.record).filter(r => picked.includes(r.id));
+    const allPicked = results.length > 0 && results.every(x => picked.includes(x.record.id));
+    const pick = (record: CandidateRecord, on: boolean) => setPickedState({ key: filterKey, ids: on ? [...picked.filter(id => id !== record.id), record.id] : picked.filter(id => id !== record.id) });
+    const pickAll = (on: boolean) => setPickedState({ key: filterKey, ids: on ? results.map(x => x.record.id) : [] });
+    const exportPicked = () => {
+        if (!pickedRecords.length) return;
+        downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(pickedRecords));
+        notify(`${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
+    };
+    const bulkStatus = async (status: RecordStatus) => {
+        const targets = pickedRecords.filter(r => r.status !== status);
+        if (!targets.length || bulkBusy) return;
+        setBulkBusy(true);
+        let done = 0;
+        let failed = 0;
+        let next = 0;
+        const lane = async () => {
+            while (next < targets.length) {
+                const record = targets[next];
+                next += 1;
+                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status } });
+                if (res.ok) { replaceRecord(res.data.record); done += 1; } else { failed += 1; if (res.noAccess) reportError(res); }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(BULK_PARALLEL, targets.length) }, lane));
+        setBulkBusy(false);
+        if (done) { notify(`${formatCount(done)} ${done === 1 ? 'candidate' : 'candidates'} set to ${STATUS_LABELS[status]}${failed ? `; ${formatCount(failed)} could not be changed` : ''}`, failed ? 'info' : 'success'); onDataChanged(); }
+        else if (failed) notify('The status could not be changed. Please try again.', 'error');
+    };
+
+    // Open only for a card that was clicked and is still in the list; a new search that drops it closes the view.
+    const focused = canQuick && focusId ? results.find(x => x.record.id === focusId) ?? null : null;
+
     return (
         <div className="space-y-4">
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
 
-            <div ref={rowRef} className="flex items-start gap-4">
+            <div ref={rowRef} className="flex items-start gap-x-4 gap-y-4">
                 {over && overOpen && <button type="button" aria-label="Close filters" onClick={() => setOverOpen(false)} className="fixed inset-0 z-[79] bg-slate-900/30" />}
 
                 <div
                     style={over ? undefined : { flexBasis: collapsed ? 56 : rail.width }}
                     className={over
                         ? `fixed inset-y-0 left-0 z-[80] w-[min(360px,100vw)] transition-[transform,visibility] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none ${overOpen ? 'visible translate-x-0' : 'invisible -translate-x-full'}`
-                        : `sticky top-20 min-w-0 shrink-0 grow-0 ${dragging ? '' : 'transition-[flex-basis] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none'}`}
+                        : `sticky top-[var(--panel-sticky-top,5rem)] min-w-0 shrink-0 grow-0 ${dragging ? '' :'transition-[flex-basis] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none'}`}
                 >
-                    <aside aria-label="Filters" className={`${over ? 'h-full rounded-none' : 'max-h-[calc(100dvh/var(--app-zoom,1)-6rem)]'} ${CARD} overflow-y-auto overscroll-contain ${collapsed ? 'p-1.5' : 'p-4'}`}>
+                    <aside aria-label="Filters" className={`${over ? 'h-full rounded-none' : 'max-h-[calc(100dvh/var(--app-zoom,1)-6rem)]'} ${CARD} overflow-y-auto overscroll-contain ${collapsed ? 'p-1.5' : 'px-4 py-4'}`}>
                         {collapsed
-                            ? <FilterStrip activeCount={activeCount} onExpand={() => changeRail({ collapsed: false })} />
+                            ? <FilterStrip activeCount={activeCount} onExpand={() => changeRail({ collapsed: false })} collapseStyle={collapseStyle} />
                             : (
                                 <FilterRail
+                                    collapseStyle={collapseStyle}
                                     orgId={orgId}
                                     filters={filters}
                                     update={update}
@@ -316,14 +377,14 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                                     <ListFilter className="h-4 w-4" aria-hidden />{activeCount ? `Filters (${activeCount})` : 'Filters'}
                                 </button>
                             )}
-                            <p role="status" className="flex items-center gap-2 font-display text-lg font-semibold text-text-primary">
+                            <p role="status" className="flex items-center gap-x-2 gap-y-2 font-display text-lg font-semibold text-text-primary">
                                 {total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}
                                 {loading && total !== null && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                             </p>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                             <span className="text-[13px] font-semibold text-text-secondary">Sort</span>
-                            <div className="w-[170px]">
+                            <div className="w-[218px]">
                                 <Dropdown
                                     variant="compact"
                                     label="Sort"
@@ -351,7 +412,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                     )}
 
                     {showBlanks && (
-                        <p className="flex flex-wrap items-center gap-1 text-[13px] text-text-secondary">
+                        <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[13px] text-text-secondary">
                             {filters.includeBlank
                                 ? `Showing ${formatCount(blankCount)} with blank details.`
                                 : `${formatCount(blankCount)} more ${blankCount === 1 ? 'has' : 'have'} blank details.`}
@@ -362,7 +423,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                     )}
 
                     {ranked && (
-                        <p className="flex flex-wrap items-center gap-1 text-[13px] text-text-secondary">
+                        <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[13px] text-text-secondary">
                             Ranked by AI.
                             <button type="button" onClick={() => setRanked(null)} className="font-bold text-primary-dark underline">Remove ranking</button>
                         </p>
@@ -379,20 +440,20 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                     )}
 
                     {listError && (
-                        <p role="alert" className={`${CARD} flex gap-3 border-l-2 border-error p-4 text-sm text-text-primary`}>
+                        <p role="alert" className={`${CARD} flex gap-x-3 gap-y-3 border-l-2 border-error px-4 py-4 text-sm text-text-primary`}>
                             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{listError}
                         </p>
                     )}
 
                     {!list && !listError && [0, 1, 2].map(i => (
-                        <div key={i} className={`${CARD} space-y-3 p-4 sm:p-6`}>
-                            <div className="flex gap-3"><Skeleton className="h-8 w-8 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div></div>
+                        <div key={i} className={`${CARD} space-y-3 px-4 py-4 sm:p-6`}>
+                            <div className="flex gap-x-3 gap-y-3"><Skeleton className="h-8 w-8 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div></div>
                             <Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-4/5" />
                         </div>
                     ))}
 
                     {total === 0 && !listError && (
-                        <div className={`${CARD} flex flex-col items-center gap-2 px-4 py-10 text-center`}>
+                        <div className={`${CARD} flex flex-col items-center gap-x-2 gap-y-2 px-4 py-10 text-center`}>
                             <p className="font-display text-base font-semibold text-text-primary">{active ? 'No candidates match' : 'No candidates yet'}</p>
                             {loosen
                                 ? <button type="button" onClick={() => update(loosen.clear)} className={BTN_PRIMARY}>Remove {loosen.label} to see {formatCount(loosen.count)} {loosen.count === 1 ? 'candidate' : 'candidates'}</button>
@@ -400,7 +461,35 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                         </div>
                     )}
 
-                    <ol className="space-y-4">
+                    {results.length > 0 && (
+                        <div className={`${WELL} flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5`} aria-live="polite">
+                            <label className="inline-flex cursor-pointer items-center gap-x-2 gap-y-2 text-sm font-semibold text-text-secondary">
+                                <input type="checkbox" checked={allPicked} onChange={e => pickAll(e.target.checked)} className="h-4 w-4 accent-[var(--primary-dark)]" />
+                                {pickedRecords.length ? <span className="text-text-primary"><span className="tabular-nums">{formatCount(pickedRecords.length)}</span> selected</span> : 'Select all shown'}
+                            </label>
+                            {pickedRecords.length > 0 && (
+                                <>
+                                    <button type="button" onClick={() => pickAll(false)} className={`${BTN_GHOST} h-8`}><X className="h-3.5 w-3.5" />Clear</button>
+                                    <span className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-2">
+                                        {bulkBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                                        <select
+                                            aria-label="Set the status of the selected candidates"
+                                            value=""
+                                            disabled={bulkBusy}
+                                            onChange={e => { if (e.target.value) void bulkStatus(e.target.value as RecordStatus); }}
+                                            className="h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                                        >
+                                            <option value="">Set status…</option>
+                                            {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
+                                        </select>
+                                        <button type="button" onClick={exportPicked} className={`${BTN_SECONDARY} h-8 rounded-lg px-3`}><Download className="h-4 w-4" />Export to Excel</button>
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    <ol className="space-y-3">
                         {results.map(res => (
                             <li key={res.record.id}>
                                 <ResultCard
@@ -409,6 +498,10 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                                     statusBusy={!!statusBusy[res.record.id]}
                                     onStatus={changeStatus}
                                     onOpen={record => setDetails({ record, open: true })}
+                                    checked={picked.includes(res.record.id)}
+                                    onCheck={pick}
+                                    focused={focused?.record.id === res.record.id}
+                                    onFocus={canQuick ? record => setFocusId(record.id) : undefined}
                                 />
                             </li>
                         ))}
@@ -422,10 +515,25 @@ export default function SearchView({ orgId, dataVersion, onDataChanged }: { orgI
                         </div>
                     )}
                 </section>
+
+                {focused && (
+                    <div style={{ flexBasis: QUICK_WIDTH }} className="sticky top-[var(--panel-sticky-top,5rem)] min-w-0 shrink-0 grow-0">
+                        <QuickView
+                            result={focused}
+                            onOpen={record => setDetails({ record, open: true })}
+                            onStatus={changeStatus}
+                            statusBusy={!!statusBusy[focused.record.id]}
+                            onClose={() => setFocusId(null)}
+                        />
+                    </div>
+                )}
             </div>
 
             {details && (
                 <CandidateDetails
+                    orgId={orgId}
+                    onChanged={onDataChanged}
+                    keywords={filters.keywords.map(k => k.text)}
                     record={details.record}
                     open={details.open}
                     onClose={() => setDetails(d => (d ? { ...d, open: false } : d))}

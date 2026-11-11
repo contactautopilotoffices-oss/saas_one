@@ -26,6 +26,12 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
 import MeetingsTab from '@/frontend/components/task-manager/meetings/MeetingsTab';
 import ProctorHub from '@/frontend/components/proctor/ProctorHub';
+import dynamic from 'next/dynamic';
+
+// Owner 2026-11-07: Candidate Search for the HR logins (beta), the same module the Tech console hosts. Loaded on demand.
+const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), {
+    loading: () => <div className="py-12 text-center text-sm text-slate-500">Loading Candidate Search…</div>,
+});
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -44,7 +50,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments' | 'candidates'>('tickets');
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
@@ -333,7 +339,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
+        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -1357,7 +1363,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     };
 
     return (
-        <div className="w-full max-w-full space-y-5 pb-12 overflow-x-hidden">
+        // overflow-x-clip, not -hidden (owner 2026-11-09): "hidden" makes this box a scroll container that never
+        // scrolls, which stops anything inside (Candidate Search's filters) from sticking while the page scrolls.
+        <div className="w-full max-w-full space-y-5 pb-12 overflow-x-clip">
             {/* Header Action Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-1">
                 <div className="flex flex-wrap items-center gap-3">
@@ -1366,8 +1374,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'candidates' ? 'Candidate Search' : activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
+                        {activeTab === 'candidates' && (
+                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Beta</span>
+                        )}
                     </div>
                 </div>
 
@@ -2679,6 +2690,12 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {visitedTabs.has('assessments') && (
                 <div className={activeTab === 'assessments' ? 'block' : 'hidden'}>
                     <ProctorHub orgId={orgId} embedded />
+                </div>
+            )}
+            {/* Owner 2026-11-07: Candidate Search (beta) for the HR logins. Kept mounted so a resume upload in progress survives a tab switch. */}
+            {visitedTabs.has('candidates') && (
+                <div className={activeTab === 'candidates' ? 'block' : 'hidden'}>
+                    <CandidateSearchTab orgId={resolvedOrgId} collapseStyle="chevron" />
                 </div>
             )}
 

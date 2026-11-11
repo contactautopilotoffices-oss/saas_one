@@ -34,7 +34,7 @@ function RawValues({ raw }: { raw: Record<string, string> }) {
     return (
         <details className="group mt-2">
             <summary className="cursor-pointer select-none text-xs font-semibold text-text-secondary hover:text-text-primary">Values in the sheet</summary>
-            <dl className="mt-2 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-lg bg-surface-elevated p-3 text-xs">
+            <dl className="mt-2 grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-0.5 rounded-lg bg-surface-elevated px-3 py-3 text-xs">
                 {Object.entries(raw).map(([k, v]) => (
                     <React.Fragment key={k}>
                         <dt className="truncate text-text-tertiary" title={k}>{k}</dt>
@@ -207,13 +207,13 @@ export default function IssuesModal({
         const thinking = asking?.rows.includes(row.rowNumber) && !s;
         return (
             <li key={row.rowNumber} className="py-4">
-                <div className="flex flex-wrap items-start gap-2">
+                <div className="flex flex-wrap items-start gap-x-2 gap-y-2">
                     <p className={`${NUM_SM} min-w-0 flex-1 text-text-primary`}>
                         Row {row.rowNumber}
                         {s && <span className="ml-2 font-sans font-normal text-text-secondary">{s.proposal.fullName}</span>}
                     </p>
                     {!s && (
-                        <div className="flex gap-1">
+                        <div className="flex gap-x-1 gap-y-1">
                             <button type="button" onClick={() => void save([{ rowNumber: row.rowNumber, changes: {} }], row.rowNumber)} disabled={busy} className={BTN_GHOST} title="The row is fine as it is">
                                 {saving === row.rowNumber ? <Spinner /> : <Check className="h-4 w-4" />}Mark reviewed
                             </button>
@@ -226,7 +226,7 @@ export default function IssuesModal({
                 <div className="mt-2"><Bullets items={row.issues} tone="warning" /></div>
 
                 {s && (
-                    <div className={`${WELL} mt-3 p-3`}>
+                    <div className={`${WELL} mt-3 px-3 py-3`}>
                         <p className={`${LABEL} flex items-center gap-1.5`}><Sparkles className="h-3.5 w-3.5" aria-hidden />AI suggestion</p>
                         {s.proposal.changes.length > 0 ? (
                             <ul className="mt-1.5 space-y-0.5">{s.proposal.changes.map(c => changeLine(row.rowNumber, s, c))}</ul>
@@ -239,7 +239,7 @@ export default function IssuesModal({
                                 <div className="mt-1"><Bullets items={s.proposal.cannotFix} tone="muted" /></div>
                             </div>
                         )}
-                        <div className="mt-3 flex flex-wrap justify-end gap-1">
+                        <div className="mt-3 flex flex-wrap justify-end gap-x-1 gap-y-1">
                             <button type="button" onClick={() => dismiss(row.rowNumber)} disabled={busy} className={BTN_GHOST}>Discard</button>
                             <button type="button" onClick={() => void save([{ rowNumber: row.rowNumber, changes: {} }], row.rowNumber)} disabled={busy} className={BTN_GHOST} title="Keep the record as it is and clear the issue">
                                 <Check className="h-4 w-4" />Mark reviewed
@@ -292,12 +292,12 @@ export default function IssuesModal({
             {!current ? (
                 <div className="space-y-3 py-2">{[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
             ) : current.error ? (
-                <p role="alert" className="flex gap-2 py-6 text-sm text-text-primary"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" />{current.error}</p>
+                <p role="alert" className="flex gap-x-2 gap-y-2 py-6 text-sm text-text-primary"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" />{current.error}</p>
             ) : rows.length === 0 ? (
                 <EmptyState icon={CircleCheck} title="No issues">Every row in this sheet was imported cleanly.</EmptyState>
             ) : (
                 <div>
-                    <div role="tablist" aria-label="Issue groups" className={`${WELL} inline-flex flex-wrap gap-1 p-1`}>
+                    <div role="tablist" aria-label="Issue groups" className={`${WELL} inline-flex flex-wrap gap-x-1 gap-y-1 px-1 py-1`}>
                         {tabButton('review', 'Needs review', review.length)}
                         {tabButton('fixed', 'Fixed automatically', fixed.length)}
                         {tabButton('skipped', 'Skipped', skipped.length)}

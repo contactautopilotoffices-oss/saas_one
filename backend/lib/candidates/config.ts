@@ -68,9 +68,10 @@ export const AI_FIX_BATCH = 15;
 
 /** AI keyword suggestions (job 'candidate_suggest'): shown beside the box as HR types, so they stay small and quick. */
 export const SUGGEST_CALL = { effort: "low", maxTokens: 2000, otherMaxTokens: 400, timeoutMs: 8000, budgetMs: 12_000 } as const;
-export const SUGGEST_MAX = 10;
-/** Terms checked against the records per call: each one is a count query. */
-export const SUGGEST_CHECK_MAX = 16;
+/** Terms shown under the keyword box: all the model offers (owner 2026-11-11: none is dropped any more). */
+export const SUGGEST_MAX = 16;
+/** Terms counted on the records per request, after they are on screen: each one is a count query. */
+export const SUGGEST_COUNT_MAX = 20;
 /** The AI ranking compares this many filtered records, in the order HR sees them (one prompt stays small and fast). */
 export const RANK_POOL = 45;
 
@@ -116,8 +117,9 @@ export const SEARCH_RATE_LIMIT = { maxRequests: 10, windowMs: 60_000 };
 // The filter panel answers every click and the dropdown every pause in typing (both debounced); neither calls a model.
 export const FILTER_RATE_LIMIT = { maxRequests: 180, windowMs: 60_000 };
 export const OPTIONS_RATE_LIMIT = { maxRequests: 120, windowMs: 60_000 };
-// AI keyword suggestions: one small model call per new keyword set.
-export const SUGGEST_RATE_LIMIT = { maxRequests: 30, windowMs: 60_000 };
+// AI keyword suggestions: one small model call per new keyword set (asked for while the keyword is still being typed),
+// then one request for the counts. Repeats are answered from memory without a model call.
+export const SUGGEST_RATE_LIMIT = { maxRequests: 90, windowMs: 60_000 };
 export const UPLOAD_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
 // The Sheets page nudges the background worker about every 20 s while records are being prepared.
 export const REINDEX_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
@@ -127,6 +129,80 @@ export const WRITE_RATE_LIMIT = { maxRequests: 60, windowMs: 60_000 };
 export const AI_FIX_RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
 // Bulk delete, permanent delete and clear all.
 export const DANGER_RATE_LIMIT = { maxRequests: 20, windowMs: 60_000 };
+
+/**
+ * Resume files (owner 2026-11-07, phase 1: every resume into one private bucket, no AI yet). The browser sends each
+ * file straight to storage with a one-time link; the server only hands out links, records rows and makes the Excel.
+ * The limits the browser shares (size, batch sizes, types) live in resume-pick.ts and are re-exported here.
+ */
+export { MAX_RESUME_BYTES, RESUME_BATCH, RESUME_LINK_BATCH, RESUME_TYPES } from "./resume-pick";
+export const RESUME_BUCKET = "candidate-resumes";
+/** How long a download link works. */
+export const RESUME_LINK_SECONDS = 10 * 60;
+export const RESUME_LIST_PAGE_SIZE = 100;
+/** Rows in the Excel and files in one ZIP run, at most. */
+export const RESUME_EXPORT_MAX = 20_000;
+// Resume uploads: a 5,000-file run is ~100 prepare + ~100 confirm calls spread over minutes; lists and links are small.
+export const RESUME_RATE_LIMIT = { maxRequests: 120, windowMs: 60_000 };
+export const RESUME_EXPORT_RATE_LIMIT = { maxRequests: 6, windowMs: 60_000 };
+
+/**
+ * Resume text and matching (owner 2026-11-10, phase 2; resume-text.ts). The background worker (the candidate-indexing
+ * cron every minute, and right after an upload) reads each stored file's text with the installed readers, keeps the
+ * emails and phones found, and links the file to the candidate with the same email or phone. No AI.
+ *   RESUME_TEXT_BATCH         files claimed per step
+ *   RESUME_TEXT_MAX_CHARS     text kept per file (phase 4 reads it again)
+ *   RESUME_TEXT_MAX_ATTEMPTS  a file whose read keeps failing (not an unreadable file) is given up after this many
+ *   RESUME_TEXT_STALE_MINUTES a run that died mid-file leaves rows at 'working'; after this they are retried
+ *   RESUME_LINK_PAGE          unlinked files matched per pass
+ */
+export const RESUME_TEXT_BATCH = 20;
+export const RESUME_TEXT_MAX_CHARS = 60_000;
+export const RESUME_TEXT_MAX_ATTEMPTS = 3;
+export const RESUME_TEXT_STALE_MINUTES = 10;
+export const RESUME_TEXT_BUDGET_MS = { cron: 20_000, afterUpload: 40_000, nudge: 20_000 } as const;
+/**
+ * Owner 2026-11-11: files read at the same time inside one run (reading is mostly waiting on storage), and how many
+ * files may be mid-read across all runs of an organisation (the cron, after-upload bursts and the page's nudges run
+ * side by side; each claims its own files first). Past the cap a run leaves the work to the others.
+ */
+export const RESUME_TEXT_PARALLEL = 4;
+export const RESUME_TEXT_MAX_INFLIGHT = 80;
+export const RESUME_LINK_PAGE = 500;
+/** Files HR may delete in one click (the list shows at most 50 a page). */
+export const RESUME_DELETE_BATCH = 200;
+
+/**
+ * Reading details from resumes (owner 2026-11-11, phase 4; resume-extract.ts, Control Center job 'candidate_extract',
+ * default Claude Haiku 5.5). One structured call per resume; the text sent is capped at RESUME_EXTRACT_MAX_CHARS with
+ * emails and phones masked. The worker runs like the text reader: claimed batches, RESUME_EXTRACT_PARALLEL calls at a
+ * time, a busy model (429 / overloaded) pauses the run instead of counting as a failure.
+ */
+export const EXTRACT_CALL = { effort: "low", maxTokens: 6000, otherMaxTokens: 2500, timeoutMs: 40_000, budgetMs: 50_000 } as const;
+export const RESUME_EXTRACT_MAX_CHARS = 12_000;
+export const RESUME_EXTRACT_BATCH = 10;
+/** Calls at a time per run: ~5 s each on the sample, so 3 lanes read ~35 resumes a minute of budget. */
+export const RESUME_EXTRACT_PARALLEL = 3;
+export const RESUME_EXTRACT_MAX_ATTEMPTS = 3;
+export const RESUME_EXTRACT_BUDGET_MS = { cron: 20_000, afterUpload: 25_000, nudge: 10_000 } as const;
+/**
+ * Scanned resumes (owner 2026-11-11): only a PDF with no text layer is sent to the model as the PDF itself (same
+ * Control Center job as the details, 'candidate_extract'), which types out the pages. One call per scan, a few at a
+ * time; a call is not started with less than RESUME_SCAN_MIN_START_MS of the run left, so a slow read is not cut off
+ * and counted as a failure. A scan longer than RESUME_SCAN_MAX_PAGES is not a resume worth paying to read.
+ */
+export const SCAN_CALL = { effort: "low", maxTokens: 12_000, otherMaxTokens: 4000, timeoutMs: 40_000 } as const;
+export const RESUME_SCAN_MAX_PAGES = 6;
+export const RESUME_SCAN_MIN_CHARS = 40;
+export const RESUME_SCAN_BATCH = 6;
+export const RESUME_SCAN_PARALLEL = 3;
+export const RESUME_SCAN_MIN_START_MS = 20_000;
+/** Longest a scan run may take inside each caller; the routes shorten it by what the steps before it used. */
+export const RESUME_SCAN_BUDGET_MS = { cron: 25_000, nudge: 40_000 } as const;
+/** A route's usable time (its limit is 60 s) for the background steps it chains. */
+export const RESUME_ROUTE_BUDGET_MS = 55_000;
+/** Resume text kept on the candidate for keyword search (the file keeps the full text). */
+export const CANDIDATE_RESUME_TEXT_CHARS = 20_000;
 
 /** "Delete all matching" moves at most this many records in one request (an organisation has ~3,000). */
 export const MAX_BULK_RECORDS = 20_000;
