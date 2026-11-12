@@ -7,6 +7,15 @@ import { EventProcessor } from './EventProcessor';
 import { EmailRecipientResolver } from './EmailRecipientResolver';
 import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
+import { buildTicketAssignedScript, normalizeCallLanguage } from '@/backend/lib/voice/ticketCallScript';
+
+/**
+ * Ticket + assignee pairs called in the last few minutes, by this server instance. A new ticket is
+ * announced by both afterTicketAssigned and afterTicketCreated at almost the same moment; this
+ * makes the phone ring once. Calls from other instances are caught by the call-log throttle.
+ */
+const recentTicketCalls = new Map<string, number>();
+const TICKET_CALL_WINDOW_MS = 10 * 60 * 1000;
 
 
 export interface NotificationPayload {
@@ -50,6 +59,9 @@ export class NotificationService {
             const assigneeId = ticket.assigned_to ? String(ticket.assigned_to) : null;
             const assigneeName = ticket.assignee?.full_name || 'a team member';
             const creatorId = ticket.raised_by ? String(ticket.raised_by) : null;
+
+            // Phone call to the assignee first, so it rings before the slower push/WhatsApp fan-out.
+            if (assigneeId) await this.callTicketAssignee(ticket.id);
 
             // Determine if the creator is a tenant
             const { data: creatorMembership } = await supabaseAdmin
@@ -314,6 +326,8 @@ export class NotificationService {
                 return;
             }
 
+            await this.callTicketAssignee(ticket.id);
+
             const assigneeId = String(ticket.assigned_to);
             await this.injectAssigneePhone(ticket);
             const waBody = this.buildWhatsAppBody(ticket);
@@ -347,6 +361,8 @@ export class NotificationService {
                 console.error('[NotificationService] Ticket not found or not assigned:', ticketError);
                 return;
             }
+
+            await this.callTicketAssignee(ticket.id);
 
             const assigneeId = String(ticket.assigned_to);
             const assigneeName = ticket.assignee?.full_name || 'a team member';
@@ -1160,6 +1176,91 @@ export class NotificationService {
             userId: String(m.user_id),
             role: String(m.role)
         }));
+    }
+
+    /**
+     * Automatic phone call to the person a ticket is assigned to, in the property's call language
+     * (properties.call_language), with the ticket title read in English.
+     * Admins can turn it off per organisation or per property: Notification settings > Tickets >
+     * Ticket assigned > Voice. It is on unless turned off. Never throws.
+     */
+    private static async callTicketAssignee(ticketId: string): Promise<void> {
+        try {
+            const { data: ticket } = await supabaseAdmin
+                .from('tickets')
+                .select('id, title, priority, status, assigned_to, property_id, organization_id')
+                .eq('id', ticketId)
+                .single();
+            if (!ticket?.assigned_to || ['resolved', 'closed'].includes(String(ticket.status))) return;
+
+            // Set synchronously, before any further await, so a second notification racing this one stops here.
+            const key = `${ticket.id}:${ticket.assigned_to}`;
+            const now = Date.now();
+            const last = recentTicketCalls.get(key);
+            if (last && now - last < TICKET_CALL_WINDOW_MS) return;
+            recentTicketCalls.set(key, now);
+            if (recentTicketCalls.size > 500) {
+                for (const [k, t] of recentTicketCalls) if (now - t > TICKET_CALL_WINDOW_MS) recentTicketCalls.delete(k);
+            }
+
+            let voiceId: string | undefined;
+            let speechSpeed: string | number | undefined;
+            if (ticket.organization_id) {
+                const rule = await this.getOmnichannelRule(ticket.organization_id, ticket.property_id, 'ticket_assigned');
+                if (!rule.channels.voice) return;
+                voiceId = rule.voice_id;
+                speechSpeed = rule.speech_speed;
+            }
+
+            const { data: assignee } = await supabaseAdmin
+                .from('users')
+                .select('full_name, phone')
+                .eq('id', ticket.assigned_to)
+                .single();
+            if (!assignee?.phone) {
+                console.warn(`[NotificationService] No phone for assignee ${ticket.assigned_to}; ticket call skipped.`);
+                return;
+            }
+
+            // call_language arrives with migration 20261112000001; until then every call is English.
+            let property: { name?: string; call_language?: string } | null = null;
+            if (ticket.property_id) {
+                const withLang = await supabaseAdmin.from('properties').select('name, call_language').eq('id', ticket.property_id).single();
+                if (withLang.error?.code === '42703') {
+                    const plain = await supabaseAdmin.from('properties').select('name').eq('id', ticket.property_id).single();
+                    property = plain.data;
+                } else {
+                    property = withLang.data;
+                }
+            }
+
+            const segments = buildTicketAssignedScript({
+                language: normalizeCallLanguage(property?.call_language),
+                assigneeName: assignee.full_name,
+                propertyName: property?.name,
+                title: ticket.title,
+                priority: ticket.priority,
+            });
+
+            const { VoiceCallingService } = await import('./VoiceCallingService');
+            await VoiceCallingService.triggerCall({
+                organizationId: ticket.organization_id || undefined,
+                propertyId: ticket.property_id || undefined,
+                recipientPhone: assignee.phone,
+                recipientUserId: String(ticket.assigned_to),
+                recipientName: assignee.full_name || undefined,
+                eventType: 'TICKET_ASSIGNED',
+                segments,
+                // Different tickets must each ring; the same ticket twice in 10 minutes must not.
+                throttleSameScriptOnly: true,
+                cooldownMinutes: 10,
+                voiceId,
+                speechSpeed,
+                variables: { userName: assignee.full_name, propertyName: property?.name, title: ticket.title },
+            });
+        } catch (err) {
+            console.error('[NotificationService] callTicketAssignee error:', err);
+        }
     }
 
     private static async injectAssigneePhone(ticket: any): Promise<void> {
@@ -2118,7 +2219,8 @@ export class NotificationService {
                 email: isMasterEnabled && (rule?.channels?.email ?? true),
                 whatsapp: isMasterEnabled && (rule?.channels?.whatsapp ?? true),
                 push: isMasterEnabled && (rule?.channels?.push ?? true),
-                voice: isMasterEnabled && (rule?.channels?.voice ?? (eventKey === 'visitor_approval_requested'))
+                // Voice is on by default only where a missed alert is costly.
+                voice: isMasterEnabled && (rule?.channels?.voice ?? (eventKey === 'visitor_approval_requested' || eventKey === 'ticket_assigned'))
             };
 
             return {
@@ -2137,7 +2239,7 @@ export class NotificationService {
             console.error('[NotificationService] getOmnichannelRule error:', err);
             return {
                 enabled: true,
-                channels: { email: true, whatsapp: true, push: true, voice: eventKey === 'visitor_approval_requested' },
+                channels: { email: true, whatsapp: true, push: true, voice: eventKey === 'visitor_approval_requested' || eventKey === 'ticket_assigned' },
                 roles: [],
                 user_ids: [],
                 custom_emails: [],
