@@ -48,6 +48,7 @@ import {
   Search,
   QrCode,
   Wrench,
+  Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { compressImage } from "@/frontend/utils/image-compression";
@@ -115,6 +116,8 @@ interface Ticket {
   current_escalation_level?: number;
   hierarchy_id?: string | null;
   escalation_paused?: boolean;
+  internal?: boolean;
+  is_internal?: boolean;
 }
 
 interface Activity {
@@ -1798,6 +1801,19 @@ export default function TicketDetailPage() {
               >
                 {ticket.priority} Priority
               </span>
+
+              {(ticket.internal || ticket.is_internal) && (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-0 rounded border text-[10px] font-bold uppercase tracking-widest leading-none h-6 ${
+                    isDark
+                      ? "bg-slate-700 border-slate-600 text-slate-100"
+                      : "bg-slate-800 border-slate-800 text-white"
+                  }`}
+                >
+                  <Lock className="w-3 h-3" />
+                  Internal
+                </span>
+              )}
 
               {(ticket as any).classification_source === "llm" && (
                 <span

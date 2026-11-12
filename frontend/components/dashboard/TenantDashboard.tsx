@@ -1357,6 +1357,7 @@ const RequestsTab = ({ activeTickets, completedTickets, onNavigate, isLoading, o
                                             assignedTo={ticket.assignee?.full_name}
                                             escalationChain={buildEscalationChain(ticket.ticket_escalation_logs)}
                                             raisedByTenant={ticket.raised_by === user?.id}
+                                            isInternal={Boolean((ticket as any).internal)}
                                             onClick={() => router.push(`/tickets/${ticket.id}?from=requests`)}
                                             onEdit={!isCompleted && !isPendingValidation && onEditClick ? (e) => onEditClick(e, ticket) : undefined}
                                             onDelete={onDeleteClick ? (e) => onDeleteClick(e, ticket.id) : undefined}
@@ -1409,6 +1410,7 @@ const RequestsTab = ({ activeTickets, completedTickets, onNavigate, isLoading, o
                                     assigneePhotoUrl={ticket.assignee?.user_photo_url}
                                     escalationChain={buildEscalationChain(ticket.ticket_escalation_logs)}
                                     raisedByTenant={ticket.raised_by === user?.id}
+                                    isInternal={Boolean((ticket as any).internal)}
                                     onClick={() => router.push(`/tickets/${ticket.id}?from=requests`)}
                                     onEdit={onEditClick ? (e) => onEditClick(e, ticket) : undefined}
                                     onDelete={onDeleteClick ? (e) => onDeleteClick(e, ticket.id) : undefined}

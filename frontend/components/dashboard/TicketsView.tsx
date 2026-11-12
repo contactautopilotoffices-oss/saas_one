@@ -840,6 +840,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                         return chain.length > 0 ? chain : undefined;
                                     })()}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: any) => m.property_id === (ticket.property_id || ticket.property?.id) && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal ?? ticket.is_internal)}
                                     onClick={() => handleTicketClick(ticket.id)}
                                     onEdit={canEditTicket(ticket) ? (e) => handleEditClick(e, ticket) : undefined}
                                     onDelete={canDelete ? (e) => handleDelete(e, ticket.id) : undefined}
