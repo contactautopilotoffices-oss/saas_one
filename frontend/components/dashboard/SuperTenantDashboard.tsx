@@ -945,6 +945,7 @@ const SuperTenantDashboard = () => {
                             propertyName={t.property?.name}
                             escalationChain={(() => { const logs = (t as any).ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a: any, b: any) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log: any, i: number) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                             raisedByTenant={((t.creator as any)?.property_memberships || []).some((m: any) => m.property_id === t.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                            isInternal={Boolean((t as any).internal)}
                             onClick={() => router.push(`/tickets/${t.id}?from=requests`)}
                             onEdit={t.raised_by === user?.id ? (e) => {
                                 e.stopPropagation();

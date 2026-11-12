@@ -9,6 +9,7 @@ import {
     PC_STATUS_META, PC_PAYMENT_MODES, inr,
 } from '@/frontend/lib/pettyCash/roles';
 import type { PettyCashCaps } from '@/frontend/lib/pettyCash/roles';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface Props {
     request: PettyCashRequest | null;
@@ -237,7 +238,7 @@ export default function RequestDetailDrawer({ request, caps, onClose, onChanged 
                                     <div key={d.id} className="bg-surface-elevated rounded-lg px-3 py-2">
                                         <div className="flex items-center gap-2 text-sm">
                                             <FileText className="w-4 h-4 text-primary shrink-0" />
-                                            <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-primary hover:underline">
+                                            <a href={d.id ? `/api/petty-cash/documents/${d.id}/download?org_id=${request.organization_id}` : (maskStorageUrl(d.file_url) || d.file_url)} target="_blank" rel="noopener noreferrer" className="flex-1 truncate text-primary hover:underline">
                                                 {d.file_name || 'Document'}
                                             </a>
                                             {d.amount != null && <span className="tabular-nums font-bold text-text-primary">{inr(d.amount)}</span>}

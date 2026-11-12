@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import ProcurementDashboard from '@/frontend/components/dashboard/ProcurementDashboard';
+import AppZoom from '@/frontend/components/layout/AppZoom';
 
 export const metadata: Metadata = {
     title: 'Procurement Dashboard | Autopilot',
@@ -10,6 +11,7 @@ export const metadata: Metadata = {
 export default function Page() {
     return (
         <Suspense fallback={<div className="p-8 text-center text-slate-500">Loading Procurement...</div>}>
+            <AppZoom />
             <ProcurementDashboard />
         </Suspense>
     );

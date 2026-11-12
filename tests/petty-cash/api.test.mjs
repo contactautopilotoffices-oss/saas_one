@@ -47,10 +47,11 @@ for (const route of ['context', 'assignments']) {
   assert.deepEqual((route==='context'?body.routes:body.assignments)[0].user,allocator);
  });
 }
-test('bulk action accepts only allocation/approval and reports independent failures without deleting anything',async()=>{
+test('bulk action accepts only allocation/approval/payment (payment for accounts only) and reports independent failures without deleting anything',async()=>{
  const called=[];const mocks={...auth,'@/backend/lib/pettyCash/api':{pcRequest:async(_a,rid)=>rid===id?{id}:null,isUuid:x=>typeof x==='string'&&x.length===36},'@/backend/lib/pettyCash/actions':{applyPettyCashAction:async(a,rid,action,body)=>{called.push({rid,action,body});return {data:{id:rid},error:null};}}};
  const {POST}=loadTs('app/api/petty-cash/bulk/route.ts',mocks);
- assert.equal((await POST(request({action:'pay',items:[{id}]}))).status,400);
+ assert.equal((await POST(request({action:'close',items:[{id}]}))).status,400);
+ assert.equal((await POST(request({action:'pay',items:[{id}]}))).status,403); // fixture user is not accounts
  assert.equal((await POST(request({action:'approve',items:[{id},{id}]}))).status,400);
  const response=await POST(request({action:'allocate',items:[{id,expected_version:0,allocated_amount:10},{id:'00000000-0000-0000-0000-000000000031',expected_version:0}]}));const data=await response.json();assert.equal(data.results[0].ok,true);assert.equal(data.results[1].ok,false);assert.equal(called.length,1);assert.ok(called[0].body.remark.includes('Batch'));
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { classifyTicket } from '@/backend/lib/ticketing';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
+import { deriveOrgInitials, derivePropertyInitials, formatTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -270,6 +271,34 @@ export async function POST(request: NextRequest) {
         const categoryMap = new Map(allCategories?.map(c => [c.code, c]) || []);
         const skillGroupMap = new Map(allSkillGroups?.map(sg => [sg.code, sg.id]) || []);
 
+        // Resolve org and property initials for ticket numbering
+        const { data: propData } = await supabase.from('properties').select('name').eq('id', propertyId).maybeSingle();
+        const { data: orgData } = await supabase.from('organizations').select('name').eq('id', organizationId).maybeSingle();
+        const orgInit = deriveOrgInitials(orgData?.name);
+        const propInit = derivePropertyInitials(propData?.name);
+
+        const { data: recentT } = await supabase
+            .from('tickets')
+            .select('ticket_number')
+            .eq('property_id', propertyId)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        let maxSeq = 0;
+        const prefix = `${orgInit}-${propInit}-`;
+        if (recentT) {
+            for (const t of recentT) {
+                if (t.ticket_number?.startsWith(prefix)) {
+                    const s = parseInt(t.ticket_number.substring(prefix.length), 10);
+                    if (!isNaN(s) && s > maxSeq) maxSeq = s;
+                }
+            }
+        }
+        if (maxSeq === 0) {
+            const { count } = await supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId);
+            maxSeq = count || 0;
+        }
+
         // Prepare tickets for insert
         const ticketsToInsert = validRows.map((row, index) => {
             // 1. Rule-based Classification
@@ -284,8 +313,8 @@ export async function POST(request: NextRequest) {
             const floorNumber = extractFloorNumber(row.issue_description);
             const location = extractLocation(row.issue_description);
 
-            // 4. Generate unique ticket number
-            const ticketNumber = `TKT-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+            // 4. Generate sequential ticket number
+            const ticketNumber = formatTicketNumber(orgInit, propInit, maxSeq + index + 1);
 
             return {
                 property_id: propertyId,

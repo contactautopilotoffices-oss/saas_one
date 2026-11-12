@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Inbox, Loader2, MapPin, Users } from 'lucide-react';
 import SiteOwnersBuilder from './SiteOwnersBuilder';
 import MailAccounts from './MailAccounts';
+import MailArchivePanel from './MailArchivePanel';
 
 type Role = 'ceo' | 'procurement' | 'technical';
 
@@ -32,8 +33,57 @@ const ROLES: Array<{ key: Role; label: string; hint: string }> = [
     { key: 'technical', label: 'IT / technical', hint: 'Only hears about it when the problem is with the system or the data.' },
 ];
 
-const split = (s: string) => s.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+const split = (s: string) => s.split(/[,;\n]/).map((x) => x.trim()).filter(Boolean);
 const join = (a?: string[]) => (a ?? []).join(', ');
+
+/** Same shapes the registry accepts: name@example.com, or Name <name@example.com>. */
+const looksLikeAddress = (v: string) =>
+    /^[^\s<>@,]+@[^\s<>@,]+\.[^\s<>@,]+$/.test(v) || /^[^<>]*<\s*[^\s<>@,]+@[^\s<>@,]+\.[^\s<>@,]+\s*>$/.test(v);
+
+/**
+ * A list of addresses typed as text.
+ *
+ * WHY THIS KEEPS ITS OWN TEXT. These fields used to be `value={join(list)}` with
+ * `onChange → split(text)`: every keystroke was parsed into a list and printed
+ * back. The trailing ", " you type before a second address parses to nothing, so
+ * it was deleted the instant it was typed — the comma vanished and a second
+ * address could never be started. The text is now what you typed; only the list
+ * handed up is parsed. It is re-seeded only when the saved list changes from
+ * outside (another agent selected, a reload), never while typing.
+ */
+function AddressListInput({ value, onChange, placeholder, multiline, className }: {
+    value: string[] | undefined;
+    onChange: (list: string[]) => void;
+    placeholder?: string;
+    multiline?: boolean;
+    className: string;
+}) {
+    const [text, setText] = useState(() => join(value));
+    const incoming = join(value);
+    useEffect(() => {
+        setText((t) => (join(split(t)) === incoming ? t : incoming));
+    }, [incoming]);
+
+    const entries = split(text);
+    const bad = entries.filter((x) => !looksLikeAddress(x));
+    const update = (t: string) => { setText(t); onChange(split(t)); };
+
+    return (
+        <>
+            {multiline
+                ? <textarea rows={2} className={className} value={text} placeholder={placeholder} onChange={(e) => update(e.target.value)} />
+                : <input className={className} value={text} placeholder={placeholder} onChange={(e) => update(e.target.value)} />}
+            {bad.length > 0 && (
+                <p className="mt-1 text-[11px] text-amber-700">
+                    Not an email address yet: {bad.join(', ')}. Saving will be refused until it is fixed or removed.
+                </p>
+            )}
+            {entries.length > 25 && (
+                <p className="mt-1 text-[11px] text-amber-700">At most 25 addresses per list; this has {entries.length}.</p>
+            )}
+        </>
+    );
+}
 
 export default function AgentDelivery({
     orgId, agentKey, runtime, onSaved,
@@ -82,10 +132,10 @@ export default function AgentDelivery({
     const setInbox = (k: keyof NonNullable<Runtime['inbox']>, v: string) =>
         setDraft((d) => ({ ...d, inbox: { ...(d.inbox ?? {}), [k]: v || undefined } }));
 
-    const setRole = (r: Role, v: string) =>
+    const setRole = (r: Role, list: string[]) =>
         setDraft((d) => ({
             ...d,
-            recipients: { ...(d.recipients ?? {}), roles: { ...(d.recipients?.roles ?? {}), [r]: split(v) } },
+            recipients: { ...(d.recipients ?? {}), roles: { ...(d.recipients?.roles ?? {}), [r]: list } },
         }));
 
     const save = async () => {
@@ -96,8 +146,11 @@ export default function AgentDelivery({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'upsert', agent_key: agentKey, runtime: draft }),
             });
-            const json = await res.json();
+            const json = await res.json().catch(() => ({ error: `The server replied with ${res.status} and not JSON.` }));
             if (json.error) { setError(json.error); return; }
+            // provisioned:false is a 200 that saved nothing — it must not say "Saved".
+            if (json.provisioned === false) { setError(json.note ?? 'Not saved: the agent tables are not in this database yet.'); return; }
+            if (!res.ok) { setError(`Save failed (HTTP ${res.status}).`); return; }
             setSaved(true);
             onSaved?.();
         } catch (e) { setError((e as Error).message); }
@@ -110,6 +163,7 @@ export default function AgentDelivery({
     return (
         <div className="flex flex-col gap-4">
             <MailAccounts orgId={orgId} />
+            <MailArchivePanel orgId={orgId} />
 
             {/* ---- mailboxes ------------------------------------------------ */}
             <section className="rounded-[14px] border border-border bg-card p-4">
@@ -129,16 +183,16 @@ export default function AgentDelivery({
                     </div>
                     <div>
                         <label className={label}>Inboxes Ira checks for replies</label>
-                        <textarea rows={2} className={`${field} font-mono text-[12px]`}
-                            value={join(pollList)}
+                        <AddressListInput multiline className={`${field} font-mono text-[12px]`}
+                            value={pollList}
                             placeholder={'purchase@worksquare.in, support@worksquare.in'}
-                            onChange={(e) => setDraft((d) => ({
+                            onChange={(list) => setDraft((d) => ({
                                 ...d,
-                                inbox: { ...(d.inbox ?? {}), poll_addresses: split(e.target.value), poll_address: undefined },
+                                inbox: { ...(d.inbox ?? {}), poll_addresses: list, poll_address: undefined },
                             }))} />
                         <p className="mt-1 text-[10.5px] text-text-tertiary">
-                            Separate them with commas. Ira needs access to each one. A reply sent to any of
-                            these will reach her.
+                            Separate them with commas or put one per line. Ira needs access to each one. A reply
+                            sent to any of these will reach her.
                         </p>
                     </div>
                     <div>
@@ -173,9 +227,9 @@ export default function AgentDelivery({
                     {ROLES.map((r) => (
                         <div key={r.key}>
                             <label className={label}>{r.label}</label>
-                            <input className={field} value={join(roles[r.key])} placeholder="name@worksquare.in, other@worksquare.in"
-                                onChange={(e) => setRole(r.key, e.target.value)} />
-                            <p className="mt-1 text-[11px] text-text-tertiary">{r.hint}</p>
+                            <AddressListInput className={field} value={roles[r.key]} placeholder="name@worksquare.in, other@worksquare.in"
+                                onChange={(list) => setRole(r.key, list)} />
+                            <p className="mt-1 text-[11px] text-text-tertiary">{r.hint} Separate several addresses with commas.</p>
                         </div>
                     ))}
                 </div>

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box } from 'lucide-react';
+import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box, Lock } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ShareModal from './ShareModal';
 import { parseDate } from '@/frontend/utils/date';
@@ -45,6 +45,7 @@ export interface TicketCardProps {
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
     hasMaterialRequest?: boolean; // indicator for procurement needs
+    isInternal?: boolean; // badge when ticket is internal (not visible to tenants)
 
     // Actions
     onClick: () => void;
@@ -91,6 +92,7 @@ export default function TicketCard({
     slaDeadline,
     slaBreached,
     raisedByTenant,
+    isInternal,
     onClick,
     onEdit,
     onDelete,
@@ -299,6 +301,13 @@ export default function TicketCard({
                 >
                     {status?.replace(/_/g, ' ')}
                 </span>
+
+                {isInternal && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-800 text-white border border-slate-800">
+                        <Lock className="w-2.5 h-2.5" />
+                        Internal
+                    </span>
+                )}
 
                 <SLABadge slaDeadline={slaDeadline ?? null} isBreached={computedIsBreached} />
 

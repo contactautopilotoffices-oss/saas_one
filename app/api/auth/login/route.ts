@@ -3,7 +3,17 @@ import { createClient } from '@/frontend/utils/supabase/server';
 
 export async function POST(request: NextRequest) {
     try {
-        const { email, password } = await request.json();
+        let body: any = {};
+        try {
+            body = await request.json();
+        } catch {
+            return NextResponse.json(
+                { error: 'Invalid or missing JSON body' },
+                { status: 400 }
+            );
+        }
+
+        const { email, password } = body;
 
         if (!email || !password) {
             return NextResponse.json(

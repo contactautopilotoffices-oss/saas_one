@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError } from '@/backend/lib/auth/callerAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -50,8 +51,11 @@ const DEFAULT_SEED_CATEGORIES = [
     { ticket_type: 'anonymous_feedback', category_name: 'Anonymous Feedback', first_level_owner_type: 'director', is_anonymous: true, l1_sla_days: 3, l2_sla_days: 7, l3_sla_days: 10, l4_sla_days: 12 }
 ];
 
-export async function GET() {
+export async function GET(request: Request) {
     try {
+        // Signed-in users only (raising an HR ticket needs the list). Role rules for HR admin: see batch 3.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         let { data, error } = await supabaseAdmin
             .from('hr_ticket_categories')
             .select(`
@@ -106,6 +110,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const body = await request.json();
         const {
             organization_id,
@@ -171,6 +177,8 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const body = await request.json();
         const { id, actor_user_id, default_hr_owner, users, ...updates } = body;
         delete updates.default_hr_owner;
@@ -273,6 +281,8 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
 

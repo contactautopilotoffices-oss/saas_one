@@ -77,19 +77,24 @@ export interface ModelPlanInput {
 function systemPrompt(input: ModelPlanInput): string {
     return `You turn an operator's description of a facility-management agent into a WORKFLOW PLAN.
 
-TOOLS THAT EXIST. Use only these slugs, or null for a pure reasoning step:
-${input.toolSlugs.join(', ')}
+TOOLS THAT EXIST. Use only these slugs, or null for a pure reasoning step.
+A tool marked (missing) is not configured here: you may still plan it, the canvas flags it.
+${bindTools([...input.toolSlugs]).map((t) => `  ${t.slug} — ${t.label}: ${t.purpose} (${t.status})`).join('\n')}
 
 TABLES THAT EXIST. Never name one outside this list:
-${input.tables.map((t) => '  ${t.name} [${t.domain}] — ${t.purpose}').join('\n')}
+${input.tables.map((t) => `  ${t.name} [${t.domain}] — ${t.purpose}`).join('\n')}
 
 MODULES: ${input.modules.join(', ')}
 
 STEP KINDS: ${PLAN_STEP_KINDS.join(', ')}
-  resolve  pin down missing context      search   reach outside the org
-  fetch    read our own tables           decide   branch on a rule
+  trigger  an event starts the run       resolve  pin down missing context
+  search   reach outside the org         fetch    read our own tables
+  call     phone people, collect answers decide   branch on a rule
   draft    produce something unsent      approve  a human gate; the agent stops
   write    mutate a business record      notify   tell someone
+  A run that starts from an inbound WhatsApp message begins with a trigger step
+  (tool whatsapp_webhook). Phoning vendors or staff is a call step (tool bolna_call),
+  and a call step that reaches people outside the org needs an approve step before it.
 
 RULES
 1. The plan must match THIS description. Do not produce a generic procurement
@@ -136,12 +141,16 @@ export async function composePlanWithModel(input: ModelPlanInput): Promise<Agent
                 { role: 'system', content: systemPrompt(input) },
                 { role: 'user', content: input.description },
             ],
-            'opinion' as never,
+            'plan',
         );
         const env = extractJsonObject(raw);
         parsed = PlanSchema.parse(env);
-    } catch {
-        return fallback();
+    } catch (e) {
+        // Say what failed. Discarding this made a timeout, a cut-off answer or a
+        // schema mismatch look like a successful, merely generic, plan.
+        const reason = describePlannerFailure(e);
+        console.warn(`[agent plan] model plan failed, showing the rules plan instead: ${reason}`);
+        return { ...fallback(), fallbackReason: reason };
     }
 
     // --- grounding, applied AFTER parsing; the model is not trusted ----------
@@ -222,4 +231,26 @@ export async function composePlanWithModel(input: ModelPlanInput): Promise<Agent
         roles: parsed.roles.map((r) => ({ name: r.name, does: r.does })),
         notes,
     };
+}
+
+/**
+ * One sentence an operator can act on — and nothing the provider said verbatim.
+ * The provider's own error body (up to 500 characters from councilChat) can
+ * carry routing or account detail, so it stays in the server log; the screen
+ * gets the category, which is what decides the next move.
+ */
+function describePlannerFailure(e: unknown): string {
+    if (e instanceof z.ZodError) {
+        const where = e.issues.slice(0, 3).map((i) => `${i.path.join('.') || 'plan'}: ${i.message}`).join('; ');
+        return `The model's plan did not match the expected shape (${where}).`;
+    }
+    const message = e instanceof Error ? e.message : String(e);
+    if (/finish_reason=length/.test(message)) return 'The model ran out of room for its answer before finishing the plan.';
+    if (/timed out/i.test(message)) return 'The model took longer than its time limit.';
+    if (/No LLM key configured/.test(message)) return 'No language-model key is configured on this server.';
+    const status = /API error: (\d{3})/.exec(message)?.[1];
+    if (status === '429') return 'The model provider is rate-limiting requests (HTTP 429). Try again in a minute.';
+    if (status) return `The model provider refused the request (HTTP ${status}).`;
+    if (/json/i.test(message)) return 'The model did not return a readable plan.';
+    return 'The planner failed unexpectedly; the server log has the details.';
 }

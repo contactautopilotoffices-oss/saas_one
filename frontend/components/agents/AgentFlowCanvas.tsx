@@ -11,9 +11,11 @@
  *    registry — not three copies that drift. A table added to the catalog appears
  *    in the palette without touching this file.
  *
- * 2. SAVE CREATES A VERSION, IT DOES NOT APPLY. Saving writes the next
- *    oem_agent_bundles row. Existing versions and in-flight runs are untouched,
- *    and nothing about the agent's behaviour changes until a human promotes it.
+ * 2. EDITS ARE KEPT, NOT APPLIED. "Use this flow" hands the edited steps back
+ *    to the plan; they are saved onto the agent (oem_agents.config.plan) only
+ *    when the operator accepts the proposal. This comment used to promise an
+ *    oem_agent_bundles version — no caller ever wired that, and the button did
+ *    nothing at all.
  *
  * 3. DRAWN IS NOT ENFORCED — SAY SO. The POS builder draws Rule and Approval
  *    nodes that nothing checks at runtime. Ours has the same exposure: an
@@ -21,19 +23,21 @@
  *    the canvas rather than left for someone to discover in production.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Background, Controls, MiniMap, ReactFlow, addEdge, useEdgesState, useNodesState,
     type Connection, type Edge, type Node, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Database, GitBranch, Globe, PenLine, Save, Send, ShieldCheck, Trash2, Wrench } from 'lucide-react';
+import { Database, GitBranch, Globe, PenLine, PhoneCall, Save, Send, ShieldCheck, Trash2, Wrench, Zap } from 'lucide-react';
 
 import type { PlanStep, PlanStepKind, ToolBinding } from './AgentPlanCanvas';
 
 /* ---- per-kind presentation, in the digest palette ------------------------ */
 
 const KIND: Record<PlanStepKind, { label: string; Icon: typeof Database; tone: string }> = {
+    trigger: { label: 'Trigger', Icon: Zap,       tone: '#8A3FA0' },
+    call:    { label: 'Call',    Icon: PhoneCall, tone: '#0E7490' },
     resolve: { label: 'Resolve', Icon: GitBranch, tone: '#B07206' },
     search:  { label: 'Search',  Icon: Globe,     tone: '#3D5A8A' },
     fetch:   { label: 'Read',    Icon: Database,  tone: '#7A776E' },
@@ -120,14 +124,45 @@ function layout(steps: PlanStep[]): Record<string, { x: number; y: number }> {
 
 export interface FlowPaletteItem { kind: PlanStepKind; label: string; tool: string | null }
 
+/**
+ * What placing each tool adds. The palette is built from the TOOL REGISTRY
+ * (backend/lib/agents/plan.ts TOOL_SPECS, handed down as `catalog`), so a tool
+ * added there — Bolna calls, the WhatsApp webhook — appears here with its live
+ * connected/missing status and no edit to this file beyond this one line.
+ */
+const STEP_FOR_TOOL: Record<string, { kind: PlanStepKind; label: string }> = {
+    whatsapp_webhook: { kind: 'trigger', label: 'WhatsApp message in' },
+    db_read: { kind: 'fetch', label: 'Read a table' },
+    web_search: { kind: 'search', label: 'Search the web' },
+    bolna_call: { kind: 'call', label: 'Voice call (Bolna)' },
+    llm: { kind: 'draft', label: 'Draft' },
+    db_write: { kind: 'write', label: 'Write a record' },
+    zoho_books: { kind: 'write', label: 'Zoho Books' },
+    email: { kind: 'notify', label: 'Email' },
+    whatsapp: { kind: 'notify', label: 'WhatsApp message out' },
+    push: { kind: 'notify', label: 'Push notification' },
+};
+const KIND_ORDER: PlanStepKind[] = ['trigger', 'resolve', 'search', 'fetch', 'call', 'decide', 'draft', 'approve', 'write', 'notify'];
+
 export default function AgentFlowCanvas({
-    steps, tools, onSave, saving,
+    steps, tools, catalog, fill, onSave, saving,
 }: {
     steps: PlanStep[];
+    /** Tools the plan's steps use. */
     tools: ToolBinding[];
+    /** Every tool on this deployment. Falls back to `tools` when absent. */
+    catalog?: ToolBinding[];
+    /** Fill the parent (full screen) instead of the fixed 460 px box. */
+    fill?: boolean;
     onSave?: (steps: PlanStep[]) => void;
     saving?: boolean;
 }) {
+    const refit = useRef<(() => void) | null>(null);
+    // Entering or leaving full screen changes the viewport; refit so the flow is not left in a corner.
+    useEffect(() => {
+        const id = requestAnimationFrame(() => refit.current?.());
+        return () => cancelAnimationFrame(id);
+    }, [fill]);
     const pos = useMemo(() => layout(steps), [steps]);
     const [seq, setSeq] = useState(1000);
 
@@ -178,25 +213,24 @@ export default function AgentFlowCanvas({
         [nodes, removeNode],
     );
 
+    const registry = catalog?.length ? catalog : tools;
     const palette: FlowPaletteItem[] = [
-        { kind: 'fetch', label: 'Read a table', tool: 'db_read' },
-        { kind: 'search', label: 'Search the web', tool: 'web_search' },
-        { kind: 'decide', label: 'Decide', tool: null },
-        { kind: 'draft', label: 'Draft', tool: 'llm' },
-        { kind: 'approve', label: 'Human approval', tool: null },
-        { kind: 'write', label: 'Write a record', tool: 'db_write' },
-        { kind: 'notify', label: 'Email', tool: 'email' },
-    ];
+        ...registry
+            .filter((t) => STEP_FOR_TOOL[t.slug])
+            .map((t) => ({ kind: STEP_FOR_TOOL[t.slug].kind, label: STEP_FOR_TOOL[t.slug].label, tool: t.slug })),
+        { kind: 'decide' as const, label: 'Decide', tool: null },
+        { kind: 'approve' as const, label: 'Human approval', tool: null },
+    ].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
 
     const drawnApproval = nodes.some((n) => (n.data as unknown as PlanStep).kind === 'approve');
 
     return (
-        <div className="flex flex-col gap-3">
+        <div className={fill ? 'flex min-h-0 flex-1 flex-col gap-3' : 'flex flex-col gap-3'}>
             {/* palette — derived from the tool registry, not hardcoded elsewhere */}
             <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-text-tertiary mr-1">Add step</span>
                 {palette.map((p) => {
-                    const t = p.tool ? tools.find((x) => x.slug === p.tool) : null;
+                    const t = p.tool ? registry.find((x) => x.slug === p.tool) : null;
                     const missing = t?.status === 'missing';
                     return (
                         <button key={p.label} type="button" onClick={() => addStep(p.kind, p.tool)}
@@ -208,8 +242,10 @@ export default function AgentFlowCanvas({
                 })}
             </div>
 
-            <div style={{ height: 460 }} className="rounded-[10px] border border-border bg-[#FBFBF9] overflow-hidden">
+            <div style={fill ? undefined : { height: 460 }}
+                className={`${fill ? 'min-h-0 flex-1 ' : ''}rounded-[10px] border border-border bg-[#FBFBF9] overflow-hidden`}>
                 <ReactFlow
+                    onInit={(instance) => { refit.current = () => { void instance.fitView({ padding: 0.15 }); }; }}
                     nodes={withDelete}
                     edges={edges}
                     onNodesChange={onNodesChange}
@@ -225,16 +261,17 @@ export default function AgentFlowCanvas({
                 </ReactFlow>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-                <button type="button" disabled={saving} onClick={() => onSave?.(collect())}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12px] font-semibold text-background disabled:opacity-40">
-                    <Save className="h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Save as next version'}
-                </button>
-                <span className="text-[11.5px] text-text-secondary">
-                    Saving creates the next version. Existing versions and in-flight runs are untouched,
-                    and nothing changes about how the agent behaves until it is promoted.
-                </span>
-            </div>
+            {onSave && (
+                <div className="flex flex-wrap items-center gap-3">
+                    <button type="button" disabled={saving} onClick={() => onSave(collect())}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3.5 py-2 text-[12px] font-semibold text-background disabled:opacity-40">
+                        <Save className="h-3.5 w-3.5" /> {saving ? 'Saving…' : 'Use this flow'}
+                    </button>
+                    <span className="text-[11.5px] text-text-secondary">
+                        Keeps these edits in the plan. They are saved onto the agent when you accept the proposal.
+                    </span>
+                </div>
+            )}
 
             {drawnApproval && (
                 <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800">

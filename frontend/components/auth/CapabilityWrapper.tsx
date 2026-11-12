@@ -29,7 +29,12 @@ export default function CapabilityWrapper({
 
     if (loading) return null; // Or a subtle skeleton
 
-    const hasPermission = context?.capabilities[domain]?.includes(action);
+    const isSuperAdminRole = context?.role_key === 'org_super_admin' ||
+        context?.role_key === 'super_admin' ||
+        context?.role_key === 'director' ||
+        context?.role_level === 0;
+
+    const hasPermission = isSuperAdminRole || context?.capabilities[domain]?.includes(action);
 
     if (!hasPermission) return fallback as any;
 

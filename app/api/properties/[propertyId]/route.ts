@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/properties/[propertyId]
@@ -11,6 +12,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId, { allowExternal: true });
+    if (denied) return denied;
 
     try {
         const { data: property, error } = await supabaseAdmin
@@ -40,6 +43,8 @@ export async function PATCH(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
 
     try {
         const body = await request.json();

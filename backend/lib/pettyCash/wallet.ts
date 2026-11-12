@@ -5,6 +5,7 @@ export function requestWalletTotals(entries: { kind: string; amount: string | nu
         const amount = Math.round(Number(entry.amount) * 100);
         if (entry.kind === 'credit') cents.received += amount;
         if (entry.kind === 'debit') cents.spent += amount;
+        if (entry.kind === 'reversal') cents.spent -= amount; // a withdrawn expense
         if (entry.kind === 'return') cents.returned += amount;
     }
     return { received: cents.received / 100, spent: cents.spent / 100, returned: cents.returned / 100, balance: (cents.received - cents.spent - cents.returned) / 100 };

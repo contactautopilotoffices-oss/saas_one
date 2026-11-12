@@ -43,6 +43,7 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
     ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
     ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
     ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'], is_media: true },
+    ticket_reply: { campaign_name: 'ticket_reply_v1', params: ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'] },
     ticket_updated: { campaign_name: 'ticket_updated', params: ['ticket_number', 'title', 'status'] },
     reminder_ticket_sla: { campaign_name: 'reminder_ticket_sla', params: ['ticket_number', 'title', 'sla_deadline'] },
 

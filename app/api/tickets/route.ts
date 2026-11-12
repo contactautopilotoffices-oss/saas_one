@@ -4,6 +4,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
 import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 // Extract floor number from description
 function extractFloorNumber(description: string): number | null {
@@ -96,9 +97,63 @@ export async function GET(request: NextRequest) {
         const materialsRequired = searchParams.get('materialsRequired');
         const floorNumber = searchParams.get('floorNumber') || searchParams.get('floor_number') || searchParams.get('floor');
 
-        // Use admin client for org-wide or all-property queries to bypass RLS row restrictions
-        const isAllProperties = propertyId === 'all';
-        const queryClient = ((organizationId && (!propertyId || isAllProperties)) || isAllProperties) ? createAdminClient() : supabase;
+        // Resolve user roles and memberships to prevent unauthorized ticket leaks
+        const adminSupabase = createAdminClient();
+        const [orgMemsRes, propMemsRes] = await Promise.all([
+            adminSupabase.from('organization_memberships').select('role, organization_id, is_active').eq('user_id', user.id),
+            adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
+        ]);
+
+        const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+        // Owner 2026-11-03: the org-level Tech team tracks every ticket of its own organisation(s) in the Tech console's
+        // Requests tab. Only those organisations; who may edit, assign or delete is unchanged.
+        const techOrgIds = Array.from(new Set((orgMemsRes.data || [])
+            .filter(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false && m.organization_id)
+            .map(m => m.organization_id as string)));
+        const propMems = propMemsRes.data || [];
+        const propRoles = propMems.map(m => (m.role || '').toLowerCase().trim());
+        const userPropIds = Array.from(new Set(propMems.map(m => m.property_id).filter(Boolean)));
+
+        const isOrgSuperAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r));
+        const isPropertyAdmin = propRoles.some(r => ['property_admin', 'ops_super_admin'].includes(r));
+        const isStaffOrMst = propRoles.some(r => ['mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r));
+        const isVendor = propRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r)) || orgRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r));
+        const isTenant = propRoles.some(r => ['tenant', 'super_tenant'].includes(r)) && !isOrgSuperAdmin && !isPropertyAdmin && !isStaffOrMst;
+
+        const isAllProperties = !propertyId || propertyId === 'all';
+        const isAllOrgs = !organizationId || organizationId === 'all';
+
+        // A user may always list the tickets assigned to themselves, at any property (owner 2026-11-02: the org-level
+        // IT team is assigned tickets across properties it holds no property membership in).
+        const isOwnAssignedQuery = assignedTo === user.id;
+
+        // Org-level Tech, asking for one of its own organisations (or not naming one): scoped to those organisations below.
+        const isTechScope = !isOrgSuperAdmin && techOrgIds.length > 0 && (isAllOrgs || techOrgIds.includes(organizationId as string));
+
+        // Non-superadmins cannot query all properties across the organization (except their own assigned tickets)
+        if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && !isTechScope) {
+            if (userPropIds.length === 0) {
+                return NextResponse.json({ tickets: [], total: 0 });
+            }
+        }
+
+        // If a specific property is requested, ensure non-superadmin belongs to that property (or, for Tech, that the
+        // property belongs to one of its organisations)
+        if (propertyId && !isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
+            if (!userPropIds.includes(propertyId)) {
+                let techProperty = false;
+                if (isTechScope) {
+                    const { data: prop } = await adminSupabase.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+                    techProperty = !!prop && techOrgIds.includes(prop.organization_id as string);
+                }
+                if (!techProperty) {
+                    return NextResponse.json({ error: 'You do not have access to tickets for this property.' }, { status: 403 });
+                }
+            }
+        }
+
+        // Use admin client when user has verified admin permissions (or Tech, scoped to its organisations); else user client
+        const queryClient = (isOrgSuperAdmin || isPropertyAdmin || isTechScope) ? adminSupabase : supabase;
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
@@ -114,7 +169,6 @@ export async function GET(request: NextRequest) {
                 material_requests${materialsRequired === 'true' ? '!inner' : ''}(id)
             `;
 
-
         let query = queryClient
             .from('tickets')
             .select(selectStr, { count: 'exact' })
@@ -124,8 +178,15 @@ export async function GET(request: NextRequest) {
                 (offsetParam ? parseInt(offsetParam) : 0) + (limitParam ? parseInt(limitParam) : 100) - 1
             );
 
-        if (propertyId && !isAllProperties) query = query.eq('property_id', propertyId);
-        if (organizationId) query = query.eq('organization_id', organizationId);
+        if (propertyId && !isAllProperties) {
+            query = query.eq('property_id', propertyId);
+        } else if (isAllProperties && isTechScope && !isOwnAssignedQuery) {
+            query = query.in('organization_id', techOrgIds);
+        } else if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && userPropIds.length > 0) {
+            query = query.in('property_id', userPropIds);
+        }
+
+        if (organizationId && !isAllOrgs) query = query.eq('organization_id', organizationId);
         if (status) {
             if (status.includes(',')) {
                 query = query.in('status', status.split(',').map(s => s.trim()));
@@ -133,10 +194,20 @@ export async function GET(request: NextRequest) {
                 query = query.eq('status', status);
             }
         }
-        if (isInternal !== null && isInternal !== undefined) {
+
+        // Internal tickets isolation: Tenants and Vendors can NEVER access internal tickets
+        if (isTenant || isVendor) {
+            query = query.eq('internal', false);
+        } else if (isInternal !== null && isInternal !== undefined) {
             query = query.eq('internal', isInternal === 'true');
         }
-        if (assignedTo) query = query.eq('assigned_to', assignedTo);
+
+        // Vendor scoping: Vendors only see tickets assigned to them
+        if (isVendor && !isOrgSuperAdmin && !isPropertyAdmin && !isStaffOrMst) {
+            query = query.eq('assigned_to', user.id);
+        } else if (assignedTo) {
+            query = query.eq('assigned_to', assignedTo);
+        }
         if (raisedBy) query = query.eq('raised_by', raisedBy);
         if (slaBreached === 'true') {
             // Include tickets where sla_deadline has passed OR sla_breached flag is explicitly set
@@ -194,7 +265,7 @@ export async function GET(request: NextRequest) {
         if (raisedByRole) {
             // Get user IDs with the specified role from memberships
             let membershipQuery;
-            if (propertyId) {
+            if (propertyId && !isAllProperties) {
                 // Scoped: only tenants of this specific property
                 membershipQuery = supabase
                     .from('property_memberships')
@@ -202,7 +273,7 @@ export async function GET(request: NextRequest) {
                     .eq('property_id', propertyId)
                     .eq('role', raisedByRole)
                     .eq('is_active', true);
-            } else if (organizationId) {
+            } else if (organizationId && !isAllOrgs) {
                 // Scoped: users with this role across any property in this org
                 membershipQuery = supabase
                     .from('property_memberships')
@@ -365,7 +436,9 @@ export async function POST(request: NextRequest) {
         }
 
         // 3. CREATE TICKET
-        const ticketNumber = `TKT-${Date.now()}`;
+        const ticketNumber = propId
+            ? await generateNextTicketNumber(supabase, propId, orgId)
+            : `AP-GEN-${Date.now()}`;
 
         const { data: ticket, error: insertError } = await supabase
             .from('tickets')

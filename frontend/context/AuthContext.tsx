@@ -128,7 +128,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             // Sort orgs to pick the "best" one for the primary context (admin roles first)
             const sortedOrgs = [...(orgData || [])].sort((a, b) => {
-                const priority = { 'owner': 0, 'org_super_admin': 1, 'ops_super_admin': 2, 'org_admin': 3, 'accounts': 4 };
+                const priority = { 'owner': 0, 'org_super_admin': 1, 'ops_super_admin': 2, 'org_admin': 3, 'tech': 3, 'it': 3, 'design': 3, 'accounts': 4 };
                 const aP = priority[a.role as keyof typeof priority] ?? 10;
                 const bP = priority[b.role as keyof typeof priority] ?? 10;
                 return aP - bP;
@@ -171,6 +171,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     organization_id: p.property?.organization_id
                 })).filter((p: any) => p.id) || []
             };
+
+            // Sync active org ID cookie for middleware rewrite support
+            if (membershipData.org_id && typeof document !== 'undefined') {
+                document.cookie = `saas_org_id=${membershipData.org_id}; path=/; max-age=2592000; SameSite=Lax`;
+            }
 
             // Cache the result
             membershipCache.set(userId, { data: membershipData, timestamp: Date.now() });

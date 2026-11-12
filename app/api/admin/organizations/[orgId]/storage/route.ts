@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, isOrgAdmin } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/admin/organizations/[orgId]/storage
@@ -12,6 +13,9 @@ export async function GET(
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!isOrgAdmin(caller, orgId)) return forbidden('Forbidden: organisation admins only');
 
     // Get properties for storage calculation
     const { data: properties, error } = await supabaseAdmin

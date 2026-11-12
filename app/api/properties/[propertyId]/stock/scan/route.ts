@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { isLiveStockItem, OLD_ITEM_LOCKED_MESSAGE } from '@/backend/lib/stock/propertyStock';
 
 export async function POST(
     request: NextRequest,
@@ -44,6 +45,10 @@ export async function POST(
 
         if (itemError || !item) {
             return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+        }
+
+        if (!(await isLiveStockItem(propertyId, item))) {
+            return NextResponse.json({ error: OLD_ITEM_LOCKED_MESSAGE }, { status: 409 });
         }
 
         // Calculate new quantity

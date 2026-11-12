@@ -9,6 +9,7 @@ import { resolveClassification, logClassification } from '@/backend/lib/ticketin
 import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { WhatsAppService, type WhatsAppOptions } from '@/backend/services/WhatsAppService';
 import { getWhatsAppProperties } from './assistant/access';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 const BUCKET_NAME = 'ticket_photos';
 const VIDEO_BUCKET = 'ticket_videos';
@@ -369,7 +370,7 @@ export async function processIncomingMessage(
         }
 
         // ── Create ticket ─────────────────────────────────────────────────────
-        const ticketNumber = `TKT-${Date.now()}`;
+        const ticketNumber = await generateNextTicketNumber(supabaseAdmin, propertyId, organizationId);
         const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
         const groqPriority = resolution.priority?.toLowerCase() || '';
         const dbPriority = priority;

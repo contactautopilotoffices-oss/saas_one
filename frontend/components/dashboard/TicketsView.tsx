@@ -115,9 +115,15 @@ interface TicketsViewProps {
     canDelete?: boolean;
     onNewRequest?: () => void;
     initialStatusFilter?: string;
+    /**
+     * Owner 2026-11-02, IT console ONLY: show only the tickets assigned to this user. The "Assigned To" filter and the
+     * Flow Map button are hidden, and Edit shows only on tickets this user raised. Every other console omits it, so
+     * their behaviour is unchanged.
+     */
+    lockedAssigneeId?: string;
 }
 
-const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, canDelete, onNewRequest, initialStatusFilter = 'all' }) => {
+const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, canDelete, onNewRequest, initialStatusFilter = 'all', lockedAssigneeId }) => {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -139,12 +145,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const [allFloors, setAllFloors] = useState<(string | number)[]>([]);
     const [hasUnspecified, setHasUnspecified] = useState(false);
 
+    // Owner 2026-11-03: + 'tech' (the Tech console shows this list exactly as the Super Admin console does)
     const isHighAdmin = membership?.org_role === 'org_super_admin' || 
                         membership?.org_role === 'owner' ||
+                        membership?.org_role === 'tech' ||
                         membership?.properties.some(p => p.role === 'property_admin');
     
     // Note: The cacheKey logic heavily depends on the filter values so changes will cleanly bypass legacy state cache instances
-    const cacheKey = `tickets-${propertyId ?? organizationId ?? 'all'}-${statusFilter}-${categoryFilter}-${raisedByFilter}-${resolvedByFilter}-${assignedToFilter}-${floorFilter}-${sortBy}-${searchQuery}-${dateFrom}-${dateTo}`;
+    const cacheKey = `tickets-${lockedAssigneeId ? `mine-${lockedAssigneeId}-` : ''}${propertyId ?? organizationId ?? 'all'}-${statusFilter}-${categoryFilter}-${raisedByFilter}-${resolvedByFilter}-${assignedToFilter}-${floorFilter}-${sortBy}-${searchQuery}-${dateFrom}-${dateTo}`;
 
     // SWR (Stale-While-Revalidate): Show cached data INSTANTLY, revalidate silently in background
     const cachedTickets = getCachedData(cacheKey);
@@ -340,7 +348,8 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         else if (organizationId) params.set('organizationId', organizationId);
 
         if (raisedByFilter !== 'all') params.set('raisedBy', raisedByFilter);
-        if (assignedToFilter !== 'all') params.set('assignedTo', assignedToFilter);
+        if (lockedAssigneeId) params.set('assignedTo', lockedAssigneeId);
+        else if (assignedToFilter !== 'all') params.set('assignedTo', assignedToFilter);
         if (categoryFilter !== 'all') params.set('skillGroup', categoryFilter);
         if (dateFrom) params.set('dateFrom', dateFrom);
         if (dateTo) params.set('dateTo', dateTo);
@@ -518,6 +527,8 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     // Check if current user can edit this ticket
     const canEditTicket = (ticket: Ticket): boolean => {
         if (!currentUserId) return false;
+        // IT console (assignee-only view): the API lets a non-admin edit only the tickets they raised
+        if (lockedAssigneeId) return (ticket as { raised_by?: string }).raised_by === currentUserId;
         // In this view (mostly used by admins/staff), we rely on the backend for strict checks,
         // but for UI purposes, we'll show the edit button for now.
         return true;
@@ -639,7 +650,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             </button>
                         )}
                     </div>
-                    {propertyId && !['org_super_admin', 'master_admin', 'owner'].includes(membership?.org_role || '') && (
+                    {propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || '') && (
                         <button
                             onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
                             className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-secondary/10 text-secondary text-[10px] sm:text-xs font-bold rounded-[var(--radius-md)] border border-secondary/20 hover:bg-secondary/20 transition-all active:scale-[0.98]"
@@ -714,8 +725,8 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     />
                 )}
 
-                {/* Assigned To Filter */}
-                {!propertyId ? (
+                {/* Assigned To Filter (hidden in the IT console's assignee-only view) */}
+                {lockedAssigneeId ? null : !propertyId ? (
                     <div className="flex items-center gap-2 h-9 px-3 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-400 font-medium select-none" title="Select a property to filter by user">
                         <User className="w-3.5 h-3.5 shrink-0" />
                         <span>Assigned To: Select property</span>
@@ -829,6 +840,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                         return chain.length > 0 ? chain : undefined;
                                     })()}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: any) => m.property_id === (ticket.property_id || ticket.property?.id) && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal ?? ticket.is_internal)}
                                     onClick={() => handleTicketClick(ticket.id)}
                                     onEdit={canEditTicket(ticket) ? (e) => handleEditClick(e, ticket) : undefined}
                                     onDelete={canDelete ? (e) => handleDelete(e, ticket.id) : undefined}

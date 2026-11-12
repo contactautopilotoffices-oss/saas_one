@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { signAnswer } from '@/backend/lib/voice/answerSignature';
 
 export interface TriggerVoiceCallOptions {
     organizationId?: string;
@@ -178,7 +179,9 @@ export class VoiceCallingService {
                     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms-dev-saas-one.vercel.app';
                     const selectedVoice = options.voiceId || config.default_voice || 'Polly.Aditi';
                     const selectedSpeed = options.speechSpeed || config.default_speed || '1.0';
-                    const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}`;
+                    // Signed, so the answer route speaks only what this server asked it to (no login is possible for Plivo).
+                    const answerSig = signAnswer(spokenScript, String(selectedVoice), String(selectedSpeed)) || '';
+                    const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}&sig=${encodeURIComponent(answerSig)}`;
 
                     const fromNumber = config.plivo_virtual_number ? config.plivo_virtual_number.replace(/[^0-9]/g, '') : 'AutoPilot';
                     const toNumber = formattedPhone.replace(/[^0-9]/g, '');

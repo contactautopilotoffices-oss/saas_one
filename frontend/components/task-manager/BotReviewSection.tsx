@@ -36,6 +36,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
 }) {
   const [tab, setTab] = useState<'review' | 'dev'>('review');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const reviews = allReviews.filter(r => !deletedIds.has(r.id));
   const [currentId, setCurrentId] = useState<string | null>(reviews[0]?.id ?? null);
@@ -127,7 +128,18 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
       <div role="tablist" className="flex gap-1 border-b border-slate-200 overflow-x-auto">
         {tabBtn('review', 'To review', waitingCount)}
         {upgraded && tabBtn('dev', 'Needs a developer', openDev)}
+        {/* Owner 2026-10-29: clear the whole To review list (approved tests and the developer list are kept). */}
+        {tab === 'review' && reviews.length > 0 && (
+          <button type="button" disabled={busy} onClick={() => setConfirmClearAll(true)} className="ml-auto self-center px-3 py-1.5 rounded-xl text-xs font-bold text-rose-700 hover:bg-rose-50 whitespace-nowrap disabled:opacity-50">🗑 Clear all</button>
+        )}
       </div>
+      {confirmClearAll && (
+        <div className="flex flex-wrap gap-2 items-center bg-rose-50 text-rose-900 rounded-xl p-3 text-sm">
+          <span>Delete every message waiting for review, including older ones not loaded yet? This cannot be undone. Approved tests and the developer list are kept.</span>
+          <button type="button" disabled={busy} onClick={async () => { const j = await post({ action: 'delete_all_reviews' }, { reload: 'all' }); setConfirmClearAll(false); if (j) { setDeletedIds(new Set(reviews.filter(r => !local[r.id]?.done).map(r => r.id))); setCurrentId(null); } }} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Yes, delete all</button>
+          <button type="button" onClick={() => setConfirmClearAll(false)} className="px-3 py-1.5 rounded-lg text-xs font-bold">Cancel</button>
+        </div>
+      )}
 
       {tab === 'review' && (!reviews.length ? <p className="text-sm text-slate-500 py-6 text-center">Nothing to review right now.</p> : (
         <div className="grid lg:grid-cols-[300px_minmax(0,1fr)] gap-4 items-start">
@@ -242,7 +254,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                         <div className="space-y-2">
                           <label htmlFor="bot-review-fix" className="text-[11px] font-black uppercase tracking-wider text-slate-500">What should the bot have done?</label>
                           <textarea id="bot-review-fix" rows={3} value={fixText} onChange={e => setFixText(e.target.value)} className="w-full border border-slate-300 rounded-xl p-2.5 text-sm"
-                            placeholder="e.g. the user wanted his teammates' carry-forward tasks, the bot should have shown those instead of today's" />
+                          />
                           <p className="text-xs text-slate-500">Write it the way you&apos;d say it. The AI will rewrite the summary above for you to check again.</p>
                           <div className="flex flex-wrap gap-2">
                             <button type="button" disabled={busy || !fixText.trim()} onClick={rewrite} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{busy ? 'Rewriting…' : 'Rewrite summary'}</button>

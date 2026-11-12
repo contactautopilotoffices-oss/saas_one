@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
     const access = await resolvePettyCashAccess(request, readOrgId(request));
     if (isPettyCashAccessError(access)) return access;
     if (!access.canManageRouting) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    const { data, error } = await supabaseAdmin.from('petty_cash_property_assignments').select('*,user:users!user_id(id,full_name,email),property:properties(name)').eq('organization_id', access.organizationId).eq('is_active', true).order('updated_at');
+    const { data, error } = await supabaseAdmin.from('petty_cash_property_assignments').select('*,user:users!user_id(id,full_name,email),property:properties(name,petty_cash_proof_threshold)').eq('organization_id', access.organizationId).eq('is_active', true).order('updated_at');
     return error ? pcError(error) : NextResponse.json({ assignments: data });
 }
 export async function PUT(request: NextRequest) {
@@ -21,6 +21,17 @@ export async function PUT(request: NextRequest) {
     if (![allocatorBackups, approverBackups].every(ids => Array.isArray(ids) && ids.length <= 25 && ids.every(isUuid) && new Set(ids).size === ids.length)) {
         return NextResponse.json({ error: 'Select up to 25 distinct eligible backups per stage' }, { status: 400 });
     }
-    const { data, error } = await supabaseAdmin.rpc('pc_set_routing', { actor: access.user.id, prop: body.property_id, allocator: body.allocator_id, approver: body.approver_id, allocator_backups: allocatorBackups, approver_backups: approverBackups });
+    const proofThreshold = body.proof_threshold !== undefined && body.proof_threshold !== '' && body.proof_threshold !== null
+        ? Math.max(0, Number(body.proof_threshold))
+        : null;
+    const { data, error } = await supabaseAdmin.rpc('pc_set_routing', {
+        actor: access.user.id,
+        prop: body.property_id,
+        allocator: body.allocator_id,
+        approver: body.approver_id,
+        allocator_backups: allocatorBackups,
+        approver_backups: approverBackups,
+        proof_threshold: proofThreshold
+    });
     return error ? pcError(error) : NextResponse.json({ routing: data });
 }

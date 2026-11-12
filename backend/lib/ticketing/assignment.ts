@@ -1,5 +1,35 @@
 import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { NotificationService } from '@/backend/services/NotificationService';
+
+/**
+ * Active members of the property's organisation who hold the org-level 'it' role, with lower-cased full names.
+ * Uses the admin client (as /api/tickets/mention-users does) because the caller's client may not be allowed to
+ * read other users' organisation memberships. Read-only. Returns [] on any failure so assignment carries on.
+ */
+async function getOrgItMembers(propertyId: string): Promise<{ user_id: string; full_name: string }[]> {
+    try {
+        const admin = createAdminClient();
+        const { data: prop } = await admin.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+        if (!prop?.organization_id) return [];
+        const { data } = await admin
+            .from('organization_memberships')
+            .select('user_id, users!organization_memberships_user_id_fkey(full_name)')
+            .eq('organization_id', prop.organization_id)
+            .eq('is_active', true)
+            .eq('role', 'it');
+        type Row = { user_id: string; users: { full_name: string | null } | { full_name: string | null }[] | null };
+        return ((data || []) as Row[])
+            .map(m => {
+                const u = Array.isArray(m.users) ? m.users[0] : m.users;
+                return { user_id: m.user_id, full_name: (u?.full_name || '').trim().toLowerCase() };
+            })
+            .filter(m => m.full_name);
+    } catch (err) {
+        console.error('[Assignment] Could not load IT members:', err);
+        return [];
+    }
+}
 
 interface AssignmentResult {
     ticketId: string;
@@ -126,6 +156,9 @@ export async function processIntelligentAssignment(
         }
     }
 
+    // IT members are loaded once, and only if some ticket contains an @mention
+    let itMembers: { user_id: string; full_name: string }[] | null = null;
+
     // 5. Process tickets
     for (const ticket of tickets) {
         try {
@@ -141,7 +174,20 @@ export async function processIntelligentAssignment(
 
             // Check for @mention in title or description FIRST
             const fullText = `${ticket.title || ''} ${ticket.description || ''}`.toLowerCase();
-            if (fullText.includes('@') && allMembersInfo) {
+
+            // IT team (owner 2026-11-02): an org-level 'it' member is assigned when mentioned by FULL name, at any
+            // property of the organisation. Checked before the MST/staff loop so "@Rahul Kumar" (IT) is not taken
+            // by an MST whose first name is also Rahul. The category is unchanged (technical stays technical).
+            if (fullText.includes('@')) {
+                itMembers ??= await getOrgItMembers(propertyId);
+                const itMatch = itMembers.find(m => fullText.includes(`@${m.full_name}`));
+                if (itMatch) {
+                    assignedTo = itMatch.user_id;
+                    console.log(`[Assignment] @Mention of IT member found, explicitly assigning to ${assignedTo}`);
+                }
+            }
+
+            if (!assignedTo && fullText.includes('@') && allMembersInfo) {
                 for (const member of allMembersInfo) {
                     const name = (member.users?.full_name || '').toLowerCase();
                     if (name) {

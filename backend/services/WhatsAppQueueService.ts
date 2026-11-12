@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { AiSensyService } from '@/backend/services/AiSensyService';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { sanitizeWhatsAppParam } from '@/backend/lib/whatsapp/sanitize';
+import { rememberTicketReplyMessage } from '@/backend/lib/whatsapp/ticketReply';
 
 export interface WhatsAppQueuePayload {
     ticketId?: string;
@@ -56,7 +57,9 @@ export class WhatsAppQueueService {
             .select('key, value')
             .in('key', keys);
 
-        if (configError && payload.durableBatch) throw configError;
+        // No system_config table means no switch is set, so sending stays on. Any other read failure is still a real failure.
+        const configTableMissing = configError?.code === 'PGRST205' || configError?.code === '42P01';
+        if (configError && payload.durableBatch && !configTableMissing) throw configError;
         const configMap = (configs || []).reduce((acc, row) => ({ ...acc, [row.key]: row.value === true }), {} as Record<string, boolean>);
         
         const isGlobalEnabled = configMap['whatsapp_notifications_enabled'] !== false;
@@ -161,7 +164,7 @@ export class WhatsAppQueueService {
             const { data: insertedRows, error } = await supabaseAdmin
                 .from('whatsapp_queue')
                 .insert(rows)
-                .select('id, phone, template_name, template_params, media_url, message, media_type');
+                .select('id, phone, template_name, template_params, media_url, message, media_type, event_type, entity_id');
 
             if (error) {
                 // Reminder events are deduped by a unique index (event_type, entity_id, user_id) —
@@ -241,6 +244,7 @@ export class WhatsAppQueueService {
                                         });
                                         sent = res.success;
                                         sendError = res.error;
+                                        if (res.success) await rememberTicketReplyMessage(r, res.messageIds);
                                     } else {
                                         sent = await WhatsAppService.sendAsync(r.phone, {
                                             message: r.message,

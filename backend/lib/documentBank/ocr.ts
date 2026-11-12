@@ -15,6 +15,8 @@
  * degrades honestly to ocr_status 'failed' — same as billOcr.ts, nothing is guessed.
  */
 
+import { ocrTimed, ocrStep, withOcrActivity } from '@/backend/lib/ocr/activity';
+import { loadPdfjs } from '@/backend/lib/ocr/pdfjs';
 import { rasterizePdf } from '@/backend/lib/ocr/rasterize';
 import { visionExtract } from '@/backend/lib/ocr/vision';
 
@@ -78,7 +80,15 @@ RULES:
 export const FIELD_REVIEW_THRESHOLD = 60;
 
 /** Parse one uploaded file. Never throws — failures come back as { extracted: null, error }. */
-export async function parseDocument(fileBytes: Buffer, mimeType: string, signedUrl: string | null): Promise<DocOcrResult> {
+export function parseDocument(fileBytes: Buffer, mimeType: string, signedUrl: string | null): Promise<DocOcrResult> {
+    return withOcrActivity(
+        { source: 'document_bank', contentType: mimeType, bytes: fileBytes.length },
+        () => parseDocumentImpl(fileBytes, mimeType, signedUrl),
+        (r) => ({ ok: !!r.extracted && !r.error, error: r.error ?? null }),
+    );
+}
+
+async function parseDocumentImpl(fileBytes: Buffer, mimeType: string, signedUrl: string | null): Promise<DocOcrResult> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return { extracted: null, text: null, payload: {}, error: 'GROQ_API_KEY not set' };
 
@@ -153,7 +163,9 @@ export async function parseDocument(fileBytes: Buffer, mimeType: string, signedU
     if (visionResult) {
         result = { ok: true, fields: visionResult.fields, payload: visionResult.payload };
     } else {
+        const groqStart = Date.now();
         result = await callGroq(apiKey, content!);
+        ocrStep({ step: 'text_model', ms: Date.now() - groqStart, ok: result.ok, model: MODEL, provider: 'groq', note: result.ok ? undefined : result.error });
     }
     if (!result.ok) return { extracted: null, text: text || null, payload: result.payload, error: result.error };
 
@@ -170,8 +182,12 @@ export async function parseDocument(fileBytes: Buffer, mimeType: string, signedU
     return { extracted, text: text || null, payload: { ...result.payload, field_confidence: extracted.fieldConfidence } };
 }
 
-async function extractPdfText(pdfBytes: Buffer): Promise<string> {
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+export function extractPdfText(pdfBytes: Buffer): Promise<string> {
+    return ocrTimed('pdf_text_layer', () => extractPdfTextImpl(pdfBytes), (t) => `${t.length} characters`);
+}
+
+async function extractPdfTextImpl(pdfBytes: Buffer): Promise<string> {
+    const pdfjs = await loadPdfjs();
     const doc = await pdfjs.getDocument({
         data: new Uint8Array(pdfBytes),
         useWorkerFetch: false,

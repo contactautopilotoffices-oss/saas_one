@@ -1,38 +1,90 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { isCallerError } from '@/backend/lib/auth/callerAccess';
+import {
+    auditPpmBulkAction,
+    fetchPropertySchedulesSnapshot,
+    guardPpmAdminWrite,
+    summarizePpmRows,
+    writePpmBackupSnapshot,
+} from '@/backend/lib/ppm/scheduleGuard';
 
 /**
  * DELETE /api/ppm/clear
- * Clears all PPM schedule records for an org (optionally filtered by property).
- * Body: { organization_id, property_id? }
+ * Clears all PPM schedule records for a single property after admin auth check,
+ * saving a recovery snapshot and writing an audit log entry.
+ * Body: { organization_id, property_id }
  */
 export async function DELETE(request: NextRequest) {
     try {
-        const supabase = await createClient();
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
         const body = await request.json();
         const { organization_id, property_id } = body;
 
-        if (!organization_id) {
-            return NextResponse.json({ error: 'organization_id is required' }, { status: 400 });
+        const caller = await guardPpmAdminWrite(request, organization_id, property_id);
+        if (isCallerError(caller)) return caller;
+
+        const existingRows = await fetchPropertySchedulesSnapshot(organization_id, property_id);
+        const summary = summarizePpmRows(existingRows);
+
+        if (existingRows.length === 0) {
+            await auditPpmBulkAction({
+                eventBy: caller.userId,
+                propertyId: property_id,
+                action: 'ppm_schedules.cleared',
+                payload: {
+                    organization_id,
+                    property_id,
+                    actor_email: caller.email,
+                    deleted_count: 0,
+                    summary,
+                },
+            });
+            return NextResponse.json({ success: true, deleted: 0 });
         }
 
-        let query = supabaseAdmin
+        const backup = await writePpmBackupSnapshot({
+            eventBy: caller.userId,
+            organizationId: organization_id,
+            propertyId: property_id,
+            triggerAction: 'ppm_schedules.cleared',
+            rows: existingRows,
+        });
+        if (!backup.ok) {
+            console.error('PPM clear backup failed:', backup.error);
+            return NextResponse.json(
+                { error: 'Failed to create safety backup before clearing; no schedules were deleted.' },
+                { status: 500 },
+            );
+        }
+
+        const { error, count } = await supabaseAdmin
             .from('ppm_schedules')
-            .delete()
-            .eq('organization_id', organization_id);
+            .delete({ count: 'exact' })
+            .eq('organization_id', organization_id)
+            .eq('property_id', property_id);
 
-        if (property_id) query = query.eq('property_id', property_id);
-
-        const { error, count } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        return NextResponse.json({ success: true, deleted: count ?? 'all' });
+        const deletedCount = count ?? existingRows.length;
+        await auditPpmBulkAction({
+            eventBy: caller.userId,
+            propertyId: property_id,
+            action: 'ppm_schedules.cleared',
+            payload: {
+                organization_id,
+                property_id,
+                actor_email: caller.email,
+                deleted_count: deletedCount,
+                summary,
+                backup_audit_log_id: backup.backupLogId ?? null,
+            },
+        });
+
+        return NextResponse.json({
+            success: true,
+            deleted: deletedCount,
+            backupAuditLogId: backup.backupLogId ?? null,
+        });
     } catch (err) {
         console.error('PPM clear error:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

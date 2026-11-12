@@ -9,14 +9,16 @@ export async function applyPettyCashAction(access: PettyCashAccess, id: string, 
         const docs = Array.isArray(payload.documents) ? payload.documents : [];
         if (docs.length === 0) {
             const voucherId = randomUUID();
-            await supabaseAdmin.from('petty_cash_uploads').insert({
+            // storage_path is UNIQUE, so each voucher needs its own path.
+            const { error: voucherError } = await supabaseAdmin.from('petty_cash_uploads').insert({
                 id: voucherId,
                 organization_id: access.organizationId,
                 uploaded_by: access.user.id,
-                storage_path: `${access.organizationId}/${access.user.id}/disbursement_voucher.txt`,
+                storage_path: `${access.organizationId}/${access.user.id}/disbursement_voucher_${voucherId}.txt`,
                 file_name: `Disbursement Voucher (${body.paid_mode || 'Cash'})`,
                 file_type: 'text/plain'
             });
+            if (voucherError) return { data: null, error: voucherError };
             payload.documents = [{ upload_id: voucherId, file_name: `Disbursement Voucher (${body.paid_mode || 'Cash'})` }];
         }
     }

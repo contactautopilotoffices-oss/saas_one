@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveDistributionAssignee } from '@/backend/lib/crm/distribution';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { LeadOutreachService } from './LeadOutreachService';
 
 /**
  * Meta Lead Ads polling sync.
@@ -164,6 +165,7 @@ export async function syncMetaLeadsForOrg(orgId: string, opts: { perFormCap?: nu
                 if (newLead?.id) {
                     // Send notifications to BD team asynchronously
                     NotificationService.afterLeadCreated(newLead.id).catch(e => console.error(e));
+                    LeadOutreachService.sendLeadFollowupOutreach(newLead.id).catch(e => console.error('[Meta sync] Lead outreach error:', e));
                 }
 
             } catch (err) { 

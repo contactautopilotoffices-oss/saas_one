@@ -9,6 +9,7 @@ import { SessionProvider, CookieConsentToast } from "@/frontend/components/analy
 import { SoundProvider } from "@/frontend/context/SoundContext";
 import NotificationSystem from "@/frontend/components/ops/NotificationSystem";
 import ErrorTrackingProvider from "@/frontend/components/ErrorTrackingProvider";
+import HrAssistantBot from "@/frontend/components/hr-assistant/HrAssistantBot";
 
 const poppins = Poppins({
     subsets: ["latin"],
@@ -140,6 +141,8 @@ export default function RootLayout({
                                         {children}
                                         <NotificationSystem />
                                         <CookieConsentToast />
+                                        {/* Floating HR policy assistant: staff only, hidden on public pages (self-gates) */}
+                                        <HrAssistantBot />
                                     </SoundProvider>
                                 </SessionProvider>
                             </DataCacheProvider>

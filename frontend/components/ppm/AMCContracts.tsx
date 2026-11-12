@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Loader2, ChevronDown, ChevronUp, FileText, Trash2, Edit, Upload, ExternalLink, AlertCircle } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface Props {
     organizationId: string;
@@ -349,7 +350,7 @@ export default function AMCContracts({ organizationId, propertyId, properties = 
                                                     <FileText className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                                                     <span className="text-xs font-bold text-slate-600 flex-shrink-0">{DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}</span>
                                                     <span className="text-xs text-slate-500 truncate flex-1">{doc.file_name}</span>
-                                                    <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/70 transition-colors">
+                                                    <a href={maskStorageUrl(doc.file_url) || doc.file_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-primary/70 transition-colors">
                                                         <ExternalLink className="w-3.5 h-3.5" />
                                                     </a>
                                                     <button onClick={() => handleDocDelete(contract.id, doc.id)} className="text-rose-400 hover:text-rose-600 transition-colors">

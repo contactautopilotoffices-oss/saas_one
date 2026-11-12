@@ -27,6 +27,9 @@
  * spend. The mock is stage-aware via the `purpose` tag the runner passes in.
  */
 
+import { ocrStep } from '@/backend/lib/ocr/activity';
+
+
 /* ---------------------------------------------------------------------------
  * PROVIDER ROUTING
  *
@@ -178,12 +181,20 @@ const MAX_OUTPUT_TOKENS: Record<CouncilPurpose, number> = {
     // its budget reasoning before it emits the JSON; 3000 was eaten entirely
     // and nothing parseable came back. Sized so the answer survives the thinking.
     vet: 6000,
+    // Meera's JSON stages (structure a brief, read a vendor page, analyse a call
+    // transcript). Same reasoning-then-JSON shape as `vet`, so the same headroom.
+    procure: 6000,
+    // The Agent Console workflow planner. Measured 2026-09-28: a nine-step plan
+    // for one ordinary paragraph used 6,011 output tokens on glm-5.3-flash, when
+    // it borrowed `opinion`'s 7,000. A longer description ran out
+    // (finish_reason=length) and the planner quietly fell back to its template.
+    plan: 12000,
 };
 
 /** Soft per-session warning threshold; a full 17-call session on luna is well under this. */
 const RUN_BUDGET_USD = Number(process.env.COUNCIL_RUN_BUDGET_USD || 1.00);
 
-export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email' | 'vet';
+export type CouncilPurpose = 'opinion' | 'review' | 'synthesis' | 'email' | 'vet' | 'procure' | 'plan';
 
 export interface CouncilChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -282,7 +293,7 @@ export async function councilChat(
      * vetting pass on a cheap one — so the choice belongs per call, not in one
      * module-level constant read once at import.
      */
-    opts: { model?: string | null } = {},
+    opts: { model?: string | null; /** Ask the model not to "think" first. Engy's models otherwise spend the whole output budget reasoning and return nothing on fiddly input. Ignored by other providers. */ thinkingOff?: boolean } = {},
 ): Promise<string> {
     if (isMockLlm()) return mockResponse(purpose, messages);
     const model = (opts.model ?? '').trim() || COUNCIL_MODEL;
@@ -304,6 +315,7 @@ export async function councilChat(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
+    const callStarted = Date.now();
     let response: Response;
     try {
         response = await fetch(chatUrl(spec), {
@@ -312,7 +324,7 @@ export async function councilChat(
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ model, messages, ...limits }),
+            body: JSON.stringify({ model, messages, ...limits, ...(opts.thinkingOff && /engy\./i.test(spec.baseUrl) ? { thinking: { type: 'disabled' } } : {}) }),
             signal: controller.signal,
         });
     } catch (error) {
@@ -326,6 +338,7 @@ export async function councilChat(
 
     if (!response.ok) {
         const err = await response.text();
+        ocrStep({ step: 'text_model', ms: Date.now() - callStarted, ok: false, model, provider, note: `HTTP ${response.status}` });
         throw new Error(`OpenAI API error: ${response.status} - ${err.slice(0, 500)}`);
     }
 
@@ -348,7 +361,9 @@ export async function councilChat(
     }
 
     const content = data.choices?.[0]?.message?.content;
-    if (!content || typeof content !== 'string' || !content.trim()) {
+    const blank = !content || typeof content !== 'string' || !content.trim();
+    ocrStep({ step: 'text_model', ms: Date.now() - callStarted, ok: !blank, model, provider, tokens_in: inputTokens, tokens_out: outputTokens, cost_usd: callCost, note: blank ? `empty answer (finish_reason=${data?.choices?.[0]?.finish_reason ?? 'unknown'})` : undefined });
+    if (blank) {
         // A reasoning model that spends its whole ceiling thinking returns an empty
         // string with finish_reason 'length' — name that, it is not a generic blank.
         const finish = data?.choices?.[0]?.finish_reason;

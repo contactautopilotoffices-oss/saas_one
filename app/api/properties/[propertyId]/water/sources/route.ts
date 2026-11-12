@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
 
     const { data, error } = await supabaseAdmin
         .from('water_sources')
@@ -30,6 +33,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
 

@@ -125,7 +125,10 @@ async function run() {
 
     console.log('\n5. Deciding: confidence, doubt and wording');
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.79 }));
-    check('a change at confidence 0.79 → CLARIFY (bar is 0.8)', d.outcome === 'CLARIFY' && d.reason === 'low_confidence');
+    // 2026-11-02: a middling confidence no longer gets a vague question: the change is shown as a preview (one yes), never done.
+    check('a change at confidence 0.79 → a PREVIEW for one yes (below the 0.8 bar), never done straight away', d.outcome === 'CONFIRM');
+    d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.49 }));
+    check('…and below 0.5 → still ASKED (low_confidence), with the AI\'s own reading', d.outcome === 'CLARIFY' && d.reason === 'low_confidence' && 'understood' in d);
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { confidence: 0.8 }));
     check('…and at exactly 0.8 → CONFIRM', d.outcome === 'CONFIRM');
     d = decide(interp('complete_tasks', { which: which({ numbers: [2] }) }, { ambiguities: ['could be task 3'] }));
@@ -160,8 +163,9 @@ async function run() {
     }
     check('"everyone", "the team", "all", "someone" are never a recipient → CLARIFY', true);
     check('no task content → CLARIFY', decide(interp('create_tasks', { assignee: 'Lohit', tasks: [], date: null })).outcome === 'CLARIFY');
-    d = decide(interp('create_tasks', { assignee: 'me', tasks: Array.from({ length: 16 }, (_, i) => ({ title: `Task ${i}`, details: null })), date: null }));
-    check('more than 15 tasks in one message → CLARIFY (too many)', d.outcome === 'CLARIFY' && d.reason === 'too_many_tasks');
+    // Owner 2026-10-19: the limit is 30 per message (was 15).
+    d = decide(interp('create_tasks', { assignee: 'me', tasks: Array.from({ length: 31 }, (_, i) => ({ title: `Task ${i}`, details: null })), date: null }));
+    check('more than 30 tasks in one message → CLARIFY (too many)', d.outcome === 'CLARIFY' && d.reason === 'too_many_tasks');
 
     console.log('\n7. Deciding: handing over');
     d = decide(interp('hand_over_task', { which: which({ numbers: [5] }), to: 'Vidhya' }));
@@ -197,7 +201,8 @@ async function run() {
     d = decide(interp('progress_update', { state: 'working', which: which({ numbers: [9] }), note: null }), mkCtx());
     check('…but a status note on a task that does not exist is still ASKED about, never acted on', d.outcome === 'CLARIFY');
     d = decide(interp('progress_update', { state: 'working', which: which(), note: null }, { confidence: 0.6 }), mkCtx({ pending: ping }));
-    check('…and an unsure status note (low confidence) is still ASKED about', d.outcome === 'CLARIFY');
+    // 2026-11-02: asked as a preview (one yes) instead of a vague question; still never noted straight away.
+    check('…and an unsure status note (low confidence) is still ASKED about (a preview), never noted straight away', d.outcome === 'CONFIRM' || d.outcome === 'CLARIFY');
     d = decide(interp('progress_update', { state: 'done_some', which: which(), note: null }));
     check('"done some" without saying which → CLARIFY', d.outcome === 'CLARIFY');
     check('state "other" → CLARIFY', decide(interp('progress_update', { state: 'other', which: which(), note: null })).outcome === 'CLARIFY');
@@ -283,7 +288,8 @@ async function run() {
         }
         if (dec.outcome === 'CONFIRM') {
             const a = dec.action;
-            if (conf < types.CHANGE_CONFIDENCE_MIN || amb.length) aboveThreshold++;
+            // 2026-11-02: a preview may now be shown from 0.5 (SOFT_CHANGE_CONFIDENCE_MIN); a flagged doubt still never becomes one.
+            if (conf < types.SOFT_CHANGE_CONFIDENCE_MIN || amb.length) aboveThreshold++;
             if (a.taskIds && !a.taskIds.every((id: string) => knownTaskIds.has(id))) badIds++;
             if (a.taskId && !knownTaskIds.has(a.taskId)) badIds++;
             if (a.assigneeId && !knownPeople.has(a.assigneeId)) badIds++;
@@ -293,7 +299,7 @@ async function run() {
         }
     }
     check(`a change is NEVER executed without confirmation, except a plain status note on real tasks (0 of ${total} broke this)`, acted === 0, acted);
-    check('a change is never proposed below the confidence bar or with flagged doubt', aboveThreshold === 0, aboveThreshold);
+    check('a change is never proposed below the soft confidence bar (0.5) or with flagged doubt', aboveThreshold === 0, aboveThreshold);
     check('a proposed change only ever names real tasks, real people, and people the sender may assign to', badIds === 0, badIds);
 
     console.log('\n12. The reply checker');
@@ -301,19 +307,20 @@ async function run() {
     const has = (text: string, f = facts) => checkReply(text, f);
     // 2026-10-14: a list ("block") sits on its own line after the sentence that introduces it.
     check('a good reply passes', has('Just checking: add these to [[assignee]]\'s list?\n[[tasks]]').length === 0);
-    check('a list glued into the middle of a sentence is rejected (the next model or the laid-out fallback is used)', has('Just checking: add [[tasks]] to [[assignee]]\'s list?').some(p => /own line/.test(p)) && has('Should I mark [[tasks]] as done for [[assignee]]?').some(p => /own line/.test(p)));
-    check('a single bullet counts as a list too; a name or a count stays inside the sentence', has('Add these for [[assignee]]?\n[[tasks]]', { ...facts, values: { ...facts.values, tasks: '• Only one' } }).length === 0 && has('Add [[tasks]] for [[assignee]]?', { ...facts, values: { ...facts.values, tasks: '• Only one' } }).some(p => /own line/.test(p)));
+    // Owner 2026-10-22: list placement is style, no longer rejected; renderReply still puts a list on its own lines.
+    check('a list written inside a sentence is no longer rejected (style), and is still laid out on its own lines', !has('Just checking: add [[tasks]] to [[assignee]]\'s list?').some(p => /own line/.test(p)) && renderReply('Should I mark [[tasks]] as done?', { tasks: '1. A\n2. B' }).includes('\n1. A\n2. B'));
+    check('a single bullet counts as a list too; a name or a count stays inside the sentence', has('Add these for [[assignee]]?\n[[tasks]]', { ...facts, values: { ...facts.values, tasks: '• Only one' } }).length === 0 && renderReply('Add [[tasks]] for [[assignee]]?', { tasks: '• Only one', assignee: 'Meera' }).includes('\n• Only one'));
     check('a missing required placeholder is caught', has('Shall I add them?').some(p => /missing required/.test(p)));
     check('an unknown placeholder is caught', has('Add [[tasks]] for [[assignee]] on [[date]]?').some(p => /unknown placeholder/.test(p)));
     check('a number written by hand is caught', has('Add these 2 tasks: [[tasks]] for [[assignee]]?').some(p => /number/.test(p)));
     check('he / she / him / her / his are caught', ['Add [[tasks]] for [[assignee]], is he ready?', 'Should I tell her: [[tasks]] [[assignee]]?', 'Add [[tasks]] to [[assignee]] on his list?'].every(t => has(t).some(p => /pronoun/.test(p))));
     check('"I\'ve added…" is caught when nothing has happened yet', has('I\'ve added [[tasks]] for [[assignee]]. Right?').some(p => /already happened/.test(p)) && has('Done! [[tasks]] [[assignee]] ok?').length >= 0);
-    check('two questions are caught; no question is caught when one is required', has('Add [[tasks]] for [[assignee]]? Really?').some(p => /exactly one question/.test(p)) && has('Adding [[tasks]] for [[assignee]].').some(p => /exactly one question/.test(p)));
+    check('a required question must be asked (two questions are style, allowed)', !has('Add [[tasks]] for [[assignee]]? Really?').some(p => /question/.test(p)) && has('Adding [[tasks]] for [[assignee]].').some(p => /must ask a question/.test(p)));
     check('a name written by hand is caught unless allowed (Lohit is allowed, Rajesh is not)', has('Should I add these for Rajesh [[assignee]]?\n[[tasks]]').some(p => /Rajesh/.test(p)) && has('Priyanka, add these to Lohit [[assignee]]?\n[[tasks]]').length === 0);
     check('a capitalised word at the start of a sentence is fine', has('Sure thing. Want these on [[assignee]]\'s list?\n[[tasks]]').length === 0);
-    check('more than one emoji, headings and bold markup are caught', has('✅✅ Add [[tasks]] for [[assignee]]?').some(p => /emoji/.test(p)) && has('# Add [[tasks]] for [[assignee]]?').some(p => /formatting/.test(p)) && has('**Add** [[tasks]] for [[assignee]]?').some(p => /formatting/.test(p)));
+    check('emoji, headings and bold are style: no longer rejected; **bold** becomes WhatsApp *bold*', !has('✅✅ Add [[tasks]] for [[assignee]]?').length && !has('**Add** [[tasks]] for [[assignee]]?').length && renderReply('**Add** this', {}) === '*Add* this');
     check('empty and non-string replies are caught', has('').length > 0 && checkReply(undefined, facts).length > 0 && checkReply(42, facts).length > 0);
-    check('a long reply is caught', has('Add [[tasks]] for [[assignee]]? ' + 'word '.repeat(120)).some(p => /too long/.test(p)));
+    check('only a runaway reply is caught (1500+ characters); a long-ish one is fine', !has('Add [[tasks]] for [[assignee]]? ' + 'word '.repeat(120)).some(p => /too long/.test(p)) && has('Add [[tasks]] for [[assignee]]? ' + 'word '.repeat(320)).some(p => /far too long/.test(p)));
     check('renderReply fills placeholders with the exact facts', renderReply('Add these for [[assignee]]?\n[[tasks]]', facts.values) === 'Add these for Lohit Kumar?\n• A\n• B');
     check('a single bullet written inline after a question is moved to its own line', renderReply('Mark this as done? [[tasks]]', { tasks: '• DG Meter Log' }) === 'Mark this as done?\n\n• DG Meter Log');
     const lv = { tasks: '1. To-do list reminder\n2. Use React Query', hint: 'Reply *done 1* when you finish task 1.' };
@@ -357,7 +364,7 @@ async function run() {
     let b = brainLlm({ intent: 'complete_tasks', slots: { which: { all: false, numbers: [2], hints: [] } } }, 'Mark this as done?\n[[tasks]]');
     let out = await runBrain('i finished the lift amc', mkCtx(), { llm: b.llm });
     check('understand → decide → reply: a change is proposed (CONFIRM) and phrased with the real title', out.status === 'ok' && out.decision?.outcome === 'CONFIRM' && out.reply?.source === 'ai' && /\?\n• Kone Lift AMC Renewal$/.test(out.reply.text), out);
-    check('exactly two AI calls: one to understand, one to reply', b.calls.length === 2 && out.trace.interpretModel === 'glm-5.3-flash');
+    check('exactly two AI calls: one to understand, one to reply', b.calls.length === 2 && out.trace.interpretModel === 'anthropic:claude-haiku-5-5');
     check('the trace records models, tokens and timing', out.trace.tokensIn === 20 && out.trace.tokensOut === 10 && out.trace.interpretMs >= 0 && out.trace.fastPath === false);
 
     const confirmCtx = mkCtx({ pending: { kind: 'confirm', summary: 'Add 2 tasks for Lohit' } as any });
@@ -385,7 +392,7 @@ async function run() {
     check('an AI that returns garbage is treated the same way', out.status === 'ai_unavailable');
     const flaky = scripted((_r, n) => (n === 1 ? new Error('HTTP 500') : /Reply with JSON only: \{"text"/.test(_r.system) ? JSON.stringify({ text: 'Here you go: [[list]]' }) : interpJson({ intent: 'view_tasks', slots: { scope: 'self', person: null, department: null } })));
     out = await runBrain("show my tasks", mkCtx(), { llm: flaky.llm });
-    check('the first model fails, the second succeeds → still answered, failure recorded', out.status === 'ok' && out.trace.interpretModel === 'qwen3.8-27b' && out.trace.failures.length === 1 && /1\. Carpet Installation PO \(Pending\)/.test(out.reply!.text), out.trace);
+    check('the first model fails, the second succeeds → still answered, failure recorded', out.status === 'ok' && out.trace.interpretModel === 'glm-5.3-flash' && out.trace.failures.length === 1 && /1\. Carpet Installation PO \(Pending\)/.test(out.reply!.text), out.trace);
 
     console.log('\n15. Prompts and the plug-in boundary');
     const sys = interpretSystemPrompt([tasksDomain, facilityDomain]);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, readOrgId, canAccessLead } from '@/backend/lib/crm/access';
 import { EmailService } from '@/backend/services/EmailService';
+import { isMissingColumnError, seatRequirementText } from '@/backend/lib/crm/seatRequirement';
 
 const LEAD_SELECT = `
     *,
@@ -17,7 +18,7 @@ const BASE_FIELDS = [
     'company_name', 'contact_person', 'contact_number', 'secondary_contact_number', 'email',
     'location', 'city', 'requirement', 'property_interest', 'lead_source',
     'status', 'priority', 'next_followup_date', 'last_contacted', 'followup_notes', 'remarks',
-    'lost_reason', 'lost_reason_notes', 'seats', 'move_in_timeline',
+    'lost_reason', 'lost_reason_notes', 'seats', 'seats_detail', 'move_in_timeline',
     // Reassignment is allowed for reps AND admins (validated against org members below).
     'assigned_to',
 ];
@@ -81,7 +82,7 @@ function responsesFromLead(lead: any): { question: string; answer: string }[] {
     // Pull move-in / seats out of requirement if present.
     const req: string = lead.requirement || '';
     const moveIn = lead.move_in_timeline || (req.match(/Move-?in:\s*([^|]+)/i)?.[1]?.trim());
-    const seats = lead.seats != null ? String(lead.seats) : (req.match(/Seats:\s*([^|]+)/i)?.[1]?.trim());
+    const seats = seatRequirementText(lead) || (req.match(/Seats:\s*([^|]+)/i)?.[1]?.trim());
     const company = lead.company_name || (req.match(/Company:\s*([^|]+)/i)?.[1]?.trim());
     const title = req.match(/Title:\s*([^|]+)/i)?.[1]?.trim();
     const pairs: [string, any][] = [
@@ -155,12 +156,30 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 });
     }
 
-    const { data, error } = await supabaseAdmin
+    let { data, error } = await supabaseAdmin
         .from('crm_leads')
         .update(updateData)
         .eq('id', id)
         .select(LEAD_SELECT)
         .single();
+
+    // seats_detail arrived with a migration the team runs by hand. If this
+    // deployment hasn't run it yet, save the rest of the edit instead of failing.
+    if (error && isMissingColumnError(error, 'seats_detail') && 'seats_detail' in updateData) {
+        const { seats_detail, ...withoutSeatsDetail } = updateData;
+        if (Object.keys(withoutSeatsDetail).length === 0) {
+            return NextResponse.json(
+                { error: 'Seat requirement text needs the crm_leads.seats_detail column (migration not applied yet)' },
+                { status: 500 }
+            );
+        }
+        ({ data, error } = await supabaseAdmin
+            .from('crm_leads')
+            .update(withoutSeatsDetail)
+            .eq('id', id)
+            .select(LEAD_SELECT)
+            .single());
+    }
 
     if (error) {
         console.error('CRM Lead UPDATE error:', error);

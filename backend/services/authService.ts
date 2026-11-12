@@ -18,7 +18,7 @@ export const authService = {
 
         if (!userProfile) return null;
 
-        // Get property membership for role context
+        // Get property or organization membership for role context
         const { data: propMembership } = await supabase
             .from('property_memberships')
             .select('property_id, role')
@@ -26,11 +26,25 @@ export const authService = {
             .eq('is_active', true)
             .maybeSingle();
 
-        const roleKey = (propMembership?.role || authUser.user_metadata?.role || 'staff') as RoleKey;
+        let orgRole: string | undefined = undefined;
+        if (!propMembership?.role) {
+            const { data: orgMembership } = await supabase
+                .from('organization_memberships')
+                .select('role')
+                .eq('user_id', authUser.id)
+                .eq('is_active', true)
+                .maybeSingle();
+            orgRole = orgMembership?.role;
+        }
+
+        const roleKey = (authUser.user_metadata?.role || orgRole || propMembership?.role || 'staff') as RoleKey;
         const propertyId = propMembership?.property_id || '';
 
         const roleLevelMap: Record<string, number> = {
             'super_admin': 0,
+            'org_super_admin': 0,
+            'director': 0,
+            'ops_super_admin': 0,
             'org_admin': 1,
             'hr_head': 1,
             'hr': 2,
@@ -73,10 +87,22 @@ export const authService = {
             .eq('is_active', true)
             .maybeSingle();
 
-        const roleKey = (propMembership?.role || authUser.user_metadata?.role || 'staff') as RoleKey;
+        let orgRole: string | undefined = undefined;
+        if (!propMembership?.role) {
+            const { data: orgMembership } = await supabase
+                .from('organization_memberships')
+                .select('role')
+                .eq('user_id', authUser.id)
+                .eq('is_active', true)
+                .maybeSingle();
+            orgRole = orgMembership?.role;
+        }
+
+        const roleKey = (authUser.user_metadata?.role || orgRole || propMembership?.role || 'staff') as RoleKey;
 
         const roleLevelMap: Record<string, number> = {
-            'super_admin': 0, 'org_admin': 1, 'property_admin': 2, 'accounts': 2,
+            'super_admin': 0, 'org_super_admin': 0, 'director': 0, 'ops_super_admin': 0,
+            'org_admin': 1, 'property_admin': 2, 'accounts': 2,
             'manager_executive': 3, 'bd_admin': 3, 'bd_rep': 4,
             'mst': 4, 'staff': 4, 'tenant_user': 4
         };

@@ -67,7 +67,7 @@ registerHooks({
                 return {
                     shortCircuit: true,
                     format: 'module',
-                    source: `export const usesBulkApprovalSummary = () => false; export const siteVendorQuotation = {}; export const requisitionNotes = {}; export const batchWhatsAppOptions = {};`,
+                    source: `export const usesBulkApprovalSummary = () => false; export const siteVendorQuotation = {}; export const requisitionNotes = {}; export const batchWhatsAppOptions = {}; export const reapprovalWhatsAppOptions = {};`,
                 };
             }
             if (specifier === '@/backend/services/AiSensyService') {

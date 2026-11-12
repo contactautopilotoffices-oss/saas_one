@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createClient } from "@/frontend/utils/supabase/client";
 import Loader from "@/frontend/components/ui/Loader";
+import AppZoom from "@/frontend/components/layout/AppZoom";
 
 interface OrgMembership {
     organization_id: string;
@@ -153,5 +154,5 @@ export default function OrgLayout({
         );
     }
 
-    return <>{children}</>;
+    return <><AppZoom />{children}</>;
 }

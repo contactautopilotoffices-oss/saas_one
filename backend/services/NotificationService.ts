@@ -6,6 +6,7 @@ import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
 import { EmailRecipientResolver } from './EmailRecipientResolver';
 import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
+import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 
 export interface NotificationPayload {
@@ -733,7 +734,7 @@ export class NotificationService {
         try {
             const { data: completion } = await supabaseAdmin
                 .from('sop_completions')
-                .select('id, property_id, organization_id, completed_by, template:sop_templates(title, frequency)')
+                .select('id, property_id, organization_id, completed_by, completed_at, template:sop_templates(title, frequency)')
                 .eq('id', completionId)
                 .single();
 
@@ -755,22 +756,41 @@ export class NotificationService {
             const templateTitle = (completion.template as any)?.title || 'Checklist';
             const completerName = completer?.full_name || 'Staff';
 
+            // Resolve assigned approver for this property
+            let approverId: string | null = (completion as any)?.approver_id || null;
+            if (!approverId && completion.property_id) {
+                const { data: propSettings } = await supabaseAdmin
+                    .from('checklist_property_settings')
+                    .select('approver_user_id')
+                    .eq('property_id', completion.property_id)
+                    .maybeSingle();
+                if (propSettings?.approver_user_id) {
+                    approverId = propSettings.approver_user_id;
+                }
+            }
+
             const { WhatsAppRecipientResolver } = await import('./WhatsAppRecipientResolver');
             const { users: waUsers } = await WhatsAppRecipientResolver.resolveRecipients({
                 organizationId: completion.organization_id,
                 propertyId: completion.property_id,
                 featureKey: 'checklist_completed',
-                contextualUserIds: [completion.completed_by]
+                contextualUsers: {
+                    requesterId: completion.completed_by,
+                    approverId: approverId || undefined
+                }
             });
 
             for (const u of waUsers) {
+                const isApproverUser = approverId && u.id === approverId;
                 await this.send({
                     userId: u.id,
                     propertyId: completion.property_id,
                     organizationId: completion.organization_id,
                     type: 'SOP_COMPLETED',
-                    title: 'Checklist Completed ✅',
-                    message: `"${templateTitle}" was completed by ${completerName}.`,
+                    title: isApproverUser ? 'Checklist Ready for Review 📋' : 'Checklist Completed ✅',
+                    message: isApproverUser 
+                        ? `"${templateTitle}" was completed by ${completerName} and is waiting for your review.`
+                        : `"${templateTitle}" was completed by ${completerName}.`,
                     deepLink: `/properties/${completion.property_id}/sop?completionId=${completionId}`
                 });
             }
@@ -783,7 +803,9 @@ export class NotificationService {
                     property_id: completion.property_id,
                     completion_id: completionId,
                     template_title: templateTitle,
-                    completed_by: completion.completed_by
+                    completed_by: completion.completed_by,
+                    completed_at: completion.completed_at,
+                    approver_id: approverId
                 }
             });
         } catch (err) {
@@ -2767,6 +2789,48 @@ export class NotificationService {
     // ============================================================================
     // HR Tickets & Grievances Notification Methods
     // ============================================================================
+    // Resolves every user who owns an HR ticket at a given escalation level.
+    // hr_tickets.assigned_to_user_id holds only the primary handler, so the HR Admin Config
+    // step assignee roster is read here and all of them are notified, not just the first one.
+    private static async resolveHrLevelRecipients(ticket: any, level: number): Promise<string[]> {
+        const recipients = new Set<string>();
+        if (ticket.assigned_to_user_id) recipients.add(ticket.assigned_to_user_id);
+
+        try {
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', ticket.organization_id)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const levelAssignees = getTicketLevelAssigneeIds(configObj, ticket, level);
+            if (levelAssignees.length === 0) {
+                return Array.from(recipients);
+            }
+
+            const filterOr = levelAssignees.map((cid: string) => `id.eq.${cid},user_id.eq.${cid}`).join(',');
+            const { data: profiles } = await supabaseAdmin
+                .from('employee_profiles')
+                .select('id, user_id')
+                .or(filterOr);
+
+            (profiles || []).forEach((prof: any) => {
+                if (prof.user_id) recipients.add(prof.user_id);
+            });
+        } catch (err) {
+            console.error('[NotificationService] resolveHrLevelRecipients error:', err);
+        }
+
+        // The submitter is never notified as a handler of their own ticket
+        if (ticket.raised_by_user_id) recipients.delete(ticket.raised_by_user_id);
+
+        return Array.from(recipients);
+    }
+
     static async afterHrTicketCreated(ticketId: string) {
         try {
             const { data: ticket, error } = await supabaseAdmin
@@ -2793,10 +2857,11 @@ export class NotificationService {
                 });
             }
 
-            // 2. Send Omnichannel Notification to Assigned Level Handler
-            if (ticket.assigned_to_user_id) {
+            // 2. Send Omnichannel Notification to EVERY handler configured at this level
+            const levelRecipients = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+            for (const recipientId of levelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ASSIGNED',
                     title: `New HR Ticket Assigned #${ticket.ticket_number}`,
@@ -2826,10 +2891,11 @@ export class NotificationService {
             const newAssigneeName = ticket.assigned_to?.full_name || ticket.assigned_to?.email || `Level ${toLevel} Authority`;
             const reason = isSlaBreach ? 'due to SLA timeout' : 'by handler escalation';
 
-            // 1. Notify Newly Assigned Level Owner
-            if (ticket.assigned_to_user_id) {
+            // 1. Notify EVERY level owner configured at the new level, not only the primary assignee
+            const newLevelRecipients = await this.resolveHrLevelRecipients(ticket, toLevel);
+            for (const recipientId of newLevelRecipients) {
                 await this.send({
-                    userId: ticket.assigned_to_user_id,
+                    userId: recipientId,
                     organizationId: ticket.organization_id,
                     type: 'HR_TICKET_ESCALATED',
                     title: `⚠️ HR Ticket Escalated to Level ${toLevel} #${ticket.ticket_number}`,
@@ -2919,9 +2985,10 @@ export class NotificationService {
             // Strictly exclude internal notes from external WhatsApp / Email channels
             if (comment.is_internal) {
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
 
                 if (orgId) {
                     const { data: hrMembers } = await supabaseAdmin
@@ -2955,11 +3022,12 @@ export class NotificationService {
             const isSenderSubmitter = comment.sender_user_id === ticket.raised_by_user_id;
 
             if (isSenderSubmitter) {
-                // Submitter replied -> notify assigned handler and HR authorities
+                // Submitter replied -> notify every handler at the current level and HR authorities
                 const recipients = new Set<string>();
-                if (ticket.assigned_to_user_id && ticket.assigned_to_user_id !== comment.sender_user_id) {
-                    recipients.add(ticket.assigned_to_user_id);
-                }
+                const levelOwners = await this.resolveHrLevelRecipients(ticket, ticket.current_level || 1);
+                levelOwners.forEach(uid => {
+                    if (uid !== comment.sender_user_id) recipients.add(uid);
+                });
                 if ((ticket.current_level >= 2 || !ticket.assigned_to_user_id) && orgId) {
                     const { data: hrMembers } = await supabaseAdmin
                         .from('organization_memberships')

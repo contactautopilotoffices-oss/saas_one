@@ -24,6 +24,14 @@ import HRNotesTrackerTab from '@/frontend/components/hr/HRNotesTrackerTab';
 import { hrDataCache } from '@/frontend/components/hr/hrDataCache';
 import { createClient } from '@/frontend/utils/supabase/client';
 import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
+import MeetingsTab from '@/frontend/components/task-manager/meetings/MeetingsTab';
+import ProctorHub from '@/frontend/components/proctor/ProctorHub';
+import dynamic from 'next/dynamic';
+
+// Owner 2026-11-07: Candidate Search for the HR logins (beta), the same module the Tech console hosts. Loaded on demand.
+const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), {
+    loading: () => <div className="py-12 text-center text-sm text-slate-500">Loading Candidate Search…</div>,
+});
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -42,17 +50,17 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks'>('tickets');
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments' | 'candidates'>('tickets');
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
     const [tickets, setTickets] = useState<any[]>(() => {
-        return hrDataCache.getAnyTickets(resolvedOrgId) || [];
+        return hrDataCache.getAnyTickets(resolvedOrgId, user?.id) || [];
     });
     const [properties, setProperties] = useState<any[]>(() => {
         return hrDataCache.getProperties(resolvedOrgId).data || [];
     });
-    const [selectedPropertyId, setSelectedPropertyId] = useState<string>('all');
+    const [selectedPropertyId, setSelectedPropertyId] = useState<string>(() => searchParams.get('propertyId') || 'all');
     const [scopeFilter, setScopeFilter] = useState<'all' | 'my_raised' | 'assigned_to_me' | 'department' | 'my_team_assigned'>('all');
     const [departmentSubView, setDepartmentSubView] = useState<'tree' | 'table'>('tree');
     const [selectedDepartmentUserId, setSelectedDepartmentUserId] = useState<string>('all');
@@ -106,6 +114,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     // Only Org Super Admin & HR may inspect every assignee; everyone else (incl. Ops Super Admin) inspects only their reportee tree
     const canInspectAllAssignees = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole) || isHrRole;
     const isHrAdmin = canViewOrgWide;
+    // Owner 2026-10-29: the HR team's Meeting Assistant — the same roles the server accepts for the 'hr' space
+    const canUseMeetingAssistant = ['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole);
     const isManager = ['manager', 'reporting_manager', 'soft_service_manager', 'soft_service_supervisor', 'property_admin', 'building_admin', 'mst_manager', 'supervisor', 'ops_super_admin', 'org_admin'].includes(userRole);
 
     useEffect(() => {
@@ -205,7 +215,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 };
             case 'in_progress':
                 return {
-                    label: 'In Progress',
+                    label: 'Acknowledged',
                     dotClass: 'bg-blue-500',
                     badgeClass: 'bg-blue-50 text-blue-700 border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60',
                 };
@@ -329,7 +339,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks'].includes(tabParam)) {
+        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -350,9 +360,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             }
         }
         setSelectedPropertyId(propertyParam || 'all');
-    }, [searchParams, canViewOrgWide, isManager]);
+    }, [searchParams, canViewOrgWide, isManager, canUseMeetingAssistant]);
 
-    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks') => {
+    const handleNavigationTabSwitch = React.useCallback((newTab: 'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant') => {
         setActiveTab(newTab);
         if (typeof window !== 'undefined') {
             const currentPath = window.location.pathname;
@@ -436,12 +446,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 filter: `organization_id=eq.${resolvedOrgId}`
             }, (payload: any) => {
                 if (payload.eventType === 'INSERT') {
-                    const newT = payload.new;
-                    setTickets(prev => {
-                        if (prev.some(t => t.id === newT.id)) return prev;
-                        return [newT, ...prev];
-                    });
-                    hrDataCache.prependTicket(newT);
+                    // Revalidate securely through server API to enforce strict role and privacy access scoping
                     fetchTickets(true);
                 } else if (payload.eventType === 'UPDATE') {
                     const upd = payload.new;
@@ -520,7 +525,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 setTickets(cached.data);
                 setLoading(false);
             }
-        } else if (!isBackground && tickets.length === 0) {
+        } else if (!isBackground) {
+            setTickets([]);
             setLoading(true);
         }
         try {
@@ -540,7 +546,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 const list = data.data || [];
                 setTickets(prev => {
                     const listIds = new Set(list.map((t: any) => t.id));
-                    const freshlyCreated = prev.filter(t => !listIds.has(t.id));
+                    // Only preserve genuine local optimistic tickets raised by the current user within active session
+                    const freshlyCreated = prev.filter(t => !listIds.has(t.id) && Boolean(t._isOptimistic && t.raised_by_user_id === user.id));
                     const merged = [...freshlyCreated, ...list];
                     hrDataCache.setTickets(cacheKey, merged);
                     return merged;
@@ -747,19 +754,29 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         myRaisedCount,
         teamTicketsCount
     } = useMemo(() => {
-        const total = tickets.length;
-        const assignedToYou = tickets.filter(t => isDirectlyAssignedToMe(t)).length;
-        const assignedPending = tickets.filter(t => isCurrentlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
+        const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
+        // Privacy guard: exclude anonymous and confidential tickets for non-OrgSuperAdmin viewers who are not assigned or submitter
+        const viewableTickets = tickets.filter(t => {
+            const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential_feedback');
+            if (isConfOrAnon && !isStrictOrgSuperAdmin) {
+                return isDirectlyAssignedToMe(t) || checkIsMyRaised(t);
+            }
+            return true;
+        });
 
-        const grievances = tickets.filter(t => isGrievance(t)).length;
-        const pendingGrievances = tickets.filter(t => isGrievance(t) && !['resolved', 'closed'].includes(t.status)).length;
-        const queries = tickets.filter(t => isHRQuery(t)).length;
-        const confidential = tickets.filter(t => isConfidential(t)).length;
-        const overdue = tickets.filter(t => t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status)).length;
+        const total = viewableTickets.length;
+        const assignedToYou = viewableTickets.filter(t => isDirectlyAssignedToMe(t)).length;
+        const assignedPending = viewableTickets.filter(t => isCurrentlyAssignedToMe(t) && !['resolved', 'closed'].includes(t.status)).length;
 
-        const myRaised = tickets.filter(t => checkIsMyRaised(t)).length;
+        const grievances = viewableTickets.filter(t => isGrievance(t)).length;
+        const pendingGrievances = viewableTickets.filter(t => isGrievance(t) && !['resolved', 'closed'].includes(t.status)).length;
+        const queries = viewableTickets.filter(t => isHRQuery(t)).length;
+        const confidential = viewableTickets.filter(t => isConfidential(t)).length;
+        const overdue = viewableTickets.filter(t => t.sla_due_at && new Date(t.sla_due_at) < new Date() && !['resolved', 'closed'].includes(t.status)).length;
 
-        const teamTickets = tickets.filter(t => 
+        const myRaised = viewableTickets.filter(t => checkIsMyRaised(t)).length;
+
+        const teamTickets = viewableTickets.filter(t => 
             !t.is_anonymous && !t.is_confidential && t.ticket_type !== 'confidential_feedback' && t.ticket_type !== 'confidential' && (
                 Array.from(reporteeUserIds).some(rid => {
                     const profileObj = employeesList.find(e => (e.user_id || e.id) === rid || e.employee_code === rid);
@@ -790,6 +807,21 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
 
     // Filter tickets based on UI search, scope, type, and status filters
     const filteredTickets = tickets.filter(t => {
+        if (selectedPropertyId && selectedPropertyId !== 'all') {
+            const ticketPropId = t.employee_snapshot?.property_id;
+            if (ticketPropId && ticketPropId !== selectedPropertyId) {
+                return false;
+            }
+        }
+        const isStrictOrgSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes(userRole);
+        // Strict privacy guard: Anonymous and confidential cases are restricted to assigned reviewer or submitter
+        const isConfOrAnon = Boolean(t.is_anonymous || t.is_confidential || t.ticket_type === 'anonymous_feedback' || t.ticket_type === 'confidential_feedback');
+        if (isConfOrAnon && !isStrictOrgSuperAdmin) {
+            const isAssigned = isDirectlyAssignedToMe(t);
+            const isRaised = checkIsMyRaised(t);
+            if (!isAssigned && !isRaised) return false;
+        }
+
         if (scopeFilter === 'my_raised') {
             if (!checkIsMyRaised(t)) return false;
         }
@@ -978,7 +1010,10 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                 designation: t.assigned_to_details?.employee_role || emp?.designation || 'Designated Authority',
                 email: t.assigned_to_details?.email || t.assigned_to?.email || emp?.email || 'N/A',
                 phone: t.assigned_to_details?.phone || t.assigned_to?.phone || emp?.phone || 'N/A',
-                photo_url: t.assigned_to_details?.photo_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || null
+                photo_url: t.assigned_to_details?.photo_url || emp?.user_photo_url || emp?.photo_url || emp?.avatar_url || t.assigned_to?.raw_user_meta_data?.user_photo_url || null,
+                // Full roster for this level, so a level owned by several users shows each
+                // of their emails rather than only the primary assignee's
+                level_users: Array.isArray(t.assigned_level_users) ? t.assigned_level_users : []
             }
         });
     };
@@ -1328,7 +1363,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
     };
 
     return (
-        <div className="w-full max-w-full space-y-5 pb-12 overflow-x-hidden">
+        // overflow-x-clip, not -hidden (owner 2026-11-09): "hidden" makes this box a scroll container that never
+        // scrolls, which stops anything inside (Candidate Search's filters) from sticking while the page scrolls.
+        <div className="w-full max-w-full space-y-5 pb-12 overflow-x-clip">
             {/* Header Action Toolbar */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-1">
                 <div className="flex flex-wrap items-center gap-3">
@@ -1337,8 +1374,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'tasks' ? 'Task Manager' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'candidates' ? 'Candidate Search' : activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
+                        {activeTab === 'candidates' && (
+                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Beta</span>
+                        )}
                     </div>
                 </div>
 
@@ -1979,7 +2019,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                     </div>
                                 </div>
                                 <p className="text-2xl font-black text-slate-900 dark:text-white mt-2 tracking-tight">{totalCount}</p>
-                                <p className="text-[11px] font-medium text-slate-400 mt-0.5">{canViewOrgWide ? 'Across organization' : 'Team & Assigned Workload'}</p>
+                                <p className="text-[11px] font-medium text-slate-400 mt-0.5">{selectedPropertyId !== 'all' ? 'In Selected Property' : (canViewOrgWide ? 'Across organization' : 'Team & Assigned Workload')}</p>
                             </div>
 
                             <div
@@ -2427,7 +2467,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                         );
                                                     })()}
                                                     <td className="px-3.5 py-3.5">
-                                                        <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        {(t.has_next_level === false && !['resolved', 'closed', 'pending_acknowledgement'].includes(t.status)) ? (
+                                                            <span className="text-[10px] text-slate-400 italic">Final level</span>
+                                                        ) : (
+                                                            <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        )}
                                                     </td>
                                                     <td className="px-3.5 py-3.5">
                                                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1.5 shadow-2xs whitespace-nowrap border ${
@@ -2568,15 +2612,21 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                                                 </div>
 
                                                 {/* Footer: SLA Countdown + Action Button */}
-                                                <div className="flex items-center justify-between pt-1">
-                                                    <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                                    <div className="min-w-0">
+                                                        {(t.has_next_level === false && !['resolved', 'closed', 'pending_acknowledgement'].includes(t.status)) ? (
+                                                            <span className="text-[10px] text-slate-400 italic">Final level — no escalation</span>
+                                                        ) : (
+                                                            <SLALiveTimer slaDueAt={t.sla_due_at} status={t.status} />
+                                                        )}
+                                                    </div>
                                                     <button
                                                         type="button"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setSelectedTicketId(t.id);
                                                         }}
-                                                        className="inline-flex items-center gap-1 px-3 py-1 bg-[#587e85] hover:bg-[#48676d] text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition-all"
+                                                        className="shrink-0 ml-auto inline-flex items-center gap-1 px-3 py-1 bg-[#587e85] hover:bg-[#48676d] text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition-all"
                                                     >
                                                         <span>View</span>
                                                         <ArrowUpRight className="w-3.5 h-3.5" />
@@ -2628,6 +2678,24 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {visitedTabs.has('tasks') && (
                 <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                     <DepartmentTasksTab />
+                </div>
+            )}
+            {/* Owner 2026-10-29: the HR team's own Meeting Assistant (its meetings are separate from Tech's and the Super Admin's) */}
+            {/* Kept mounted once opened (hidden when another tab is shown), so switching tabs never stops a recording */}
+            {canUseMeetingAssistant && visitedTabs.has('meeting_assistant') && (
+                <div className={activeTab === 'meeting_assistant' ? 'block' : 'hidden'}>
+                    <MeetingsTab space="hr" />
+                </div>
+            )}
+            {visitedTabs.has('assessments') && (
+                <div className={activeTab === 'assessments' ? 'block' : 'hidden'}>
+                    <ProctorHub orgId={orgId} embedded />
+                </div>
+            )}
+            {/* Owner 2026-11-07: Candidate Search (beta) for the HR logins. Kept mounted so a resume upload in progress survives a tab switch. */}
+            {visitedTabs.has('candidates') && (
+                <div className={activeTab === 'candidates' ? 'block' : 'hidden'}>
+                    <CandidateSearchTab orgId={resolvedOrgId} collapseStyle="chevron" />
                 </div>
             )}
 

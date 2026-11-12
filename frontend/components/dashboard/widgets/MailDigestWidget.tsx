@@ -45,6 +45,8 @@ interface Thread {
 
 interface Payload {
     provisioned: boolean;
+    /** When the sync last read purchase@ — not when this card fetched. */
+    last_synced_at?: string | null;
     filtered_by: string | null;
     totals: {
         threads: number; open: number; awaiting_reply: number;
@@ -107,7 +109,11 @@ export default function MailDigestWidget({ orgId, size, onSeverity, onHeadline, 
     }
 
     const total = Math.max(1, t.awaiting_reply + t.unactioned_request);
-    const stamp = `synced ${relativeTime(fetchedAt)}`;
+    // The sync runs hourly. Showing the card's own fetch time here once hid a digest
+    // that had not read the mailbox for two months behind "synced just now".
+    const syncedTs = data.last_synced_at ? Date.parse(data.last_synced_at) : null;
+    const stale = syncedTs !== null && Date.now() - syncedTs > 3 * 3600_000;
+    const stamp = syncedTs !== null ? `mailbox read ${relativeTime(syncedTs)}` : `synced ${relativeTime(fetchedAt)}`;
 
     // sm — one question: is anything waiting?
     if (size === 'sm') {
@@ -141,7 +147,8 @@ export default function MailDigestWidget({ orgId, size, onSeverity, onHeadline, 
                             <Clock className="w-2.5 h-2.5" />oldest {t.oldest_days}d
                         </span>
                     )}
-                    <span className="text-[9px] font-bold text-text-tertiary" title="When this card last read the digest">
+                    <span className="text-[9px] font-bold" title="When purchase@ was last read by the hourly sync"
+                        style={{ color: stale ? 'var(--error)' : 'var(--text-tertiary)' }}>
                         {stamp}
                     </span>
                 </div>

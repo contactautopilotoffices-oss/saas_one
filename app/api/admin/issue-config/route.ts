@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import dictionary from '@/backend/lib/ticketing/issueDictionary.json';
+import { resolveCaller, isCallerError, forbidden } from '@/backend/lib/auth/callerAccess';
 
 // Admin client for table operations
 const supabaseAdmin = createClient(
@@ -26,6 +27,10 @@ function getKeywordsForCode(code: string): any[] {
 
 // GET: Fetch all skill groups with their issue categories and keywords
 export async function GET(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         // Fetch ALL skill groups (both global and property-level)
         // Group them by code to avoid duplicates across properties
@@ -109,6 +114,10 @@ export async function GET(request: NextRequest) {
 
 // POST: Create a new issue category
 export async function POST(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const body = await request.json();
         const { code, name, description, skill_group_id, priority, keywords } = body;
@@ -160,6 +169,10 @@ export async function POST(request: NextRequest) {
 
 // PATCH: Update an issue category (including skill group reassignment)
 export async function PATCH(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const body = await request.json();
         const { id, code, name, description, skill_group_id, priority, is_active } = body;
@@ -196,6 +209,10 @@ export async function PATCH(request: NextRequest) {
 
 // DELETE: Remove an issue category
 export async function DELETE(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');

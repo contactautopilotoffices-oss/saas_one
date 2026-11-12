@@ -36,6 +36,16 @@ async function run() {
     learning.learningTriggers({ exact: 'undo' }).includes('undo'));
   const safe = learning.sanitizeReplayContext({ today: '2026-10-11', sender: { id: 'u1', name: 'A', phone: '999' } as any, people: [{ id: 'u2', name: 'B', phone: '888' }] as any, tasks: [{ id: 't1', title: 'Quote', status: 'pending' }] as any, pending: { kind: 'confirm', summary: 'Call +91 98765 43210' } });
   check('replay context keeps opaque ids and model facts but no phones', JSON.stringify(safe).includes('u1') && JSON.stringify(safe).includes('Quote') && !JSON.stringify(safe).includes('999') && !JSON.stringify(safe).includes('888') && !JSON.stringify(safe).includes('98765'));
+  const chatCtx = (lines: unknown, pending: any = null) => learning.sanitizeReplayContext({ today: '2026-11-05', conversation: lines, pending } as any) as any;
+  const chatLines = Array.from({ length: 12 }, (_, i) => `Person: line ${i}`);
+  check('the recent chat is kept with a test, newest 8, in order', JSON.stringify(chatCtx(chatLines).conversation) === JSON.stringify(chatLines.slice(-8)));
+  const redacted = chatCtx(['Person: call me on +91 98765 43210', 'Person: mail priya.shah@autopilotoffices.com today', 'Assistant: ok']).conversation;
+  check('phone numbers and email addresses never stay in a saved chat line', !/98765|priya\.shah|autopilotoffices/.test(JSON.stringify(redacted)) && redacted[0].includes('[phone redacted]') && redacted[1].includes('[email redacted]'));
+  check('a long chat line is cut', chatCtx(['Person: ' + 'x'.repeat(2000)]).conversation[0].length === 300);
+  check('no chat → no conversation field, as in a live turn', !('conversation' in chatCtx([])) && !('conversation' in chatCtx(undefined)) && !('conversation' in chatCtx([7, null])));
+  const draftPending = chatCtx([], { kind: 'draft', request: 'add task, mail a@b.co', question: 'For whom?', at: '2026-11-05T10:00:00Z', suggested: 'Call vendor' }).pending;
+  check('an unfinished request is kept with a test, without contact details', draftPending?.kind === 'draft' && draftPending.question === 'For whom?' && draftPending.suggested === 'Call vendor' && draftPending.at === '2026-11-05T10:00:00Z' && !draftPending.request.includes('a@b.co'));
+  check('an unfinished request is enough context for an answer test', learning.repairReviewLabel({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }, { pending: draftPending }).ok);
   check('review labels are closed-list and structurally checked', learning.validateReviewLabel({ intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'self' } }).ok && !learning.validateReviewLabel({ intent: 'invented', outcome: 'ACT', expect: {} } as any).ok);
   check('review labels reject invalid typed details', !learning.validateReviewLabel({ intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'planet' } }).ok && !learning.validateReviewLabel({ intent: 'complete_tasks', outcome: 'CONFIRM', expect: { taskIds: [7] } }).ok);
 
@@ -44,7 +54,35 @@ async function run() {
   check('quiet night makes zero-call early exit', !nightly.shouldStartNightly(new Date('2026-10-10T21:00:00Z'), { newestLabelAt: null, lastConsumedLabelAt: null, runDate: null }));
   check('worst-case reservation blocks a call over $0.25', nightly.reserveWorstCaseUsd('x'.repeat(1000), 1200, 0.135, 0.45) > 0 && !nightly.withinNightlyCap(0.2499, 0.001, 0.25));
   const good = { passRate: 98, unsafe: 0, missedClarify: 0, wrongProposal: 0, byGroup: { a: 9, b: 10 } };
-  check('candidate must be no worse and safety-perfect', nightly.candidatePasses(good, { ...good, passRate: 99, byGroup: { a: 8, b: 10 } }).ok && !nightly.candidatePasses(good, { ...good, unsafe: 1 }).ok && !nightly.candidatePasses(good, { ...good, byGroup: { a: 7, b: 10 } }).ok);
+  check('candidate must be no worse on score, safety and groups', nightly.candidatePasses(good, { ...good, passRate: 99, byGroup: { a: 8, b: 10 } }).ok && !nightly.candidatePasses(good, { ...good, unsafe: 1 }).ok && !nightly.candidatePasses(good, { ...good, byGroup: { a: 7, b: 10 } }).ok);
+  // Owner 2026-11-05: the numbers of the real v1, which was rejected although it was better than the prompt in use.
+  const inUse = { passRate: 63.6, unsafe: 1, missedClarify: 1, wrongProposal: 1, byGroup: { live: 2, real: 4, progress: 1 }, flagged: ['x', 'y', 'z'] };
+  const v1 = { ...inUse, passRate: 66.7, byGroup: { live: 3, real: 5 } };
+  check('a better prompt passes even when the prompt in use is not at zero', nightly.candidatePasses(inUse, v1).ok);
+  check('a group going from 1 to 0 is one lost case, not a rejection', !('progress' in v1.byGroup) && nightly.candidatePasses(inUse, v1).reason === null);
+  check('losing two cases in a group is still rejected, also when it reaches 0', !nightly.candidatePasses({ ...inUse, byGroup: { live: 2 } }, { ...inUse, byGroup: {} }).ok);
+  for (const k of ['unsafe', 'missedClarify', 'wrongProposal'] as const) check(`more ${k} than the prompt in use is rejected`, !nightly.candidatePasses(inUse, { ...v1, [k]: inUse[k] + 1 }).ok);
+  check('equal totals cannot hide a test that became unsafe', !nightly.candidatePasses(inUse, { ...v1, flagged: ['x', 'y', 'new'] }).ok);
+  check('fewer safety failures pass', nightly.candidatePasses(inUse, { ...v1, unsafe: 0, flagged: ['x', 'y'] }).ok);
+  check('versions tested before this change have no flagged list and still compare', nightly.candidatePasses({ ...good }, { ...good }).ok);
+
+  console.log('\n3b. Saved tests the scorer can really judge');
+  const replay = { pending: null, sender: { id: 'u1', name: 'Rahul Shah' }, people: [{ id: 'u2', name: 'Priya' }], tasks: [{ id: 't1' }, { id: 't2' }] };
+  const label = (l: any) => learning.repairReviewLabel({ expect: {}, ...l }, replay) as any;
+  check('a proposal marked "must not change" keeps the outcome and loses the flag', label({ intent: 'create_tasks', outcome: 'CONFIRM', mustNotMutate: true }).value.mustNotMutate === false);
+  check('a question that must not change anything keeps its safety flag', label({ intent: 'delete_tasks', outcome: 'CLARIFY', mustNotMutate: true, mustClarify: true }).value.mustNotMutate === true);
+  check('showing tasks keeps its safety flag', label({ intent: 'view_tasks', outcome: 'ACT', mustNotMutate: true }).value.mustNotMutate === true);
+  check('a person named in a test becomes their id', label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'priya' } }).value.expect.assignee === 'u2' && label({ intent: 'create_tasks', outcome: 'ACT', expect: { assignee: 'Rahul Shah' } }).value.expect.assignee === 'u1');
+  check('a person nobody can find is dropped, never guessed', label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'Ghost' } }).value.expect.assignee === undefined);
+  check('details the action does not carry are dropped', JSON.stringify(label({ intent: 'create_tasks', outcome: 'CONFIRM', expect: { scope: 'self', personId: 'u2', taskCount: [1] } }).value.expect) === '{"taskCount":[1]}' && JSON.stringify(label({ intent: 'complete_tasks', outcome: 'CONFIRM', expect: { scope: 'self', state: 'done_some', taskCount: [4], taskIds: ['t1', 'gone'] } }).value.expect) === '{"taskIds":["t1"]}');
+  check('no answer can be right → not a test', !label({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }).ok && !label({ intent: 'unknown', outcome: 'ACT' }).ok && !label({ intent: 'view_tasks', outcome: 'ACT', mustClarify: true }).ok);
+  check('answering a saved question stays a test', learning.repairReviewLabel({ intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } }, { pending: { kind: 'confirm', summary: 'x' } }).ok);
+  check('asking first or acting at once both count for a change, and only for a change', JSON.stringify(learning.acceptedOutcomes({ intent: 'complete_tasks', outcome: 'ACT' })) === '["ACT","CONFIRM"]' && JSON.stringify(learning.acceptedOutcomes({ intent: 'view_tasks', outcome: 'ACT' })) === '["ACT"]' && JSON.stringify(learning.acceptedOutcomes({ intent: 'create_tasks', outcome: 'CLARIFY' })) === '["CLARIFY"]');
+  const liveHk = await import('../BotLearningHousekeeping');
+  const skippedRow = liveHk.liveEvalCase({ case_key: 'live-1', message_text: 'Yes', context_snapshot: replay, expectation: { intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' } } });
+  check('a saved test that cannot be judged is reported, with its reason', !skippedRow.ok && skippedRow.skipped.message === 'Yes' && skippedRow.skipped.reason.includes('not saved'));
+  const fixedRow = liveHk.liveEvalCase({ case_key: 'live-2', message_text: 'Add task', context_snapshot: replay, expectation: { intent: 'create_tasks', outcome: 'ACT', mustNotMutate: false, expect: { scope: 'self', assignee: 'Rahul Shah' } } });
+  check('a saved test is repaired when it is loaded', fixedRow.ok && fixedRow.item.team && fixedRow.item.c.expect.assignee === 'u1' && fixedRow.item.c.expect.scope === undefined && fixedRow.item.c.expect.outcome.length === 2);
 
   console.log('\n4. Health and alerts');
   const metrics = health.computeBotHealth([
@@ -114,7 +152,13 @@ async function run() {
   const good2 = { wanted: 'To see team carry-forward tasks.', did: "Showed today's tasks.", fix: 'Show carried-over tasks for the team.', owner: 'learn', owner_reason: 'Wording only.', test: { intent: 'view_tasks', outcome: 'ACT', expect: { scope: 'team', personId: 'ghost', taskIds: ['t1', 'nope'] }, mustNotMutate: true, mustClarify: false } };
   const parsed = rs.parseSummary(good2, row, 'gemini-test');
   check('summary keeps the sentences and a checked test', parsed.wanted.startsWith('To ') && parsed.test?.intent === 'view_tasks' && parsed.owner === 'learn');
-  check('made-up ids are dropped from the test, real ones kept', parsed.test?.expect.personId === undefined && JSON.stringify(parsed.test?.expect.taskIds) === '["t1"]');
+  const parsedIds = rs.parseSummary({ ...good2, test: { intent: 'complete_tasks', outcome: 'CONFIRM', expect: { personId: 'ghost', taskIds: ['t1', 'nope'] }, mustNotMutate: false, mustClarify: false } }, row, 'gemini-test');
+  check('made-up ids are dropped from the test, real ones kept', parsedIds.test?.expect.personId === undefined && JSON.stringify(parsedIds.test?.expect.taskIds) === '["t1"]');
+  const contradiction = rs.parseSummary({ ...good2, test: { intent: 'create_tasks', outcome: 'CONFIRM', expect: { assignee: 'Priya', scope: 'self' }, mustNotMutate: true, mustClarify: false } }, row, 'gemini-test');
+  check('a new test is repaired before it can be saved', contradiction.test?.mustNotMutate === false && contradiction.test?.expect.assignee === 'u2' && contradiction.test?.expect.scope === undefined && contradiction.owner === 'learn');
+  const unanswerable = rs.parseSummary({ ...good2, test: { intent: 'answer_pending', outcome: 'ACT', expect: { answer: 'yes' }, mustNotMutate: false, mustClarify: false } }, row, 'gemini-test');
+  check('a test no answer could pass is never saved', unanswerable.test === null && unanswerable.owner === 'developer');
+  check('the prompt says a proposal never needs the safety flag', /CONFIRM already waits for YES/.test(rs.SUMMARY_SYSTEM) && /answer_pending only when context\.pending/.test(rs.SUMMARY_SYSTEM));
   const bad2 = rs.parseSummary({ ...good2, test: { intent: 'invented', outcome: 'ACT', expect: {} } }, row, 'm');
   check('no valid test → marked "Needs a developer", never saved as a test', bad2.test === null && bad2.owner === 'developer');
   let threw = false; try { rs.parseSummary({ did: 'x', fix: 'y' }, row, 'm'); } catch { threw = true; }
@@ -133,7 +177,7 @@ async function run() {
   check('Bot learning is one collapsible section that loads only when opened', /Show bot learning/.test(panel) && /if \(next\) void load\(\)/.test(panel));
   check('review card shows conversation, AI summary and Correct / Fix / Ignore', ['What the user wanted', 'What the bot did', 'The fix', 'Who can fix it', '✅ Correct', '✏️ Fix', 'Needs a developer'].every(t => review.includes(t)));
   check('approve uses the server-side AI test, never a test sent from the browser', /action: 'approve', id: current\.id, owner \}/.test(review) && /validateReviewLabel\(row\.ai_summary\.test\)/.test(svc2));
-  check('new API actions sit behind the same admin guard', ['summarize', 'approve', 'undo', 'set_dev_state'].every(a => route.includes(`b.action === '${a}'`)) && /requireTaskManagerAdmin/.test(route));
+  check('new API actions sit behind the same admin guard', ['summarize', 'approve', 'undo', 'set_dev_state'].every(a => route.includes(`b.action === '${a}'`)) && /requireControlCentre/.test(route));
   check('prompt versions: large viewer, coloured diff, results table, no browser pop-ups', /VersionViewer/.test(pv) && /bg-emerald-50/.test(pv) && /bg-rose-50/.test(pv) && /<table/.test(pv) && !/window\.(prompt|confirm|alert)/.test(pv));
 
   check('no network used', true);
