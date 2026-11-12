@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
-import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Upload, Download, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { downloadTemplateFromUrl } from '@/frontend/utils/downloadTemplate';
 
 interface PPMSchedule {
     id: string;
@@ -91,6 +92,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadPropertyId, setUploadPropertyId] = useState(propertyId || '');
     const [isUploading, setIsUploading] = useState(false);
+    const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
     const [uploadResult, setUploadResult] = useState<{ success?: boolean; message?: string } | null>(null);
     const [isClearing, setIsClearing] = useState(false);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -271,6 +273,18 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
         }
     };
 
+    const handleDownloadTemplate = async () => {
+        setIsDownloadingTemplate(true);
+        try {
+            await downloadTemplateFromUrl('/api/ppm/template', 'PPM_Schedule_Template.xlsx');
+        } catch (err: any) {
+            setUploadResult({ success: false, message: err?.message || 'Failed to download template' });
+            setShowUpload(true);
+        } finally {
+            setIsDownloadingTemplate(false);
+        }
+    };
+
     const handleUpload = async () => {
         if (!uploadFile) return;
         setIsUploading(true);
@@ -369,13 +383,24 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                         ))}
                     </div>
                     {!readOnly && (
-                        <button
-                            onClick={() => setShowUpload(true)}
-                            className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0 ml-2"
-                        >
-                            <Upload className="w-4 h-4" />
-                            Upload Excel
-                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                            <button
+                                onClick={handleDownloadTemplate}
+                                disabled={isDownloadingTemplate}
+                                title="Download PPM Excel template accepted by the importer"
+                                className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-all disabled:opacity-50"
+                            >
+                                {isDownloadingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-primary" />}
+                                <span className="hidden sm:inline">Template</span>
+                            </button>
+                            <button
+                                onClick={() => setShowUpload(true)}
+                                className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all"
+                            >
+                                <Upload className="w-4 h-4" />
+                                Upload Excel
+                            </button>
+                        </div>
                     )}
                 </div>
             </div>
@@ -986,6 +1011,23 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             </button>
                         </div>
                         <div className="p-5 space-y-4">
+                            {/* Step 1: Download template */}
+                            <div className="flex items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-black text-slate-800">Download Parser Template (.xlsx)</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">Matches the 52-week PPM column &amp; date layout (data starts at Row 4).</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleDownloadTemplate}
+                                    disabled={isDownloadingTemplate}
+                                    className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-100 transition-all shrink-0 disabled:opacity-50"
+                                >
+                                    {isDownloadingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5 text-primary" />}
+                                    Template
+                                </button>
+                            </div>
+
                             {/* Property selector */}
                             {properties.length > 0 && (
                                 <div>
