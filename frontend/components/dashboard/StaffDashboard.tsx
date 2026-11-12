@@ -1199,6 +1199,7 @@ const DashboardTab = ({ tickets, completedTickets, ticketStats, onTicketClick, u
                                     photoUrl={ticket.photo_before_url}
                                     escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: TicketCreatorMembership) => m.property_id === ticket.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal)}
                                     onClick={() => onTicketClick?.(ticket.id)}
                                     onEdit={onEditClick ? (e) => onEditClick(e, ticket) : undefined}
                                     onDelete={onDeleteClick ? (e) => onDeleteClick(e, ticket.id) : undefined}
@@ -1358,6 +1359,7 @@ const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick,
                                     photoUrl={ticket.photo_before_url}
                                     escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: TicketCreatorMembership) => m.property_id === ticket.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal)}
                                     onClick={() => onTicketClick?.(ticket.id)}
                                     onEdit={onEditClick ? (e) => onEditClick(e, ticket) : undefined}
                                     onDelete={onDeleteClick ? (e) => onDeleteClick(e, ticket.id) : undefined}
@@ -1417,6 +1419,7 @@ const TasksTab = ({ tickets = [], onTicketClick, onEditClick }: { tickets: any[]
                                     assignedTo="You"
                                     photoUrl={ticket.photo_before_url}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: TicketCreatorMembership) => m.property_id === ticket.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal)}
                                     onClick={() => onTicketClick?.(ticket.id)}
                                     onEdit={onEditClick ? (e) => onEditClick(e, ticket) : undefined}
                                     hasMaterialRequest={Boolean((ticket.material_requests?.length ?? 0) > 0)}

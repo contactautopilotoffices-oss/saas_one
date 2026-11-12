@@ -15,6 +15,7 @@ interface Ticket {
     created_at: string;
     sla_deadline: string | null;
     sla_breached: boolean;
+    internal?: boolean;
     is_internal: boolean;
     current_escalation_level?: number;
     category?: { name: string; icon: string };
@@ -156,7 +157,7 @@ export default function TicketList({
                                             {ticket.category.name}
                                         </span>
                                     )}
-                                    {ticket.is_internal && (
+                                    {(ticket.internal || ticket.is_internal) && (
                                         <span className="text-xs px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded">
                                             Internal
                                         </span>

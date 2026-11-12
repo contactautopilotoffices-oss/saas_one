@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import {
     ArrowLeft, Clock, User, MapPin, Send, CheckCircle, CheckCircle2, Circle, Camera,
-    AlertTriangle, Pause, Play, Video, Upload, X, Loader2, Package, ShoppingBag, Paperclip
+    AlertTriangle, Pause, Play, Video, Upload, X, Loader2, Package, ShoppingBag, Paperclip, Lock
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import EnhancedClassificationBadge from './EnhancedClassificationBadge';
@@ -439,6 +439,12 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                             }`}>
                             {(ticket.status as string)?.replace(/_/g, ' ')}
                         </span>
+                        {Boolean(ticket.internal || ticket.is_internal) && (
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm bg-slate-700 text-white border border-slate-600">
+                                <Lock className="w-3.5 h-3.5" />
+                                Internal
+                            </span>
+                        )}
                     </div>
                 </div>
 

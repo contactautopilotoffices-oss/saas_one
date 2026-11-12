@@ -315,6 +315,7 @@ function TicketSection({
                             photoUrl={ticket.photo_before_url}
                             escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                             raisedByTenant={!ticket.internal}
+                            isInternal={Boolean(ticket.internal)}
                             onClick={() => onTicketClick(ticket.id)}
                         />
                     ))}
