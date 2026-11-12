@@ -126,6 +126,8 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     vendor_revenue_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
     vendor_revenue_pending_digest: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [] },
     ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+    client_ticket_created: { enabled: true, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
+    critical_ticket_created: { enabled: true, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     reminder_ticket_sla: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
@@ -167,6 +169,14 @@ export const DEFAULT_WHATSAPP_SERVICE_CONFIG: Record<string, FeatureWhatsAppConf
     visitor_approval_requested: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     visitor_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true }
+};
+
+const OPT_IN_CONTEXTUAL_FEATURES = new Set(['client_ticket_created', 'critical_ticket_created']);
+
+const resolveContextualFlag = (overrideVal: any, ruleVal: any, fallbackIfUnset: boolean): boolean => {
+    if (overrideVal !== undefined) return overrideVal === true;
+    if (ruleVal !== undefined) return ruleVal === true;
+    return fallbackIfUnset;
 };
 
 export const WhatsAppRecipientResolver = {
@@ -223,13 +233,18 @@ export const WhatsAppRecipientResolver = {
                     : (matrixRule.channels?.whatsapp === true)
             );
 
+            const isOptInContextual = OPT_IN_CONTEXTUAL_FEATURES.has(canonicalKey);
             featureConfig = {
                 enabled: isWhatsAppEnabled,
                 roles: propOverride?.roles || matrixRule.roles || [],
                 user_ids: propOverride?.user_ids || matrixRule.user_ids || [],
-                notify_assignee: propOverride?.notify_assignee !== undefined ? propOverride.notify_assignee !== false : matrixRule.notify_assignee !== false,
-                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : (featureKey === 'ticket_assigned' ? false : matrixRule.notify_requester !== false),
-                notify_approver: propOverride?.notify_approver !== undefined ? propOverride.notify_approver !== false : matrixRule.notify_approver !== false,
+                notify_assignee: resolveContextualFlag(propOverride?.notify_assignee, matrixRule.notify_assignee, !isOptInContextual),
+                notify_requester: resolveContextualFlag(
+                    propOverride?.notify_requester,
+                    matrixRule.notify_requester,
+                    !isOptInContextual && featureKey !== 'ticket_assigned'
+                ),
+                notify_approver: resolveContextualFlag(propOverride?.notify_approver, matrixRule.notify_approver, !isOptInContextual),
                 reminder_minutes: propOverride?.reminder_minutes ?? matrixRule.reminder_minutes ?? null,
                 property_overrides: matrixRule.property_overrides || {}
             };

@@ -1938,6 +1938,7 @@ const OrgAdminDashboard = () => {
                     propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
                     isAdminMode={true}
                     showInternalToggle={true}
+                    showCriticalToggle={isOrgSuperAdmin || isOpsSuperAdmin}
                     onSuccess={(ticket) => {
                         invalidateCache('tickets-');
                         invalidateCache('spoc-dashboard-');

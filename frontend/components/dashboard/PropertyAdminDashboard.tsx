@@ -1011,6 +1011,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         propertyId={property.id}
                         organizationId={property.organization_id}
                         showInternalToggle={true}
+                        showCriticalToggle={isOpsSuperAdmin || userOrgRole === 'org_super_admin'}
                         onSuccess={(ticket) => {
                             invalidateCache('tickets-');
                             invalidateCache('spoc-dashboard-');
