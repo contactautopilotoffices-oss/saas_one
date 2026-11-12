@@ -11,6 +11,7 @@ import {
 } from 'recharts';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { useDataCache } from '@/frontend/context/DataCacheContext';
 
 /**
  * Property Overview Report (Reports tab, after a property is chosen).
@@ -1061,8 +1062,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
     const [custom, setCustom] = useState<{ from: string; to: string }>(() => presetRange('30'));
     const [report, setReport] = useState<Report | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isExporting, setIsExporting] = useState(false);
+    // The cache helpers change identity whenever the cache changes; keep them in a ref so a write
+    // never re-triggers the load effect (that would refetch in a loop).
+    const dataCache = useDataCache();
+    const cacheRef = useRef(dataCache);
+    cacheRef.current = dataCache;
     const [showHow, setShowHow] = useState(false);
     const [drill, setDrill] = useState<DrillSpec | null>(null);
     const closeDrill = useCallback(() => setDrill(null), []);
@@ -1070,22 +1077,30 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
 
     const range = useMemo(() => preset === 'custom' ? custom : presetRange(preset), [preset, custom]);
 
-    const load = useCallback(async () => {
+    // Fast path: the last result for this scope and range is shown at once from the app cache,
+    // then refreshed quietly in the background. The Refresh button forces a fresh server read.
+    // "dashboard-" keys are the ones the app cache also keeps in localStorage, so the last report survives a page reload.
+    const cacheKey = `dashboard-property-overview:${propertyId ? `p:${propertyId}` : `o:${orgId}`}:${range.from}:${range.to}`;
+    const load = useCallback(async (fresh = false) => {
         if (!propertyId && !orgId) return;
-        setIsLoading(true);
+        const cached = !fresh ? (cacheRef.current.getCachedData(cacheKey) as Report | null) : null;
+        if (cached) { setReport(cached); setIsLoading(false); setIsRefreshing(true); }
+        else setIsLoading(true);
         setError(null);
         try {
             const scope = propertyId ? `propertyId=${propertyId}` : `orgId=${orgId}`;
-            const res = await fetch(`/api/reports/property-overview?${scope}&from=${range.from}&to=${range.to}`, { cache: 'no-store' });
+            const res = await fetch(`/api/reports/property-overview?${scope}&from=${range.from}&to=${range.to}${fresh ? '&fresh=1' : ''}`);
             const data = await res.json();
             if (!res.ok) throw new Error(data?.error || 'Failed to load the property report');
             setReport(data as Report);
+            cacheRef.current.setCachedData(cacheKey, data, 10 * 60 * 1000);
         } catch (e) {
-            setError(e instanceof Error ? e.message : 'Failed to load the property report');
+            if (!cached) setError(e instanceof Error ? e.message : 'Failed to load the property report');
         } finally {
             setIsLoading(false);
+            setIsRefreshing(false);
         }
-    }, [propertyId, orgId, range.from, range.to]);
+    }, [propertyId, orgId, range.from, range.to, cacheKey]);
 
     useEffect(() => {
         if (preset === 'custom' && custom.from > custom.to) return;
@@ -1151,8 +1166,8 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <button type="button" onClick={load} disabled={isLoading} className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors" title="Refresh">
-                        <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                    <button type="button" onClick={() => load(true)} disabled={isLoading || isRefreshing} className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:bg-slate-50 transition-colors" title="Reload from the database">
+                        <RefreshCw className={`w-4 h-4 ${isLoading || isRefreshing ? 'animate-spin' : ''}`} />
                     </button>
                     <button type="button" onClick={handleDownloadPdf} disabled={isExporting || isLoading || !report}
                         className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-slate-900 transition-colors disabled:opacity-50">
@@ -1195,7 +1210,7 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                     <p className="text-sm">building the report for {propertyName || 'this property'}</p>
                 </div>
             ) : report && s ? (
-                <div ref={reportRef} className={`space-y-4 bg-white rounded-2xl p-1 ${isLoading ? 'opacity-60' : ''}`}>
+                <div ref={reportRef} className={`space-y-4 bg-white rounded-2xl p-1 transition-opacity ${isLoading ? 'opacity-60' : ''}`}>
                     {/* Title */}
                     <header className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-900 to-slate-700 text-white p-6">
                         <div className="flex flex-wrap items-start justify-between gap-4">

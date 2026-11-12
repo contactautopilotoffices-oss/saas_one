@@ -109,6 +109,31 @@ function byProperty(rows: Row[], ids: string[], key = 'property_id'): Map<string
 }
 
 type Section<T> = ({ available: true; truncated?: boolean } & T) | { available: false; reason: string };
+
+/**
+ * Short-lived server cache. The same scope and range asked for again within CACHE_TTL_MS
+ * (a refresh, a preset switched back, a second person opening the same report) is served
+ * from memory instead of re-running every query. Authorisation still runs on every request.
+ * `?fresh=1` bypasses it, which the Refresh button uses.
+ */
+const CACHE_TTL_MS = 120_000;
+const CACHE_MAX = 200;
+const CACHE = new Map<string, { at: number; body: unknown; timings: Record<string, number> }>();
+function cacheGet(key: string) {
+    const hit = CACHE.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.at > CACHE_TTL_MS) { CACHE.delete(key); return null; }
+    return hit;
+}
+function cacheSet(key: string, body: unknown, timings: Record<string, number>) {
+    if (CACHE.size >= CACHE_MAX) { const oldest = CACHE.keys().next().value; if (oldest !== undefined) CACHE.delete(oldest); }
+    CACHE.set(key, { at: Date.now(), body, timings });
+}
+/** Server-Timing header so the slow sections show up in the browser's network panel. */
+function serverTiming(timings: Record<string, number>, total: number, cached: boolean): string {
+    const parts = Object.entries(timings).sort((a, b) => b[1] - a[1]).slice(0, 25).map(([k, v]) => `${k};dur=${v}`);
+    return [`total;dur=${total}`, `cache;desc=${cached ? 'hit' : 'miss'}`, ...parts].join(', ');
+}
 /** Per-property figures a section contributes to the comparative view. */
 type PerProperty = Record<string, Record<string, number | null>>;
 
@@ -218,6 +243,20 @@ export async function GET(request: NextRequest) {
     }
     const ids = properties.map(p => p.id);
     const single = ids.length === 1;
+    const t0 = Date.now();
+    const cacheKey = `${single ? `p:${ids[0]}` : `o:${orgId}`}|${from}|${to}`;
+    const fresh = searchParams.get('fresh') === '1';
+    if (!fresh) {
+        const hit = cacheGet(cacheKey);
+        if (hit) {
+            return NextResponse.json(hit.body, { headers: { 'Cache-Control': 'private, max-age=60', 'Server-Timing': serverTiming(hit.timings, Date.now() - t0, true) } });
+        }
+    }
+    const timings: Record<string, number> = {};
+    const timed = <T,>(name: string, run: () => Promise<T>): Promise<Section<T>> => {
+        const start = Date.now();
+        return section(name, run).then(r => { timings[name] = Date.now() - start; return r; });
+    };
     const ROW_CAP = single ? ROW_CAP_PROPERTY : ROW_CAP_ORG;
     const nameOf = new Map(properties.map(p => [p.id, p.name]));
 
@@ -226,24 +265,28 @@ export async function GET(request: NextRequest) {
     const toTsExclusive = `${addDays(to, 1)}T00:00:00${IST_OFFSET}`;
     const nowIso = new Date().toISOString();
 
-    // Team: who belongs to each property. Reused by HR and tasks, which carry no property_id.
-    const teamRows = await rows(
-        supabaseAdmin.from('property_memberships').select('user_id, role, is_active, property_id').in('property_id', ids).range(0, ROW_CAP - 1),
-    ).catch(() => [] as Row[]);
-    const activeTeam = teamRows.filter(r => r.is_active !== false);
-    const memberIds = Array.from(new Set(activeTeam.map(r => str(r.user_id)).filter(Boolean)));
-    // A person can belong to several properties; their HR tickets and tasks count for each.
-    const propertiesOfUser = new Map<string, string[]>();
-    for (const r of activeTeam) {
-        const u = str(r.user_id);
-        if (!u) continue;
-        propertiesOfUser.set(u, [...(propertiesOfUser.get(u) || []), str(r.property_id)]);
-    }
-    const byMember = (list: Row[], userKey: string): Map<string, Row[]> => {
-        const m = new Map<string, Row[]>(ids.map(id => [id, []]));
-        for (const r of list) for (const pid of propertiesOfUser.get(str(r[userKey])) || []) m.get(pid)?.push(r);
-        return m;
-    };
+    // Team: who belongs to each property. Needed by tasks (which carry no property_id) and the team
+    // card. Fetched once, in parallel with everything else; the two sections that need it await it.
+    const teamPromise = (async () => {
+        const teamRows = await rows(
+            supabaseAdmin.from('property_memberships').select('user_id, role, is_active, property_id').in('property_id', ids).range(0, ROW_CAP - 1),
+        ).catch(() => [] as Row[]);
+        const activeTeam = teamRows.filter(r => r.is_active !== false);
+        const memberIds = Array.from(new Set(activeTeam.map(r => str(r.user_id)).filter(Boolean)));
+        // A person can belong to several properties; their tasks count for each.
+        const propertiesOfUser = new Map<string, string[]>();
+        for (const r of activeTeam) {
+            const u = str(r.user_id);
+            if (!u) continue;
+            propertiesOfUser.set(u, [...(propertiesOfUser.get(u) || []), str(r.property_id)]);
+        }
+        const byMember = (list: Row[], userKey: string): Map<string, Row[]> => {
+            const m = new Map<string, Row[]>(ids.map(id => [id, []]));
+            for (const r of list) for (const pid of propertiesOfUser.get(str(r[userKey])) || []) m.get(pid)?.push(r);
+            return m;
+        };
+        return { activeTeam, memberIds, byMember };
+    })();
 
     const comparative: PerProperty = Object.fromEntries(ids.map(id => [id, {}]));
     const setCmp = (pid: string, key: string, value: number | null) => { if (comparative[pid]) comparative[pid][key] = value; };
@@ -255,7 +298,7 @@ export async function GET(request: NextRequest) {
         visitors, meetingRooms, pettyCash, procurement, requisitions, roster, tasks, audit, team,
     ] = await Promise.all([
         // ── Tickets (requests) ───────────────────────────────────────────────
-        section('tickets', async () => {
+        timed('tickets', async () => {
             const [list, openRows] = await Promise.all([
                 rows(supabaseAdmin.from('tickets')
                     .select('id, property_id, status, priority, category, created_at, resolved_at, internal, floor_number, sla_breached, sla_deadline, issue_category:category_id(name)')
@@ -263,10 +306,14 @@ export async function GET(request: NextRequest) {
                     .gte('created_at', fromTs).lt('created_at', toTsExclusive)
                     .order('created_at', { ascending: true })
                     .range(0, ROW_CAP - 1)),
-                rows(supabaseAdmin.from('tickets').select('id, property_id')
-                    .in('property_id', ids)
-                    .not('status', 'in', `(${[...TICKET_CLOSED, ...TICKET_DEAD].join(',')})`)
-                    .range(0, ROW_CAP - 1)),
+                single
+                    ? count(supabaseAdmin.from('tickets').select('id', { count: 'exact', head: true })
+                        .in('property_id', ids)
+                        .not('status', 'in', `(${[...TICKET_CLOSED, ...TICKET_DEAD].join(',')})`)).then(c => Array.from({ length: c }, () => ({ property_id: ids[0] }) as Row))
+                    : rows(supabaseAdmin.from('tickets').select('id, property_id')
+                        .in('property_id', ids)
+                        .not('status', 'in', `(${[...TICKET_CLOSED, ...TICKET_DEAD].join(',')})`)
+                        .range(0, ROW_CAP - 1)),
             ]);
             const isClosed = (t: Row) => TICKET_CLOSED.includes(str(t.status));
             const calc = (ts: Row[]) => {
@@ -336,7 +383,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Guest requests (QR walk-in requests) ─────────────────────────────
-        section('guest_requests', async () => {
+        timed('guest_requests', async () => {
             const list = await rows(
                 supabaseAdmin.from('guest_requests').select('id, property_id, status, ai_category, created_at')
                     .in('property_id', ids)
@@ -351,7 +398,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── SOP checklists ───────────────────────────────────────────────────
-        section('sop', async () => {
+        timed('sop', async () => {
             const [list, templates] = await Promise.all([
                 rows(supabaseAdmin.from('sop_completions').select('id, property_id, status, is_late, due_at, template_id')
                     .in('property_id', ids)
@@ -390,7 +437,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── PPM ──────────────────────────────────────────────────────────────
-        section('ppm', async () => {
+        timed('ppm', async () => {
             const [list, overdueRows] = await Promise.all([
                 rows(supabaseAdmin.from('ppm_schedules').select('id, property_id, status, planned_date, done_date, system_name')
                     .in('property_id', ids)
@@ -424,7 +471,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Electricity (main meters only, so sub-meters are not double counted) ─
-        section('electricity', async () => {
+        timed('electricity', async () => {
             const [list, meters] = await Promise.all([
                 rows(supabaseAdmin.from('electricity_readings')
                     .select('id, property_id, reading_date, computed_units, final_units, computed_cost, meter:electricity_meters(id, name, meter_type)')
@@ -474,7 +521,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Diesel ───────────────────────────────────────────────────────────
-        section('diesel', async () => {
+        timed('diesel', async () => {
             const list = await rows(
                 supabaseAdmin.from('diesel_readings')
                     .select('id, property_id, reading_date, computed_consumed_litres, computed_cost, generator:generators(id, name)')
@@ -518,7 +565,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Water ────────────────────────────────────────────────────────────
-        section('water', async () => {
+        timed('water', async () => {
             const sources = await rows(
                 supabaseAdmin.from('water_sources').select('id, name, property_id').in('property_id', ids).range(0, 999),
             );
@@ -567,7 +614,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Stock ────────────────────────────────────────────────────────────
-        section('stock', async () => {
+        timed('stock', async () => {
             const [items, moves] = await Promise.all([
                 rows(supabaseAdmin.from('stock_items').select('id, property_id, name, quantity, min_threshold').in('property_id', ids).range(0, ROW_CAP - 1)),
                 rows(supabaseAdmin.from('stock_movements').select('id, property_id, action, quantity_change, created_at')
@@ -604,7 +651,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Assets ───────────────────────────────────────────────────────────
-        section('assets', async () => {
+        timed('assets', async () => {
             const [list, events] = await Promise.all([
                 rows(supabaseAdmin.from('assets').select('id, property_id, status, warranty_end, amc_required, purchase_cost, category:asset_categories(name)')
                     .in('property_id', ids).is('deleted_at', null).range(0, ROW_CAP - 1)),
@@ -628,7 +675,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── AMC contracts ────────────────────────────────────────────────────
-        section('amc', async () => {
+        timed('amc', async () => {
             const list = await rows(
                 supabaseAdmin.from('amc_contracts').select('id, property_id, system_name, vendor_name, contract_end_date, contract_value, status')
                     .in('property_id', ids).range(0, ROW_CAP - 1),
@@ -649,7 +696,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Visitors ─────────────────────────────────────────────────────────
-        section('visitors', async () => {
+        timed('visitors', async () => {
             const base = () => supabaseAdmin.from('visitor_logs').select('id', { count: 'exact', head: true })
                 .in('property_id', ids).gte('checkin_time', fromTs).lt('checkin_time', toTsExclusive);
             const [total, inside, out, logs] = await Promise.all([
@@ -679,7 +726,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Meeting rooms ────────────────────────────────────────────────────
-        section('meeting_rooms', async () => {
+        timed('meeting_rooms', async () => {
             const [list, roomsCount] = await Promise.all([
                 rows(supabaseAdmin.from('meeting_room_bookings').select('id, property_id, status, booking_date, start_time, end_time, meeting_room_id, meeting_room:meeting_rooms(name)')
                     .in('property_id', ids)
@@ -715,7 +762,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Petty cash ───────────────────────────────────────────────────────
-        section('petty_cash', async () => {
+        timed('petty_cash', async () => {
             const list = await rows(
                 supabaseAdmin.from('petty_cash_requests').select('id, property_id, status, request_type, amount_requested, approved_amount, paid_amount, created_at')
                     .in('property_id', ids)
@@ -741,7 +788,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Procurement (material requests) ──────────────────────────────────
-        section('procurement', async () => {
+        timed('procurement', async () => {
             const list = await rows(
                 supabaseAdmin.from('material_requests').select('id, property_id, status, total_amount, created_at')
                     .in('property_id', ids)
@@ -761,7 +808,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Monthly requisitions ─────────────────────────────────────────────
-        section('requisitions', async () => {
+        timed('requisitions', async () => {
             const months: string[] = [];
             for (let m = from.slice(0, 7); m <= to.slice(0, 7);) {
                 months.push(m);
@@ -791,7 +838,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Roster ───────────────────────────────────────────────────────────
-        section('roster', async () => {
+        timed('roster', async () => {
             const list = await rows(
                 supabaseAdmin.from('staff_rosters').select('id, property_id, user_id, roster_date, is_reliever')
                     .in('property_id', ids)
@@ -812,7 +859,8 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Task manager (tasks assigned to the team) ────────────────────────
-        section('tasks', async () => {
+        timed('tasks', async () => {
+            const { memberIds, byMember } = await teamPromise;
             if (!memberIds.length) return { total: 0, completed: 0, in_progress: 0, pending: 0, completion_rate: null as number | null };
             const list = await rows(
                 supabaseAdmin.from('task_assignments').select('id, status, assigned_date, employee_id')
@@ -831,7 +879,7 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Statutory / internal audit (current state, not range bound) ──────
-        section('audit', async () => {
+        timed('audit', async () => {
             const list = await rows(
                 supabaseAdmin.from('property_audit_submissions').select('id, property_id, status').in('property_id', ids).range(0, ROW_CAP - 1),
             );
@@ -845,7 +893,8 @@ export async function GET(request: NextRequest) {
         }),
 
         // ── Team ─────────────────────────────────────────────────────────────
-        section('team', async () => {
+        timed('team', async () => {
+            const { activeTeam, memberIds } = await teamPromise;
             for (const [pid, l] of byProperty(activeTeam, ids)) setCmp(pid, 'team_members', l.length);
             return {
                 members: memberIds.length,
@@ -855,7 +904,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     const first = properties[0];
-    return NextResponse.json({
+    const body = {
         scope: single ? 'property' : 'organization',
         property: single
             ? { id: first.id, name: first.name, code: first.code, address: first.address, city: first.city, is_active: first.is_active }
@@ -868,5 +917,7 @@ export async function GET(request: NextRequest) {
             visitors, meeting_rooms: meetingRooms, petty_cash: pettyCash, procurement, requisitions, roster, tasks, audit, team,
         },
         comparative: single ? null : { metrics: COMPARATIVE_METRICS, values: comparative },
-    });
+    };
+    cacheSet(cacheKey, body, timings);
+    return NextResponse.json(body, { headers: { 'Cache-Control': 'private, max-age=60', 'Server-Timing': serverTiming(timings, Date.now() - t0, false) } });
 }
