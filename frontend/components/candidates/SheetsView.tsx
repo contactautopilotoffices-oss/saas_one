@@ -10,7 +10,7 @@ import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, apiUpload, qs } from './api';
 import { DeleteSheetDialog, TypedConfirmDialog } from './DangerDialogs';
 import { formatCount, formatDate } from './format';
-import IssuesModal from './IssuesModal';
+import IssuesModal, { IssueJobChip } from './IssuesModal';
 import UploadConflictModal from './UploadConflictModal';
 import {
     BTN_DANGER_GHOST, BTN_GHOST, BTN_SECONDARY, CARD, EASE_PATIENT, EmptyState, LABEL, NUM_LG, NUM_SM, Spinner, Toggle, useUi, WELL,
@@ -284,6 +284,8 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
         </>
     ) : (
         <>
+            {/* A job on this sheet's flagged rows goes on after the box is closed (owner 2026-11-12); its progress shows here. */}
+            <IssueJobChip sheet={s} />
             <button type="button" onClick={() => { setIssues(x => ({ sheet: s, key: (x?.key ?? 0) + 1 })); setIssuesOpen(true); }} disabled={s.status !== 'ready'}
                 className={BTN_GHOST} title={s.flaggedCount ? `${formatCount(s.flaggedCount)} rows need review` : 'Rows fixed automatically or skipped'}>
                 <ListChecks className="h-4 w-4" />{compact ? 'Issues' : 'View issues'}
@@ -492,7 +494,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                 </button>
             </section>
 
-            <IssuesModal orgId={orgId} request={issues} open={issuesOpen} onClose={() => setIssuesOpen(false)} onChanged={onDataChanged} />
+            <IssuesModal orgId={orgId} request={issues} open={issuesOpen} onClose={() => setIssuesOpen(false)} />
 
             <DeleteSheetDialog
                 key={deleteTarget?.key ?? 0}

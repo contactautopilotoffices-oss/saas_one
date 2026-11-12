@@ -1,7 +1,7 @@
 /** Uploaded sheets: list, soft-delete, restore, permanent delete, clear all, data-quality report. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { EMBEDDING_MODEL } from "./config";
+import { EMBEDDING_MODEL, meaningIndexOn } from "./config";
 import type { SheetRowDb } from "./import";
 import { FIXED_PREFIX, isFixedNote } from "./normalize";
 import { CandidateActionError, rpcFail } from "./records";
@@ -49,6 +49,8 @@ async function loadStats(client: SupabaseClient, orgId: string) {
   for (const row of (data ?? []) as { sheet_id: string | null; live_count: number; pending_count: number }[]) {
     stats.set(row.sheet_id, { live: row.live_count, pending: row.pending_count });
   }
+  // The meaning-search index is switched off (config.ts): no record is "being prepared", so a sheet shows Ready.
+  if (!meaningIndexOn()) for (const s of stats.values()) s.pending = 0;
   return stats;
 }
 

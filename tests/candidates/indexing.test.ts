@@ -17,6 +17,8 @@ import { listSheets } from "../../backend/lib/candidates/sheets";
 import { freshDb, vec } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
 
+// The index is off by default (owner 2026-11-12); these tests are about the index, so they switch it on.
+process.env.CANDIDATE_MEANING_INDEX = "on";
 const ORG = "00000000-0000-0000-0000-00000000000a";
 const OTHER_ORG = "00000000-0000-0000-0000-00000000000b";
 const USER = "00000000-0000-0000-0000-000000000001";

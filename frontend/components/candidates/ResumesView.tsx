@@ -289,22 +289,26 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         return () => { live = false; };
     }, []);
     const [scanning, setScanning] = useState(false);
-    const autoFromInput = useRef(false);
+    /**
+     * Owner 2026-11-12: with no source folder set, the button opens the ordinary folder window, in every browser. That
+     * window accepts Downloads (the newer folder picker refuses it: "contains system files"), and the upload of what is
+     * new then starts by itself. With a source folder set, that folder is read with no window.
+     */
     const uploadNew = async () => {
         if (uploading || scanning) return;
-        if (!canRememberFolder()) {
-            // No folder memory in this browser: the folder dialog, then the upload starts by itself.
-            autoFromInput.current = true;
-            folderInput.current?.click();
-            return;
-        }
+        // Decided from what is on screen, with nothing awaited first: a file window only opens straight from a click.
+        if (source.state !== 'remembered') { folderInput.current?.click(); return; }
         setScanning(true);
         try {
-            let handle = await loadFolder();
-            if (handle && !(await ensureReadable(handle))) handle = null;
+            const handle = await loadFolder();
             if (!handle) {
-                handle = await pickFolder();
-                if (!handle) return;
+                setSource({ state: 'none' });
+                notify('The source folder is no longer remembered. Click Upload new resumes again to pick the folder.', 'info');
+                return;
+            }
+            if (!(await ensureReadable(handle))) {
+                notify(`The browser did not allow reading ${handle.name}. Allow it, or use Forget to pick the folder each time.`, 'info');
+                return;
             }
             setSource({ state: 'remembered', name: handle.name, allowed: true });
             const found = await listFolderFiles(handle);
@@ -329,6 +333,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         }
     };
     // Files dragged onto the page (owner 2026-11-11): shown for review like "Choose files"; nothing uploads by itself.
+    // Owner 2026-11-12: "Review a folder" is gone (it had become the same button as Upload new resumes); reviewing
+    // before sending is what Choose files and dropping are for.
     const [dropping, setDropping] = useState(false);
     const onDrop = (e: React.DragEvent) => {
         e.preventDefault();
@@ -336,7 +342,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         if (uploading || scanning) return;
         // A dropped folder arrives as an entry with no size and no type: only real files are taken.
         const dropped = Array.from(e.dataTransfer.files).filter(file => file.size > 0);
-        if (!dropped.length) { notify('Drop PDF or Word files; for a whole folder use Review a folder', 'info'); return; }
+        if (!dropped.length) { notify('Drop PDF or Word files; for a whole folder use Upload new resumes', 'info'); return; }
         takeFiles(dropped.map(file => ({ key: `${file.name}|${file.size}|${file.lastModified}`, file, folder: null })), false);
     };
     const tick = (key: string, on: boolean) => setOverrides(o => ({ ...o, [key]: on }));
@@ -713,7 +719,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     <div className="flex min-w-0 flex-1 basis-72 items-start gap-x-3">
                         <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-primary-dark shadow-[var(--w-shadow)]"><Folder className="h-4 w-4" aria-hidden /></span>
                         <div className="min-w-0">
-                            <p className={LABEL}>Source folder</p>
+                            <p className={LABEL}>Source folder (optional)</p>
                             {source.state === 'remembered' ? (
                                 <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                                     <span className="truncate font-semibold text-text-primary" title={source.name}>{source.name}</span>
@@ -722,9 +728,9 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                     </Tag>
                                 </p>
                             ) : source.state === 'none' ? (
-                                <p className="mt-0.5 text-sm font-semibold text-text-primary">Not chosen yet</p>
+                                <p className="mt-0.5 text-sm font-semibold text-text-primary">Not set: the folder is asked for on each upload</p>
                             ) : source.state === 'unsupported' ? (
-                                <p className="mt-0.5 text-sm font-semibold text-text-primary">This browser cannot keep a folder selected</p>
+                                <p className="mt-0.5 text-sm font-semibold text-text-primary">Not available in this browser</p>
                             ) : (
                                 <Skeleton className="mt-1 h-4 w-40 rounded" />
                             )}
@@ -735,11 +741,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         {!source.allowed && <> When the browser asks, choose &ldquo;Allow on every visit&rdquo; and it stops asking.</>}
                                     </>
                                 ) : source.state === 'none' ? (
-                                    <>Choose your Downloads folder once. After that, Upload new resumes reads it by itself, with no file window.</>
+                                    <>Upload new resumes opens the folder window, and Downloads can be picked there. To skip that window, choose a folder inside Downloads here, such as a Resumes folder. The browser does not let a page remember Downloads itself.</>
                                 ) : source.state === 'unsupported' ? (
                                     isBrave()
-                                        ? <>Brave has this switched off. Open <span className="font-semibold text-text-primary">brave://flags</span>, turn on &ldquo;File System Access API&rdquo; and restart Brave; or use Chrome or Edge. Until then the folder is asked for on every upload.</>
-                                        : <>Chrome and Edge can keep the folder selected. In this browser the folder is asked for on every upload.</>
+                                        ? <>Upload new resumes opens the folder window each time, and Downloads can be picked there. To keep a folder selected, open <span className="font-semibold text-text-primary">brave://flags</span>, turn on &ldquo;File System Access API&rdquo; and restart Brave, or use Chrome or Edge.</>
+                                        : <>Upload new resumes opens the folder window each time, and Downloads can be picked there. Chrome and Edge can keep a folder inside Downloads selected.</>
                                 ) : (
                                     <>Checking which folder this browser remembers.</>
                                 )}
@@ -767,7 +773,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-text-primary">{dropping ? 'Drop the files to review them' : 'Drop PDF or Word files here'}</p>
                             <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
-                                Or click Upload new resumes: it reads the source folder and sends what is new. Keep this tab open while it uploads.
+                                {source.state === 'remembered'
+                                    ? 'Or click Upload new resumes: it reads the source folder and sends what is new.'
+                                    : 'Or click Upload new resumes and pick your Downloads folder: the files downloaded since your last upload are sent.'}
+                                {' '}Keep this tab open while it uploads.
                             </p>
                         </div>
                     </div>
@@ -775,7 +784,6 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         <button type="button" onClick={() => void uploadNew()} disabled={uploading || scanning} className={BTN_PRIMARY}>
                             {scanning ? <Spinner className="h-4 w-4 text-white" /> : <FolderDown className="h-4 w-4" />}{scanning ? 'Reading the folder' : 'Upload new resumes'}
                         </button>
-                        <button type="button" onClick={() => folderInput.current?.click()} disabled={uploading || scanning} className={BTN_SECONDARY} title="Pick a folder and review the files before uploading"><FolderOpen className="h-4 w-4" />Review a folder</button>
                         <button type="button" onClick={() => filesInput.current?.click()} disabled={uploading || scanning} className={BTN_GHOST}><FileText className="h-4 w-4" />Choose files</button>
                     </div>
                 </div>
@@ -790,7 +798,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     )}
                     {/* webkitdirectory (folder picking) is not in React's typings, so it is set on the element itself. */}
                     <input ref={el => { folderInput.current = el; el?.setAttribute('webkitdirectory', ''); }} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden
-                        onChange={e => { const auto = autoFromInput.current; autoFromInput.current = false; takeFiles(fromFileList(e.target.files), auto); }} />
+                        onChange={e => takeFiles(fromFileList(e.target.files), true)} />
                     <input ref={filesInput} type="file" multiple accept=".pdf,.doc,.docx" className="sr-only" tabIndex={-1} aria-hidden onChange={e => takeFiles(fromFileList(e.target.files), false)} />
                 </div>
 

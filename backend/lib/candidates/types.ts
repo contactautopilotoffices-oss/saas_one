@@ -322,6 +322,16 @@ export interface AiFixApplyResponse {
   flaggedCount: number;
 }
 
+/** POST /api/candidates/sheets/[id]/discard: flagged rows deleted from "View issues". */
+export interface AiFixDiscardResponse {
+  /** Records moved to Deleted (restorable from the Candidates tab). */
+  deleted: number;
+  /** Rows whose issues were closed, so they left "Needs review" (also rows whose record was deleted earlier). */
+  closed: number;
+  /** The sheet's flagged-row count after this. */
+  flaggedCount: number;
+}
+
 /** POST /api/candidates/bulk */
 export interface BulkResponse {
   /** Records deleted (moved to deleted, or deleted permanently for "purge"). */

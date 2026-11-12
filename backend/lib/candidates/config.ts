@@ -27,6 +27,19 @@ export const EMBEDDING_PROVIDER: EmbeddingProvider =
   (process.env.EMBEDDING_PROVIDER ?? "").trim().toLowerCase() === "jina" ? "jina" : "gemini";
 export const EMBEDDING_MODEL = EMBEDDING_MODELS[EMBEDDING_PROVIDER];
 export const EMBEDDING_DIMENSIONS = 768;
+/**
+ * The meaning-search index is OFF unless the environment variable CANDIDATE_MEANING_INDEX is "on" (owner 2026-11-12).
+ *
+ * Why: the Search screen HR uses (keywords, filters, Rank with AI) never reads this index; only the older free-text
+ * search route (/api/candidates/search, called by no screen) does. Building it sent every record to the embedding
+ * service, whose free quota ran out on a 3,000-row sheet, so the Sheets page showed "Preparing 16%" for hours on a
+ * sheet that was fully imported and searchable. It also used up the quota of a key other features share.
+ *
+ * Off means: no record is sent to the embedding service (the cron, the after-upload run and the page's nudge do
+ * nothing), a sheet shows Ready as soon as it is imported, and the free-text route searches by filters and words only.
+ * Nothing is deleted: the vectors already stored stay, and turning it back on resumes where it stopped.
+ */
+export const meaningIndexOn = (): boolean => (process.env.CANDIDATE_MEANING_INDEX ?? "").trim().toLowerCase() === "on";
 
 /**
  * The background worker (indexing.ts): a cron every minute (/api/cron/candidate-indexing), right after an upload or

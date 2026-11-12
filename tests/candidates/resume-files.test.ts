@@ -278,6 +278,47 @@ describe("resume files against the real schema", () => {
     await assert.rejects(prepare([file(0, "No name.pdf", "noname")], null), /cannot be filed under a name/);
     await assert.rejects(prepare([file(0, "No name.pdf", "noname")], "   "), /cannot be filed under a name/);
   });
+
+  // Owner 2026-11-12: several people upload at once. Two of them can prepare the same file in the same instant: both
+  // find no row and both insert, and the unique index (organisation + content hash) refuses the second insert.
+  it("two people preparing the same file in the same instant: the second batch still goes through, the file is stored once", async () => {
+    let raced = false;
+    // The second person's client: just before its insert lands, the first person's whole prepare runs.
+    const racing = new Proxy(client, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (prop !== "from") return typeof value === "function" ? value.bind(target) : value;
+        return (table: string) => {
+          const query = target.from(table);
+          if (table !== "candidate_resume_files" || raced) return query;
+          return new Proxy(query, {
+            get(q, p) {
+              const v = Reflect.get(q, p);
+              if (p !== "insert") return typeof v === "function" ? v.bind(q) : v;
+              return (rows: unknown) => {
+                raced = true;
+                const first = prepareResumeUploads(client, store.storage, ORG, USER_INFO, { device: "First laptop", files: [file(0, "Chetan Rao.pdf", "chetan")] });
+                return first.then(() => (q as unknown as { insert(r: unknown): PromiseLike<unknown> }).insert(rows));
+              };
+            },
+          });
+        };
+      },
+    }) as SupabaseClient;
+    const second = await prepareResumeUploads(racing, store.storage, ORG, USER_INFO, {
+      device: "Second laptop", files: [file(0, "Chetan_Rao_Naukri.pdf", "chetan"), file(1, "Divya Menon.pdf", "divya")],
+    });
+    assert.equal(raced, true, "the race was staged");
+    assert.deepEqual(second.files.map((f) => f.outcome), ["upload", "upload"], "neither file of the second batch is lost");
+    const { rows } = await db.query<{ id: string; sha256: string }>(
+      "select id, sha256 from public.candidate_resume_files where organization_id = $1 and sha256 = any($2)", [ORG, [sha("chetan"), sha("divya")]],
+    );
+    assert.equal(rows.length, 2, "one row per file");
+    assert.equal(second.files[0].id, rows.find((r) => r.sha256 === sha("chetan"))?.id, "the shared file goes to the row that already exists");
+    // Both people finish; the file counts once.
+    const done = await finish(second.files);
+    assert.equal(done.ready.length, 2);
+  });
 });
 
 describe("resume query and names", () => {
