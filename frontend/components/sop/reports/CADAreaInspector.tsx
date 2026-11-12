@@ -742,7 +742,9 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                             <div className="space-y-1.5">
                                 {displayArea.parameters.map((param, pIdx) => {
                                     const isPass = param.status === 'pass';
-                                    const pScore = param.score !== null ? param.score : score;
+                                    const isNotVisible = param.status === 'not_visible' || param.status === 'not_in_frame';
+                                    const isAttention = param.status === 'needs_attention' || param.status === 'warning';
+                                    const pScore = isNotVisible || param.reviewed_by_checker ? null : (param.score !== null ? param.score : score);
 
                                     return (
                                         <div
@@ -751,13 +753,13 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                         >
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                                    isPass ? 'bg-emerald-500' : 'bg-rose-500'
+                                                    isPass ? 'bg-emerald-500' : isAttention ? 'bg-amber-500' : 'bg-rose-500'
                                                 }`} />
                                                 <span className="text-xs font-bold text-slate-800">{param.name}</span>
                                                 <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                                    isPass ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                                    isPass ? 'bg-emerald-100 text-emerald-800' : isAttention ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
                                                 }`}>
-                                                    {isPass ? 'Pass' : 'Needs Attention'}
+                                                    {isPass ? 'Pass' : isNotVisible ? 'Not visible · Flagged' : isAttention ? 'Needs Attention' : 'Fail'}
                                                 </span>
                                                 {pScore !== null && (
                                                     <span className="text-[10px] font-black text-slate-600">

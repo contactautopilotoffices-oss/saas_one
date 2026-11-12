@@ -26,8 +26,9 @@ export interface AreaAuditScore {
     parameters: Array<{
         name: string;
         score: number | null;
-        status: 'pass' | 'fail' | 'warning';
+        status: 'pass' | 'fail' | 'warning' | 'needs_attention' | 'not_visible' | 'not_in_frame';
         reason?: string;
+        reviewed_by_checker?: boolean;
     }>;
     linkedItemIds: string[];
     linkedTitles: string[];
@@ -239,7 +240,7 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
             const scores: number[] = [];
             const allProofs: Array<{ url: string; label?: string; captured_at?: string }> = [];
             const allBenchmarks: Array<{ id?: string; url: string; label?: string }> = [];
-            const allParams: Array<{ name: string; score: number | null; status: 'pass' | 'fail' | 'warning'; reason?: string }> = [];
+            const allParams: AreaAuditScore['parameters'] = [];
             const allMatches: Array<{
                 benchmark_id?: string;
                 benchmark_label?: string;
@@ -300,11 +301,16 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                     }
                     if (Array.isArray(pScores)) {
                         pScores.forEach(ps => {
+                            // A checker correction overrides the AI verdict in the report
+                            const reviewed = Boolean(ps.reviewer_status);
                             allParams.push({
                                 name: ps.name || 'Check',
-                                score: ps.score !== undefined ? ps.score : null,
-                                status: ps.status || (ps.score >= 75 ? 'pass' : 'fail'),
-                                reason: ps.reason,
+                                score: reviewed ? null : (ps.score !== undefined ? ps.score : null),
+                                status: ps.reviewer_status || ps.status || (ps.score >= 75 ? 'pass' : 'fail'),
+                                reason: reviewed
+                                    ? `Checker: ${ps.reviewer_verdict === 'correct' ? 'AI was right' : 'corrected'}${ps.reviewer_note ? ` · ${ps.reviewer_note}` : ''}`
+                                    : ps.reason,
+                                reviewed_by_checker: reviewed,
                             });
                         });
                     }
