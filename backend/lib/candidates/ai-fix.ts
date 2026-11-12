@@ -18,12 +18,13 @@ import { AI_FIX_CALL } from "./config";
 import { jobCaller, type JsonCaller } from "./models";
 import { isFixedNote, parseEmail, parsePhone } from "./normalize";
 import { fieldForHeader } from "./parse-sheet";
-import { CandidateActionError, getRecordRows, rpcFail, toRecord, updateRecord, validateInput } from "./records";
+import { CandidateActionError, deleteRecords, getRecordRows, rpcFail, toRecord, updateRecord, validateInput } from "./records";
 import { getSheet } from "./sheets";
 import {
   AI_FIX_FIELDS,
   type AiFixApplyResponse,
   type AiFixApproval,
+  type AiFixDiscardResponse,
   type AiFixChange,
   type AiFixField,
   type AiFixProposal,
@@ -364,4 +365,42 @@ export async function applyFixes(
   }
 
   return { applied: fixedRows.length + reviewedRows.length, failed, flaggedCount };
+}
+
+/** What "View issues" writes on a row it deleted, shown under "Fixed automatically" with the other closed rows. */
+export const DISCARD_NOTE = "record deleted by HR";
+
+/**
+ * "Delete rows" in View issues (owner 2026-11-12: "mass discard means deleting those rows which the AI could not
+ * fix"). The records these rows became are moved to Deleted, exactly like a delete in the Candidates tab (restorable
+ * there), and the rows' issues are closed with a note, so they leave "Needs review" and the sheet's flagged count
+ * drops. Only rows of this sheet's latest upload that still have an open issue are touched. A row whose record was
+ * deleted earlier is closed too, so trying again after a failure finishes the job instead of leaving it stuck.
+ */
+export async function discardRows(
+  client: SupabaseClient,
+  args: { orgId: string; userId: string; sheetId: string; rowNumbers: number[] },
+): Promise<AiFixDiscardResponse> {
+  const sheet = await getSheet(client, args.orgId, args.sheetId);
+  if (sheet.deleted_at) throw new CandidateActionError(409, "This sheet is deleted. Restore it first.");
+  const { data, error } = await client
+    .from("candidate_sheet_rows")
+    .select("row_number, issues, skipped, application_id")
+    .eq("sheet_id", sheet.id)
+    .eq("upload_no", sheet.upload_count)
+    .in("row_number", args.rowNumbers);
+  if (error) {
+    console.error("[candidates] ai-fix: load rows to delete", error);
+    throw new CandidateActionError(500, "Couldn't load the rows. Please try again.");
+  }
+  const open = ((data ?? []) as { row_number: number; issues: string[]; skipped: boolean; application_id: string | null }[]).filter(
+    (r) => !r.skipped && r.application_id && r.issues.some((issue) => !isFixedNote(issue)),
+  );
+  if (!open.length) return { deleted: 0, closed: 0, flaggedCount: sheet.flagged_count };
+
+  const deleted = await deleteRecords(client, args.orgId, args.userId, open.map((r) => r.application_id as string));
+  const resolved = await client.rpc("candidate_resolve_row_issues", { p_sheet_id: sheet.id, p_row_numbers: open.map((r) => r.row_number), p_note: DISCARD_NOTE });
+  if (resolved.error) rpcFail("close the deleted rows", resolved.error);
+  console.info(`[candidates] view issues: ${deleted} records deleted, ${open.length} rows closed, sheet ${sheet.id}, by ${args.userId}`);
+  return { deleted, closed: open.length, flaggedCount: Number(resolved.data) };
 }

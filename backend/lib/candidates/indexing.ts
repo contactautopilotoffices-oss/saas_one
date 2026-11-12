@@ -16,7 +16,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { EMBED_BATCH, EMBED_CALL_GAP_MS, EMBED_MAX_ATTEMPTS, EMBEDDING_MODEL, INDEX_BACKOFF_SECONDS, INDEX_BUDGET_MS } from "./config";
+import { EMBED_BATCH, EMBED_CALL_GAP_MS, EMBED_MAX_ATTEMPTS, EMBEDDING_MODEL, INDEX_BACKOFF_SECONDS, INDEX_BUDGET_MS, meaningIndexOn } from "./config";
 import { EmbedError, embedDocuments } from "./embeddings";
 
 export type Embedder = (texts: string[]) => Promise<number[][]>;
@@ -83,6 +83,8 @@ async function remainingCount(client: SupabaseClient, orgId: string): Promise<nu
 
 /** One organisation, within the time budget. Never throws. */
 export async function indexOrganisation(client: SupabaseClient, orgId: string, options: IndexOptions = {}): Promise<IndexResult> {
+  // Switched off (config.ts, meaningIndexOn): nothing is sent to the embedding service and nothing counts as waiting.
+  if (!meaningIndexOn()) return { indexed: 0, remaining: 0, waiting: false };
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? realSleep;
   const embed = options.embed ?? embedDocuments;
@@ -161,6 +163,7 @@ export async function indexAllOrganisations(
   client: SupabaseClient,
   options: IndexOptions = {},
 ): Promise<{ organisations: number; indexed: number }> {
+  if (!meaningIndexOn()) return { organisations: 0, indexed: 0 };
   const now = options.now ?? Date.now;
   const deadline = now() + (options.budgetMs ?? INDEX_BUDGET_MS.cron);
   const { data, error } = await client.rpc("candidate_orgs_to_index", { p_model: EMBEDDING_MODEL });

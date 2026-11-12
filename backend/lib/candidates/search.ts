@@ -10,7 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { JsonCaller } from "./models";
-import { comparePoolSize, EMBEDDING_MODEL, MAX_QUERY_LENGTH, RANK_POOL } from "./config";
+import { comparePoolSize, EMBEDDING_MODEL, MAX_QUERY_LENGTH, meaningIndexOn, RANK_POOL } from "./config";
 import { embedQuery } from "./embeddings";
 import { filterRecords } from "./filter-search";
 import { describeFilters, specFromFilters, type SearchFilters } from "./filters";
@@ -69,7 +69,8 @@ export async function searchCandidates(
   const text = searchTextFor(spec, query);
   let embedding: number[] | null = null;
   try {
-    embedding = await (deps.embed ?? embedQuery)(spec.summary ? `${spec.summary}. ${text}` : text);
+    // With the index switched off (config.ts) the query is not embedded either: filters and words only.
+    if (deps.embed || meaningIndexOn()) embedding = await (deps.embed ?? embedQuery)(spec.summary ? `${spec.summary}. ${text}` : text);
   } catch (error) {
     // Owner 2026-11-03: HR is not told about the embedding service; the search still uses filters and keywords.
     console.warn("[candidates] query embedding failed", error instanceof Error ? error.message : error);

@@ -14,6 +14,7 @@ import RecordsView from './RecordsView';
 import ResumesView from './ResumesView';
 import SearchView from './SearchView';
 import SheetsView from './SheetsView';
+import { IssueJobsWatcher } from './IssuesModal';
 import { CARD, EASE_PATIENT, EmptyState, Spinner, UiProvider } from './ui';
 
 /**
@@ -120,6 +121,8 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
 
     return (
         <UiProvider value={ui}>
+            {/* View issues: its jobs go on when the box is closed, and report here wherever HR is by then. */}
+            <IssueJobsWatcher onChanged={onDataChanged} />
             {/* One width for every view (owner 2026-11-11), so the tab bar does not shift when the view changes: the
                 whole width of the page, so nothing is left empty beside it when the sidebar is collapsed. */}
             <div className="w-full min-w-0 space-y-5">

@@ -213,6 +213,11 @@ const PrepareInput = z.object({
     .max(RESUME_BATCH),
 });
 
+/** Postgres: a row with this organisation and content hash is already there. */
+const UNIQUE_VIOLATION = "23505";
+/** Times a prepare reads the rows and tries its insert; more than one only when someone else stored the same file in between. */
+const PREPARE_ROUNDS = 3;
+
 /**
  * One upload link per new file. Files already stored (same hash, any laptop) come back as duplicates; files of another
  * type or over the size limit as rejected. A row left at 'uploading' by an earlier attempt is reused (and the link
@@ -251,54 +256,66 @@ export async function prepareResumeUploads(
   }
   if (!wanted.length) return { files: byIndex(out) };
 
-  const { data: existingRows, error } = await client
-    .from(TABLE)
-    .select("id, sha256, status")
-    .eq("organization_id", orgId)
-    .in("sha256", wanted.map((f) => f.sha256));
-  if (error) fail("prepare the upload", error);
-  const existing = new Map(
-    ((existingRows ?? []) as unknown as { id: string; sha256: string; status: string }[]).map((r) => [r.sha256, r]),
-  );
-
+  // Several people upload at once (owner 2026-11-12). Two of them can prepare the same file in the same instant: both
+  // find no row and both insert, and the unique index (organisation + content hash) refuses the second insert whole,
+  // which used to fail that person's batch of up to 50 files. The one refused now reads the rows again, finds the
+  // other person's row and goes round once more, so nothing of its batch is lost and the file is stored once.
   const now = new Date().toISOString();
-  const inserts: Record<string, unknown>[] = [];
-  const slots: { index: number; id: string; path: string; contentType: string }[] = [];
-  for (const f of wanted) {
-    const ext = fileExtension(f.name);
-    const contentType = RESUME_TYPES[ext];
-    const row = existing.get(f.sha256);
-    // Stored already (as a resume or another document), or read earlier and removed: either way the file is not sent again.
-    if (row?.status === "ready" || row?.status === "rejected" || row?.status === "other") {
-      out.push({ index: f.index, outcome: "duplicate", id: row.id });
-      continue;
+  let slots: { index: number; id: string; path: string; contentType: string }[] = [];
+  for (let round = 1; ; round += 1) {
+    const { data: existingRows, error } = await client
+      .from(TABLE)
+      .select("id, sha256, status")
+      .eq("organization_id", orgId)
+      .in("sha256", wanted.map((f) => f.sha256));
+    if (error) fail("prepare the upload", error);
+    const existing = new Map(
+      ((existingRows ?? []) as unknown as { id: string; sha256: string; status: string }[]).map((r) => [r.sha256, r]),
+    );
+
+    const inserts: Record<string, unknown>[] = [];
+    const duplicates: PreparedUpload[] = [];
+    slots = [];
+    for (const f of wanted) {
+      const ext = fileExtension(f.name);
+      const contentType = RESUME_TYPES[ext];
+      const row = existing.get(f.sha256);
+      // Stored already (as a resume or another document), or read earlier and removed: either way the file is not sent again.
+      if (row?.status === "ready" || row?.status === "rejected" || row?.status === "other") {
+        duplicates.push({ index: f.index, outcome: "duplicate", id: row.id });
+        continue;
+      }
+      const id = row?.id ?? randomUUID();
+      const path = `${orgId}/${id}${ext}`;
+      const values = {
+        file_name: f.name.trim(),
+        file_type: contentType,
+        file_size: f.size,
+        storage_path: path,
+        status: "uploading",
+        downloaded_at: toDownloadedAt(f.modifiedAt),
+        device_label: device,
+        folder_path: cleanFolder(f.folder),
+        uploaded_by: user.id,
+        uploaded_by_email: user.email,
+        updated_at: now,
+      };
+      if (row) {
+        const { error: upErr } = await client.from(TABLE).update(values).eq("id", id).eq("organization_id", orgId);
+        if (upErr) fail("prepare the upload", upErr);
+      } else {
+        inserts.push({ id, organization_id: orgId, sha256: f.sha256, created_at: now, ...values });
+      }
+      slots.push({ index: f.index, id, path, contentType });
     }
-    const id = row?.id ?? randomUUID();
-    const path = `${orgId}/${id}${ext}`;
-    const values = {
-      file_name: f.name.trim(),
-      file_type: contentType,
-      file_size: f.size,
-      storage_path: path,
-      status: "uploading",
-      downloaded_at: toDownloadedAt(f.modifiedAt),
-      device_label: device,
-      folder_path: cleanFolder(f.folder),
-      uploaded_by: user.id,
-      uploaded_by_email: user.email,
-      updated_at: now,
-    };
-    if (row) {
-      const { error: upErr } = await client.from(TABLE).update(values).eq("id", id).eq("organization_id", orgId);
-      if (upErr) fail("prepare the upload", upErr);
-    } else {
-      inserts.push({ id, organization_id: orgId, sha256: f.sha256, created_at: now, ...values });
+    if (inserts.length) {
+      // One statement: either every row is in, or none is, so going round again starts clean.
+      const { error: insErr } = await client.from(TABLE).insert(inserts);
+      if (insErr && (insErr as { code?: string }).code === UNIQUE_VIOLATION && round < PREPARE_ROUNDS) continue;
+      if (insErr) fail("prepare the upload", insErr);
     }
-    slots.push({ index: f.index, id, path, contentType });
-  }
-  if (inserts.length) {
-    const { error: insErr } = await client.from(TABLE).insert(inserts);
-    if (insErr) fail("prepare the upload", insErr);
+    out.push(...duplicates);
+    break;
   }
 
   await Promise.all(

@@ -9,7 +9,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 
-import { AI_FIX_JSON_SCHEMA, applyFixes, convertValue, fixRowPrompt, proposeFixes } from "../../backend/lib/candidates/ai-fix";
+import { AI_FIX_JSON_SCHEMA, applyFixes, convertValue, discardRows, fixRowPrompt, proposeFixes } from "../../backend/lib/candidates/ai-fix";
 import { findLiveSheetByName, importSheet } from "../../backend/lib/candidates/import";
 import type { JsonCaller, JsonRequest } from "../../backend/lib/candidates/models";
 import { parseSheet } from "../../backend/lib/candidates/parse-sheet";
@@ -223,6 +223,43 @@ describe("permanent delete, clear all, bulk delete, AI fix", () => {
     await assert.rejects(proposeFixes(client, { orgId: ORG, userId: USER, sheetId: e.sheetId, rowNumbers: [2], today: "2026-11-03" }, failing), /could not answer/);
     const [log] = await q<{ error: string }>("select error from public.candidate_fix_logs where sheet_id = $1", [e.sheetId]);
     assert.match(log.error, /no model answered/);
+  });
+
+  // Owner 2026-11-12: "mass discard means deleting those rows which the AI could not fix".
+  it("deletes flagged rows from View issues: the records move to deleted and the rows leave Needs review", async () => {
+    const f = await upload("F.xlsx", [YES, SHIFTED]);
+    assert.equal(f.rowsFlagged, 2);
+    const live = async () => (await listRecords(client, ORG, { sheetId: f.sheetId, pageSize: 100 })).total;
+    const flagged = async () => (await listSheets(client, ORG, false)).sheets.find((s) => s.id === f.sheetId)!.flaggedCount;
+    assert.equal(await live(), 2);
+
+    const first = await discardRows(client, { orgId: ORG, userId: USER, sheetId: f.sheetId, rowNumbers: [2, 99] });
+    assert.deepEqual(first, { deleted: 1, closed: 1, flaggedCount: 1 }, "row 99 does not exist and is ignored");
+    assert.equal(await live(), 1);
+    assert.equal(await flagged(), 1);
+    const rows = await sheetIssues(client, ORG, f.sheetId);
+    const row2 = rows.find((r) => r.rowNumber === 2)!;
+    assert.deepEqual(row2.issues, [], "nothing left to review on the deleted row");
+    assert.ok(row2.fixed.every((note) => /\(record deleted by HR\)$/.test(note)));
+    assert.ok(rows.find((r) => r.rowNumber === 3)!.issues.length > 0, "the other row is untouched");
+    const [gone] = await q<{ deleted_by: string | null; n: number }>(
+      "select max(deleted_by::text) as deleted_by, count(*)::int as n from public.candidate_applications where sheet_id = $1 and deleted_at is not null", [f.sheetId],
+    );
+    assert.deepEqual(gone, { deleted_by: USER, n: 1 }, "moved to deleted (restorable), not erased");
+
+    // Again on the same row: nothing more to do.
+    assert.deepEqual(await discardRows(client, { orgId: ORG, userId: USER, sheetId: f.sheetId, rowNumbers: [2] }), { deleted: 0, closed: 0, flaggedCount: 1 });
+
+    // A row whose record was deleted in the Candidates tab is closed too, so it does not stay stuck in Needs review.
+    const [left] = (await listRecords(client, ORG, { sheetId: f.sheetId, pageSize: 100 })).records;
+    await deleteRecords(client, ORG, USER, [left.id]);
+    assert.deepEqual(await discardRows(client, { orgId: ORG, userId: USER, sheetId: f.sheetId, rowNumbers: [3] }), { deleted: 0, closed: 1, flaggedCount: 0 });
+  });
+
+  it("deletes rows only in the caller's organisation", async () => {
+    const g = await upload("G.xlsx", [YES]);
+    await assert.rejects(discardRows(client, { orgId: OTHER_ORG, userId: USER, sheetId: g.sheetId, rowNumbers: [2] }));
+    assert.equal((await listRecords(client, ORG, { sheetId: g.sheetId, pageSize: 100 })).total, 1);
   });
 
   it("shows email and phone to the model only when a problem is about them", async () => {
