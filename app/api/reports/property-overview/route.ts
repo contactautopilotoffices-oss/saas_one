@@ -7,8 +7,8 @@ import { isMissingRelation } from '@/backend/lib/commandCenter/access';
  * GET /api/reports/property-overview?propertyId=<uuid>&from=YYYY-MM-DD&to=YYYY-MM-DD
  * GET /api/reports/property-overview?orgId=<uuid>&from=YYYY-MM-DD&to=YYYY-MM-DD
  *
- * One report across every service and module: tickets, guest requests, HR
- * grievances, SOP checklists, PPM, electricity, diesel, water, stock, assets, AMC,
+ * One report across every service and module: tickets, guest requests,
+ * SOP checklists, PPM, electricity, diesel, water, stock, assets, AMC,
  * visitors, meeting rooms, petty cash, procurement, monthly requisitions, roster,
  * tasks, statutory audit and the team.
  *
@@ -36,7 +36,6 @@ const ROW_CAP_ORG = 20000;
 
 const TICKET_CLOSED = ['resolved', 'closed', 'satisfied', 'completed'];
 const TICKET_DEAD = ['cancelled', 'rejected', 'duplicate'];
-const HR_CLOSED = ['resolved', 'closed', 'cancelled'];
 
 function isDay(v: string | null): v is string {
     if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -248,9 +247,11 @@ export async function GET(request: NextRequest) {
 
     const comparative: PerProperty = Object.fromEntries(ids.map(id => [id, {}]));
     const setCmp = (pid: string, key: string, value: number | null) => { if (comparative[pid]) comparative[pid][key] = value; };
+    /** A rate plus the two numbers behind it, so the UI can always show "75% (48 of 64)". */
+    const setRate = (pid: string, key: string, num: number, den: number) => { setCmp(pid, key, pct(num, den)); setCmp(pid, `${key}_num`, num); setCmp(pid, `${key}_den`, den); };
 
     const [
-        tickets, guestRequests, hr, sop, ppm, electricity, diesel, water, stock, assets, amc,
+        tickets, guestRequests, sop, ppm, electricity, diesel, water, stock, assets, amc,
         visitors, meetingRooms, pettyCash, procurement, requisitions, roster, tasks, audit, team,
     ] = await Promise.all([
         // ── Tickets (requests) ───────────────────────────────────────────────
@@ -285,8 +286,9 @@ export async function GET(request: NextRequest) {
             for (const [pid, ts] of byProperty(list, ids)) {
                 const c = calc(ts);
                 setCmp(pid, 'tickets_total', c.total);
-                setCmp(pid, 'tickets_closure', c.closure_rate);
-                setCmp(pid, 'tickets_sla', c.total ? round1(100 - (c.breached / c.total) * 100) : null);
+                setRate(pid, 'tickets_closure', c.closed, c.total);
+                setRate(pid, 'tickets_sla', c.total - c.breached, c.total);
+                setCmp(pid, 'use_tickets', c.total);
                 setCmp(pid, 'tickets_hours', c.avg_hours);
                 setCmp(pid, 'tickets_open_now', openByProp.get(pid)?.length || 0);
             }
@@ -341,29 +343,10 @@ export async function GET(request: NextRequest) {
                     .gte('created_at', fromTs).lt('created_at', toTsExclusive).range(0, ROW_CAP - 1),
             );
             const s = (l: Row[], v: string) => l.filter(r => str(r.status).toUpperCase() === v).length;
-            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'guest_resolved', pct(s(l, 'RESOLVED'), l.length));
+            for (const [pid, l] of byProperty(list, ids)) { setRate(pid, 'guest_resolved', s(l, 'RESOLVED'), l.length); setCmp(pid, 'use_guest', l.length); }
             return {
                 total: list.length, pending: s(list, 'PENDING'), in_progress: s(list, 'IN_PROGRESS'), resolved: s(list, 'RESOLVED'),
                 by_category: countBy(list, r => str(r.ai_category) || 'Uncategorised').slice(0, 6),
-            };
-        }),
-
-        // ── HR grievances raised by the team ─────────────────────────────────
-        section('hr_tickets', async () => {
-            if (!memberIds.length) return { total: 0, open: 0, resolved: 0, escalated: 0, by_type: [] as { name: string; count: number }[], by_priority: [] as { name: string; count: number }[] };
-            const list = await rows(
-                supabaseAdmin.from('hr_tickets').select('id, status, ticket_type, priority, created_at, raised_by_user_id')
-                    .eq('organization_id', orgId)
-                    .in('raised_by_user_id', memberIds)
-                    .gte('created_at', fromTs).lt('created_at', toTsExclusive).range(0, ROW_CAP - 1),
-            );
-            return {
-                total: list.length,
-                open: list.filter(r => !HR_CLOSED.includes(str(r.status))).length,
-                resolved: list.filter(r => HR_CLOSED.includes(str(r.status))).length,
-                escalated: list.filter(r => str(r.status) === 'escalated').length,
-                by_type: countBy(list, r => str(r.ticket_type).replace(/_/g, ' ')),
-                by_priority: countBy(list, r => str(r.priority)),
             };
         }),
 
@@ -378,8 +361,9 @@ export async function GET(request: NextRequest) {
             const done = (l: Row[]) => l.filter(r => str(r.status) === 'completed');
             const missed = (l: Row[]) => l.filter(r => str(r.status) === 'missed').length;
             for (const [pid, l] of byProperty(list, ids)) {
-                setCmp(pid, 'sop_completion', pct(done(l).length, l.length));
+                setRate(pid, 'sop_completion', done(l).length, l.length);
                 setCmp(pid, 'sop_missed', l.length ? missed(l) : null);
+                setCmp(pid, 'use_sop', l.length);
             }
             const completed = done(list);
             const sopDaily = dayBuckets(from, to, () => ({ on_time: 0, late: 0, missed: 0, pending: 0 }));
@@ -418,8 +402,9 @@ export async function GET(request: NextRequest) {
             const isDone = (r: Row) => ['done', 'completed'].includes(str(r.status));
             const overdueByProp = byProperty(overdueRows, ids);
             for (const [pid, l] of byProperty(list, ids)) {
-                setCmp(pid, 'ppm_compliance', pct(l.filter(isDone).length, l.length));
+                setRate(pid, 'ppm_compliance', l.filter(isDone).length, l.length);
                 setCmp(pid, 'ppm_overdue', overdueByProp.get(pid)?.length || 0);
+                setCmp(pid, 'use_ppm', l.length);
             }
             const st = (v: string) => list.filter(r => str(r.status) === v).length;
             const done = list.filter(isDone).length;
@@ -452,7 +437,8 @@ export async function GET(request: NextRequest) {
             const main = list.filter(isMain);
             for (const [pid, l] of byProperty(list, ids)) {
                 const days = new Set(l.map(r => str(r.reading_date))).size;
-                setCmp(pid, 'elec_logging', l.length ? pct(days, dayCount) : null);
+                if (l.length) setRate(pid, 'elec_logging', days, dayCount); else setCmp(pid, 'elec_logging', null);
+                setCmp(pid, 'use_elec', l.length);
                 setCmp(pid, 'elec_units', l.length ? round1(l.filter(isMain).reduce((s, r) => s + units(r), 0)) : null);
             }
             const byMeter = new Map<string, { name: string; units: number; cost: number }>();
@@ -497,7 +483,8 @@ export async function GET(request: NextRequest) {
             );
             const litres = (r: Row) => Math.max(0, num(r.computed_consumed_litres));
             for (const [pid, l] of byProperty(list, ids)) {
-                setCmp(pid, 'diesel_logging', l.length ? pct(new Set(l.map(r => str(r.reading_date))).size, dayCount) : null);
+                if (l.length) setRate(pid, 'diesel_logging', new Set(l.map(r => str(r.reading_date))).size, dayCount); else setCmp(pid, 'diesel_logging', null);
+                setCmp(pid, 'use_diesel', l.length);
                 setCmp(pid, 'diesel_litres', l.length ? round1(l.reduce((s, r) => s + litres(r), 0)) : null);
             }
             const byGen = new Map<string, { name: string; litres: number; cost: number }>();
@@ -546,7 +533,8 @@ export async function GET(request: NextRequest) {
             const withProp: Row[] = list.map(r => ({ ...r, property_id: sourceProp.get(str(r.source_id)) || '' }));
             const sourcesByProp = byProperty(sources, ids);
             for (const [pid, l] of byProperty(withProp, ids)) {
-                setCmp(pid, 'water_logging', sourcesByProp.get(pid)?.length ? pct(new Set(l.map(r => str(r.reading_date))).size, dayCount) : null);
+                if (sourcesByProp.get(pid)?.length) setRate(pid, 'water_logging', new Set(l.map(r => str(r.reading_date))).size, dayCount); else setCmp(pid, 'water_logging', null);
+                setCmp(pid, 'use_water', l.length);
             }
             const bySource = new Map<string, { name: string; quantity: number; cost: number }>();
             for (const r of withProp) {
@@ -591,7 +579,8 @@ export async function GET(request: NextRequest) {
             for (const [pid, l] of byProperty(moves, ids)) {
                 const its = itemsByProp.get(pid) || [];
                 setCmp(pid, 'stock_low', its.length ? its.filter(isLow).length : null);
-                setCmp(pid, 'stock_activity', its.length ? pct(new Set(l.map(m => istDay(m.created_at))).size, dayCount) : null);
+                if (its.length) setRate(pid, 'stock_activity', new Set(l.map(m => istDay(m.created_at))).size, dayCount); else setCmp(pid, 'stock_activity', null);
+                setCmp(pid, 'use_stock', l.length);
             }
             const low = items.filter(isLow);
             const stockDaily = dayBuckets(from, to, () => ({ added: 0, removed: 0 }));
@@ -622,7 +611,7 @@ export async function GET(request: NextRequest) {
                 count(supabaseAdmin.from('asset_events').select('id', { count: 'exact', head: true })
                     .in('property_id', ids).gte('occurred_at', fromTs).lt('occurred_at', toTsExclusive)).catch(() => 0),
             ]);
-            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'assets_repair', l.length ? l.filter(a => str(a.status) === 'under_repair').length : null);
+            for (const [pid, l] of byProperty(list, ids)) { setCmp(pid, 'assets_repair', l.length ? l.filter(a => str(a.status) === 'under_repair').length : null); setCmp(pid, 'use_assets', l.length); }
             const in90 = addDays(today, 90);
             return {
                 truncated: list.length >= ROW_CAP,
@@ -671,6 +660,7 @@ export async function GET(request: NextRequest) {
             ]);
             for (const [pid, l] of byProperty(logs, ids)) {
                 setCmp(pid, 'visitors_total', l.length);
+                setCmp(pid, 'use_visitors', l.length);
                 setCmp(pid, 'visitors_inside', l.filter(v => !v.checkout_time).length);
             }
             const visitorDaily = dayBuckets(from, to, () => ({ visitors: 0 }));
@@ -700,6 +690,7 @@ export async function GET(request: NextRequest) {
             const hoursOf = (b: Row) => { const d = mins(str(b.end_time)) - mins(str(b.start_time)); return d > 0 ? d / 60 : 0; };
             const confirmed = list.filter(b => str(b.status) === 'confirmed');
             for (const [pid, l] of byProperty(confirmed, ids)) setCmp(pid, 'rooms_hours', round1(l.reduce((s, b) => s + hoursOf(b), 0)));
+            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'use_rooms', l.length);
             const roomDaily = dayBuckets(from, to, () => ({ bookings: 0, hours: 0 }));
             const byRoom = new Map<string, { name: string; bookings: number; hours: number }>();
             for (const b of confirmed) {
@@ -735,6 +726,7 @@ export async function GET(request: NextRequest) {
             for (const [pid, l] of byProperty(list, ids)) {
                 setCmp(pid, 'petty_paid', l.length ? sum(l, 'paid_amount') : null);
                 setCmp(pid, 'petty_pending', l.length ? pending(l) : null);
+                setCmp(pid, 'use_petty', l.length);
             }
             return {
                 requests: list.length,
@@ -756,7 +748,7 @@ export async function GET(request: NextRequest) {
                     .gte('created_at', fromTs).lt('created_at', toTsExclusive).range(0, ROW_CAP - 1),
             );
             const pending = (l: Row[]) => l.filter(r => ['pending', 'vendor_arranged'].includes(str(r.status))).length;
-            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'proc_pending', l.length ? pending(l) : null);
+            for (const [pid, l] of byProperty(list, ids)) { setCmp(pid, 'proc_pending', l.length ? pending(l) : null); setCmp(pid, 'use_proc', l.length); }
             return {
                 requests: list.length,
                 pending: pending(list),
@@ -783,7 +775,7 @@ export async function GET(request: NextRequest) {
             );
             const monthOf = (r: Row) => `${r.requisition_year}-${String(r.requisition_month).padStart(2, '0')}`;
             const inRange = list.filter(r => months.includes(monthOf(r)));
-            for (const [pid, l] of byProperty(inRange, ids)) setCmp(pid, 'req_submitted', Math.min(100, pct(l.length, months.length) ?? 0));
+            for (const [pid, l] of byProperty(inRange, ids)) { setRate(pid, 'req_submitted', Math.min(l.length, months.length), months.length); setCmp(pid, 'use_req', l.length); }
             const missing: string[] = [];
             for (const [pid, l] of byProperty(inRange, ids)) {
                 const have = new Set(l.map(monthOf));
@@ -805,7 +797,7 @@ export async function GET(request: NextRequest) {
                     .in('property_id', ids)
                     .gte('roster_date', from).lte('roster_date', to).range(0, ROW_CAP - 1),
             );
-            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'roster_coverage', pct(new Set(l.map(r => str(r.roster_date))).size, dayCount));
+            for (const [pid, l] of byProperty(list, ids)) { setRate(pid, 'roster_coverage', new Set(l.map(r => str(r.roster_date))).size, dayCount); setCmp(pid, 'use_roster', l.length); }
             const daysCovered = single
                 ? new Set(list.map(r => str(r.roster_date))).size
                 : Math.min(...Array.from(byProperty(list, ids).values()).map(l => new Set(l.map(r => str(r.roster_date))).size));
@@ -828,7 +820,7 @@ export async function GET(request: NextRequest) {
                     .gte('assigned_date', from).lte('assigned_date', to).range(0, ROW_CAP - 1),
             );
             const done = (l: Row[]) => l.filter(r => str(r.status) === 'completed').length;
-            for (const [pid, l] of byMember(list, 'employee_id')) setCmp(pid, 'tasks_completion', pct(done(l), l.length));
+            for (const [pid, l] of byMember(list, 'employee_id')) { setRate(pid, 'tasks_completion', done(l), l.length); setCmp(pid, 'use_tasks', l.length); }
             return {
                 truncated: list.length >= ROW_CAP,
                 total: list.length, completed: done(list),
@@ -845,7 +837,7 @@ export async function GET(request: NextRequest) {
             );
             const s = (l: Row[], v: string) => l.filter(r => str(r.status) === v).length;
             const compliance = (l: Row[]) => pct(s(l, 'compliant'), l.length - s(l, 'not_applicable'));
-            for (const [pid, l] of byProperty(list, ids)) setCmp(pid, 'audit_compliance', compliance(l));
+            for (const [pid, l] of byProperty(list, ids)) { setRate(pid, 'audit_compliance', s(l, 'compliant'), l.length - s(l, 'not_applicable')); setCmp(pid, 'use_audit', l.length); }
             return {
                 items: list.length, compliant: s(list, 'compliant'), pending_review: s(list, 'pending_review'), missing: s(list, 'missing'),
                 not_applicable: s(list, 'not_applicable'), compliance: compliance(list),
@@ -872,7 +864,7 @@ export async function GET(request: NextRequest) {
         range: { from, to, days: dayCount },
         generated_at: new Date().toISOString(),
         sections: {
-            tickets, guest_requests: guestRequests, hr_tickets: hr, sop, ppm, electricity, diesel, water, stock, assets, amc,
+            tickets, guest_requests: guestRequests, sop, ppm, electricity, diesel, water, stock, assets, amc,
             visitors, meeting_rooms: meetingRooms, petty_cash: pettyCash, procurement, requisitions, roster, tasks, audit, team,
         },
         comparative: single ? null : { metrics: COMPARATIVE_METRICS, values: comparative },
