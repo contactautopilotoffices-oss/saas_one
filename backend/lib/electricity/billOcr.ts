@@ -19,6 +19,9 @@
  * 'needs_manual_entry', surfaced in the Inbox review queue. Nothing is guessed.
  */
 
+import { ocrStep, withOcrActivity } from '@/backend/lib/ocr/activity';
+
+
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // Was qwen/qwen3.8-27b until 2026-09-05, when Groq
 // retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
@@ -155,7 +158,15 @@ export const CRITICAL_FIELDS = [
 ] as const;
 
 /** Parse one bill PDF. Never throws — failures come back as { parsed: null, error }. */
-export async function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
+export function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
+    return withOcrActivity(
+        { source: 'electricity', contentType: 'application/pdf', bytes: pdfBytes.length },
+        () => parseBillPdfImpl(pdfBytes),
+        (r) => ({ ok: !!r.parsed && !r.error, error: r.error ?? null }),
+    );
+}
+
+async function parseBillPdfImpl(pdfBytes: Buffer): Promise<BillOcrResult> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return { parsed: null, payload: {}, error: 'GROQ_API_KEY not set' };
 
@@ -166,7 +177,9 @@ export async function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
         return { parsed: null, payload: {}, error: `pdf text extraction failed: ${e instanceof Error ? e.message : e}` };
     }
 
+    const groqStart = Date.now();
     const content = await callGroq(apiKey, text ? textContent(text) : await imageContent(pdfBytes));
+    ocrStep({ step: 'text_model', ms: Date.now() - groqStart, ok: content.ok, model: MODEL, provider: 'groq', note: content.ok ? undefined : content.error });
     if (!content.ok) return { parsed: null, payload: content.payload, error: content.error };
 
     // The prompt asks for {fields, confidence}. Tolerate the older flat shape too, so a

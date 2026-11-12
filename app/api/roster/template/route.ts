@@ -45,6 +45,7 @@ export async function GET(request: NextRequest) {
                     .select('user_id, role, custom_designation, users:users!property_memberships_user_id_fkey(full_name)')
                     .eq('property_id', propertyId)
                     .eq('is_active', true)
+                    .or('hide_from_roster.is.null,hide_from_roster.eq.false')
                     .neq('role', 'vendor')
                     .neq('role', 'tenant')
                     .neq('role', 'super_tenant'),

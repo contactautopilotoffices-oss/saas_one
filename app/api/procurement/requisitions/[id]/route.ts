@@ -5,6 +5,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { resolveCaller, isCallerError, forbidden, guardOrg, propertyOrgId, canUseProperty } from '@/backend/lib/auth/callerAccess';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -20,6 +21,9 @@ export async function GET(
         if (!id) {
             return NextResponse.json({ error: 'Requisition ID is required' }, { status: 400 });
         }
+        // Sign-in first, so a missing and a forbidden requisition look the same to an outsider.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
 
         const adminSupabase = createAdminClient();
 
@@ -31,6 +35,11 @@ export async function GET(
 
         if (error || !req) {
             return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+        }
+        {
+            const orgId = req.organization_id || (req.property_id ? await propertyOrgId(req.property_id) : null);
+            const allowed = req.property_id ? canUseProperty(caller, req.property_id, orgId) : !!orgId && (await guardOrg(request, orgId)) === null;
+            if (!allowed) return forbidden('Forbidden: no access to this requisition');
         }
 
         let propertyObj: any = null;
@@ -65,7 +74,7 @@ export async function GET(
                 categories: parsedData.categories || [],
                 total_estimated_amount: parsedData.total_estimated_amount || req.total_estimated_amount || 0,
                 total_items_count: parsedData.items?.length || 0,
-                site_notes: parsedData.site_notes || (typeof req.notes === 'string' ? req.notes : ''),
+                site_notes: parsedData.site_notes || parsedData.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '',
                 vendor_quotation: siteVendorQuotation({ ...req, vendor_quotation: parsedData.vendor_quotation }),
                 approver_info: parsedData.approver_info || null,
                 po_info: parsedData.po_info || null
@@ -158,8 +167,9 @@ export async function PATCH(
             if (action === 'issue_po' && existing.status !== 'approved') {
                 return NextResponse.json({ error: 'Review and approve this requisition before issuing a PO.' }, { status: 409 });
             }
-            if (action === 'submit_for_approval' && !['submitted', 'uploaded', 'acknowledged', 'pending_approval', 'rejected'].includes(existing.status)) {
-                return NextResponse.json({ error: 'This requisition is already approved or ordered.' }, { status: 409 });
+            // A quote already sent is replaced through the re-approval route, which flags the change for the approver.
+            if (action === 'submit_for_approval' && !['submitted', 'uploaded', 'acknowledged'].includes(existing.status)) {
+                return NextResponse.json({ error: 'This requisition was already sent for approval. Use Replace Comparison File to upload a corrected file.' }, { status: 409 });
             }
             if (action === 'issue_po') {
                 const poNumber = formData.get('po_number') as string || '';
@@ -182,7 +192,7 @@ export async function PATCH(
                         .upload(poPath, buffer, { upsert: true, contentType: poFile.type || 'application/octet-stream' });
 
                     if (!poUploadErr && uploadData) {
-                        poFileUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+                        poFileUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
                         poFileName = poFile.name;
                     }
                 }
@@ -225,7 +235,7 @@ export async function PATCH(
                         .upload(quotePath, buffer, { upsert: true, contentType: quoteFile.type || 'application/octet-stream' });
 
                     if (!quoteUploadErr && uploadData) {
-                        fileUrl = adminSupabase.storage.from('procurement_requisitions').getPublicUrl(uploadData.path).data.publicUrl;
+                        fileUrl = `/api/storage/procurement_requisitions/${uploadData.path}`;
                         fileName = quoteFile.name;
                     }
                 }

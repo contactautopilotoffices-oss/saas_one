@@ -72,9 +72,9 @@ export default function Home() {
                 }
 
                 // 3. Check Org Membership from context
-                const ORG_ROUTED_ROLES = ['org_super_admin', 'ops_super_admin', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement'];
+                const ORG_ROUTED_ROLES = ['org_super_admin', 'ops_super_admin', 'tech', 'it', 'design', 'super_tenant', 'owner', 'admin', 'org_admin', 'maintenance_vendor', 'procurement'];
                 if (membership?.org_id && membership?.org_role && ORG_ROUTED_ROLES.includes(membership.org_role)) {
-                    router.replace(`/org/${membership.org_id}/dashboard`);
+                    router.replace('/dashboard');
                     return;
                 }
 

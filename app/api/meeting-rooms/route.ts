@@ -68,7 +68,8 @@ export async function POST(request: NextRequest) {
             capacity,
             size,
             amenities,
-            status = 'active'
+            status = 'active',
+            hourly_rate
         } = body;
 
         if (!name || !photo_url || !propertyId || !capacity) {
@@ -119,6 +120,16 @@ export async function POST(request: NextRequest) {
             .eq('id', propertyId)
             .single();
 
+        // Price per hour is optional. Only sent when set, so creating rooms keeps working
+        // even before the hourly_rate migration is applied.
+        let hourlyRate: number | null = null;
+        if (hourly_rate !== undefined && hourly_rate !== null && hourly_rate !== '') {
+            hourlyRate = typeof hourly_rate === 'number' || typeof hourly_rate === 'string' ? Number(hourly_rate) : NaN;
+            if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
+                return NextResponse.json({ error: 'Price per hour must be a number of 0 or more' }, { status: 400 });
+            }
+        }
+
         const { data: room, error: insertError } = await supabase
             .from('meeting_rooms')
             .insert({
@@ -131,7 +142,8 @@ export async function POST(request: NextRequest) {
                 size,
                 amenities: amenities || [],
                 status,
-                created_by: user.id
+                created_by: user.id,
+                ...(hourlyRate !== null ? { hourly_rate: hourlyRate } : {})
             })
             .select('*')
             .single();

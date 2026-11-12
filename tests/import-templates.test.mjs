@@ -53,6 +53,12 @@ function makeSupabaseMock({ userId = 'u1', tables = {} } = {}) {
             select: () => api,
             eq: (k, v) => { filters.push((r) => r[k] === v); return api; },
             neq: (k, v) => { filters.push((r) => r[k] !== v); return api; },
+            or: (expr) => {
+                if (expr.includes('hide_from_roster')) {
+                    filters.push((r) => r.hide_from_roster === null || r.hide_from_roster === undefined || r.hide_from_roster === false);
+                }
+                return api;
+            },
             in: (k, arr) => { filters.push((r) => arr.includes(r[k])); return api; },
             insert: (data) => { op = 'insert'; payload = data; inserted.push({ table, data }); return api; },
             upsert: (data) => { op = 'upsert'; payload = data; inserted.push({ table, data }); return api; },
@@ -91,24 +97,36 @@ function makeMockFile(name, buffer, type) {
 
 test('PPM template downloads valid .xlsx and round-trips through POST /api/ppm/upload', async () => {
     const sb = makeSupabaseMock();
-    const templateHelpers = await loadRoute('backend/lib/excel/templateHelpers.ts');
+    const ppmTemplateLib = await loadRoute('backend/lib/ppm/template.ts');
     const mocks = {
         '@/frontend/utils/supabase/server': { createClient: async () => sb.client },
         '@/backend/lib/supabase/admin': { supabaseAdmin: sb.client },
-        '@/backend/lib/excel/templateHelpers': templateHelpers,
+        '@/backend/lib/ppm/template': ppmTemplateLib,
     };
 
     const ppmTemplate = await loadRoute('app/api/ppm/template/route.ts', mocks);
     const res = await ppmTemplate.GET();
     assert.equal(res.status, 200);
-    assert.match(res.headers.get('content-disposition'), /PPM_Schedule_Template\.xlsx/);
+    assert.match(res.headers.get('content-disposition'), /ppm_upload_template\.xlsx/);
 
+    // Fill one task row starting at Row 4 and round-trip through POST /api/ppm/upload
     const buf = Buffer.from(await res.arrayBuffer());
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = wb.getWorksheet('PPM Schedule');
+    assert.equal(ws.getRow(3).getCell(2).value, 'System Name');
+    ws.getRow(4).values = [
+        1, 'HVAC / Chiller', 'AHU Filter Cleaning', 'Clean filters', 'Monthly',
+        'CoolAir', '1st Floor', 'AHU', 'Vendor', 'Engineer',
+        new Date(Date.UTC(2026, 9, 10)), new Date(Date.UTC(2026, 9, 10)), 'Done',
+    ];
+    const editedBuf = Buffer.from(await wb.xlsx.writeBuffer());
+
     const ppmUpload = await loadRoute('app/api/ppm/upload/route.ts', mocks);
     const req = {
         formData: async () => ({
             get: (k) => {
-                if (k === 'file') return makeMockFile('PPM_Schedule_Template.xlsx', buf);
+                if (k === 'file') return makeMockFile('ppm_upload_template.xlsx', editedBuf);
                 if (k === 'organization_id') return 'org-1';
                 if (k === 'property_id') return 'prop-1';
                 return null;
@@ -119,12 +137,12 @@ test('PPM template downloads valid .xlsx and round-trips through POST /api/ppm/u
     const body = await uploadRes.json();
     assert.equal(uploadRes.status, 200, JSON.stringify(body));
     assert.equal(body.success, true);
-    assert.ok(body.inserted >= 4, `Expected >=4 parsed PPM records, got ${body.inserted}`);
+    assert.equal(body.inserted, 1);
 
     const insertedRows = sb.inserted.filter((x) => x.table === 'ppm_schedules').flatMap((x) => x.data);
     assert.equal(insertedRows[0].system_name, 'HVAC / Chiller');
     assert.equal(insertedRows[0].status, 'done');
-    assert.ok(/^\d{4}-10-10$/.test(insertedRows[0].planned_date), `Unexpected planned_date: ${insertedRows[0].planned_date}`);
+    assert.equal(insertedRows[0].planned_date, '2026-10-10');
 });
 
 test('Roster template downloads valid .xlsx and round-trips through POST /api/roster/import', async () => {
@@ -186,6 +204,11 @@ test('Snag template downloads .xlsx & .csv and round-trips through POST /api/tic
         '@/backend/lib/excel/templateHelpers': templateHelpers,
         '@/backend/lib/ticketing': { classifyTicket: () => ({ issue_code: 'HVAC-01', skill_group: 'technical', confidence: 'high' }) },
         '@/backend/lib/ticketing/assignment': { processIntelligentAssignment: async () => {} },
+        '@/backend/lib/ticketing/ticketNumberService': {
+            deriveOrgInitials: () => 'ORG',
+            derivePropertyInitials: () => 'PRP',
+            formatTicketNumber: () => 'TKT-001',
+        },
     };
 
     const snagTemplate = await loadRoute('app/api/tickets/bulk-import/template/route.ts', mocks);

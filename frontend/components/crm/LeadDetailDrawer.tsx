@@ -14,6 +14,7 @@ import AddEventModal from '@/frontend/components/crm/AddEventModal';
 import CallCoachPanel from '@/frontend/components/crm/CallCoachPanel';
 import { getStageVisual, COMMENT_REQUIRED_STAGES } from '@/frontend/lib/crm/stages';
 import { getSourceVisual } from '@/frontend/lib/crm/sourceIcons';
+import { parseSeatCount, seatRequirementText } from '@/backend/lib/crm/seatRequirement';
 import { TextShimmer } from '@/frontend/components/ui/text-shimmer';
 import { Toast } from '@/frontend/components/ui/Toast';
 
@@ -108,11 +109,17 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             setEditingField(null);
             return;
         }
-        const valToSend = field === 'seats'
-            ? (fieldDraft !== '' && !isNaN(Number(fieldDraft)) ? Number(fieldDraft) : null)
-            : (fieldDraft || null);
+        // Seat requirement is free text ("70 workstations and 4 cabins"); it is
+        // stored as typed, with its leading number kept in `seats` for the filters.
+        const isSeatRequirement = field === 'seats';
+        const seatText = fieldDraft.trim();
+        const payload: Record<string, any> = isSeatRequirement
+            ? { seats_detail: seatText || null, seats: parseSeatCount(seatText) }
+            : { [field]: fieldDraft || null };
 
-        if (valToSend === (lead[field] ?? null)) {
+        const currentVal = isSeatRequirement ? seatRequirementText(lead) : (lead[field] ?? null);
+        const nextVal = isSeatRequirement ? (seatText || null) : payload[field];
+        if (nextVal === (currentVal ?? null)) {
             setEditingField(null);
             return;
         }
@@ -121,11 +128,11 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
             const res = await fetch(`/api/crm/leads/${lead.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ [field]: valToSend }),
+                body: JSON.stringify(payload),
             });
             if (res.ok) {
                 const data = await res.json().catch(() => null);
-                const updated = data?.lead ? data.lead : ({ ...lead, [field]: valToSend } as CRMLead);
+                const updated = data?.lead ? data.lead : ({ ...lead, ...payload } as CRMLead);
                 setLead(updated);
                 onLeadUpdate?.(updated);
 
@@ -279,8 +286,8 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                 } else if (normQ.includes('timeline') || normQ.includes('move-in')) {
                     updatePayload.move_in_timeline = val;
                 } else if (normQ.includes('seat')) {
-                    const num = parseInt(val, 10);
-                    if (!isNaN(num)) updatePayload.seats = num;
+                    updatePayload.seats_detail = val || null;
+                    updatePayload.seats = parseSeatCount(val);
                 } else if (normQ.includes('name') || normQ.includes('contact person')) {
                     updatePayload.contact_person = val;
                 }
@@ -497,18 +504,39 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
     const handleLogTimelineAction = async (actionType: string, actionLabel: string) => {
         if (!leadId || !lead) return;
         try {
-            await fetch('/api/crm/notes', {
+            const res = await fetch('/api/crm/activities', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lead_id: leadId, note: `[${actionLabel}] logged` }),
+                body: JSON.stringify({
+                    lead_id: leadId,
+                    activity_type: actionType,
+                    description: `${actionLabel} logged`,
+                }),
             });
-            setActivities(prev => [{
-                id: `temp-${Date.now()}`, lead_id: leadId, user_id: '',
-                activity_type: actionType as any,
-                description: `${actionLabel} logged`,
-                metadata: {}, created_at: new Date().toISOString(),
-                user_info: { id: '', full_name: 'You', email: '' },
-            } as CRMActivity, ...prev]);
+            const data = await res.json().catch(() => null);
+            const nowIso = new Date().toISOString();
+            if (res.ok) {
+                setActivities(prev => [{
+                    id: data?.activity?.id || `temp-${Date.now()}`,
+                    lead_id: leadId,
+                    user_id: '',
+                    activity_type: actionType as any,
+                    description: `${actionLabel} logged`,
+                    metadata: {},
+                    created_at: nowIso,
+                    user_info: { id: '', full_name: 'You', email: '' },
+                } as CRMActivity, ...prev]);
+
+                if (actionType === 'call') {
+                    const updatedLead: CRMLead = {
+                        ...lead,
+                        first_call_at: lead.first_call_at || nowIso,
+                        last_contacted: nowIso,
+                    };
+                    setLead(updatedLead);
+                    onLeadUpdate?.(updatedLead);
+                }
+            }
         } catch {}
     };
 
@@ -704,6 +732,39 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                     </div>
                 )}
 
+                {/* Call Me Now SLA Action Banner */}
+                {lead?.outreach_button_tapped === 'Call me now' && (
+                    <div className="px-5 py-2.5 border-b border-border bg-amber-500/10 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                            {!lead.first_call_at ? (
+                                <>
+                                    <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-ping shrink-0" />
+                                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300 truncate">
+                                        🚨 Client tapped &quot;Call me now&quot; (10m SLA Active)
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                                    <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 truncate">
+                                        First call completed at {formatDate(lead.first_call_at)}
+                                    </p>
+                                </>
+                            )}
+                        </div>
+                        {!lead.first_call_at && (
+                            <button
+                                type="button"
+                                onClick={() => handleLogTimelineAction('call', 'Call Done')}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm transition-all shrink-0 flex items-center gap-1.5"
+                            >
+                                <Phone className="w-3.5 h-3.5" />
+                                Mark Call Done
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {/* Tabs */}
                 <div className="flex border-b border-border" data-tour="lead-tabs">
                     {(['overview', 'timeline', 'calls', 'notes'] as const).map(tab => (
@@ -750,7 +811,7 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                             {renderEditable('Secondary Contact', 'secondary_contact_number', lead.secondary_contact_number, <Phone className="w-4 h-4" />)}
                                             {renderEditable('Email', 'email', lead.email, <Mail className="w-4 h-4" />)}
                                             {renderEditable('City/Location', 'location', lead.location, <MapPin className="w-4 h-4" />)}
-                                            {renderEditable('Seat Requirement', 'seats', lead.seats, <Users className="w-4 h-4" />)}
+                                            {renderEditable('Seat Requirement', 'seats', seatRequirementText(lead), <Users className="w-4 h-4" />)}
                                         </div>
                                     </div>
 
@@ -1253,6 +1314,12 @@ export default function LeadDetailDrawer({ leadId, isOpen, onClose, onLeadUpdate
                                         </button>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={() => handleLogTimelineAction('call', 'Call Done')}
+                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800"
+                                        >
+                                            <Phone className="w-3.5 h-3.5" /> Call Done
+                                        </button>
                                         <button
                                             onClick={() => handleLogTimelineAction('site_visit', 'Visit Pending')}
                                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-xs font-bold hover:bg-amber-100 transition-colors dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800"

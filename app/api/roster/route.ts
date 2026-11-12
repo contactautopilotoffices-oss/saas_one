@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,6 +11,14 @@ export async function GET(request: NextRequest) {
         if (!propertyId || !monthStr) {
             return NextResponse.json({ error: 'propertyId and month are required' }, { status: 400 });
         }
+
+        // Signed-in internal staff of this property or its organisation only.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const orgId = await propertyOrgId(propertyId);
+        if (!orgId) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+        if (!canUseProperty(caller, propertyId, orgId)) return forbidden('Forbidden: no access to this property');
+        if (!/^\d{4}-\d{2}$/.test(monthStr)) return NextResponse.json({ error: 'month must be YYYY-MM' }, { status: 400 });
 
         // Calculate date range for the month
         const year = parseInt(monthStr.split('-')[0]);

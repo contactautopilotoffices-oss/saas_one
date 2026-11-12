@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Send, Star, User, ChevronRight, X, MessageSquare, Loader2, CheckCircle, Camera, Filter, Video, Play, Pause, Activity, AtSign, Search } from 'lucide-react';
+import { Plus, Send, Star, User, ChevronRight, X, MessageSquare, Loader2, CheckCircle, Camera, Filter, Video, Play, Pause, Activity, AtSign, Search, Paperclip, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTheme } from '@/frontend/context/ThemeContext';
@@ -9,6 +9,14 @@ import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import {
+    MAX_TICKET_FILES,
+    TICKET_ATTACHMENT_ACCEPT,
+    TicketFileIcon,
+    checkTicketFile,
+    formatFileSize,
+    uploadTicketFile,
+} from '@/frontend/components/tickets/TicketAttachments';
 
 interface Ticket {
     id: string;
@@ -73,6 +81,10 @@ export default function TenantTicketingDashboard({
     const [showCameraModal, setShowCameraModal] = useState(false);
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
+    // Owner 2026-11-03: optional documents / images attached to the request (uploaded after the ticket is created)
+    const [attachments, setAttachments] = useState<File[]>([]);
+    const [attachError, setAttachError] = useState<string | null>(null);
+    const attachInputRef = useRef<HTMLInputElement>(null);
     const [isInternal, setIsInternal] = useState(false);
     const [isCritical, setIsCritical] = useState(false);
     const [ratingTicket, setRatingTicket] = useState<Ticket | null>(null);
@@ -334,6 +346,19 @@ export default function TenantTicketingDashboard({
                     await fetch(endpoint, { method: 'POST', body: formData });
                 }
 
+                // Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
+                if (attachments.length > 0 && data.ticket?.id) {
+                    const failures: string[] = [];
+                    for (const file of attachments) {
+                        const err = await uploadTicketFile(data.ticket.id, file);
+                        if (err) failures.push(err);
+                    }
+                    setAttachError(failures.length
+                        ? `Request created, but ${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`
+                        : null);
+                }
+                setAttachments([]);
+
                 setDescription('');
                 setIsCritical(false);
                 setTaggedUser(null);
@@ -354,6 +379,23 @@ export default function TenantTicketingDashboard({
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const handleAttachPick = (list: FileList | null) => {
+        const picked = Array.from(list || []);
+        if (attachInputRef.current) attachInputRef.current.value = '';
+        if (!picked.length) return;
+        const problem = picked.map(checkTicketFile).find(Boolean);
+        if (problem) {
+            setAttachError(problem);
+            return;
+        }
+        if (attachments.length + picked.length > MAX_TICKET_FILES) {
+            setAttachError(`You can attach at most ${MAX_TICKET_FILES} files to a request.`);
+            return;
+        }
+        setAttachError(null);
+        setAttachments(prev => [...prev, ...picked]);
     };
 
     const handleRatingSubmit = async () => {
@@ -580,7 +622,7 @@ export default function TenantTicketingDashboard({
                                                                     </span>
                                                                 </div>
                                                                 <div className="min-w-0">
-                                                                    <p className="text-sm sm:text-xs font-semibold truncate">{u.full_name}</p>
+                                                                    <p className="text-sm sm:text-xs font-semibold truncate">{u.full_name}{u.role === 'it' && ' (IT)'}</p>
                                                                     {u.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{u.email}</p>}
                                                                 </div>
                                                             </div>
@@ -678,6 +720,42 @@ export default function TenantTicketingDashboard({
                                 </div>
                             )}
 
+                            {/* Attachments (optional) */}
+                            {attachments.length > 0 && (
+                                <ul className="mt-4 space-y-2">
+                                    {attachments.map((file, i) => (
+                                        <li key={`${file.name}-${i}`} className={`flex items-center gap-3 px-3 py-2 rounded-xl border ${isDark ? 'bg-[#0d1117] border-[#30363d]' : 'bg-slate-50 border-slate-200'}`}>
+                                            <TicketFileIcon name={file.name} className="w-4 h-4 text-primary flex-shrink-0" />
+                                            <span className={`flex-1 min-w-0 truncate text-xs font-bold ${isDark ? 'text-slate-200' : 'text-slate-700'}`} title={file.name}>{file.name}</span>
+                                            <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+                                                disabled={isSubmitting}
+                                                title="Remove file"
+                                                className="text-slate-400 hover:text-rose-500 transition-colors p-0.5 disabled:opacity-50"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                            {attachError && (
+                                <div className="mt-3 flex items-start gap-2 text-xs text-rose-500">
+                                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                    <span>{attachError}</span>
+                                </div>
+                            )}
+                            <input
+                                ref={attachInputRef}
+                                type="file"
+                                multiple
+                                accept={TICKET_ATTACHMENT_ACCEPT}
+                                className="hidden"
+                                onChange={(e) => handleAttachPick(e.target.files)}
+                            />
+
                             <div className="flex flex-col xl:flex-row items-stretch xl:items-center justify-between mt-6 md:mt-10 gap-4">
                                 <div className="flex flex-wrap items-center gap-2">
                                     <button
@@ -686,6 +764,18 @@ export default function TenantTicketingDashboard({
                                     >
                                         <Camera className="w-4 h-4" />
                                         <span>Camera</span>
+                                    </button>
+
+                                    {/* Attach files (optional: PDF, Word, Excel, images) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => attachInputRef.current?.click()}
+                                        disabled={isSubmitting || attachments.length >= MAX_TICKET_FILES}
+                                        title={attachments.length >= MAX_TICKET_FILES ? `At most ${MAX_TICKET_FILES} files` : 'Attach PDF, Word, Excel or images'}
+                                        className={`flex items-center justify-center gap-2 ${isDark ? 'text-slate-400 hover:text-white hover:bg-[#21262d]' : 'text-text-secondary hover:text-primary hover:bg-primary/5'} cursor-pointer transition-all text-[10px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl border border-border/10 bg-surface-elevated disabled:opacity-50 disabled:cursor-not-allowed`}
+                                    >
+                                        <Paperclip className="w-4 h-4" />
+                                        <span>Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}</span>
                                     </button>
 
                                     {/* Critical Priority Toggle - only for tenants */}

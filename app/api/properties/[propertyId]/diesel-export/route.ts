@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import * as XLSX from 'xlsx';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 // GET: Export diesel readings as Excel (DG-2 format)
 export async function GET(
@@ -8,6 +9,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 

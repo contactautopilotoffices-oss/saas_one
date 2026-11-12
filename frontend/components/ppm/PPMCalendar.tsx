@@ -2,10 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
-import { ChevronLeft, ChevronRight, ChevronDown, Upload, Download, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye, Download } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
-import { downloadTemplateFromUrl } from '@/frontend/utils/downloadTemplate';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface PPMSchedule {
     id: string;
@@ -77,6 +77,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [selectedTask, setSelectedTask] = useState<PPMSchedule | null>(null);
     const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
+    const [updateError, setUpdateError] = useState<string | null>(null);
 
     // Upload state
     // Active property filter — comes from props (global selector)
@@ -92,7 +93,6 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [uploadPropertyId, setUploadPropertyId] = useState(propertyId || '');
     const [isUploading, setIsUploading] = useState(false);
-    const [isDownloadingTemplate, setIsDownloadingTemplate] = useState(false);
     const [uploadResult, setUploadResult] = useState<{ success?: boolean; message?: string } | null>(null);
     const [isClearing, setIsClearing] = useState(false);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -194,6 +194,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
     const handleTaskClick = (task: PPMSchedule) => {
         setSelectedTask(task);
+        setUpdateError(null);
         setEditStatus(task.status);
         setEditDoneDate(task.done_date || new Date().toISOString().split('T')[0]);
         setEditRemark(task.remark || '');
@@ -207,12 +208,18 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const handleUpdateTask = async () => {
         if (!selectedTask) return;
         setIsUpdating(true);
+        setUpdateError(null);
         try {
+            // Keep the existing vendor link unless the company name was actually
+            // changed in this edit (a manual vendor override). Clearing it on every
+            // save would drop the task out of the vendor dashboard and the
+            // verification flow.
+            const vendorNameChanged = (editVendorName || '') !== (selectedTask.vendor_name || '');
             const payload: any = {
                 status: editStatus,
                 done_date: editStatus === 'done' ? (editDoneDate || new Date().toISOString().split('T')[0]) : null,
                 remark: editRemark || null,
-                vendor_id: null,
+                vendor_id: vendorNameChanged ? null : editVendorId,
                 vendor_name: editVendorName || null,
                 vendor_phone: editVendorPhone || null,
                 vendor_contact_person: editVendorContact || null,
@@ -228,7 +235,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             if (res.ok) {
                 await fetchSchedules();
                 setSelectedTask(null);
+            } else {
+                // Never fail silently — a dropped write here went unnoticed for months.
+                const detail = await res.json().catch(() => null);
+                setUpdateError(detail?.error || `Could not save this update (${res.status}). Please retry or report it.`);
             }
+        } catch (err) {
+            setUpdateError(err instanceof Error ? err.message : 'Could not save this update. Please check your connection and retry.');
         } finally {
             setIsUpdating(false);
         }
@@ -270,18 +283,6 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                 setSelectedTask(prev => prev ? { ...prev, invoice_url: null } : null);
             }
             await fetchSchedules();
-        }
-    };
-
-    const handleDownloadTemplate = async () => {
-        setIsDownloadingTemplate(true);
-        try {
-            await downloadTemplateFromUrl('/api/ppm/template', 'PPM_Schedule_Template.xlsx');
-        } catch (err: any) {
-            setUploadResult({ success: false, message: err?.message || 'Failed to download template' });
-            setShowUpload(true);
-        } finally {
-            setIsDownloadingTemplate(false);
         }
     };
 
@@ -383,24 +384,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                         ))}
                     </div>
                     {!readOnly && (
-                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                            <button
-                                onClick={handleDownloadTemplate}
-                                disabled={isDownloadingTemplate}
-                                title="Download PPM Excel template accepted by the importer"
-                                className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 bg-white text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-50 transition-all disabled:opacity-50"
-                            >
-                                {isDownloadingTemplate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-primary" />}
-                                <span className="hidden sm:inline">Template</span>
-                            </button>
-                            <button
-                                onClick={() => setShowUpload(true)}
-                                className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all"
-                            >
-                                <Upload className="w-4 h-4" />
-                                Upload Excel
-                            </button>
-                        </div>
+                        <button
+                            onClick={() => setShowUpload(true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0 ml-2"
+                        >
+                            <Upload className="w-4 h-4" />
+                            Upload Excel
+                        </button>
                     )}
                 </div>
             </div>
@@ -787,7 +777,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         </div>
                                         {selectedTask.attachments?.certificate || selectedTask.completion_doc_url ? (
                                             <div className="flex items-center gap-2">
-                                                <a href={(selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Certificate</a>
+                                                <a href={maskStorageUrl((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!) || ((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url!)} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Certificate</a>
                                                 {isEditMode && (
                                                     <button
                                                         onClick={() => handleAttachmentDelete(((selectedTask.attachments?.certificate as string) || selectedTask.completion_doc_url)!, 'doc')}
@@ -827,7 +817,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         </div>
                                         {selectedTask.attachments?.invoice || selectedTask.invoice_url ? (
                                             <div className="flex items-center gap-2">
-                                                <a href={(selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Invoice</a>
+                                                <a href={maskStorageUrl((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!) || ((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url!)} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-primary underline">View Invoice</a>
                                                 {isEditMode && (
                                                     <button
                                                         onClick={() => handleAttachmentDelete(((selectedTask.attachments?.invoice as string) || selectedTask.invoice_url)!, 'invoice')}
@@ -880,13 +870,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                 </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
-                                                <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.certificate) || selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
                                                     <FileText className="w-3.5 h-3.5 flex-shrink-0" /> Completion Certificate
                                                 </a>
                                             )}
                                             {selectedTask.attachments.invoice && (
-                                                <a href={selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.invoice) || selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs font-bold text-blue-700 underline">
                                                     <Receipt className="w-3.5 h-3.5 flex-shrink-0" /> Invoice
                                                 </a>
@@ -898,14 +888,25 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             <button
                                                 onClick={async () => {
                                                     setIsUpdating(true);
-                                                    await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
-                                                        method: 'PATCH',
-                                                        headers: { 'Content-Type': 'application/json' },
-                                                        body: JSON.stringify({ verification_status: 'verified' }),
-                                                    });
-                                                    setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'verified' } : s));
-                                                    setSelectedTask(t => t ? { ...t, verification_status: 'verified' } : t);
-                                                    setIsUpdating(false);
+                                                    setUpdateError(null);
+                                                    try {
+                                                        const res = await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+                                                            method: 'PATCH',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ verification_status: 'verified' }),
+                                                        });
+                                                        if (!res.ok) {
+                                                            const detail = await res.json().catch(() => null);
+                                                            setUpdateError(detail?.error || `Could not approve this proof (${res.status}). Please retry or report it.`);
+                                                            return;
+                                                        }
+                                                        setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'verified' } : s));
+                                                        setSelectedTask(t => t ? { ...t, verification_status: 'verified' } : t);
+                                                    } catch (err) {
+                                                        setUpdateError(err instanceof Error ? err.message : 'Could not approve this proof. Please check your connection and retry.');
+                                                    } finally {
+                                                        setIsUpdating(false);
+                                                    }
                                                 }}
                                                 disabled={isUpdating}
                                                 className="flex-1 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 flex items-center justify-center gap-1"
@@ -915,14 +916,25 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             <button
                                                 onClick={async () => {
                                                     setIsUpdating(true);
-                                                    await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
-                                                        method: 'PATCH',
-                                                        headers: { 'Content-Type': 'application/json' },
-                                                        body: JSON.stringify({ verification_status: 'rejected', status: 'pending' }),
-                                                    });
-                                                    setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'rejected', status: 'pending' } : s));
-                                                    setSelectedTask(t => t ? { ...t, verification_status: 'rejected', status: 'pending' } : t);
-                                                    setIsUpdating(false);
+                                                    setUpdateError(null);
+                                                    try {
+                                                        const res = await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+                                                            method: 'PATCH',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ verification_status: 'rejected', status: 'pending' }),
+                                                        });
+                                                        if (!res.ok) {
+                                                            const detail = await res.json().catch(() => null);
+                                                            setUpdateError(detail?.error || `Could not reject this proof (${res.status}). Please retry or report it.`);
+                                                            return;
+                                                        }
+                                                        setSchedules(prev => prev.map(s => s.id === selectedTask.id ? { ...s, verification_status: 'rejected', status: 'pending' } : s));
+                                                        setSelectedTask(t => t ? { ...t, verification_status: 'rejected', status: 'pending' } : t);
+                                                    } catch (err) {
+                                                        setUpdateError(err instanceof Error ? err.message : 'Could not reject this proof. Please check your connection and retry.');
+                                                    } finally {
+                                                        setIsUpdating(false);
+                                                    }
                                                 }}
                                                 disabled={isUpdating}
                                                 className="flex-1 py-2 bg-red-50 text-red-600 border border-red-200 text-xs font-bold rounded-xl hover:bg-red-100 disabled:opacity-60 flex items-center justify-center gap-1"
@@ -955,13 +967,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                 </button>
                                             ))}
                                             {selectedTask.attachments.certificate && (
-                                                <a href={selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.certificate) || selectedTask.attachments.certificate} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs text-emerald-700 hover:underline">
                                                     <FileText className="w-3.5 h-3.5 flex-shrink-0" /> Completion Certificate
                                                 </a>
                                             )}
                                             {selectedTask.attachments.invoice && (
-                                                <a href={selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
+                                                <a href={maskStorageUrl(selectedTask.attachments.invoice) || selectedTask.attachments.invoice} target="_blank" rel="noopener noreferrer"
                                                     className="flex items-center gap-2 text-xs text-emerald-700 hover:underline">
                                                     <Receipt className="w-3.5 h-3.5 flex-shrink-0" /> Invoice
                                                 </a>
@@ -981,6 +993,13 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                 >
                                     Edit Task Details
                                 </button>
+                            )}
+
+                            {updateError && (
+                                <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3">
+                                    <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                                    <p className="text-xs font-bold text-red-700">{updateError}</p>
+                                </div>
                             )}
 
                             {isEditMode && (
@@ -1011,23 +1030,6 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             </button>
                         </div>
                         <div className="p-5 space-y-4">
-                            {/* Step 1: Download template */}
-                            <div className="flex items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-                                <div className="min-w-0">
-                                    <p className="text-xs font-black text-slate-800">Download Parser Template (.xlsx)</p>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">Matches the 52-week PPM column &amp; date layout (data starts at Row 4).</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={handleDownloadTemplate}
-                                    disabled={isDownloadingTemplate}
-                                    className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-100 transition-all shrink-0 disabled:opacity-50"
-                                >
-                                    {isDownloadingTemplate ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5 text-primary" />}
-                                    Template
-                                </button>
-                            </div>
-
                             {/* Property selector */}
                             {properties.length > 0 && (
                                 <div>
@@ -1042,6 +1044,22 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                     </select>
                                 </div>
                             )}
+
+                            {/* Template download — the site team should start from this,
+                                not from a sheet of their own, or the columns land in the
+                                wrong fields on import. */}
+                            <a
+                                href="/api/ppm/template"
+                                download
+                                className="flex items-center gap-3 w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl hover:bg-slate-100 hover:border-slate-300 transition-all group"
+                            >
+                                <FileSpreadsheet className="w-5 h-5 text-primary flex-shrink-0" />
+                                <span className="flex-1 min-w-0">
+                                    <span className="block text-sm font-bold text-slate-800">Download the blank template</span>
+                                    <span className="block text-[11px] text-slate-500">Fill this and upload it back. A sheet with its own column order will import into the wrong fields.</span>
+                                </span>
+                                <Download className="w-4 h-4 text-slate-400 group-hover:text-primary flex-shrink-0" />
+                            </a>
 
                             {/* File drop zone */}
                             <label className={`flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-2xl cursor-pointer transition-all
@@ -1082,7 +1100,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             </button>
 
                             <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-                                Re-uploading will replace all existing Maintenance data for this property. Data starts from row 4. Columns after Checker should be month triplets (Planned Date · Done Date · Remark).
+                                Re-uploading replaces all existing Maintenance data for this property, so always upload the full sheet including past months and their Done Dates. Headers belong on row 3, data from row 4, and every three columns after Checker are one month (Planned Date · Done Date · Remark).
                             </p>
 
                             {/* Danger zone — clear all data */}
@@ -1155,7 +1173,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     >
                         <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
                             <a
-                                href={previewPhotoUrl}
+                                href={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={e => e.stopPropagation()}
@@ -1180,7 +1198,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             onClick={e => e.stopPropagation()}
                         >
                             <img
-                                src={previewPhotoUrl}
+                                src={maskStorageUrl(previewPhotoUrl) || previewPhotoUrl}
                                 alt="PPM Completion Proof"
                                 className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl border border-white/10"
                             />

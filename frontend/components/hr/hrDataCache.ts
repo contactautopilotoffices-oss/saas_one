@@ -37,32 +37,35 @@ class HRDataCache {
     private employees = new Map<string, CacheEntry<any[]>>();
     private properties = new Map<string, CacheEntry<any[]>>();
 
-    // Ticket Details (Instant re-open)
-    getTicketDetail(ticketId?: string | null): { data: any | null; isStale: boolean } {
+    // Ticket Details (Instant re-open, strictly scoped to userId to prevent cross-account ticket leak)
+    getTicketDetail(ticketId?: string | null, userId?: string | null): { data: any | null; isStale: boolean } {
         if (!ticketId) return { data: null, isStale: true };
-        const entry = this.ticketDetails.get(ticketId);
+        const key = userId ? `${userId}_${ticketId}` : ticketId;
+        const entry = this.ticketDetails.get(key);
         if (entry) {
             const isStale = Date.now() - entry.timestamp > TICKET_CACHE_TTL_MS;
             return { data: entry.data, isStale };
         }
-        const session = safeSessionGet<any>(`hr_ticket_detail_${ticketId}`);
+        const session = safeSessionGet<any>(`hr_ticket_detail_${key}`);
         if (session.data) {
-            this.ticketDetails.set(ticketId, { data: session.data, timestamp: Date.now() });
+            this.ticketDetails.set(key, { data: session.data, timestamp: Date.now() });
             return session;
         }
         return { data: null, isStale: true };
     }
 
-    setTicketDetail(ticketId: string | null | undefined, data: any): void {
+    setTicketDetail(ticketId: string | null | undefined, data: any, userId?: string | null): void {
         if (!ticketId) return;
-        this.ticketDetails.set(ticketId, { data, timestamp: Date.now() });
-        safeSessionSet(`hr_ticket_detail_${ticketId}`, data, TICKET_CACHE_TTL_MS);
+        const key = userId ? `${userId}_${ticketId}` : ticketId;
+        this.ticketDetails.set(key, { data, timestamp: Date.now() });
+        safeSessionSet(`hr_ticket_detail_${key}`, data, TICKET_CACHE_TTL_MS);
     }
 
-    invalidateTicketDetail(ticketId?: string | null): void {
+    invalidateTicketDetail(ticketId?: string | null, userId?: string | null): void {
         if (ticketId) {
-            this.ticketDetails.delete(ticketId);
-            try { sessionStorage.removeItem(`hr_ticket_detail_${ticketId}`); } catch {}
+            const key = userId ? `${userId}_${ticketId}` : ticketId;
+            this.ticketDetails.delete(key);
+            try { sessionStorage.removeItem(`hr_ticket_detail_${key}`); } catch {}
         } else {
             this.ticketDetails.clear();
         }
@@ -83,28 +86,25 @@ class HRDataCache {
         return { data: null, isStale: true };
     }
 
-    // Returns ANY cached ticket list for instant initial display on mount
-    getAnyTickets(orgId?: string): any[] | null {
-        // 1. Check in-memory entries matching orgId
+    // Returns cached ticket list strictly matching orgId AND userId for instant initial display on mount
+    getAnyTickets(orgId?: string, userId?: string): any[] | null {
+        if (!userId) return null;
+        const prefix = orgId ? `${orgId}_${userId}` : userId;
+
+        // 1. Check in-memory entries matching user prefix
         for (const [key, entry] of this.tickets.entries()) {
-            if (!orgId || key.startsWith(orgId) || key.includes(orgId)) {
+            if (key.includes(prefix)) {
                 if (Array.isArray(entry.data) && entry.data.length > 0) {
                     return entry.data;
                 }
             }
         }
-        // 2. Check any entry regardless of key in memory
-        for (const entry of this.tickets.values()) {
-            if (Array.isArray(entry.data) && entry.data.length > 0) {
-                return entry.data;
-            }
-        }
-        // 3. Check sessionStorage
+        // 2. Check sessionStorage strictly matching user prefix
         if (typeof window !== 'undefined') {
             try {
                 for (let i = 0; i < sessionStorage.length; i++) {
                     const k = sessionStorage.key(i);
-                    if (k && k.startsWith('hr_tickets_')) {
+                    if (k && k.startsWith(`hr_tickets_${prefix}`)) {
                         const val = safeSessionGet<any[]>(k);
                         if (val.data && Array.isArray(val.data) && val.data.length > 0) {
                             return val.data;

@@ -345,7 +345,7 @@ async function safeReply(io: VoiceIO, phone: string, text: string): Promise<bool
  */
 export async function handToBrain(input: { phone: string; messageId: string; text: string; prefix: string }, liveIO?: LiveIO): Promise<boolean> {
     const { claimSmartChat } = await import('../brain/live');
-    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice' });
+    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice', noBatch: true });
     if (!claim.handled) return false;
     if (claim.background) await claim.background();   // never throws: a problem becomes one apology
     return true;
@@ -390,6 +390,8 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
     const { transcribeVoiceNote } = await import('./VoiceTranscriber');
     const { cleanTranscript } = await import('./VoiceCleanup');
     const { engyBrainLlm } = await import('../brain/llm');
+    // Owner 2026-10-28: the models picked in the Control Center ("AI models"); today's models when none / on any problem
+    const { chainFor } = await import('../ai/AiModelSettings');
     const store = makeVoiceStore(supabaseAdmin);
     const llm = engyBrainLlm();
     return {
@@ -403,8 +405,8 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
             return user ? { employeeId: null, userId: user.id } : null;
         },
         download: url => fetchMediaSafely(url),
-        transcribe: input => transcribeVoiceNote(input),
-        cleanup: text => cleanTranscript(text, { llm }),
+        transcribe: async input => transcribeVoiceNote(input, { models: await chainFor('voice_transcribe') }),
+        cleanup: async text => cleanTranscript(text, { llm, models: await chainFor('voice_cleanup') }),
         tryBrain: input => handToBrain(input),
         getState: phone => store.get(phone),
         setState: (phone, state) => store.set(phone, state),

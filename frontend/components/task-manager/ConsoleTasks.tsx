@@ -3,16 +3,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import Board from '@/frontend/components/procurement/tasks/Board';
+import RemarkDialog from '@/frontend/components/procurement/tasks/RemarkDialog';
 import NotificationsView from '@/frontend/components/procurement/tasks/NotificationsView';
 import { Status, WTask } from '@/frontend/components/procurement/tasks/types';
 import { registerSessionCache } from '@/frontend/lib/dashboard/sessionCaches';
-import DateRangePicker, { DateRange, localDay, shiftDay } from './DateRangePicker';
+import { DateRange, localDay, shiftDay } from './DateRangePicker';
+import TaskRangeFilter from './assign/TaskRangeFilter';
+import SelectMenu from './assign/SelectMenu';
+import ZohoTasksButton from './ZohoTasksButton';
 
 /**
  * The superuser's own Task Manager view across ALL departments:
  *  - "Assigned to me": a board of the tasks they hold (move and delete)
  *  - "Assigned by me": the tasks they gave to others, grouped by department (status is shown; only the owner moves it)
- *  - Notifications: the department notification rules, with a department picker
+ *  - Notifications: the superuser's own notifications only
  * The server decides who may see and do what; this file only shows and sends. Nothing here animates on entry:
  * this screen is opened often, so it simply appears.
  */
@@ -23,12 +27,18 @@ interface ConsoleTask {
     locked: boolean; canLock: boolean;
     /** Owner 2026-10-15: still open from before the chosen dates. */
     isCarriedForward?: boolean;
+    /** Owner 2026-10-28: what the holder wrote when they marked it done. */
+    completionRemark?: string | null;
+    /** 2026-10-29: imported from Zoho Mail. */
+    fromZoho?: boolean;
 }
 export interface ConsoleData {
     actor: { userId: string; name: string };
     departments: string[];
     mine: ConsoleTask[];
     given: ConsoleTask[];
+    /** Owner 2026-10-28: the comment box when I mark one of my tasks done. */
+    completionRemark?: 'off' | 'ask' | 'required';
 }
 
 // Kept for the whole page load, so coming back to the tab shows the last data at once and refreshes quietly.
@@ -88,7 +98,7 @@ export function useConsoleTasks() {
     };
 
     /** Moves one of MY tasks. The screen changes at once and snaps back with a message if the server refuses. */
-    const moveTask = useCallback(async (taskId: string, next: Status) => {
+    const moveTask = useCallback(async (taskId: string, next: Status, remark?: string) => {
         const before = dataRef.current;
         if (!before) return;
         const task = before.mine.find(t => t.id === taskId);
@@ -96,7 +106,7 @@ export function useConsoleTasks() {
         const apply = (d: ConsoleData): ConsoleData => ({ ...d, mine: d.mine.map(t => (t.id === taskId ? { ...t, status: next } : t)) });
         setData(apply(before));
         try {
-            await post({ action: 'set_status', taskId, status: next });
+            await post({ action: 'set_status', taskId, status: next, ...(remark ? { remark } : {}) });
             load();
         } catch (err) {
             setData(before);
@@ -151,22 +161,6 @@ export function useConsoleTasks() {
     return { data, status, refreshing, notice, reload: load, moveTask, deleteTask, setLocked, addTask, range, setRange };
 }
 
-const field = 'rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs font-bold text-zinc-900 outline-none focus:border-indigo-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
-
-export function DepartmentSelect({ value, departments, onChange, allLabel, id }: {
-    value: string; departments: string[]; onChange: (v: string) => void; allLabel?: string; id: string;
-}) {
-    return (
-        <label htmlFor={id} className="flex items-center gap-2 text-[11px] font-black uppercase tracking-wider text-zinc-500">
-            Department
-            <select id={id} value={value} onChange={e => onChange(e.target.value)} className={`${field} normal-case tracking-normal`}>
-                {allLabel && <option value="All">{allLabel}</option>}
-                {departments.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-        </label>
-    );
-}
-
 function Notice({ notice }: { notice: ConsoleState['notice'] }) {
     if (!notice) return null;
     return (
@@ -195,16 +189,26 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const [view, setView] = useState<View>('mine');
     const [dept, setDept] = useState('All');
     const data = c.data;
+    // Owner 2026-10-28: "Remark on completion" — the box opens before one of my tasks is marked done
+    const [completingId, setCompletingId] = useState<string | null>(null);
+    const remarkMode = data?.completionRemark ?? 'ask';
+    const move = (taskId: string, next: Status) => {
+        const t = data?.mine.find(x => x.id === taskId);
+        if (next === 'completed' && remarkMode !== 'off' && t && t.status !== 'completed') { setCompletingId(taskId); return; }
+        void c.moveTask(taskId, next);
+    };
 
+    // Owner 2026-10-22: the department filter is for "Assigned by me" only; "Assigned to me" always shows all of yours
     const inDept = useCallback((t: ConsoleTask) => dept === 'All' || t.department === dept, [dept]);
-    const mine = useMemo(() => (data ? data.mine.filter(inDept) : []), [data, inDept]);
+    const mine = useMemo(() => (data ? data.mine : []), [data]);
     const given = useMemo(() => (data ? data.given.filter(inDept) : []), [data, inDept]);
 
     const boardTasks: WTask[] = useMemo(() => (data ? mine.map(t => ({
         id: t.id, title: t.title, description: null, ownerId: data.actor.userId, ownerName: data.actor.name, status: t.status,
         assignedDate: t.assignedDate, isCarriedForward: !!t.isCarriedForward, canChange: true, locked: t.locked, canLock: t.canLock,
-        meta: { from: t.personName, department: t.department },
+        meta: { from: t.personName, department: t.department }, completionRemark: t.completionRemark ?? null, fromZoho: !!t.fromZoho,
     })) : []), [data, mine]);
+    const completingTask = completingId ? boardTasks.find(t => t.id === completingId) || null : null;
 
     if (!data) return null;
 
@@ -221,24 +225,34 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
     const groups = DEPT_ORDER(given);
 
     return (
-        <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-                <div role="tablist" className="inline-flex max-w-full flex-wrap gap-1 rounded-2xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900">
-                    {([['mine', 'Assigned to me', data.mine.filter(inDept).length], ['given', 'Assigned by me', data.given.filter(inDept).length]] as const).map(([id, label, n]) => (
+        // `@container`: the shared Board lays out by this space, the same as on every department's Tasks tab
+        <div className="@container space-y-4">
+            {/* Owner 2026-10-22: the same controls as Assign & monitor */}
+            <div className="flex flex-wrap items-end gap-2">
+                <div role="tablist" aria-label="Whose tasks" className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-zinc-100 p-1 [scrollbar-width:none] dark:bg-zinc-800 [&::-webkit-scrollbar]:hidden">
+                    {([['mine', 'Assigned to me', data.mine.length], ['given', 'Assigned by me', given.length]] as const).map(([id, label, n]) => (
                         <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}
-                            className={`flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold ${view === id ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'}`}>
-                            {label}<span className="text-[10px] font-black tabular-nums text-zinc-400">{n}</span>
+                            className={`min-h-9 whitespace-nowrap rounded-lg px-3 text-[13px] font-bold ${view === id ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-900 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                            {label} <span className="font-semibold text-zinc-500">{n}</span>
                         </button>
                     ))}
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                    {/* Owner 2026-10-15: date range */}
-                    <DateRangePicker value={c.range} onChange={c.setRange} className="rounded-xl py-2" />
-                    <DepartmentSelect id="console-dept" value={dept} departments={data.departments} onChange={setDept} allLabel="All departments" />
-                    <button type="button" onClick={c.reload} disabled={c.refreshing} aria-label="Refresh" className="rounded-xl border border-zinc-200 bg-white p-2.5 text-zinc-500 hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-200">
-                        {c.refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                    </button>
-                </div>
+                <TaskRangeFilter value={c.range} onChange={c.setRange} />
+                {view === 'given' && (
+                    <div className="w-full sm:w-[260px]">
+                        <SelectMenu label="Department" value={dept} onChange={setDept}
+                            options={[
+                                { value: 'All', label: 'All active departments', count: data.given.filter(t => t.status !== 'completed').length },
+                                ...data.departments.map(d => ({ value: d, label: d, count: data.given.filter(t => t.department === d && t.status !== 'completed').length })),
+                            ]} />
+                    </div>
+                )}
+                {/* 2026-10-29: copy the signed-in person's own Zoho Mail tasks into their list */}
+                <ZohoTasksButton onSynced={() => { void c.reload(); }} />
+                <button type="button" onClick={c.reload} disabled={c.refreshing} aria-label="Refresh"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 hover:text-zinc-800 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:text-zinc-200">
+                    {c.refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </button>
             </div>
 
             <Notice notice={c.notice} />
@@ -253,7 +267,14 @@ export function ConsoleTasksView({ c }: { c: ConsoleState }) {
             </div>
 
             {view === 'mine' ? (
-                <Board tasks={boardTasks} meId={data.actor.userId} onMove={c.moveTask} onQuickAdd={c.addTask} onDelete={c.deleteTask} onLock={c.setLocked} instant />
+                <>
+                    <Board tasks={boardTasks} meId={data.actor.userId} onMove={move} onQuickAdd={c.addTask} onDelete={c.deleteTask} onLock={c.setLocked} instant />
+                    <RemarkDialog
+                        task={completingTask} completing={remarkMode === 'required' ? 'required' : 'ask'} onClose={() => setCompletingId(null)}
+                        onSkip={id => void c.moveTask(id, 'completed')}
+                        onSave={async (id, remark) => { await c.moveTask(id, 'completed', remark); return true; }}
+                    />
+                </>
             ) : (
                 <div className="space-y-3">
                     {groups.length === 0 && <p className="rounded-2xl border border-dashed border-zinc-300 p-6 text-center text-xs text-zinc-500 dark:border-zinc-700">You have not given any tasks{dept === 'All' ? '' : ` in ${dept}`}.</p>}
@@ -300,32 +321,7 @@ function DEPT_ORDER(items: ConsoleTask[]): Array<[string, ConsoleTask[]]> {
     return Array.from(map.entries()).sort((a, b) => b[1].filter(t => t.status !== 'completed').length - a[1].filter(t => t.status !== 'completed').length || a[0].localeCompare(b[0]));
 }
 
-export function ConsoleNotifications({ departments }: { departments: string[] }) {
-    const [scope, setScope] = useState<'me' | 'dept'>('me');
-    return (
-        <div className="space-y-4">
-            <div role="tablist" className="inline-flex max-w-full flex-wrap gap-1 rounded-2xl border border-zinc-200 bg-zinc-100/80 p-1 dark:border-zinc-800 dark:bg-zinc-900">
-                {([['me', 'My notifications'], ['dept', 'Department notifications']] as const).map(([id, label]) => (
-                    <button key={id} type="button" role="tab" aria-selected={scope === id} onClick={() => setScope(id)}
-                        className={`rounded-xl px-3.5 py-2 text-xs font-bold ${scope === id ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100' : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'}`}>{label}</button>
-                ))}
-            </div>
-            {scope === 'me' ? <NotificationsView personal /> : <DepartmentNotifications departments={departments} />}
-        </div>
-    );
-}
-
-function DepartmentNotifications({ departments }: { departments: string[] }) {
-    const [dept, setDept] = useState(departments.includes('Procurement') ? 'Procurement' : departments[0] || '');
-    useEffect(() => { if (!dept && departments[0]) setDept(departments[0]); }, [dept, departments]);
-    if (!dept) return <p className="rounded-2xl border border-dashed border-zinc-300 p-6 text-center text-xs text-zinc-500 dark:border-zinc-700">No departments to configure yet.</p>;
-    return (
-        <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-zinc-500">Choose a department to see and change when its Task Manager messages go out.</p>
-                <DepartmentSelect id="console-notif-dept" value={dept} departments={departments} onChange={setDept} />
-            </div>
-            <NotificationsView key={dept} departmentName={dept} />
-        </div>
-    );
+/** Owner 2026-10-22: only the superuser's OWN notifications here; departments set up their own on their Tasks tab. */
+export function ConsoleNotifications() {
+    return <NotificationsView personal />;
 }

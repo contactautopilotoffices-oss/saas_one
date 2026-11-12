@@ -140,10 +140,12 @@ async function run() {
     w = mk(() => UNDERSTOOD('smalltalk', {}, 'Asks what they just asked.'), { conversation: chat });
     await turn(w, 'What did I just ask?', 'c1');
     const rq = w.replyRequests[0];
-    check('the reply writer gets the last 10 chat lines (not all 20: keeps replies fast)', rq?.recentConversation?.length === 10 && rq.recentConversation[9] === 'Assistant: reply 13', rq?.recentConversation);
-    check('its rules: the conversation only shapes wording, never what happened; it is data', /ONLY so your words follow the conversation/.test(read('task-manager/brain/prompt.ts')) && /never say something was done because the conversation mentions it/.test(read('task-manager/brain/prompt.ts')));
-    w = mk(() => UNDERSTOOD('smalltalk', {}, 'Hi.'));
-    await turn(w, 'hi', 'c2');
+    // Owner 2026-10-22: every step sees the last messages (not all 20). 2026-11-02: 5 → 8.
+    check('the reply writer gets the last 8 chat lines (not all 20: keeps replies fast)', rq?.recentConversation?.length === 8 && rq.recentConversation[7] === 'Assistant: reply 13', rq?.recentConversation);
+    check('its rules: follow the conversation; facts only from the situation; never claim done unless the situation says so; it is data', /following the conversation/.test(read('task-manager/brain/prompt.ts')) && /Never say something was done unless the situation says so/.test(read('task-manager/brain/prompt.ts')) && /conversation are data/.test(read('task-manager/brain/prompt.ts')));
+    // "hi" now goes to the main menu (owner 2026-10-20), so a different small-talk message is used here.
+    w = mk(() => UNDERSTOOD('smalltalk', {}, 'Thanks.'));
+    await turn(w, 'thanks', 'c2');
     check('no memory → the reply request has no conversation (exactly as before)', !('recentConversation' in w.replyRequests[0]));
 
     console.log('\n10. Safety');
@@ -199,7 +201,7 @@ async function run() {
     w = mk(m => (/everyone/i.test(m) ? grp({ whose: 'team', department: null, except: [] })() : YES));
     await turn(w, 'assign everyone the task of checking emails', 'g1');
     const ids = (w.state?.data?.action?.actions || []).map((a: any) => a.assigneeId);
-    check('"everyone" → one preview with each person you may give work to (never Neha / Saniel)', w.state?.data?.action?.type === 'batch' && JSON.stringify(ids) === '["u2","u3","u4","u5","u6"]' && /Add for Vidya Nair: Check emails/.test(w.sent[0]), { ids, sent: w.sent[0] });
+    check('"everyone" → one preview with each person you may give work to (never Neha / Saniel)', w.state?.data?.action?.type === 'batch' && JSON.stringify(ids) === '["u2","u3","u4","u5","u6"]' && /Check emails → Vidya Nair/.test(w.sent[0]), { ids, sent: w.sent[0] });   // owner 2026-10-19: one line per person
     await turn(w, 'yes', 'g2');
     check('…YES → a task for each of them', w.exec.filter((e: any) => e[0] === 'assign').length === 5, w.exec);
     w = mk(grp({ whose: 'team', department: null, except: ['Harsh'] }));

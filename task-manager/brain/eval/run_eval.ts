@@ -2,7 +2,11 @@
  * Measures the language brain against real models on the labelled English cases.
  *
  *   npx tsx task-manager/brain/eval/run_eval.ts --models qwen3.8-27b,glm-5.3-flash --out <folder> [--concurrency 6] [--only group] [--limit 20]
- *     [--set base|hinglish|team]   (Phase 4: base = the original English set, the default; team runs with the Team reports domain)
+ *     [--set base|real]   base = 15 cases (cases.ts), real = the 5 chats that went wrong (Sher, Sanil, follow-ups); --two-step = step 3's reading
+ *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs CLAUDE_API_KEY)
+ *
+ * COST RULE (owner 2026-10-22): every run is paid. The sets were cut to 20 cases in all; still never run more than needed: use --set real or
+ *   --only <group> --limit 10. Ask the owner before anything bigger. See docs/TASK_BRAIN_SPEC.md, "keep paid test runs small".
  *
  * MANUAL tool — it calls the AI provider (the key is read from .env and never printed), so it is NOT part of the normal
  * test run. It sends no WhatsApp message and touches no database: every case runs against a fake in-memory world.
@@ -24,7 +28,9 @@ for (const f of ['.env', '.env.local']) {
 // USD per million tokens, from backend/lib/council/llm.ts (the provider's own published rates)
 const PRICE: Record<string, [number, number]> = {
     'deepseek-v4-flash-0731': [0.045, 0.09], 'qwen3.6-35b-a3b': [0.045, 0.3], 'qwen3.8-27b': [0.045, 0.32],
-    'glm-5.3-flash': [0.135, 0.45], 'glm-5.2': [0.68, 1.5], 'glm-5.3': [0.98, 3.08], 'kimi-k3': [1.95, 9.75],
+    'glm-5.3-flash': [0.135, 0.45],
+    // Groq list prices as far as we know (check console.groq.com before relying on them)
+    'groq:openai/gpt-oss-120b': [0.15, 0.6], 'groq:openai/gpt-oss-20b': [0.075, 0.3], 'glm-5.2': [0.68, 1.5], 'glm-5.3': [0.98, 3.08], 'kimi-k3': [1.95, 9.75],
 };
 
 const arg = (name: string, fallback?: string) => { const i = process.argv.indexOf(`--${name}`); return i > -1 ? process.argv[i + 1] : fallback; };
@@ -43,11 +49,9 @@ async function main() {
 
     const set = arg('set', 'base') as string;
     const { EVAL_CASES } = await import('./cases');
-    const { HINGLISH_CASES, TEAM_CASES } = await import('./cases_phase4');
-    const { tasksDomainWithTeam } = await import('../tasksDomain');
-    const { facilityDomain } = await import('../facilityDomain');
-    const source = set === 'hinglish' ? HINGLISH_CASES : set === 'team' ? TEAM_CASES : EVAL_CASES;
-    const domains = set === 'team' ? [tasksDomainWithTeam, facilityDomain] : undefined;
+    const { REAL_CASES } = await import('./cases_real');
+    const twoStep = process.argv.includes('--two-step');
+    const source = set === 'real' ? REAL_CASES : EVAL_CASES;
     const { world } = await import('./worlds');
     const { scoreCase, summarize } = await import('./score');
     const { runBrain } = await import('../index');
@@ -91,12 +95,12 @@ async function main() {
                 const i = next++;
                 if (i >= cases.length) return;
                 const c = cases[i];
-                const ctx = world(c.world || 'default', c.pending ?? null);
+                const ctx = { ...world(c.world || 'default', c.pending ?? null), ...(c.conversation?.length ? { conversation: c.conversation } : {}) };
                 const started = Date.now();
                 const waited0 = waitedMs;
                 const warn = console.warn; console.warn = () => undefined;
                 let result;
-                try { result = await runBrain(c.message, ctx, { llm, interpretModels: [model], replyModels: [replyModel || model], ...(domains ? { domains } : {}) }); }
+                try { result = await runBrain(c.message, ctx, { llm, interpretModels: [model], replyModels: [replyModel || model], twoStep, rewriteModels: [replyModel || model] }); }
                 catch (err) { result = { status: 'ai_unavailable' as const, interpretation: null, decision: null, reply: null, trace: { fastPath: false, interpretModel: null, replyModel: null, interpretMs: 0, replyMs: 0, tokensIn: 0, tokensOut: 0, failures: [String(err)] } }; }
                 console.warn = warn;
                 const score = scoreCase(c, result as any);
@@ -125,7 +129,7 @@ async function main() {
             byGroup[g] = `${gr.filter(r => r.pass).length}/${gr.length}`;
         }
         const stats = {
-            model, replyModel: replyModel || model, thinking, ...sum,
+            model, replyModel: replyModel || model, thinking, twoStep, ...sum,
             replyFallbackRate: replies.length ? Math.round((replies.filter(r => r.reply.source === 'fallback').length / replies.length) * 1000) / 10 : 0,
             medianMs: median(rows.map(r => r.ms)), p90Ms: pctl(rows.map(r => r.ms), 0.9),
             medianInterpretMs: median(llmRows.map(r => r.interpretMs)),
@@ -133,7 +137,7 @@ async function main() {
             wallSeconds: Math.round((Date.now() - t0) / 100) / 10, byGroup,
         };
         all[model] = { stats, rows };
-        fs.writeFileSync(path.join(outDir, `eval_${set === "base" ? "" : set + "_"}${model.replace(/[^a-z0-9.-]/gi, '_')}${replyModel ? '__reply_' + replyModel.replace(/[^a-z0-9.-]/gi, '_') : ''}_${thinking}.json`), JSON.stringify({ stats, rows }, null, 2));
+        fs.writeFileSync(path.join(outDir, `eval_${set === "base" ? "" : set + "_"}${model.replace(/[^a-z0-9.-]/gi, '_')}${replyModel ? '__reply_' + replyModel.replace(/[^a-z0-9.-]/gi, '_') : ''}_${thinking}${twoStep ? '_twostep' : ''}.json`), JSON.stringify({ stats, rows }, null, 2));
         console.log(JSON.stringify(stats));
     }
     fs.writeFileSync(path.join(outDir, set === 'base' ? 'eval_all.json' : `eval_all_${set}.json`), JSON.stringify(all, null, 2));

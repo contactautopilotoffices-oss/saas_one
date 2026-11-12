@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Download, Loader2, AlertCircle, Play } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface VideoPreviewModalProps {
     isOpen: boolean;
@@ -12,6 +13,7 @@ interface VideoPreviewModalProps {
 }
 
 const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, videoUrl, title }) => {
+    const safeVideoUrl = maskStorageUrl(videoUrl) || videoUrl;
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [loadError, setLoadError] = useState(false);
@@ -21,7 +23,7 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
 
     // Fetch video as blob when modal opens — avoids CORS/range-request issues with Supabase URLs
     useEffect(() => {
-        if (!isOpen || !videoUrl) return;
+        if (!isOpen || !safeVideoUrl) return;
 
         let cancelled = false;
         setIsLoading(true);
@@ -30,7 +32,7 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
 
         (async () => {
             try {
-                const res = await fetch(videoUrl);
+                const res = await fetch(safeVideoUrl);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const blob = await res.blob();
                 if (cancelled) return;
@@ -47,7 +49,7 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
         return () => {
             cancelled = true;
         };
-    }, [isOpen, videoUrl]);
+    }, [isOpen, safeVideoUrl]);
 
     // Revoke blob URL when modal closes
     useEffect(() => {
@@ -59,10 +61,10 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
     }, [isOpen]);
 
     const handleDownload = async () => {
-        if (!videoUrl) return;
+        if (!safeVideoUrl) return;
         setIsDownloading(true);
         try {
-            const res = await fetch(videoUrl);
+            const res = await fetch(safeVideoUrl);
             const blob = await res.blob();
             const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
             const url = URL.createObjectURL(blob);
@@ -74,13 +76,13 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         } catch {
-            if (videoUrl) window.open(videoUrl, '_blank');
+            if (safeVideoUrl) window.open(safeVideoUrl, '_blank');
         } finally {
             setIsDownloading(false);
         }
     };
 
-    if (!isOpen || !videoUrl) return null;
+    if (!isOpen || !safeVideoUrl) return null;
 
     return (
         <AnimatePresence>
@@ -147,7 +149,7 @@ const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({ isOpen, onClose, 
                                 <AlertCircle size={32} />
                                 <span className="text-xs font-bold uppercase tracking-widest">Failed to load video</span>
                                 <button
-                                    onClick={() => window.open(videoUrl, '_blank')}
+                                    onClick={() => window.open(safeVideoUrl, '_blank')}
                                     className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center gap-2"
                                 >
                                     <Play size={12} /> Open in new tab

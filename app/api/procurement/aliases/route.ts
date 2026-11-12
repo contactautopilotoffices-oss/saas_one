@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { normalizeText, CANONICAL_PROPERTY_ALIASES } from '@/backend/lib/procurement/pricingAndAliasService';
+import { resolveCaller, isCallerError, forbidden, guardOrg, propertyOrgId } from '@/backend/lib/auth/callerAccess';
+import { isProcurementAdmin } from '@/backend/lib/auth/procurementAccess';
 
 export async function GET(request: NextRequest) {
     try {
@@ -9,6 +11,10 @@ export async function GET(request: NextRequest) {
 
         if (!organizationId) {
             return NextResponse.json({ error: 'organization_id is required' }, { status: 400 });
+        }
+        {
+            const denied = await guardOrg(request, organizationId);
+            if (denied) return denied;
         }
 
         const adminSupabase = createAdminClient();
@@ -53,6 +59,12 @@ export async function POST(request: NextRequest) {
 
         if (!organization_id || !property_id || !alias_name) {
             return NextResponse.json({ error: 'Missing required fields: organization_id, property_id, alias_name' }, { status: 400 });
+        }
+        {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            if (!isProcurementAdmin(caller, organization_id)) return forbidden('Forbidden: procurement or admin access is required');
+            if ((await propertyOrgId(property_id)) !== organization_id) return NextResponse.json({ error: 'Property does not belong to this organization' }, { status: 400 });
         }
 
         const normalizedAlias = normalizeText(alias_name);

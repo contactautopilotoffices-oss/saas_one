@@ -43,6 +43,7 @@ function database(records, failId = '') {
             },
             eq(key, value) { selected = selected.filter(row => row[key] === value); return this; },
             in(key, values) { selected = selected.filter(row => values.includes(row[key])); return this; },
+            like(key, pattern) { const part = pattern.replace(/^%|%$/g, ''); selected = selected.filter(row => String(row[key] || '').includes(part)); return this; },
             update(value) { patch = value; return this; },
             async single() { return this.maybeSingle(); },
             async maybeSingle() {
@@ -56,17 +57,20 @@ function database(records, failId = '') {
             }
         };
         return query;
-    } };
+    }, storage: { from: () => ({
+        async upload(path, body, options) { (records.__uploads ||= []).push({ path, options }); return { data: { path }, error: null }; },
+        getPublicUrl: path => ({ data: { publicUrl: 'https://files.test/' + path } })
+    }) } };
 }
 
-function loadRoute(path, records, actor, sent = [], failId = '') {
+function loadRoute(path, records, actor, sent = [], failId = '', uuid = '66666666-6666-4666-8666-666666666666') {
     const exports = {};
     const admin = database(records, failId);
     const source = readFileSync(new URL('../' + path, import.meta.url), 'utf8');
     const compiled = ts.transpileModule(source, { compilerOptions: {
         module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022
     } }).outputText;
-    vm.runInNewContext(compiled, { exports, console, crypto: { randomUUID: () => '66666666-6666-4666-8666-666666666666' }, Buffer,
+    vm.runInNewContext(compiled, { exports, console, crypto: { randomUUID: () => uuid }, Buffer, URL,
         require: name => {
             if (name === 'next/server') return { NextResponse: { json: Response.json } };
             if (name.endsWith('/server')) return { createClient: async () => ({ auth: { getUser: async () =>
@@ -74,8 +78,18 @@ function loadRoute(path, records, actor, sent = [], failId = '') {
             if (name.endsWith('/admin')) return { createAdminClient: () => admin };
             if (name.endsWith('requisition-approval.mjs')) return approval;
             if (name.endsWith('WhatsAppEventProcessor')) return { WhatsAppEventProcessor: { dispatch: async message => { if (failId === 'dispatch') throw new Error('Queue unavailable'); sent.push(message); } } };
-            if (name.endsWith('EmailRecipientResolver')) return { EmailRecipientResolver: { resolveRecipients: async () => ({ enabled: false, emails: [] }) } };
-            if (name.endsWith('EmailService')) return { EmailService: { sendGenericNotificationEmail: async () => {} } };
+            // Tests that set records.__emails see every email; others run with email switched off.
+            if (name.endsWith('EmailRecipientResolver')) return { EmailRecipientResolver: { resolveRecipients: async ({ contextualEmails = [] }) =>
+                records.__emails ? { enabled: true, emails: contextualEmails.length ? contextualEmails : ['team@example.test'] } : { enabled: false, emails: [] } } };
+            if (name.endsWith('EmailService')) return { EmailService: { sendGenericNotificationEmail: async email => { records.__emails?.push(email); } } };
+            if (name.endsWith('catalogAccess')) return { isMissingSchemaError: () => false };
+            // The single-requisition GET checks sign-in and membership; the PATCH and DELETE tested here keep their own checks.
+            if (name.endsWith('/auth/callerAccess')) return {
+                resolveCaller: async () => actor ? { userId: actor, isMasterAdmin: false, orgMemberships: [], propertyMemberships: [] } : Response.json({ error: 'Unauthorized' }, { status: 401 }),
+                isCallerError: value => value instanceof Response,
+                forbidden: (message = 'Forbidden') => Response.json({ error: message }, { status: 403 }),
+                guardOrg: async () => null, propertyOrgId: async () => null, canUseProperty: () => false,
+            };
             throw new Error('Unexpected import ' + name);
         }
     });
@@ -369,4 +383,227 @@ test('durable recipient resolution propagates failed settings, memberships and u
             contextualUsers: { approverId: reviewer }
         }), /Read unavailable/);
     }
+});
+
+
+// ---------------------------------------------------------------------------
+// Re-approval: procurement replaces the comparison file after sending it.
+// ---------------------------------------------------------------------------
+const batch = '66666666-6666-4666-8666-666666666666';
+const revisionId = '99999999-9999-4999-8999-999999999999';
+
+/** Both sites sent in one multi-site batch with the original comparison file. */
+function sentBatch() {
+    const records = fixture();
+    records.users[1].email = 'reviewer@example.test';
+    for (const row of records.property_monthly_requisitions) {
+        const notes = JSON.parse(row.notes);
+        notes.vendor_quotation = { ...approval.prepareBulkApproval([row], { batch_id: batch, vendor_name: 'Vendor Quote' })[0].vendor_quotation,
+            file_url: 'https://files.test/old.xlsx', file_name: 'old.xlsx', uploaded_at: now };
+        notes.approver_info = { id: reviewer, name: 'Reviewer', status: 'pending' };
+        notes.batch_id = batch;
+        row.notes = JSON.stringify(notes);
+        row.status = 'pending_approval';
+        row.uploaded_by = buyer;
+    }
+    return records;
+}
+
+function replaceForm(values = {}) {
+    const file = { name: 'fixed comparison.xlsx', size: 12, type: 'application/vnd.ms-excel', arrayBuffer: async () => new ArrayBuffer(12) };
+    const all = { organization_id: org, batch_id: batch, target_approver_id: reviewer, note: 'Fixed Noida quantity', quote_file: file, ...values };
+    return { formData: async () => ({ get: key => all[key] ?? null }) };
+}
+
+const reapprovalRoute = (records, actor, sent = [], failId = '') =>
+    loadRoute('app/api/procurement/requisitions/reapproval/route.ts', records, actor, sent, failId, revisionId);
+
+test('replacing the comparison file sends the whole batch back once, flagged as re-approval', async () => {
+    const records = sentBatch(), sent = [];
+    records.__emails = [];
+    const [noidaRow, plazaRow] = records.property_monthly_requisitions;
+    noidaRow.status = 'approved';
+    const approved = JSON.parse(noidaRow.notes);
+    approved.approver_info = { id: reviewer, name: 'Reviewer', status: 'approved', remarks: 'ok', action_at: now };
+    noidaRow.notes = JSON.stringify(approved);
+
+    const response = await reapprovalRoute(records, buyer, sent).POST(replaceForm());
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.revision, 2);
+    assert.equal(result.updated_count, 2);
+    assert.equal(result.approved_earlier_count, 1);
+    assert.deepEqual([noidaRow.status, plazaRow.status], ['pending_approval', 'pending_approval']);
+
+    for (const row of [noidaRow, plazaRow]) {
+        const quote = JSON.parse(row.notes).vendor_quotation;
+        assert.equal(quote.batch_id, batch, 'the batch keeps its id');
+        assert.equal(quote.revision, 2);
+        assert.equal(quote.is_reapproval, true);
+        assert.match(quote.file_url, /_rev2_fixed_comparison\.xlsx$/);
+        assert.deepEqual(quote.previous_files.map(file => [file.revision, file.file_url]), [[1, 'https://files.test/old.xlsx']]);
+        assert.equal(quote.reapproval_note, 'Fixed Noida quantity');
+        assert.equal(approval.usesBulkApprovalSummary(row), true, 'per-site outbox messages stay quiet');
+        assert.equal(JSON.parse(row.notes).status_history.at(-1).type, 'file_replaced');
+    }
+    assert.equal(JSON.parse(noidaRow.notes).vendor_quotation.previous_decision.status, 'approved');
+    assert.equal(JSON.parse(noidaRow.notes).approver_info.status, 'pending');
+    assert.deepEqual(JSON.parse(noidaRow.notes).items, [{ requested_qty: 2, unit_price: 8159 }]);
+    assert.deepEqual(JSON.parse(plazaRow.notes).vendor_quotation.total_quoted_amount, 73492, 'site amounts do not change');
+
+    assert.equal(records.__uploads.length, 1);
+    assert.equal(records.__uploads[0].options.upsert, false, 'the old file is never overwritten');
+
+    const summary = sent.filter(message => message.featureKey === 'requisition_approval_requested');
+    assert.equal(summary.length, 1, 'one WhatsApp summary to the approver');
+    assert.equal(summary[0].entityId, revisionId);
+    assert.match(summary[0].paramValues.notes, /RE-APPROVAL.*Rev 2.*1 site\(s\) approved earlier need approval again.*Fixed Noida quantity/);
+    const onHold = sent.filter(message => message.featureKey === 'requisition_status_updated');
+    assert.deepEqual(onHold.map(message => message.entityId), [noida + ':rev:2'], 'the site team hears its approval is on hold');
+    assert.equal(onHold[0].paramValues.status, 'PENDING RE-APPROVAL');
+
+    assert.equal(records.event_outbox.length, 1);
+    assert.equal(records.event_outbox[0].status, 'completed');
+    assert.equal(records.event_outbox[0].payload.revision_id, revisionId);
+    const subjects = records.__emails.map(email => email.subject);
+    assert.ok(subjects.some(subject => /^\[Re-Approval\] Comparison file updated for 2 monthly requisition\(s\) · Rev 2$/.test(subject)));
+    assert.ok(subjects.some(subject => /^\[Pending Re-Approval\] 1 approved/.test(subject)));
+    assert.equal(subjects.length, 2, 'same approver kept, so no "moved" email');
+});
+
+test('a second replacement raises the revision again and keeps every earlier file', async () => {
+    const records = sentBatch();
+    await reapprovalRoute(records, buyer).POST(replaceForm());
+    const response = await reapprovalRoute(records, buyer).POST(replaceForm({ note: '' }));
+    assert.equal(response.status, 200);
+    const quote = JSON.parse(records.property_monthly_requisitions[0].notes).vendor_quotation;
+    assert.equal(quote.revision, 3);
+    assert.deepEqual(quote.previous_files.map(file => file.revision), [1, 2]);
+});
+
+test('PO issued sites and approved sites with a confirmed delivery keep the old file', async () => {
+    const records = sentBatch(), sent = [];
+    const [noidaRow, plazaRow] = records.property_monthly_requisitions;
+    noidaRow.status = 'ordered';
+    plazaRow.status = 'approved';
+    records.requisition_deliveries = [{ requisition_id: plaza, status: 'confirmed' }];
+    const allLocked = await reapprovalRoute(records, buyer, sent).POST(replaceForm());
+    assert.equal(allLocked.status, 409);
+    assert.deepEqual((await allLocked.json()).locked.map(site => site.reason), ['PO already issued', 'Delivery already received']);
+    assert.equal(sent.length, 0);
+    assert.equal(records.__uploads, undefined, 'nothing uploaded when no site can take the file');
+
+    records.requisition_deliveries = [];
+    const partly = await reapprovalRoute(records, buyer, sent).POST(replaceForm());
+    assert.equal(partly.status, 200);
+    const result = await partly.json();
+    assert.equal(result.updated_count, 1);
+    assert.deepEqual(result.locked.map(site => site.id), [noida]);
+    assert.equal(noidaRow.status, 'ordered');
+    assert.equal(JSON.parse(noidaRow.notes).vendor_quotation.file_url, 'https://files.test/old.xlsx');
+    assert.equal(plazaRow.status, 'pending_approval');
+});
+
+test('replacing a file needs the file, procurement access and this organization', async () => {
+    const noFile = await reapprovalRoute(sentBatch(), buyer).POST(replaceForm({ quote_file: null }));
+    assert.equal(noFile.status, 400);
+    const anonymous = await reapprovalRoute(sentBatch(), null).POST(replaceForm());
+    assert.equal(anonymous.status, 401);
+    const records = sentBatch();
+    records.organization_memberships[0].organization_id = 'other-org';
+    const foreign = await reapprovalRoute(records, buyer).POST(replaceForm());
+    assert.equal(foreign.status, 403);
+    assert.equal(records.property_monthly_requisitions[0].status, 'pending_approval');
+    const both = await reapprovalRoute(sentBatch(), buyer).POST(replaceForm({ requisition_id: noida }));
+    assert.equal(both.status, 400);
+    const badApprover = await reapprovalRoute(sentBatch(), buyer).POST(replaceForm({ target_approver_id: buyer }));
+    assert.equal(badApprover.status, 400);
+});
+
+test('choosing a different approver tells the earlier approver the batch has moved', async () => {
+    const records = sentBatch();
+    records.__emails = [];
+    const other = '77777777-7777-4777-8777-777777777777';
+    records.users.push({ id: other, full_name: 'Other Admin', email: 'other@example.test' });
+    records.organization_memberships.push({ user_id: other, organization_id: org, role: 'org_super_admin', is_active: true });
+    const response = await reapprovalRoute(records, buyer).POST(replaceForm({ target_approver_id: other }));
+    assert.equal(response.status, 200);
+    assert.equal(JSON.parse(records.property_monthly_requisitions[0].notes).approver_info.id, other);
+    const moved = records.__emails.find(email => /moved to Other Admin/.test(email.subject));
+    assert.equal(moved?.emailTo, 'reviewer@example.test');
+});
+
+test('the confirm screen lists each site with what will happen to it', async () => {
+    const records = sentBatch();
+    records.property_monthly_requisitions[0].status = 'ordered';
+    const url = 'https://app.test/api?organization_id=' + org + '&batch_id=' + batch;
+    const response = await reapprovalRoute(records, buyer).GET({ url });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.revision, 1);
+    assert.equal(result.approver.id, reviewer);
+    assert.equal(result.file.name, 'old.xlsx');
+    assert.deepEqual(result.sites.map(site => [site.status, site.eligible]), [['ordered', false], ['pending_approval', true]]);
+});
+
+test('an approval against an older file revision is refused', async () => {
+    const records = sentBatch();
+    await reapprovalRoute(records, buyer).POST(replaceForm());
+    const params = { params: Promise.resolve({ id: noida }) };
+    const decide = revision => ({ json: async () => ({ action: 'approve', file_revision: revision }) });
+    const stale = await loadRoute('app/api/procurement/requisitions/[id]/approve/route.ts', records, reviewer).PATCH(decide(1), params);
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /Rev 2/);
+    assert.equal(records.property_monthly_requisitions[0].status, 'pending_approval');
+    const current = await loadRoute('app/api/procurement/requisitions/[id]/approve/route.ts', records, reviewer).PATCH(decide(2), params);
+    assert.equal(current.status, 200);
+    assert.equal(records.property_monthly_requisitions[0].status, 'approved');
+    assert.equal(JSON.parse(records.property_monthly_requisitions[0].notes).status_history.at(-1).revision, 2);
+});
+
+test('sites already sent cannot be silently overwritten by a new bulk or single upload', async () => {
+    const bulk = await loadRoute('app/api/procurement/requisitions/bulk-approval/route.ts', sentBatch(), buyer).POST(upload());
+    assert.equal(bulk.status, 409);
+    const params = { params: Promise.resolve({ id: noida }) };
+    const form = { headers: new Headers({ 'content-type': 'multipart/form-data' }),
+        formData: async () => ({ get: key => ({ action: 'submit_for_approval', target_approver_id: reviewer })[key] ?? null }) };
+    const records = sentBatch();
+    const single = await loadRoute('app/api/procurement/requisitions/[id]/route.ts', records, buyer).PATCH(form, params);
+    assert.equal(single.status, 409);
+    assert.equal(JSON.parse(records.property_monthly_requisitions[0].notes).vendor_quotation.file_name, 'old.xlsx');
+});
+
+test('outbox recovery after a replacement summarizes only the sites saved with that revision', async () => {
+    const records = sentBatch(), sent = [];
+    await reapprovalRoute(records, buyer, [], 'dispatch').POST(replaceForm());
+    assert.equal(records.event_outbox[0].status, 'failed', 'a failed send is left for the sweeper');
+    // Plaza was later sent again under another revision: the retry must not include it.
+    const plazaNotes = JSON.parse(records.property_monthly_requisitions[1].notes);
+    plazaNotes.vendor_quotation.revision_id = 'later-revision';
+    records.property_monthly_requisitions[1].notes = JSON.stringify(plazaNotes);
+    const handler = serviceMethod('backend/services/WhatsAppEventProcessor.ts', 'handleRequisitionApprovalBatchRequested',
+        'handleRequisitionApprovalRequested', { ...approval, supabaseAdmin: database(records) },
+        { dispatch: async value => sent.push(value) });
+    await handler(records.event_outbox[0].payload);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].entityId, revisionId);
+    assert.match(sent[0].paramValues.notes, /RE-APPROVAL/);
+    assert.doesNotMatch(sent[0].paramValues.property, /Plaza/);
+});
+
+test('a single-site quote can be replaced on its own', async () => {
+    const records = fixture();
+    const row = records.property_monthly_requisitions[0];
+    row.status = 'rejected';
+    row.notes = JSON.stringify({ ...JSON.parse(row.notes), vendor_quotation: { vendor_name: 'Vendor Quote', total_quoted_amount: 16318,
+        file_url: 'https://files.test/single.pdf', file_name: 'single.pdf' }, approver_info: { id: reviewer, name: 'Reviewer', status: 'rejected', remarks: 'Wrong rate' } });
+    const sent = [];
+    const response = await reapprovalRoute(records, buyer, sent).POST(replaceForm({ batch_id: null, requisition_id: noida }));
+    assert.equal(response.status, 200);
+    assert.equal(row.status, 'pending_approval');
+    const quote = JSON.parse(row.notes).vendor_quotation;
+    assert.equal(quote.previous_decision.remarks, 'Wrong rate');
+    assert.equal(quote.previous_files[0].file_name, 'single.pdf');
+    assert.equal(sent.filter(message => message.featureKey === 'requisition_approval_requested').length, 1);
+    assert.equal(records.property_monthly_requisitions[1].status, 'submitted');
 });

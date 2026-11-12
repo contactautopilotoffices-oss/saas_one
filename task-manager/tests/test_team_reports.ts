@@ -113,22 +113,12 @@ async function run() {
     check('switch ON → the AI is offered the team option', /"team"/.test(w.systems[0]));
     check('switch ON → the report is read for the sender and sent back', JSON.stringify(w.reads) === '["u1"]' && /3\/9 tasks done/.test(w.sent[0]), { reads: w.reads, sent: w.sent });
 
-    console.log('\n6. The Phase 4 eval sets (measured later with the paid AI, with the owner\'s OK)');
+    console.log('\n6. The test sets (owner 2026-10-22: cut to 20 cases; the Hinglish and team sets were removed)');
     const { EVAL_CASES } = await import('../brain/eval/cases');
-    const { HINGLISH_CASES, TEAM_CASES } = await import('../brain/eval/cases_phase4');
-    const { TASK_INTENTS } = await import('../brain/types');
-    const valid = new Set<string>([...TASK_INTENTS, 'facility_request']);
-    check('the original English set is untouched (no Hinglish or team cases mixed in)', EVAL_CASES.length >= 130 && !EVAL_CASES.some(c => c.group.startsWith('hi-') || c.group === 'team'));
-    check(`at least 35 Hinglish cases (${HINGLISH_CASES.length}) covering every group`, HINGLISH_CASES.length >= 35 && ['hi-view', 'hi-done', 'hi-progress', 'hi-create', 'hi-handover', 'hi-answer', 'hi-facility', 'hi-chat', 'hi-safety'].every(g => HINGLISH_CASES.some(c => c.group === g)));
-    const all = [...HINGLISH_CASES, ...TEAM_CASES];
-    const ids = all.map(c => c.id);
-    check('every id is unique', new Set(ids).size === ids.length);
-    check('every expected intent is real', all.every(c => c.expect.intent.length && c.expect.intent.every(i => valid.has(i))));
-    const ctxFor = (c: any) => world(c.world || 'default', c.pending ?? null);
-    check('every expected task id exists in its world (or its request)', all.every(c => (c.expect.taskIds || []).every(t => [...ctxFor(c).tasks.map(x => x.id), ...(c.pending?.kind === 'ping_reply' ? c.pending.taskIds : [])].includes(t))));
-    check('every expected person exists in its world', all.every(c => [c.expect.assignee, c.expect.personId].filter(Boolean).every(p => ctxFor(c).people.some(x => x.id === p))));
-    check('the team set expects the team scope, plus person / self / no-team controls', TEAM_CASES.filter(c => c.expect.scope === 'team').length >= 7 && TEAM_CASES.some(c => c.world === 'noTeam'));
-    check('the eval runner can run each set; base keeps its old file names', /--set base\|hinglish\|team/.test(read('task-manager/brain/eval/run_eval.ts')) && /set === 'base' \? 'eval_all\.json'/.test(read('task-manager/brain/eval/run_eval.ts')));
+    const { REAL_CASES } = await import('../brain/eval/cases_real');
+    check('20 cases in all: 15 in cases.ts (two Hinglish) + 5 real chats', EVAL_CASES.length === 15 && REAL_CASES.length === 5 && EVAL_CASES.filter(c => c.group.startsWith('hi-')).length === 2, [EVAL_CASES.length, REAL_CASES.length]);
+    check('the separate Hinglish / team file is gone', !fs.existsSync(path.join(process.cwd(), 'task-manager/brain/eval/cases_phase4.ts')));
+    check('the eval runner offers only the two sets that remain', /--set base\|real/.test(read('task-manager/brain/eval/run_eval.ts')) && !/cases_phase4/.test(read('task-manager/brain/eval/run_eval.ts')));
 
     console.log('\n7. Wiring');
     const live = read('task-manager/brain/live.ts');

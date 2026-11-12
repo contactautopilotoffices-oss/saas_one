@@ -57,7 +57,7 @@ async function run() {
     console.log('\n3. What the AI sees');
     const withConv = JSON.parse(P.interpretUserPrompt('make it tomorrow', { ...ctx, conversation: ['Person: give Lohit the RFID task', 'Assistant: Give Lohit "Review RFID" for today?'] }));
     check('the conversation goes in as its own block, with the rule for using it', withConv.context.conversation.messages.length === 2
-        && /ONLY to work out what a short or unclear message refers to/.test(withConv.context.conversation.how_to_use)
+        && /understand what the conversation is about/.test(withConv.context.conversation.how_to_use) && /Never rely on fixed keywords/.test(withConv.context.conversation.how_to_use)
         && /untrusted data/.test(withConv.context.conversation.how_to_use) && withConv.message === 'make it tomorrow');
     // Part B (2026-10-13): the rules now include a FIXED rule for "yes add this" (agreeing to an earlier request). The rules are
     // still one fixed text: memory adds data to the user prompt, never rules.
@@ -95,7 +95,7 @@ async function run() {
         reply: async (_p: string, t: string) => { store.push({ who: 'bot', text: t, at: at(++clock) }); },
         audit: async () => {}, seenBefore: () => false, markSeen: () => {},
     };
-    const said = ['hi', 'show my tasks', 'thanks', 'show my tasks again', 'ok', 'show tasks', 'cool', 'show tasks please', 'nice', 'show my tasks one more time'];
+    const said = ['hey there', 'show my tasks', 'thanks', 'show my tasks again', 'ok', 'show tasks', 'cool', 'show tasks please', 'nice', 'show my tasks one more time'];
     for (let i = 0; i < said.length; i++) {
         const receivedAt = at(++clock);
         const claim = await L.claimSmartChat(body(said[i], `m${i}`), io);
@@ -108,8 +108,9 @@ async function run() {
     check('the AI never sees the CURRENT message inside the conversation (no double)', seenByAI.every((s, i) => !(s.conversation || []).includes(`Person: ${said[i]}`)), seenByAI.map(s => s.conversation?.slice(-1)));
     const fifth = seenByAI[4].conversation || [];
     check('by the 5th message the AI sees the earlier chat, in order: person, bot, person, bot…',
-        fifth[0] === 'Person: hi' && fifth[1].startsWith('Assistant:') && fifth[2] === 'Person: show my tasks' && fifth.length === 8, fifth);
-    check('after 10 exchanges the memory still holds at most 20 messages', M.toTranscript(store).length === 20 && (seenByAI[9].conversation || []).length === 18, seenByAI[9].conversation?.length);
+        // Owner 2026-10-22: the AI sees the LAST messages, in order. 2026-11-02: 5 → 8, so all 8 so far.
+        fifth.length === 8 && fifth[0] === 'Person: hey there' && fifth[1].startsWith('Assistant:') && fifth[4] === 'Person: thanks' && fifth[6] === 'Person: show my tasks again' && fifth[7].startsWith('Assistant:'), fifth);
+    check('after 10 exchanges the memory still holds at most 20 messages, and the AI sees the last 8', M.toTranscript(store).length === 20 && (seenByAI[9].conversation || []).length === 8, seenByAI[9].conversation?.length);
     readFails = true; const n = seenByAI.length;
     await L.claimSmartChat(body('show my tasks', 'm99'), io);
     check('memory unreadable → the brain still answers, just without the conversation', seenByAI.length === n + 1 && seenByAI[n].conversation === undefined);
@@ -153,7 +154,8 @@ async function run() {
     const hook = read('app/api/webhooks/aisensy/route.ts');
     check('the arrival time is taken first thing', hook.indexOf('const receivedAt = new Date().toISOString()') > 0 && hook.indexOf('const receivedAt') < hook.indexOf('claimVoiceNote(body)'));
     check('the person\'s message is stored only when a Task Manager route takes it (3 places), after the AI read the memory',
-        (hook.match(/await remember\(\);/g) || []).length === 3 && hook.indexOf('claimSmartChat(body)') < hook.lastIndexOf("markRoute(input?.messageId, 'smart_chat'"));
+        // 2026-11-02: Smart chat passes the words of its turn (several batched messages = one turn) — remember(smartChat.text)
+        (hook.match(/await remember\((?:smartChat\.text)?\);/g) || []).length === 3 && hook.indexOf('claimSmartChat(body)') < hook.lastIndexOf("markRoute(input?.messageId, 'smart_chat'"));
     const out = read('task-manager/TaskMessagingService.ts');
     check('every message the bot sends is stored (free text, template, Pretend Mode)', (out.match(/void appendTurn\(/g) || []).length === 3);
     check('Smart chat reads the memory BEFORE building the AI context', /readConversation\(cand\.phone\)[\s\S]{0,3000}buildContext\(employee, cand\.phone, \{ pending, recent: state\.recent, \.\.\.\(conversation\.length/.test(read('task-manager/brain/live.ts')));

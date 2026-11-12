@@ -17,7 +17,8 @@
  * glm-5.3-flash, kimi-k3 and qwen3.8-27b.
  */
 
-import { resolveProvider } from '@/backend/lib/council/llm';
+import { resolveProvider, priceOf } from '@/backend/lib/council/llm';
+import { ocrStep } from '@/backend/lib/ocr/activity';
 import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
@@ -36,6 +37,8 @@ export interface VisionExtractInput {
     instruction: string;
     model?: string;
     maxTokens?: number;
+    /** Engy only: skip the model's hidden reasoning. Right for plain reading; wrong for judgement. */
+    thinkingOff?: boolean;
     /** When true, ask for response_format json_object. */
     json?: boolean;
 }
@@ -57,7 +60,7 @@ export interface VisionExtractResult {
  * Never throws: every failure comes back as { ok: false, error }, matching the
  * convention in documentBank/ocr.ts so a caller's control flow is unchanged.
  */
-export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
+async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtractResult> {
     const model = input.model || DEFAULT_VISION_MODEL;
 
     // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
@@ -93,6 +96,8 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
         messages: [{ role: 'user', content }],
     };
     if (input.json) body.response_format = { type: 'json_object' };
+    // Reading a page is not a puzzle: do not let the model spend its budget "thinking" (Engy only).
+    if (input.thinkingOff && /engy\./i.test(baseUrl)) body.thinking = { type: 'disabled' };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -149,4 +154,18 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
     } finally {
         clearTimeout(timer);
     }
+}
+
+/** The public entry point: the read itself, plus one step in the OCR activity log (tokens and cost included). */
+export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
+    const t0 = Date.now();
+    const r = await visionExtractRaw(input);
+    const rate = priceOf(r.model);
+    ocrStep({
+        step: 'vision_model', ms: Date.now() - t0, ok: r.ok, model: r.model, provider: r.provider,
+        tokens_in: r.usage?.prompt, tokens_out: r.usage?.completion,
+        cost_usd: r.usage ? (r.usage.prompt * rate.input + r.usage.completion * rate.output) / 1e6 : undefined,
+        note: `${input.pages.length} page image${input.pages.length === 1 ? '' : 's'}${r.ok ? '' : `: ${r.error ?? 'failed'}`}`,
+    });
+    return r;
 }

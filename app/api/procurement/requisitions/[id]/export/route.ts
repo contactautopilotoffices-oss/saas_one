@@ -33,7 +33,7 @@ export async function GET(
 
         // 2. Parse Items from notes JSON or structured fields
         let parsedItems: RequisitionItemData[] = [];
-        let siteNotes = req.notes || '';
+        let siteNotes = '';
         let requesterPhone = req.uploader?.phone || '';
 
         try {
@@ -42,7 +42,7 @@ export async function GET(
                 if (Array.isArray(parsed.items)) {
                     parsedItems = parsed.items;
                 }
-                siteNotes = parsed.site_notes || siteNotes;
+                siteNotes = parsed.site_notes || parsed.creator_notes || (typeof req.notes === 'string' && !req.notes.trim().startsWith('{') ? req.notes : '') || '';
                 requesterPhone = parsed.requester_phone || requesterPhone;
             } else if (req.notes && typeof req.notes === 'object' && Array.isArray(req.notes.items)) {
                 parsedItems = req.notes.items;

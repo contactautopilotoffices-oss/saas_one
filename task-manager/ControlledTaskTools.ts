@@ -17,6 +17,13 @@ export class ControlledTaskTools {
         return dept;
     }
 
+    /** Owner 2026-10-22: the people whose tasks this actor must not see (another superuser, when the actor is one). */
+    private static async hiddenIds(actor: Employee): Promise<Set<string>> {
+        if (actor.role !== 'superuser') return new Set();
+        const all = await TaskDatabaseService.getAllEmployees();
+        return new Set(all.filter(e => PermissionService.hiddenFrom(actor, e)).map(e => e.id));
+    }
+
     /**
      * Tool 1: get_organisation_progress
      * Scoped strictly to superusers.
@@ -58,14 +65,20 @@ export class ControlledTaskTools {
         }
 
         const data = await TaskProgressService.getDepartmentProgress(dept.id, params.date);
+        // Another superuser's work is left out entirely: their row and their numbers in the totals
+        const hidden = await this.hiddenIds(actor);
+        const rows = data.employeeProgress.filter(e => !hidden.has(e.employeeId));
+        const trimmed = rows.length !== data.employeeProgress.length;
+        const total = trimmed ? rows.reduce((n, e) => n + e.total, 0) : data.total;
+        const completed = trimmed ? rows.reduce((n, e) => n + e.completed, 0) : data.completed;
         return {
             departmentName: data.departmentName,
-            activeEmployees: data.activeEmployeeCount,
-            totalTasks: data.total,
-            completedTasks: data.completed,
-            pendingTasks: data.pending,
-            completionPercentage: `${data.percentage}%`,
-            employeeBreakdown: data.employeeProgress.map(e => ({
+            activeEmployees: trimmed ? rows.length : data.activeEmployeeCount,
+            totalTasks: total,
+            completedTasks: completed,
+            pendingTasks: trimmed ? total - completed : data.pending,
+            completionPercentage: trimmed ? `${total ? Math.round((completed / total) * 100) : 0}%` : `${data.percentage}%`,
+            employeeBreakdown: rows.map(e => ({
                 name: e.employeeName,
                 total: e.total,
                 completed: e.completed,
@@ -90,7 +103,8 @@ export class ControlledTaskTools {
 
         const date = params.date || new Date().toISOString().slice(0, 10);
         const emps = await TaskDatabaseService.getEmployeesByDepartment(dept.id);
-        const empIds = emps.map(e => e.id);
+        const hidden = await this.hiddenIds(actor);
+        const empIds = emps.map(e => e.id).filter(id => !hidden.has(id));
 
         if (empIds.length === 0) {
             return { department: dept.name, tasks: [] };
@@ -149,7 +163,8 @@ export class ControlledTaskTools {
             employees = [actor];
         }
 
-        const empIds = employees.map(e => e.id);
+        const hidden = await this.hiddenIds(actor);
+        const empIds = employees.map(e => e.id).filter(id => !hidden.has(id));
         if (empIds.length === 0) {
             return { pendingTasks: [] };
         }
@@ -198,6 +213,9 @@ export class ControlledTaskTools {
         }
 
         // Check access
+        if (PermissionService.hiddenFrom(actor, target)) {
+            throw new PermissionDeniedError('AI_TOOL_ACCESS', actor.id, "You can't see that person's tasks.");
+        }
         if (actor.role === 'employee' && actor.id !== target.id) {
             throw new PermissionDeniedError('AI_TOOL_ACCESS', actor.id, 'Cannot view other employee tasks');
         }

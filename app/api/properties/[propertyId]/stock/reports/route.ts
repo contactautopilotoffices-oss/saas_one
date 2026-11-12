@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { getPropertyStockSource } from '@/backend/lib/stock/propertyStock';
+import { liveItems as liveItemsFor, movementsForItems } from '@/frontend/lib/stock/itemSource';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -53,6 +58,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -79,8 +86,8 @@ export async function POST(
             return NextResponse.json({ error: 'Property not found' }, { status: 404 });
         }
 
-        // Get all stock items for this property
-        const { data: items, error: itemsError } = await supabase
+        // Get all stock items for this property, on the list it currently uses
+        const { data: allItems, error: itemsError } = await supabase
             .from('stock_items')
             .select('*')
             .eq('property_id', propertyId);
@@ -89,8 +96,11 @@ export async function POST(
             return NextResponse.json({ error: itemsError.message }, { status: 500 });
         }
 
+        const source = await getPropertyStockSource(propertyId);
+        const items = liveItemsFor(allItems || [], source);
+
         // Get movements for the report date
-        const { data: movements, error: movError } = await supabase
+        const { data: allMovements, error: movError } = await supabase
             .from('stock_movements')
             .select('*')
             .eq('property_id', propertyId)
@@ -100,6 +110,8 @@ export async function POST(
         if (movError) {
             return NextResponse.json({ error: movError.message }, { status: 500 });
         }
+
+        const movements = movementsForItems(allMovements || [], new Set(items.map(i => i.id)), source);
 
         // Calculate report data
         const totalItems = items?.length || 0;

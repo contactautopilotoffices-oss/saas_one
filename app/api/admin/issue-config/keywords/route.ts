@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError, forbidden } from '@/backend/lib/auth/callerAccess';
 
 const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,6 +9,10 @@ const supabaseAdmin = createClient(
 
 // POST: Add keyword(s) to an issue category
 export async function POST(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const body = await request.json();
         const { issue_category_id, keywords, match_type = 'contains' } = body;
@@ -48,6 +53,10 @@ export async function POST(request: NextRequest) {
 
 // DELETE: Remove a keyword
 export async function DELETE(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const { searchParams } = new URL(request.url);
         const id = searchParams.get('id');
@@ -89,6 +98,10 @@ export async function DELETE(request: NextRequest) {
 
 // PATCH: Update keyword match_type
 export async function PATCH(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const body = await request.json();
         const { id, match_type } = body;

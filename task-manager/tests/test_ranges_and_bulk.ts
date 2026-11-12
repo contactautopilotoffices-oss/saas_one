@@ -118,6 +118,8 @@ async function run() {
     const rev = read('frontend/components/task-manager/BotReviewSection.tsx'), pv = read('frontend/components/task-manager/PromptVersionsSection.tsx'), svc = read('task-manager/BotLearningService.ts'), blr = read('app/api/task-manager/bot-learning/route.ts');
     check('review items: 🗑 Delete with a Yes/No check, removed now (only waiting or ignored)', /action: 'delete_review'/.test(rev) && /Delete\?/.test(rev) && /\.delete\(\)\.eq\('id', id\)\.in\('status', \['waiting', 'ignored'\]\)/.test(svc) && /'delete_review'/.test(blr));
     check('prompt versions: 🗑 Delete on every version except the one in use', /action: 'delete_prompt'/.test(pv) && /p\.status !== 'active' &&/.test(pv) && /\.neq\('status', 'active'\)/.test(svc) && /'delete_prompt'/.test(blr));
+    check('review list: 🗑 Clear all with a confirm, deletes only waiting items', /action: 'delete_all_reviews'/.test(rev) && /Yes, delete all/.test(rev) && /\.delete\(\)\.eq\('status', 'waiting'\)\.select/.test(svc) && /'delete_all_reviews'/.test(blr));
+    check('prompt versions: 🗑 Clear all with a confirm, never the version in use', /action: 'delete_all_prompts'/.test(pv) && /Yes, delete all/.test(pv) && /deleteAllPrompts[\s\S]{0,200}\.delete\(\)\.neq\('status', 'active'\)/.test(svc) && /'delete_all_prompts'/.test(blr));
 
     check('no network used', net.length === 0, net);
     console.log(failures === 0 ? '\n🎉 RANGES AND BULK TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

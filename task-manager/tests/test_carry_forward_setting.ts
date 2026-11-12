@@ -20,7 +20,9 @@ async function run() {
     const db = D.TaskDatabaseService as any;
 
     console.log('\n1. The setting');
-    check('missing or odd values → on, 7 days', JSON.stringify(D.normalizeCarryForward(undefined)) === '{"enabled":true,"days":7}' && D.normalizeCarryForward({ enabled: true, days: 9 }).days === 7 && D.normalizeCarryForward({ enabled: true, days: 2.5 }).days === 7);
+    check('missing or odd values → on, 7 days', JSON.stringify(D.normalizeCarryForward(undefined)) === '{"enabled":true,"days":7}' && D.normalizeCarryForward({ enabled: true, days: 31 }).days === 7 && D.normalizeCarryForward({ enabled: true, days: 2.5 }).days === 7);
+    // Owner 2026-10-20: any whole number of days up to 30 is allowed (not only 1–7).
+    check('up to 30 days is kept', D.normalizeCarryForward({ enabled: true, days: 9 }).days === 9 && D.normalizeCarryForward({ enabled: true, days: 30 }).days === 30 && D.MAX_CARRY_DAYS === 30);
     check('a valid setting is kept', JSON.stringify(D.normalizeCarryForward({ enabled: false, days: 3 })) === '{"enabled":false,"days":3}');
     check('off → look back 0 days; on → the chosen days', D.carryDaysOf({ enabled: false, days: 5 }) === 0 && D.carryDaysOf({ enabled: true, days: 3 }) === 3);
 
@@ -84,8 +86,8 @@ async function run() {
     try { await R.DepartmentRulesService.saveCarryForward('u1', { enabled: true, days: 3 }); } catch (e) { err = e; }
     check('a team member whose notifications are NOT handed over cannot change it', err?.status === 403 && saved.length === 0, err?.message);
     delegated = true; err = null;
-    try { await R.DepartmentRulesService.saveCarryForward('u1', { enabled: true, days: 9 }); } catch (e) { err = e; }
-    check('days outside 1–7 are refused', err?.status === 400 && saved.length === 0, err?.message);
+    try { await R.DepartmentRulesService.saveCarryForward('u1', { enabled: true, days: 31 }); } catch (e) { err = e; }
+    check('days outside 1–30 are refused', err?.status === 400 && saved.length === 0, err?.message);
     await R.DepartmentRulesService.saveCarryForward('u1', { enabled: true, days: 3, departmentId: 'dept-z' });
     check('saved for THEIR department only, whatever the request says, and recorded', saved.length === 1 && saved[0].dept === 'dept-a' && saved[0].v.days === 3 && audits.some(a => a.eventType === 'carry_forward_setting_saved'), { saved, audits });
     actor = { ...actor, role: 'superuser' }; delegated = false; saved.length = 0;
@@ -95,7 +97,7 @@ async function run() {
     const fs = await import('node:fs'); const path = await import('node:path');
     const ui = fs.readFileSync(path.resolve(__dirname, '../../frontend/components/procurement/tasks/NotificationsView.tsx'), 'utf8');
     const route = fs.readFileSync(path.resolve(__dirname, '../../app/api/task-manager/department-rules/route.ts'), 'utf8');
-    check('Notifications tab has the switch and the 1–7 day choice; the API uses the signed-in person', /Include carry-forward tasks/.test(ui) && /\[1, 2, 3, 4, 5, 6, 7\]/.test(ui) && /action === 'save_carry_forward'/.test(route) && /saveCarryForward\(userId,/.test(route));
+    check('Notifications tab has the switch, the 1–7 day buttons and a number box up to 30; the API uses the signed-in person', /Include carry-forward tasks/.test(ui) && /\[1, 2, 3, 4, 5, 6, 7\]/.test(ui) && /type="number"/.test(ui) && /const MAX_CARRY_DAYS = 30/.test(ui) && /action === 'save_carry_forward'/.test(route) && /saveCarryForward\(userId,/.test(route));
 
     check('no network used', net.length === 0, net);
     console.log(failures === 0 ? '\n🎉 CARRY-FORWARD SETTING TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

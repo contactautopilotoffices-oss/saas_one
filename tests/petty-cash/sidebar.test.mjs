@@ -27,7 +27,7 @@ test('role dashboards reuse their established body and place Petty Cash in exist
   assert.equal((source.match(/<PettyCashNavLink/g)||[]).length,1,name);
   const hub=source.indexOf('Management Hub');
   const petty=source.indexOf('<PettyCashNavLink');
-  if(['OrgAdminDashboard','PropertyAdminDashboard','SecurityDashboard'].includes(name)) assert.ok(hub!==-1&&hub<petty,name);
+  if(['OrgAdminDashboard','PropertyAdminDashboard','SecurityDashboard','StaffDashboard','MstDashboard'].includes(name)) assert.ok(hub!==-1&&hub<petty,name);
   else assert.doesNotMatch(source,/data-navigation-section="management-hub"/,name);
   const personal=source.indexOf('System & Personal',hub);
   if(hub!==-1&&personal!==-1) assert.ok(petty<personal,name);

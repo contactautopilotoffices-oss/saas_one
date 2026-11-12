@@ -5,12 +5,14 @@ import { useDashboardContent } from '@/frontend/components/layout/DashboardConte
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
-    LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle, Activity,
+    LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Edit, Trash2, X, Check, UsersRound,
-    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan, Key,
-    GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets, TrendingUp, Smartphone,
-    MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList, FlaskConical
+    Coffee, IndianRupee, FileDown, ChevronDown, Fuel, Menu, Upload, FileBarChart, Zap, Package, ClipboardCheck, Scan,
+    Key, GitBranch, DoorOpen, MessageCircle, Send, Loader2, CalendarDays, Wrench, ShoppingCart, Sun, Moon, Droplets,
+    TrendingUp, Smartphone, MessageSquarePlus, Bot, Gauge, Cpu, FolderLock, Layers, ShieldCheck, ClipboardList,
+    FlaskConical, PhoneCall, AlertCircle, CheckCircle2, Clock, Calendar, Mic, BookOpen, FileCheck2, Target
 } from 'lucide-react';
+import SatejConsole from '@/frontend/components/satej/SatejConsole';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -18,7 +20,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import TicketsView from './TicketsView';
+import RequestsWorkspace, { RequestsViewSwitcher } from '@/frontend/components/tickets/RequestsWorkspace';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import { assetCaps } from '@/frontend/lib/assets/roles';
@@ -38,8 +40,8 @@ const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/Ti
 const StockMovementModal = dynamic(() => import('@/frontend/components/stock/StockMovementModal'), { loading: () => null });
 const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
 const UserDirectory = dynamic(() => import('./UserDirectory'), { loading: TabLoading });
-const AdminSPOCDashboard = dynamic(() => import('../tickets/AdminSPOCDashboard'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const DieselAnalyticsDashboard = dynamic(() => import('../diesel/DieselAnalyticsDashboard'), { loading: TabLoading });
 const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
 const ElectricityAnalyticsDashboard = dynamic(() => import('../electricity/ElectricityAnalyticsDashboard'), { loading: TabLoading });
@@ -52,16 +54,19 @@ const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-roo
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
 const DocumentBank = dynamic(() => import('@/frontend/components/audit/DocumentBank'), { loading: TabLoading });
+const MeetingsHome = dynamic(() => import('@/frontend/components/meetings/MeetingsHome'), { loading: TabLoading });
+const MeetingAssistantTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
+const WikiHome = dynamic(() => import('@/frontend/components/wiki/WikiHome'), { loading: TabLoading });
 const VendorManagement = dynamic(() => import('@/frontend/components/vendors/VendorManagement'), { loading: TabLoading });
-const TicketFlowMap = dynamic(() => import('../ops/TicketFlowMap'), { loading: TabLoading });
 const ProcurementModule = dynamic(() => import('../procurement/ProcurementModule'), { loading: TabLoading });
+const BountyInbox = dynamic(() => import('../aop/BountyInbox'), { loading: TabLoading });
+const PoApprovals = dynamic(() => import('../approvals/PoApprovals'), { loading: TabLoading });
 const VMSOrgVisitorDashboard = dynamic(() => import('@/frontend/components/vms/VMSOrgVisitorDashboard'), { loading: TabLoading });
 const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
 const VendorManagementModal = dynamic(() => import('@/frontend/components/vendor/VendorManagementModal'), { loading: () => null });
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const AITicketsDashboard = dynamic(() => import('@/frontend/components/ai-tickets/AITicketsDashboard'), { loading: TabLoading });
 const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
-const TaskManagerTestingDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'), { loading: TabLoading });
 const OrgProgressTracker = dynamic(() => import('@/frontend/components/org-efficiency/OrgProgressTracker'), { loading: TabLoading });
 const OrgEfficiencyMeter = dynamic(() => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'), { loading: TabLoading });
 const AgentConsole = dynamic(() => import('@/frontend/components/agents/AgentConsole'), { loading: TabLoading });
@@ -69,6 +74,7 @@ const RosterDashboard = dynamic(() => import('@/frontend/components/roster/Roste
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
 const AppUsageReport = dynamic(() => import('@/frontend/components/dashboard/AppUsageReport'), { loading: TabLoading });
+const PropertyOverviewReport = dynamic(() => import('@/frontend/components/reports/PropertyOverviewReport'), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -98,7 +104,6 @@ const TAB_PRELOADS = [
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/ai-tickets/AITicketsDashboard'),
     () => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'),
-    () => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'),
     () => import('@/frontend/components/org-efficiency/OrgProgressTracker'),
     () => import('@/frontend/components/org-efficiency/OrgEfficiencyMeter'),
     () => import('@/frontend/components/agents/AgentConsole'),
@@ -170,10 +175,10 @@ const OrgAdminDashboard = () => {
     usePreloadTabs(TAB_PRELOADS);
     const { dashboardContent, navigateDashboard } = useDashboardContent();
     const { user, signOut, membership } = useAuth();
-    const params = useParams();
+    const routeParams = useParams();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const orgSlugOrId = params?.orgId as string;
+    const orgSlugOrId = (routeParams?.orgId as string) || membership?.org_id || '';
 
     const isOpsTabScope = ['ops_super_admin', 'ops super admin'].includes((membership?.org_role || '').toLowerCase());
     const dashboardTab = resolveOrgDashboardTab(searchParams.get('tab'), isOpsTabScope);
@@ -203,11 +208,17 @@ const OrgAdminDashboard = () => {
     const isOpsSuperAdmin = rawOrgRole.includes('ops_super_admin') || rawOrgRole.includes('ops super admin');
     // Reports → App usage is for org super admins only (the API enforces the same rule).
     const isOrgSuperAdmin = rawOrgRole.includes('org_super_admin');
-    const reportsView: 'imports' | 'app_usage' = isOrgSuperAdmin && searchParams.get('report') === 'app_usage' ? 'app_usage' : 'imports';
-    const setReportsView = (next: 'imports' | 'app_usage') => {
+    // Owner 2026-10-29: the Super Admin's own Meeting Assistant. Kept mounted once opened, so switching tabs never stops a recording.
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (activeTab === 'meeting_assistant' && isOrgSuperAdmin && !assistantOpened) setAssistantOpened(true);
+    // Reports tab views: the property-wide overview (default), ticket import history, and App usage (org super admins).
+    type ReportsView = 'overview' | 'imports' | 'app_usage';
+    const reportParam = searchParams.get('report');
+    const reportsView: ReportsView = reportParam === 'app_usage' && isOrgSuperAdmin ? 'app_usage' : reportParam === 'imports' ? 'imports' : 'overview';
+    const setReportsView = (next: ReportsView) => {
         const params = new URLSearchParams(window.location.search);
-        if (next === 'app_usage') params.set('report', 'app_usage');
-        else params.delete('report');
+        if (next === 'overview') params.delete('report');
+        else params.set('report', next);
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
     const [isSelectorOpen, setIsSelectorOpen] = useState(false); // Global toggle state
@@ -422,21 +433,29 @@ const OrgAdminDashboard = () => {
 
         setErrorMsg('');
 
+        if (!orgSlugOrId) {
+            setIsLoading(false);
+            return;
+        }
+
         // 2. Decode URL param
         const decoded = decodeURIComponent(orgSlugOrId);
 
         // 2. Sanitize ID (Remove spaces/newlines that might have crept in)
-        // This fixes the issue if the URL somehow looks like "uuid part 1 - uuid part 2"
         const cleanId = decoded.trim().replace(/\s+/g, '');
+        if (!cleanId) {
+            setIsLoading(false);
+            return;
+        }
 
-
-        // 3. Fetch strict by ID
-        const { data, error } = await supabase
+        // 3. Fetch by ID (if UUID) or by Code (if slug)
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+        const query = supabase
             .from('organizations')
             .select('*')
-            .eq('id', cleanId)
-            .is('deleted_at', null)
-            .maybeSingle();
+            .is('deleted_at', null);
+
+        const { data, error } = await (isUUID ? query.eq('id', cleanId) : query.eq('code', cleanId)).maybeSingle();
 
         if (error) {
             console.error('❌ [Dashboard] Supabase Error:', error);
@@ -781,7 +800,7 @@ const OrgAdminDashboard = () => {
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
-        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console')) ? 'overview' : tab;
+        const effectiveTab = (isOpsSuperAdmin && (tab === 'org_progress' || tab === 'org_efficiency' || tab === 'agent_console' || tab === 'wiki')) ? 'overview' : tab;
         setPendingStatusFilter(filter);
         setSidebarOpen(false);
         const params = new URLSearchParams(window.location.search);
@@ -816,7 +835,7 @@ const OrgAdminDashboard = () => {
             params.set('view', requestsView);
         }
         
-        const path = dashboardContent !== undefined ? `/${orgSlugOrId}/dashboard` : window.location.pathname;
+        const path = dashboardContent !== undefined ? (typeof routeParams?.orgId === 'string' ? `/${orgSlugOrId}/dashboard` : '/dashboard') : window.location.pathname;
         if (dashboardContent !== undefined) router.push(`${path}?${params.toString()}`, { scroll: false });
         else pushDashboardNavigation(`${path}?${params.toString()}${window.location.hash}`);
     };
@@ -969,6 +988,16 @@ const OrgAdminDashboard = () => {
                                     >
                                         <Cpu className="w-4 h-4" />
                                         Agent Console
+                                    </button>
+                                    <button
+                                        onClick={() => handleTabChange('wiki')}
+                                        className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'wiki'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <BookOpen className="w-4 h-4" />
+                                        Wiki
                                     </button>
                                 </>
                             )}
@@ -1143,16 +1172,7 @@ const OrgAdminDashboard = () => {
                                 <ShoppingCart className="w-4 h-4" />
                                 Procurement
                             </button>
-                            <button
-                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'urgency-tracker')}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'urgency-tracker'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                                    }`}
-                            >
-                                <Layers className="w-4 h-4" />
-                                Payment Urgency Tracker
-                            </button>
+
                             <button
                                 onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'payment-tracker')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'payment-tracker'
@@ -1163,6 +1183,73 @@ const OrgAdminDashboard = () => {
                                 <IndianRupee className="w-4 h-4" />
                                 Payment Tracker
                             </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'invoices')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'invoices'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <FileCheck2 className="w-4 h-4" />
+                                Invoice Control
+                            </button>
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('po-approvals')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'po-approvals'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <FileCheck2 className="w-4 h-4" />
+                                    PO Approvals
+                                </button>
+                            )}
+                            <button
+                                onClick={() => handleTabChange('bounty')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'bounty'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Target className="w-4 h-4" />
+                                AOP Bounty
+                            </button>
+                            <button
+                                onClick={() => handleTabChange('procurement', 'all', undefined, undefined, 'vendor-discovery')}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'procurement' && searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <PhoneCall className="w-4 h-4" />
+                                Vendor Discovery (Meera)
+                            </button>
+                            {org && (
+                                <button
+                                    onClick={() => handleTabChange('meetings')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meetings'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <Mic className="w-4 h-4" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
+                            {/* Owner 2026-10-29: Meeting Assistant — record a meeting, get notes + tasks (Super Admin's own meetings) */}
+                            {isOrgSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('meeting_assistant')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'meeting_assistant'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                        }`}
+                                >
+                                    <Mic className="w-4 h-4" />
+                                    Meeting Assistant
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('checklist')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'checklist'
@@ -1254,17 +1341,6 @@ const OrgAdminDashboard = () => {
                                 <span className="flex-1 text-left">Task Manager</span>
                             </button>
                             <button
-                                onClick={() => handleTabChange('task_testing')}
-                                className={`w-full flex items-center gap-3 px-4 py-2 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'task_testing'
-                                    ? 'bg-primary text-text-inverse shadow-sm'
-                                    : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
-                                    }`}
-                            >
-                                <Building2 className={`w-4 h-4 transition-transform ${activeTab === 'task_testing' ? '' : 'group-hover:scale-110 text-amber-500'}`} />
-                                <span className="flex-1 text-left">Control Center</span>
-                                <span className="text-[10px] uppercase font-extrabold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">Dept & WA</span>
-                            </button>
-                            <button
                                 onClick={() => handleTabChange('ai_tickets')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${activeTab === 'ai_tickets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -1350,7 +1426,9 @@ const OrgAdminDashboard = () => {
             />
 
             {/* Main Content */}
-            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12'}`}>
+            {/* Owner 2026-10-26: globals.css redefines .p-4 (32px) after the utilities, so on phones it beat pt-16 and the top of
+                each tab sat under the fixed 64px bar; max-md:!pt-16 gives phones the full room back (md and up unchanged). */}
+            <main id="main-scroll-container" className={`flex-1 min-w-0 w-full lg:ml-72 bg-white transition-all duration-300 overflow-y-auto ${activeTab === 'overview' ? 'pt-16 px-4 pb-4 md:p-6 lg:p-8' : activeTab === 'requests' ? 'pt-16 lg:pt-0 lg:p-12' : 'pt-16 lg:pt-0 p-4 md:p-8 lg:p-12 max-md:!pt-16'}`}>
                 {(showCommandCenter || dashboardContent !== undefined) && (
                     <div className="lg:hidden fixed top-0 inset-x-0 h-14 bg-white border-b border-border flex items-center gap-3 px-4 z-30">
                         <button type="button" aria-label="Open menu" onClick={() => setSidebarOpen(true)} className="p-2 text-text-secondary"><Menu className="w-6 h-6" /></button>
@@ -1412,46 +1490,17 @@ const OrgAdminDashboard = () => {
                             {/* Property Selector for Requests/Other tabs */}
                             {renderPropertySelector()}
 
-                            {/* Requests View Switcher */}
+                            {/* Requests View Switcher (shared with the Tech console) */}
                             {activeTab === 'requests' && (
-                                <div className="hidden lg:flex items-center gap-1 bg-surface-elevated border border-border p-1 rounded-xl shadow-sm">
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('list');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'list');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'list' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <Ticket className="w-3.5 h-3.5" />
-                                        List
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('board');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'board');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'board' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <LayoutDashboard className="w-3.5 h-3.5" />
-                                        Board
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setRequestsView('flow');
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('view', 'flow');
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${requestsView === 'flow' ? 'bg-primary text-white shadow-md' : 'text-text-secondary hover:bg-background'}`}
-                                    >
-                                        <Activity className="w-3.5 h-3.5" />
-                                        Flow Map
-                                    </button>
-                                </div>
+                                <RequestsViewSwitcher
+                                    view={requestsView}
+                                    onChange={view => {
+                                        setRequestsView(view);
+                                        const url = new URL(window.location.href);
+                                        url.searchParams.set('view', view);
+                                        window.history.pushState({}, '', url.toString());
+                                    }}
+                                />
                             )}
                             <div className="flex flex-col items-end">
                                 <span className="text-sm font-display font-semibold text-text-primary tracking-tight">System Status</span>
@@ -1476,7 +1525,9 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'procurement' && org && (
                             <>
                                 <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.procurement} consoleTab="agent_console" className="mb-3" />
-                                <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />
+                                {searchParams.get('procurement_tab') === 'vendor-discovery'
+                                    ? <SatejConsole orgId={org.id} />
+                                    : <ProcurementModule key="procurement-admin" orgId={org.id} isAdmin={true} properties={properties} />}
                             </>
                         )}
                         {activeTab === 'roster' && selectedPropertyId === 'all' && (
@@ -1537,9 +1588,23 @@ const OrgAdminDashboard = () => {
                             Registry, sandbox, live activity, uptime, reliability profile, reinforcement
                             and credentials all live behind it. */}
                         {!isOpsSuperAdmin && activeTab === 'agent_console' && <AgentConsole key="agent-console-tab" orgId={org?.id ?? ''} />}
+                        {isOrgSuperAdmin && activeTab === 'po-approvals' && org && <PoApprovals orgId={org.id} />}
+                        {activeTab === 'bounty' && org && (
+                            <div className="space-y-3">
+                                <div>
+                                    <h2 className="text-xl font-bold text-text-primary">AOP Bounty</h2>
+                                    <p className="text-sm text-text-secondary">What the month&apos;s AOP still needs, who owes it, and how long it has waited.</p>
+                                </div>
+                                <BountyInbox orgId={org.id} />
+                            </div>
+                        )}
+                        {!isOpsSuperAdmin && activeTab === 'wiki' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <WikiHome orgId={org.id} />
+                            </div>
+                        )}
                         {activeTab === 'ai_tickets' && <AITicketsDashboard propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId} />}
-                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
-                        {activeTab === 'task_testing' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                        {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} underFixedHeader showReport={isOrgSuperAdmin} />}
                         {activeTab === 'revenue' && <RevenueTab key="revenue-tab" properties={properties} selectedPropertyId={selectedPropertyId} />}
                         {activeTab === 'properties' && (
                             <PropertiesTab
@@ -1558,61 +1623,49 @@ const OrgAdminDashboard = () => {
                             {/* Gated on activeTab, not on the wrapper: this block stays mounted with
                                 display:none on every other tab, and an always-mounted pulse would keep
                                 polling from screens that are not showing it. */}
-                            {activeTab === 'requests' && (
-                                <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.requests} consoleTab="agent_console" className="mb-3" />
-                            )}
-                            {requestsView === 'list' ? (
-                                <TicketsView
-                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                    organizationId={selectedPropertyId === 'all' ? org?.id : undefined}
-                                    canDelete={true}
-                                    initialStatusFilter={pendingStatusFilter}
-                                />
-                            ) : requestsView === 'board' ? (
-                                <AdminSPOCDashboard
-                                    organizationId={org?.id || ''}
-                                    propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                    propertyName={selectedPropertyId === 'all' ? 'All Properties' : activeProperty?.name}
-                                    adminUser={{
-                                        full_name: user?.user_metadata?.full_name || 'Super Admin',
-                                        avatar_url: ''
-                                    }}
-                                    initialStatusFilter={pendingStatusFilter}
-                                    properties={properties}
-                                    onPropertyChange={handlePropertyChange}
-                                />
-                            ) : (
-                                <div className="w-full h-full min-h-[calc(100vh-12rem)] bg-white -mt-2 overflow-hidden flex flex-col rounded-2xl relative">
-                                    <TicketFlowMap
-                                        organizationId={org?.id}
-                                        propertyId={selectedPropertyId === 'all' ? undefined : selectedPropertyId}
-                                        isEmbedded={true}
-                                    />
-                                </div>
-                            )}
+                            <RequestsWorkspace
+                                view={requestsView}
+                                organizationId={org?.id}
+                                selectedPropertyId={selectedPropertyId}
+                                propertyName={activeProperty?.name}
+                                adminUserName={user?.user_metadata?.full_name || 'Super Admin'}
+                                properties={properties}
+                                onPropertyChange={handlePropertyChange}
+                                initialStatusFilter={pendingStatusFilter}
+                                showAgentPulse={activeTab === 'requests'}
+                                agentConsoleTab="agent_console"
+                            />
                         </div>
 
                         {activeTab === 'visitors' && org?.id && <VMSOrgVisitorDashboard key="visitors-tab" orgId={org.id} />}
 
                         {activeTab === 'reports' && org && (
                             <div key="reports-tab" className="space-y-6">
-                                {isOrgSuperAdmin && (
-                                    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
-                                        {([['imports', 'Import reports'], ['app_usage', 'App usage']] as const).map(([id, label]) => (
-                                            <button
-                                                key={id}
-                                                type="button"
-                                                onClick={() => setReportsView(id)}
-                                                aria-pressed={reportsView === id}
-                                                className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                                            >
-                                                {label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
+                                <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                    {([
+                                        ['overview', 'Property report'],
+                                        ['imports', 'Import reports'],
+                                        ...(isOrgSuperAdmin ? [['app_usage', 'App usage']] : []),
+                                    ] as [ReportsView, string][]).map(([id, label]) => (
+                                        <button
+                                            key={id}
+                                            type="button"
+                                            onClick={() => setReportsView(id)}
+                                            aria-pressed={reportsView === id}
+                                            className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
                                 {reportsView === 'app_usage' ? (
                                     <AppUsageReport orgId={org.id} />
+                                ) : reportsView === 'overview' ? (
+                                    selectedPropertyId === 'all' ? (
+                                        <PropertyOverviewReport orgId={org.id} propertyName="all properties" />
+                                    ) : (
+                                        <PropertyOverviewReport propertyId={selectedPropertyId} propertyName={activeProperty?.name} />
+                                    )
                                 ) : (
                                     <>
                                         <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.reports} consoleTab="agent_console" />
@@ -1794,6 +1847,18 @@ const OrgAdminDashboard = () => {
                             </div>
                         )}
 
+                        {activeTab === 'meetings' && org && (
+                            <div className="w-full min-h-screen bg-white">
+                                <MeetingsHome orgId={org.id} embedded />
+                            </div>
+                        )}
+
+                        {isOrgSuperAdmin && assistantOpened && (
+                            <div className={activeTab === 'meeting_assistant' ? 'w-full p-4 sm:p-6' : 'hidden'}>
+                                <MeetingAssistantTab space="admin" />
+                            </div>
+                        )}
+
                         {activeTab === 'vendors' && org && (
                             <div className="w-full min-h-screen bg-white">
                                 <AgentPulse orgId={org.id} module={AGENT_PULSE_BY_TAB.vendors} consoleTab="agent_console" className="mb-3" />
@@ -1806,6 +1871,11 @@ const OrgAdminDashboard = () => {
                         )}
 
                         {activeTab === 'settings' && <SettingsView />}
+                        {activeTab === 'petty-cash' && (
+                            <div className="w-full">
+                                <PettyCashDashboard orgId={org?.id || orgSlugOrId} />
+                            </div>
+                        )}
                         {activeTab === 'profile' && (
                             <div className="flex justify-center items-start py-8">
                                 <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">

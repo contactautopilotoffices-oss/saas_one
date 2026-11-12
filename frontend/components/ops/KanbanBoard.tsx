@@ -3,7 +3,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
     DndContext,
-    DragOverlay,
     closestCorners,
     KeyboardSensor,
     PointerSensor,
@@ -23,6 +22,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, AlertTriangle, Users, Activity, Filter } from 'lucide-react';
 import KanbanColumn from './KanbanColumn';
 import KanbanCard from './KanbanCard';
+import ZoomSafeDragOverlay from '@/frontend/components/ui/ZoomSafeDragOverlay';
 import { createClient } from '@/frontend/utils/supabase/client';
 
 // PRD 5.1: Status-based columns
@@ -290,14 +290,14 @@ export default function KanbanBoard({ propertyId, organizationId }: KanbanBoardP
                 </main>
 
                 {/* Drag Overlay */}
-                <DragOverlay>
+                <ZoomSafeDragOverlay>
                     {activeTicket && (
                         <KanbanCard
                             ticket={activeTicket}
                             isDragging
                         />
                     )}
-                </DragOverlay>
+                </ZoomSafeDragOverlay>
             </div>
         </DndContext>
     );

@@ -7,7 +7,7 @@ import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
     Search, Plus, Filter, LogOut, ChevronRight, MapPin, Building2,
     Calendar, CheckCircle2, AlertCircle, Clock, Coffee, IndianRupee, FileDown, Fuel, Store, Activity, Upload, FileBarChart, Menu, X, Zap, RefreshCw,
-    Package, ClipboardCheck, ClipboardList, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck
+    Package, ClipboardCheck, ClipboardList, Scan, ChevronDown, ChevronUp, Check, GitBranch, CalendarDays, ShoppingCart, Droplets, TrendingUp, QrCode, Smartphone, MessageSquarePlus, Bot, ShieldCheck, Mic
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -48,7 +48,10 @@ const ElectricityAnalyticsDashboard = dynamic(() => import('@/frontend/component
 const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: TabLoading });
 const TicketsView = dynamic(() => import('./TicketsView'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+const PettyCashDashboard = dynamic(() => import('@/frontend/components/pettyCash/PettyCashDashboard'), { loading: TabLoading });
 const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
+// Owner 2026-11-04: the Operations team's own Meeting Assistant (Ops Super Admin only; property admins share this dashboard)
+const MeetingsTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
 const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
 const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
@@ -62,6 +65,7 @@ const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/component
 const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const ImportReportsView = dynamic(() => import('@/frontend/components/snags').then(m => m.ImportReportsView), { loading: TabLoading });
+const PropertyOverviewReport = dynamic(() => import('@/frontend/components/reports/PropertyOverviewReport'), { loading: TabLoading });
 const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
@@ -93,7 +97,7 @@ const TAB_PRELOADS = [
 ];
 
 // Types
-type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks';
+type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'meeting_assistant' | 'petty-cash';
 
 interface Property {
     id: string;
@@ -352,7 +356,10 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
     // State
     const [dashboardTab, setActiveTab] = useState<Tab>('overview');
-    const openTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
+    // Reports tab: the property-wide report (default) or the ticket import history.
+    const [reportsView, setReportsView] = useState<'overview' | 'imports'>('overview');
+    const activeTabFromSearch = searchParams?.get('tab');
+    const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKey = `property-${propertyId}`;
@@ -376,6 +383,9 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const userOrgRole = (membership?.org_role || '').toLowerCase();
     const isOpsSuperAdmin = userOrgRole === 'ops_super_admin';
     const isElevatedRole = ['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin'].includes(userOrgRole);
+    // Owner 2026-11-04: the Meeting Assistant stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
+    const [assistantOpened, setAssistantOpened] = useState(false);
+    if (openTab === 'meeting_assistant' && isOpsSuperAdmin && !assistantOpened) setAssistantOpened(true);
 
     // Organization properties for ops/super admins
     const [orgProperties, setOrgProperties] = useState<any[]>([]);
@@ -479,7 +489,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks', ...(isOpsSuperAdmin ? ['meeting_assistant'] : [])].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         const filter = searchParams.get('filter');
@@ -488,7 +498,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
         } else {
             setPendingStatusFilter('all');
         }
-    }, [searchParams]);
+    }, [searchParams, isOpsSuperAdmin]);
 
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string) => {
@@ -942,6 +952,27 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 <Bot className={`w-4 h-4 transition-transform ${openTab === 'ai_tickets' ? '' : 'group-hover:scale-110'}`} />
                                 AI Automation
                             </button>
+                            {isElevatedRole && (property?.organization_id || membership?.org_id) && (
+                                <button
+                                    onClick={() => router.push(`/${property?.organization_id || membership?.org_id}/meetings`)}
+                                    className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-primary/10 hover:text-primary group"
+                                >
+                                    <Mic className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                                    Meetings (Ira)
+                                </button>
+                            )}
+                            {isOpsSuperAdmin && (
+                                <button
+                                    onClick={() => handleTabChange('meeting_assistant')}
+                                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm group ${openTab === 'meeting_assistant'
+                                        ? 'bg-primary text-text-inverse shadow-sm'
+                                        : 'text-text-secondary hover:bg-primary/10 hover:text-primary'
+                                        }`}
+                                >
+                                    <Mic className={`w-4 h-4 transition-transform ${openTab === 'meeting_assistant' ? '' : 'group-hover:scale-110'}`} />
+                                    Meeting Assistant
+                                </button>
+                            )}
                             <button
                                 onClick={() => handleTabChange('grievance')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${openTab === 'grievance'
@@ -1092,7 +1123,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                 <AnimatePresence mode="wait">
                     <motion.div
                         key={openTab}
-                        className={['overview', 'checklist'].includes(openTab) ? '' : 'px-0 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8'}
+                        className={['overview', 'checklist', 'meeting_assistant'].includes(openTab) ? '' : 'px-0 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8'}
 
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -1120,6 +1151,11 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         />}
                         {openTab === 'roster' && property && <RosterDashboard propertyId={property.id} />}
                         {openTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
+                        {openTab === 'petty-cash' && (
+                            <div className="w-full">
+                                <PettyCashDashboard orgId={property?.organization_id || membership?.org_id || undefined} />
+                            </div>
+                        )}
 
                         {openTab === 'water_analytics' && property && <WaterAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'guest_experience' && property && <GuestExperienceDashboard propertyId={property.id} />}
@@ -1134,10 +1170,29 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             />
                         )}
                         {openTab === 'reports' && property && (
-                            <ImportReportsView
-                                propertyId={property.id}
-                                organizationId={property.organization_id}
-                            />
+                            <div className="space-y-6">
+                                <div className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1" role="group" aria-label="Report">
+                                    {([['overview', 'Property report'], ['imports', 'Import reports']] as const).map(([id, label]) => (
+                                        <button
+                                            key={id}
+                                            type="button"
+                                            onClick={() => setReportsView(id)}
+                                            aria-pressed={reportsView === id}
+                                            className={`rounded-lg px-4 py-1.5 text-xs font-bold transition ${reportsView === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                                {reportsView === 'overview' ? (
+                                    <PropertyOverviewReport propertyId={property.id} propertyName={property.name} />
+                                ) : (
+                                    <ImportReportsView
+                                        propertyId={property.id}
+                                        organizationId={property.organization_id}
+                                    />
+                                )}
+                            </div>
                         )}
                         {openTab === 'grievance' && (
                             <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
@@ -1272,6 +1327,8 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         )}
                     </motion.div>
                 </AnimatePresence>
+                {/* Outside the keyed wrapper above, which remounts its content on every tab change */}
+                {assistantOpened && <div className={openTab === 'meeting_assistant' ? 'px-4 md:px-8 lg:px-12 pt-0 md:pt-4 pb-8' : 'hidden'}><MeetingsTab space="operations" /></div>}
 
                 </>)}
 </main>

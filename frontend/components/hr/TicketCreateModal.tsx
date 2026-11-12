@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Send, ShieldAlert, UserX, AlertTriangle, Paperclip, CheckCircle2, Info, Lock, HelpCircle, FileText, Check } from 'lucide-react';
 import { formatSlaDisplay } from '@/frontend/components/hr/HRAdminConfigPanel';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface TicketCreateModalProps {
     isOpen: boolean;
@@ -364,7 +365,7 @@ export default function TicketCreateModal({ isOpen, onClose, onSuccess, orgId, u
                                     return (
                                         <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-300 rounded-lg text-[11px] font-medium">
                                             <Paperclip className="w-3 h-3 text-[#587e85]" />
-                                            <a href={url} target="_blank" rel="noopener noreferrer" className="max-w-[180px] truncate hover:underline">
+                                            <a href={maskStorageUrl(url) || url} target="_blank" rel="noopener noreferrer" className="max-w-[180px] truncate hover:underline">
                                                 {name}
                                             </a>
                                             <button

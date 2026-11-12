@@ -1,11 +1,19 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search } from 'lucide-react';
+import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
+import {
+    MAX_TICKET_FILES,
+    TICKET_ATTACHMENT_ACCEPT,
+    TicketFileIcon,
+    checkTicketFile,
+    formatFileSize,
+    uploadTicketFile,
+} from '@/frontend/components/tickets/TicketAttachments';
 
 interface TicketCreateModalProps {
     isOpen: boolean;
@@ -43,6 +51,10 @@ export default function TicketCreateModal({
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
     const [showMediaModal, setShowMediaModal] = useState(false);
+    // Owner 2026-11-03: optional documents / images attached to the request (uploaded after the ticket is created)
+    const [attachments, setAttachments] = useState<File[]>([]);
+    const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
+    const attachInputRef = useRef<HTMLInputElement>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [classification, setClassification] = useState<Classification | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -229,6 +241,18 @@ export default function TicketCreateModal({
                 if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
             }
 
+            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
+            const failures: string[] = [];
+            if (attachments.length > 0 && data.ticket?.id) {
+                for (const file of attachments) {
+                    const err = await uploadTicketFile(data.ticket.id, file);
+                    if (err) failures.push(err);
+                }
+                if (failures.length) {
+                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
+                }
+            }
+
             playTickleSound();
             setClassification(data.classification);
             setSuccess(true);
@@ -240,10 +264,11 @@ export default function TicketCreateModal({
                 window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
             }
 
+            // Keep the screen up longer when some files failed, so the warning can be read
             setTimeout(() => {
                 handleReset();
                 onClose();
-            }, 2000);
+            }, failures.length ? 7000 : 2000);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Something went wrong');
         } finally {
@@ -251,10 +276,30 @@ export default function TicketCreateModal({
         }
     };
 
+    const handleAttachPick = (list: FileList | null) => {
+        const picked = Array.from(list || []);
+        if (attachInputRef.current) attachInputRef.current.value = '';
+        if (!picked.length) return;
+        const problem = picked.map(checkTicketFile).find(Boolean);
+        if (problem) {
+            setError(problem);
+            return;
+        }
+        const room = MAX_TICKET_FILES - attachments.length;
+        if (picked.length > room) {
+            setError(`You can attach at most ${MAX_TICKET_FILES} files to a request.`);
+            return;
+        }
+        setError(null);
+        setAttachments(prev => [...prev, ...picked]);
+    };
+
     const handleReset = () => {
         setDescription('');
         setIsInternal(false);
         setMediaFile(null);
+        setAttachments([]);
+        setAttachmentWarning(null);
         setClassification(null);
         setError(null);
         setSuccess(false);
@@ -296,6 +341,12 @@ export default function TicketCreateModal({
                                 <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
                                 <h3 className="text-xl font-display font-semibold text-text-primary mb-2">Request Submitted!</h3>
                                 <p className="text-text-secondary font-body text-sm mb-4">Your request has been created and will be reviewed shortly.</p>
+                                {attachmentWarning && (
+                                    <div className="flex items-start gap-2 text-left text-amber-600 text-xs font-body bg-amber-50 border border-amber-200 rounded-xl p-3">
+                                        <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                        <span>{attachmentWarning}</span>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <>
@@ -476,7 +527,7 @@ export default function TicketCreateModal({
                                                                             </span>
                                                                         </div>
                                                                         <div className="min-w-0">
-                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}</p>
+                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}{user.role === 'it' && ' (IT)'}</p>
                                                                             {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
                                                                         </div>
                                                                     </div>
@@ -580,6 +631,36 @@ export default function TicketCreateModal({
                                     </div>
                                 )}
 
+                                {/* Attachments (optional) */}
+                                {attachments.length > 0 && (
+                                    <ul className="space-y-2">
+                                        {attachments.map((file, i) => (
+                                            <li key={`${file.name}-${i}`} className="flex items-center gap-3 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl">
+                                                <TicketFileIcon name={file.name} className="w-4 h-4 text-primary flex-shrink-0" />
+                                                <span className="flex-1 min-w-0 truncate text-xs font-bold text-slate-700" title={file.name}>{file.name}</span>
+                                                <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
+                                                    disabled={isSubmitting}
+                                                    title="Remove file"
+                                                    className="text-slate-400 hover:text-red-500 transition-colors p-0.5 disabled:opacity-50"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                <input
+                                    ref={attachInputRef}
+                                    type="file"
+                                    multiple
+                                    accept={TICKET_ATTACHMENT_ACCEPT}
+                                    className="hidden"
+                                    onChange={(e) => handleAttachPick(e.target.files)}
+                                />
+
                                 {/* Actions Row */}
                                 <div className="flex items-center gap-3 pt-4">
                                     {/* Camera / Media button */}
@@ -589,6 +670,20 @@ export default function TicketCreateModal({
                                     >
                                         <Camera className="w-6 h-6 text-slate-600" />
                                         <span className="text-xs font-bold text-slate-700 uppercase tracking-wide hidden sm:block">Camera</span>
+                                    </button>
+
+                                    {/* Attach files button (optional: PDF, Word, Excel, images) */}
+                                    <button
+                                        type="button"
+                                        onClick={() => attachInputRef.current?.click()}
+                                        disabled={isSubmitting || attachments.length >= MAX_TICKET_FILES}
+                                        title={attachments.length >= MAX_TICKET_FILES ? `At most ${MAX_TICKET_FILES} files` : 'Attach PDF, Word, Excel or images'}
+                                        className="flex-1 flex flex-col items-center justify-center gap-1 px-2 py-3 bg-slate-100 border border-slate-300 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors active:scale-95 text-center h-20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <Paperclip className="w-6 h-6 text-slate-600" />
+                                        <span className="text-xs font-bold text-slate-700 uppercase tracking-wide hidden sm:block">
+                                            Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}
+                                        </span>
                                     </button>
 
                                     {/* Submit */}

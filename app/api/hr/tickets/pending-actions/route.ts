@@ -78,9 +78,29 @@ export async function GET(request: NextRequest) {
             return isCurrentHandler || isSubmitterWaitingAck || isL1Manager;
         });
 
+        const sanitizedTickets = validTickets.map(t => {
+            if (t.is_anonymous || t.ticket_type === 'anonymous_feedback') {
+                const isViewerSubmitter = t.raised_by_user_id === activeUserId || (empId && t.raised_by_user_id === empId);
+                if (!isViewerSubmitter) {
+                    return {
+                        ...t,
+                        raised_by_user_id: null,
+                        employee_snapshot: {
+                            name: 'Anonymous Employee',
+                            code: 'Hidden',
+                            department: 'Confidential',
+                            location: 'Hidden',
+                            manager_name: 'Hidden'
+                        }
+                    };
+                }
+            }
+            return t;
+        });
+
         return NextResponse.json({
             success: true,
-            tickets: validTickets
+            tickets: sanitizedTickets
         });
     } catch (err: any) {
         console.error('[HR Pending Actions Error]:', err);

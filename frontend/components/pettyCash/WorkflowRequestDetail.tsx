@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { inr, PC_STATUS_META, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
+import { Button } from '@/frontend/components/ui/button';
 import WorkflowModal from './WorkflowModal';
 import ProofUpload from './ProofUpload';
 import ExpenseForm from './ExpenseForm';
@@ -30,30 +31,44 @@ import {
     ExternalLink,
     Cpu,
     ChevronDown,
-    ChevronUp
+    ChevronUp,
+    Download,
+    FileSpreadsheet,
+    Users,
+    Wallet
 } from 'lucide-react';
+import { exportExpensesToCsv, exportExpensesToExcel } from '@/frontend/lib/pettyCash/exportExpenses';
 
 export default function WorkflowRequestDetail({
     context,
     id,
     onClose,
-    onChanged
+    onChanged,
+    initialAction
 }: {
     context: Context;
     id: string;
     onClose: () => void;
     onChanged: () => void;
+    initialAction?: string;
 }) {
     const [detail, setDetail] = useState<Detail | null>(null);
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [requestModeFilter, setRequestModeFilter] = useState<'all' | 'Operation' | 'Client'>('all');
     const [legacyAmounts, setLegacyAmounts] = useState<Record<string, string>>({});
-    const [action, setAction] = useState('');
+    const [action, setAction] = useState(initialAction || '');
     const [proofs, setProofs] = useState<Upload[]>([]);
     const [uploading, setUploading] = useState(false);
     const [expense, setExpense] = useState(false);
     const [correction, setCorrection] = useState<Expense>();
     const [showVisionAudit, setShowVisionAudit] = useState(false);
+
+    useEffect(() => {
+        if (initialAction) {
+            setAction(initialAction);
+        }
+    }, [initialAction]);
 
     const refresh = useCallback(async () => {
         try {
@@ -103,6 +118,8 @@ export default function WorkflowRequestDetail({
     const finance = context.caps.canDisburse && r && !owner;
     const funded = !!r && ['paid', 'settlement_submitted', 'closed'].includes(r.status);
     const missingCredit = !!(r?.workflow_version === 2 && funded && Number(r.paid_amount) > 0 && detail?.wallet && detail.wallet.received === 0);
+    const cancelPending = !!(r?.cancel_requested_at && r.status === 'paid');
+    const nothingSpent = !(detail?.expenses || []).some(entry => entry.review_status !== 'withdrawn');
 
     const actions: { key: string; label: string; primary?: boolean; danger?: boolean }[] = [];
     if (canAllocate) actions.push({ key: 'allocate', label: 'Allocate Cash', primary: true });
@@ -117,11 +134,15 @@ export default function WorkflowRequestDetail({
     }
     if (owner && r?.status === 'sent_back') actions.push({ key: 'resubmit', label: 'Correct and Resubmit', primary: true });
     if (owner && r?.status === 'draft') actions.push({ key: 'submit', label: 'Edit or Submit Draft', primary: true });
-    if (owner && r && !missingCredit && ['paid', 'settlement_submitted'].includes(r.status) && (!detail?.balance || r.workflow_version === 1)) {
+    if (owner && r && !missingCredit && !cancelPending && ['paid', 'settlement_submitted'].includes(r.status) && (!detail?.balance || r.workflow_version === 1)) {
         actions.push({ key: 'settle', label: 'Submit Reconciliation', primary: true });
     }
     if (owner && r && ['draft', 'submitted', 'pending_approval', 'sent_back', 'approved'].includes(r.status)) {
         actions.push({ key: 'cancel', label: 'Cancel Request', danger: true });
+    }
+    // Paid but nothing spent: the requester asks to cancel; accounts completes it by confirming the cash is back.
+    if (owner && r?.workflow_version === 2 && r.status === 'paid' && !cancelPending && !missingCredit && nothingSpent) {
+        actions.push({ key: 'cancel', label: 'Cancel Request (return cash)', danger: true });
     }
     if (context.caps.canManageRouting && r && ['submitted', 'pending_approval', 'sent_back'].includes(r.status)) {
         actions.push({ key: 'reassign', label: 'Reassign Routing' });
@@ -251,20 +272,27 @@ export default function WorkflowRequestDetail({
                     </div>
 
                     {/* Milestone Pipeline Stepper */}
-                    <div className="p-4 rounded-2xl bg-white dark:bg-[#161b22] border border-slate-200/80 dark:border-[#30363d] shadow-sm">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
-                                <Sparkles size={13} className="text-primary" /> Lifecycle Tracking
-                            </span>
-                            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                                {isSpecialStatus
-                                    ? PC_STATUS_META[status]?.label
-                                    : `Step ${stages.findIndex(s => s.isActive || (!s.isDone && s.id !== 'settled')) + 1} of 5`}
-                            </span>
+                    <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#161b22] border border-slate-200/80 dark:border-[#30363d] shadow-sm space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                            <div>
+                                <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 flex items-center gap-1.5">
+                                    <Sparkles size={14} className="text-primary" /> Lifecycle Pipeline
+                                </span>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                                    5-stage audit and approval workflow from submission to reconciliation
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200">
+                                    {isSpecialStatus
+                                        ? PC_STATUS_META[status]?.label
+                                        : `Stage ${stages.findIndex(s => s.isActive || (!s.isDone && s.id !== 'settled')) + 1} of 5 · ${PC_STATUS_META[status]?.label || status}`}
+                                </span>
+                            </div>
                         </div>
 
                         {/* Stepper Chain */}
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
                             {stages.map((stage, idx) => {
                                 const isCurrent = stage.isActive;
                                 const isDone = stage.isDone;
@@ -273,37 +301,66 @@ export default function WorkflowRequestDetail({
                                 return (
                                     <div
                                         key={stage.id}
-                                        className={`relative p-3 rounded-xl border transition-all flex flex-col justify-between ${
+                                        className={`relative p-4 rounded-2xl border transition-all flex flex-col justify-between ${
                                             isDone
-                                                ? 'bg-emerald-500/5 dark:bg-emerald-500/10 border-emerald-500/30 text-emerald-950 dark:text-emerald-100'
+                                                ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-300/80 dark:border-emerald-800/60 shadow-xs'
                                                 : isCurrent
-                                                ? 'bg-primary/10 border-primary/50 text-slate-900 dark:text-white shadow-sm ring-1 ring-primary/30'
+                                                ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-400 dark:border-blue-600 shadow-md ring-2 ring-primary/20'
                                                 : isFailed
-                                                ? 'bg-red-500/5 border-red-500/30 text-red-900 dark:text-red-200'
-                                                : 'bg-slate-50/50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500'
+                                                ? 'bg-red-50/40 dark:bg-red-950/20 border-red-300 dark:border-red-900/50'
+                                                : 'bg-slate-50/50 dark:bg-[#1c2128]/40 border-slate-200/80 dark:border-[#30363d]'
                                         }`}
                                     >
-                                        <div className="flex items-center justify-between gap-1 mb-1.5">
-                                            <span className="text-xs font-bold leading-tight truncate">
-                                                {stage.title}
-                                            </span>
-                                            {isDone && <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />}
-                                            {isCurrent && (
-                                                <span className="relative flex h-2 w-2 shrink-0">
-                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                                        <div>
+                                            <div className="flex items-center justify-between gap-1 mb-2.5">
+                                                <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                                                    isDone
+                                                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                                                        : isCurrent
+                                                        ? 'bg-primary/15 text-primary dark:text-blue-300 font-bold'
+                                                        : isFailed
+                                                        ? 'bg-red-500/15 text-red-700 dark:text-red-300'
+                                                        : 'bg-slate-200/60 dark:bg-slate-800 text-slate-500'
+                                                }`}>
+                                                    Step {idx + 1}
                                                 </span>
-                                            )}
-                                            {isFailed && <XCircle size={14} className="text-red-500 shrink-0" />}
-                                        </div>
 
-                                        <div className="text-[11px] space-y-0.5">
-                                            <p className={`font-semibold truncate ${isDone || isCurrent ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'}`}>
+                                                {isDone && (
+                                                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                                                        <CheckCircle2 size={15} className="text-emerald-500" />
+                                                    </span>
+                                                )}
+                                                {isCurrent && (
+                                                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-primary">
+                                                        <span className="relative flex h-2 w-2">
+                                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                                                            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                                                        </span>
+                                                        Active
+                                                    </span>
+                                                )}
+                                                {isFailed && <XCircle size={15} className="text-red-500" />}
+                                            </div>
+
+                                            <h4 className="text-sm font-black text-slate-900 dark:text-white leading-tight">
+                                                {stage.title}
+                                            </h4>
+
+                                            <p className={`text-xs mt-1.5 font-semibold break-words ${isDone || isCurrent ? 'text-slate-800 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500'}`}>
                                                 {stage.actorName}
                                             </p>
-                                            <p className={`text-[10px] font-medium truncate ${isDone ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
+                                        </div>
+
+                                        <div className="mt-3.5 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/80">
+                                            <div className={`text-[11px] font-bold ${
+                                                isDone
+                                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                                    : isCurrent
+                                                    ? 'text-primary dark:text-blue-400'
+                                                    : 'text-slate-400 dark:text-slate-500'
+                                            }`}>
                                                 {stage.meta}
-                                            </p>
+                                            </div>
                                         </div>
                                     </div>
                                 );
@@ -311,47 +368,84 @@ export default function WorkflowRequestDetail({
                         </div>
 
                         {/* Contextual Next Step Guidance Banner */}
-                        <div className="mt-3.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
-                            <div className="flex items-center gap-2">
-                                <Info size={15} className="text-primary shrink-0" />
-                                <span className="text-slate-700 dark:text-slate-300">
-                                    {status === 'submitted' && (
-                                        <>Awaiting <strong>{r?.assigned_allocator?.full_name || 'Allocator'}</strong> to assign budget limit.</>
-                                    )}
-                                    {status === 'pending_approval' && (
-                                        <>Awaiting approval from <strong>{r?.assigned_approver?.full_name || 'Approver'}</strong> for {inr(r?.allocated_amount)}.</>
-                                    )}
-                                    {status === 'approved' && (
-                                        <>Sanctioned! Awaiting <strong>Treasury / Accounts</strong> to record disbursal voucher.</>
-                                    )}
-                                    {status === 'paid' && currentBalance > 0 && (
-                                        <>Cash active! Requester can record daily expenses with <strong>Vision AI OCR</strong> below.</>
-                                    )}
-                                    {status === 'paid' && currentBalance <= 0 && (
-                                        <>All funds spent! Requester can submit reconciliation for audit review.</>
-                                    )}
-                                    {status === 'settlement_submitted' && (
-                                        <>Settlement submitted. Finance must review attached bills and close the request.</>
-                                    )}
-                                    {status === 'closed' && (
-                                        <>Reconciliation settled and verified. This request is closed.</>
-                                    )}
-                                    {status === 'sent_back' && (
-                                        <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                                            Request was sent back: &ldquo;{r?.approval_remarks || r?.remarks || 'Please revise purpose/amount'}&rdquo;
+                        <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 transition-all ${
+                            status === 'paid' && currentBalance > 0
+                                ? 'bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-200 dark:border-emerald-900/50 text-emerald-950 dark:text-emerald-100'
+                                : status === 'rejected' || status === 'sent_back'
+                                ? 'bg-red-50/70 dark:bg-red-950/25 border-red-200 dark:border-red-900/50 text-red-950 dark:text-red-100'
+                                : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200'
+                        }`}>
+                            <div className="flex items-start sm:items-center gap-3">
+                                <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                                    status === 'paid' && currentBalance > 0
+                                        ? 'bg-emerald-500 text-white shadow-sm'
+                                        : 'bg-primary text-white shadow-sm'
+                                }`}>
+                                    {status === 'paid' && currentBalance > 0 ? <Wallet size={18} /> : <Info size={18} />}
+                                </div>
+                                <div className="space-y-0.5">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-mono">
+                                            {status === 'paid' ? (currentBalance > 0 ? 'Active Float' : 'Spent & Reconciling') : status.replace('_', ' ').toUpperCase()}
                                         </span>
-                                    )}
-                                    {status === 'rejected' && (
-                                        <span className="text-red-600 dark:text-red-400 font-semibold">
-                                            Request rejected: &ldquo;{r?.approval_remarks || r?.remarks || 'Declined'}&rdquo;
+                                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                            {status === 'submitted' && `Waiting for ${r?.assigned_allocator?.full_name || 'Allocator'} to assign limit`}
+                                            {status === 'pending_approval' && `Waiting for ${r?.assigned_approver?.full_name || 'Approver'} to approve ${inr(r?.allocated_amount)}`}
+                                            {status === 'approved' && 'Sanctioned · Waiting for Disbursal'}
+                                            {status === 'paid' && currentBalance > 0 && `${inr(currentBalance)} Remaining to Spend`}
+                                            {status === 'paid' && currentBalance <= 0 && 'Float Fully Spent · Ready for Reconciliation'}
+                                            {status === 'settlement_submitted' && 'Settlement Submitted · In Audit'}
+                                            {status === 'closed' && 'Settled & Closed'}
+                                            {status === 'sent_back' && 'Action Required: Revision Requested'}
+                                            {status === 'rejected' && 'Request Declined'}
                                         </span>
-                                    )}
-                                </span>
+                                    </div>
+                                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                                        {status === 'submitted' && (
+                                            <>Request submitted for <strong>{inr(requestedAmt)}</strong>. Allocator will review and assign approved budget limit.</>
+                                        )}
+                                        {status === 'pending_approval' && (
+                                            <>Allocated at <strong>{inr(r?.allocated_amount)}</strong>. Awaiting final approval before funds can be released.</>
+                                        )}
+                                        {status === 'approved' && (
+                                            <>Sanctioned for <strong>{inr(approvedAmt || requestedAmt)}</strong>. Treasury / Accounts team must record payment and disburse funds.</>
+                                        )}
+                                        {status === 'paid' && currentBalance > 0 && (
+                                            <>Advance disbursed in <strong>{r?.paid_mode || 'Cash'}</strong> on {pettyCashDate(r?.payment_date || r?.paid_at)}. Requester can record daily expenses and upload receipts below.</>
+                                        )}
+                                        {status === 'paid' && currentBalance <= 0 && (
+                                            <>All allocated funds have been spent. Requester can now submit reconciliation for finance audit review.</>
+                                        )}
+                                        {status === 'settlement_submitted' && (
+                                            <>Requester has submitted expense reconciliation. Finance team must audit the bills and close the request.</>
+                                        )}
+                                        {status === 'closed' && (
+                                            <>All expenses have been reviewed, receipts audited, and the request lifecycle is complete.</>
+                                        )}
+                                        {status === 'sent_back' && (
+                                            <span className="text-amber-600 dark:text-amber-400 font-semibold">
+                                                Remarks: &ldquo;{r?.approval_remarks || r?.remarks || 'Please revise purpose/amount'}&rdquo;
+                                            </span>
+                                        )}
+                                        {status === 'rejected' && (
+                                            <span className="text-red-600 dark:text-red-400 font-semibold">
+                                                Remarks: &ldquo;{r?.approval_remarks || r?.remarks || 'Declined'}&rdquo;
+                                            </span>
+                                        )}
+                                    </p>
+                                </div>
                             </div>
-                            {actions.length > 0 && !action && (
-                                <span className="text-[10px] font-black uppercase text-primary tracking-wider shrink-0 hidden sm:inline-block">
-                                    Actions Available Below
-                                </span>
+
+                            {owner && r?.workflow_version === 2 && ['paid', 'settlement_submitted'].includes(r.status) && !cancelPending && currentBalance > 0 && (
+                                <button
+                                    type="button"
+                                    disabled={busy || missingCredit}
+                                    onClick={() => setExpense(true)}
+                                    className="shrink-0 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                    <PlusCircle size={15} />
+                                    <span>Record Expense</span>
+                                </button>
                             )}
                         </div>
                     </div>
@@ -456,6 +550,18 @@ export default function WorkflowRequestDetail({
                         </div>
                     )}
 
+                    {cancelPending && (
+                        <div role="status" className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 text-xs font-semibold flex items-center gap-2">
+                            <AlertTriangle size={16} className="shrink-0 text-amber-500" />
+                            <span>
+                                Cancellation pending{r?.cancel_reason ? ` (${r.cancel_reason})` : ''}.{' '}
+                                {owner
+                                    ? `Return ${inr(detail?.balance || 0)} to accounts. The request is cancelled once accounts confirms the cash.`
+                                    : `Collect ${inr(detail?.balance || 0)} from the requester and use Confirm Returned Cash; the request is then cancelled.`}
+                            </span>
+                        </div>
+                    )}
+
                     {/* Action Buttons Bar */}
                     <div className="flex flex-wrap items-center gap-2.5 pt-1">
                         {actions.map(a => (
@@ -480,7 +586,7 @@ export default function WorkflowRequestDetail({
                             </button>
                         ))}
 
-                        {owner && r?.workflow_version === 2 && ['paid', 'settlement_submitted'].includes(r.status) && (
+                        {owner && r?.workflow_version === 2 && ['paid', 'settlement_submitted'].includes(r.status) && !cancelPending && (
                             <button
                                 disabled={busy || missingCredit || currentBalance <= 0}
                                 className="pc-button gap-1.5 shadow-sm"
@@ -627,6 +733,13 @@ export default function WorkflowRequestDetail({
                                         <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment Reference / UTR</span>
                                         <input name="payment_ref" className="pc-input mt-1" placeholder="e.g. UPI Ref / Cheque No / Voucher ID" />
                                     </label>
+                                    <div className="pt-1">
+                                        <div className="flex items-center justify-between mb-1.5">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Payment Receipt / Proof</span>
+                                            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">Optional — document is not required to confirm payment</span>
+                                        </div>
+                                        <ProofUpload org={context.organization_id} value={proofs} onChange={setProofs} disabled={busy} onBusyChange={setUploading} />
+                                    </div>
                                 </div>
                             )}
 
@@ -671,14 +784,14 @@ export default function WorkflowRequestDetail({
 
                             <label className="block">
                                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                                    Remarks {['send_back', 'reject', 'return'].includes(action) && <span className="text-red-500">*</span>}
+                                    Remarks {(['send_back', 'reject', 'return'].includes(action) || (action === 'cancel' && r?.status === 'paid')) && <span className="text-red-500">*</span>}
                                 </span>
                                 <textarea
                                     name="remark"
                                     className="pc-input mt-1"
                                     rows={2}
                                     placeholder="Add any notes or justification..."
-                                    required={['send_back', 'reject', 'return'].includes(action)}
+                                    required={['send_back', 'reject', 'return'].includes(action) || (action === 'cancel' && r?.status === 'paid')}
                                 />
                             </label>
 
@@ -724,6 +837,8 @@ export default function WorkflowRequestDetail({
                                 balance={detail.balance}
                                 correction={correction}
                                 existingExpenses={detail.expenses}
+                                proofThreshold={context.properties.find(p => p.id === r?.property_id)?.petty_cash_proof_threshold ?? 500}
+                                requestDate={r?.created_at ? new Date(r.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : undefined}
                                 onSaved={() => { void changed(); }}
                             />
                         </div>
@@ -829,27 +944,118 @@ export default function WorkflowRequestDetail({
                     )}
 
                     {/* Expenses and Bills Section */}
-                    <div className="space-y-3 pt-2">
-                        <div className="flex flex-wrap justify-between items-center gap-2">
-                            <div>
-                                <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
-                                    <Receipt size={17} className="text-primary" /> Expenses & Receipt Audits
-                                </h3>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {detail.expenses.length} {detail.expenses.length === 1 ? 'expense' : 'expenses'} recorded against this request
-                                </p>
-                            </div>
-                        </div>
+                    {(() => {
+                        const reqExpenses = detail.expenses || [];
+                        const opTotal = reqExpenses.filter(e => (e.spend_mode || 'Operation') === 'Operation').reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const clientTotal = reqExpenses.filter(e => e.spend_mode === 'Client').reduce((s, e) => s + Number(e.amount || 0), 0);
+                        const filtered = reqExpenses.filter(e => requestModeFilter === 'all' || (e.spend_mode || 'Operation') === requestModeFilter);
+                        const exportReadyExpenses = filtered.map(entry => ({
+                            ...entry,
+                            request: entry.request || (r?.request_no ? { id: r.id, request_no: r.request_no } : null),
+                            property: entry.property || (r?.property?.name ? { id: r.property_id, name: r.property.name } : null),
+                            documents: entry.documents && entry.documents.length > 0 ? entry.documents : (detail.documents || []).filter(d => d.expense_id === entry.id)
+                        }));
+                        return (
+                            <div className="space-y-3 pt-2">
+                                <div className="flex flex-wrap justify-between items-center gap-3">
+                                    <div>
+                                        <h3 className="font-bold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                                            <Receipt size={17} className="text-primary" /> Expenses & Receipt Audits
+                                        </h3>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                            {reqExpenses.length} {reqExpenses.length === 1 ? 'expense' : 'expenses'} recorded against this request
+                                            {reqExpenses.length > 0 && (
+                                                <span className="ml-2 font-semibold">
+                                                    (Op: <strong className="text-indigo-600 dark:text-indigo-400">{inr(opTotal)}</strong> · Client: <strong className="text-amber-600 dark:text-amber-400">{inr(clientTotal)}</strong>)
+                                                </span>
+                                            )}
+                                        </p>
+                                    </div>
 
-                        <ExpenseTable
-                            org={context.organization_id}
-                            showRequest={false}
-                            busy={busy}
-                            expenses={detail.expenses.map(entry => ({
-                                ...entry,
-                                documents: detail.documents.filter(document => document.expense_id === entry.id)
-                            }))}
+                                    {reqExpenses.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <div className="flex items-center p-0.5 bg-slate-100 dark:bg-[#21262d] rounded-xl text-xs font-bold">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('all')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all ${
+                                                        requestModeFilter === 'all'
+                                                            ? 'bg-white dark:bg-[#30363d] text-slate-900 dark:text-white shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                                                    }`}
+                                                >
+                                                    All
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('Operation')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 ${
+                                                        requestModeFilter === 'Operation'
+                                                            ? 'bg-white dark:bg-[#30363d] text-indigo-600 dark:text-indigo-400 shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-indigo-600'
+                                                    }`}
+                                                >
+                                                    <Building2 size={11} /> Op
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setRequestModeFilter('Client')}
+                                                    className={`px-2 py-0.5 rounded-lg transition-all flex items-center gap-1 ${
+                                                        requestModeFilter === 'Client'
+                                                            ? 'bg-white dark:bg-[#30363d] text-amber-600 dark:text-amber-400 shadow-xs'
+                                                            : 'text-slate-600 dark:text-slate-400 hover:text-amber-600'
+                                                    }`}
+                                                >
+                                                    <Users size={11} /> Client
+                                                </button>
+                                            </div>
+
+                                            <Button
+                                                variant="solid"
+                                                size="sm"
+                                                onClick={() => exportExpensesToCsv(exportReadyExpenses, `${r?.request_no || 'request'}_expenses`)}
+                                                title="Export clean UTF-8 CSV with BOM"
+                                                className="gap-1 rounded-xl text-xs font-bold h-7 px-2"
+                                            >
+                                                <Download size={12} /> CSV
+                                            </Button>
+                                            <Button
+                                                variant="solid"
+                                                size="sm"
+                                                onClick={() => exportExpensesToExcel(exportReadyExpenses, `${r?.request_no || 'request'}_expenses`)}
+                                                title="Export formatted Excel (.xls) with bold headers"
+                                                className="gap-1 rounded-xl text-xs font-bold h-7 px-2 text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                                            >
+                                                <FileSpreadsheet size={12} /> Excel
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <ExpenseTable
+                                    org={context.organization_id}
+                                    showRequest={false}
+                                    busy={busy}
+                                    expenses={exportReadyExpenses}
                             onCorrect={owner ? entry => { setCorrection(entry); setExpense(false); } : undefined}
+                            onWithdraw={(owner || finance) && r?.status !== 'closed' ? async entry => {
+                                const remark = window.prompt(`Withdraw the ₹${entry.amount} expense "${entry.description}"? Its amount goes back to the wallet and must be returned to accounts. Reason:`);
+                                if (!remark?.trim()) return;
+                                setBusy(true);
+                                setError('');
+                                try {
+                                    await pcFetch(`/api/petty-cash/expenses/${entry.id}`, pcJson({
+                                        organization_id: context.organization_id,
+                                        action: 'withdraw',
+                                        remark
+                                    }, 'PATCH'));
+                                    await changed();
+                                } catch (reason) {
+                                    setError(reason instanceof Error ? reason.message : 'Withdraw failed');
+                                } finally {
+                                    setBusy(false);
+                                }
+                            } : undefined}
                             onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
                                 const remark = reviewStatus === 'rejected' ? window.prompt('Reason for rejecting proof') : undefined;
                                 if (reviewStatus === 'rejected' && !remark?.trim()) return;
@@ -899,6 +1105,8 @@ export default function WorkflowRequestDetail({
                             </div>
                         )}
                     </div>
+                    );
+                    })()}
 
                     {/* Activity Audit Timeline */}
                     <div className="space-y-3 pt-3">

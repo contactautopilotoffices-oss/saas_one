@@ -156,7 +156,7 @@ function SearchableUserPicker({
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition-all cursor-pointer"
             >
                 <UserPlus className="w-3.5 h-3.5 text-primary" />
-                <span>+ Add user...</span>
+                <span>Add user...</span>
                 <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />
             </button>
 
@@ -337,6 +337,12 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { requester: true }
             },
             {
+                key: 'ticket_reply',
+                name: 'Ticket Reply',
+                description: 'WhatsApp only. Sent to the requester when the assignee replies on a ticket, and to the assignee when the requester replies.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
                 key: 'reminder_ticket_sla',
                 name: 'SLA Breach Warning (Reminder)',
                 description: 'Sent before resolution deadline breaches.',
@@ -371,7 +377,7 @@ const MODULES_META: ModuleMeta[] = [
                 key: 'checklist_completed',
                 name: 'Checklist Completed & Submitted',
                 description: 'Sent to designated supervisors/property admins when checklist photos and items are submitted.',
-                hasContextual: { requester: true }
+                hasContextual: { approver: true, requester: true }
             },
             {
                 key: 'checklist_overdue_alert',
@@ -670,12 +676,13 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
+        ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
     },
     checklists: {
         checklist_slot_reminder: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
         checklist_started: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
         checklist_overdue_alert: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
         checklist_rated: { channels: { email: false, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },

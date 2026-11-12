@@ -92,7 +92,7 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     reminder_ticket_sla: { enabled: false, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
     checklist_slot_reminder: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
     checklist_started: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+    checklist_completed: { enabled: true, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
     checklist_overdue_alert: { enabled: true, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
     checklist_rated: { enabled: false, roles: [], user_ids: [], notify_requester: true },
     checklists: { enabled: true, roles: ['property_admin'], user_ids: [] },

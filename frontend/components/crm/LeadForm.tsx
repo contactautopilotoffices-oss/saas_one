@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CRMLead, LeadStatusConfig, LeadSource, CreateLeadInput } from '@/frontend/types/crm';
+import { parseSeatCount, seatBucket } from '@/backend/lib/crm/seatRequirement';
 
 import { Toast } from '@/frontend/components/ui/Toast';
 
@@ -17,6 +18,7 @@ interface LeadFormProps {
 
 export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode }: LeadFormProps) {
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // Seat requirement as typed, e.g. "70 workstations and 4 cabins".
     const [seats, setSeats] = useState<string>('');
     const [statuses, setStatuses] = useState<LeadStatusConfig[]>([]);
     const [sources, setSources] = useState<LeadSource[]>([]);
@@ -63,10 +65,14 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
         if (isOpen) {
             fetchConfigs();
             if (initialData) {
-                // Read seats from the real column (falls back to a legacy token if present).
+                // Prefer the typed text, then the numeric column, then a legacy token.
                 const reqRaw = initialData.requirement || '';
                 const seatMatch = reqRaw.match(/\[seats=(\d+)/);
-                setSeats((initialData as any).seats != null ? String((initialData as any).seats) : (seatMatch ? seatMatch[1] : ''));
+                const seatsDetail = ((initialData as any).seats_detail || '').trim();
+                setSeats(
+                    seatsDetail
+                        || ((initialData as any).seats != null ? String((initialData as any).seats) : (seatMatch ? seatMatch[1] : ''))
+                );
                 const reqClean = reqRaw.replace(/^\[seats=\d+;bucket=[^\]]*\]\s*/, '');
                 const propInterestVal = initialData.property_interest 
                     ? initialData.property_interest 
@@ -142,14 +148,16 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
         e.preventDefault();
         setIsSubmitting(true);
         try {
-            const seatNum = parseInt(seats);
+            // Keep the words the rep typed; `seats` carries the number for filters.
+            const seatsText = seats.trim();
             const propInterest = formData.property_interest?.startsWith('custom:')
                 ? null
                 : (formData.property_interest || null);
             const payload: any = {
                 ...formData,
                 property_interest: propInterest,
-                seats: !isNaN(seatNum) && seatNum > 0 ? seatNum : null,
+                seats_detail: seatsText || null,
+                seats: parseSeatCount(seatsText),
             };
             await onSubmit(payload);
             onClose();
@@ -478,16 +486,15 @@ export default function LeadForm({ isOpen, onClose, onSubmit, initialData, mode 
                                             Seat Requirement
                                         </label>
                                         <input
-                                            type="number"
-                                            min={0}
+                                            type="text"
                                             value={seats}
                                             onChange={(e) => setSeats(e.target.value)}
                                             className="w-full border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                            placeholder="e.g. 50"
+                                            placeholder="e.g. 70 workstations and 4 cabins"
                                         />
-                                        {seats && !isNaN(parseInt(seats)) && parseInt(seats) > 0 && (
+                                        {seatBucket(parseSeatCount(seats)) && (
                                             <span className="inline-block mt-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                                                {(() => { const n = parseInt(seats); return n < 25 ? '<25' : n <= 50 ? '25–50' : n <= 100 ? '50–100' : '100+'; })()} seats bucket
+                                                {seatBucket(parseSeatCount(seats))} seats bucket
                                             </span>
                                         )}
                                     </div>

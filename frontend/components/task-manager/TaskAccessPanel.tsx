@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { Lock, Unlock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Lock, Unlock, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, SlidersHorizontal, X } from 'lucide-react';
 
 /**
  * Step 3 — Who is unlocked for the Task Manager.
@@ -16,17 +16,40 @@ interface AccessMember {
     onboarded: boolean;
     source: string | null;
     kickoffSentAt: string | null;
+    /** Owner 2026-10-27: ticked for "Only selected people" (may send to other departments). */
+    crossDeptAllowed?: boolean;
+    /** Owner 2026-10-28: personal exceptions (setting → 'on' / 'off', or a completion-remark mode). Empty = follows the team. */
+    overrides?: Record<string, string>;
 }
+
+type RemarkMode = 'off' | 'ask' | 'required';
+const REMARK_LABEL: Record<RemarkMode, string> = { off: 'Off', ask: 'Ask', required: 'Required' };
 
 interface AccessDepartment {
     departmentId: string;
     name: string;
     enabled: boolean;
     peerAssign: boolean;
+    /** Owner 2026-10-19: members may give tasks to anyone in the team (seeing still follows the reporting chain). */
+    teamAssign?: boolean;
+    /** Owner 2026-10-19: the "Pending on…" button, protection of given tasks, and the "Assigned by me" tab. */
+    pendingOn?: boolean;
+    protectGiven?: boolean;
+    assignedTab?: boolean;
+    /** Owner 2026-10-27: deadlines on tasks (countdown, "due soon" reminder, on-time / late). */
+    dueDates?: boolean;
+    /** Owner 2026-11-02: Meeting Assistant names who spoke, from voices people set up (LiveVoice ID). */
+    voiceId?: boolean;
+    /** Owner 2026-10-27: the Send tab's "Other departments" side (ON by default). */
+    crossDeptCollab?: boolean;
+    /** Owner 2026-10-27: who may SEND to other departments: everyone, or only the ticked people. */
+    crossDeptScope?: 'everyone' | 'selected';
     notificationsDelegated: boolean;
     taskImportEnabled: boolean;
     smartChatEnabled: boolean;
     superuserCollabEnabled: boolean;
+    /** Owner 2026-10-28: the comment box when a task is marked done. */
+    completionRemark?: RemarkMode;
     memberCount: number;
     onboardedCount: number;
     members: AccessMember[];
@@ -39,6 +62,61 @@ function formatWhen(iso: string | null): string {
     } catch {
         return '';
     }
+}
+
+/**
+ * Owner 2026-10-27: one on/off switch (replaces the coloured "Name: ON" pills). `role="switch"` so screen readers
+ * announce it as on or off; the label stays next to it.
+ */
+function Toggle({ checked, disabled, busy, onClick, label, tone = 'indigo' }: {
+    checked: boolean; disabled?: boolean; busy?: boolean; onClick: () => void; label: string; tone?: 'indigo' | 'emerald';
+}) {
+    const on = tone === 'emerald' ? 'bg-emerald-500' : 'bg-indigo-600';
+    return (
+        <button
+            type="button" role="switch" aria-checked={checked} aria-label={label} title={checked ? 'ON — click to switch off' : 'OFF — click to switch on'}
+            disabled={disabled || busy} onClick={onClick}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${checked ? on : 'bg-slate-300'}`}
+        >
+            <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'} ${busy ? 'animate-pulse' : ''}`} />
+        </button>
+    );
+}
+
+/** One department setting: name and a short line on the left, the switch on the right. */
+function SettingRow({ label, hint, checked, disabled, busy, onToggle }: {
+    label: string; hint: string; checked: boolean; disabled: boolean; busy: boolean; onToggle: () => void;
+}) {
+    return (
+        <div className="flex items-start justify-between gap-3 py-2">
+            <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-900">{label}</p>
+                <p className="text-[11px] leading-snug text-slate-500">{hint}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 pt-0.5">
+                <span className={`w-6 text-right text-[10px] font-black uppercase tracking-wider ${checked ? 'text-indigo-700' : 'text-slate-400'}`}>{checked ? 'On' : 'Off'}</span>
+                <Toggle checked={checked} disabled={disabled} busy={busy} onClick={onToggle} label={label} />
+            </div>
+        </div>
+    );
+}
+
+/** Owner 2026-10-28: a small segmented choice (who can send, remark on completion, a person's exception). */
+function Segmented<T extends string>({ value, options, onChange, disabled, label }: {
+    value: T; options: ReadonlyArray<readonly [T, string]>; onChange: (v: T) => void; disabled?: boolean; label: string;
+}) {
+    return (
+        <div className="inline-flex shrink-0 rounded-lg border border-slate-200 bg-slate-50 p-0.5" role="radiogroup" aria-label={label}>
+            {options.map(([v, text]) => (
+                <button
+                    key={v} type="button" role="radio" aria-checked={value === v} disabled={disabled} onClick={() => value !== v && onChange(v)}
+                    className={`whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${value === v ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                    {text}
+                </button>
+            ))}
+        </div>
+    );
 }
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -60,7 +138,17 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
     const [smartChatColumnMissing, setSmartChatColumnMissing] = useState(false);
     const [collabColumnMissing, setCollabColumnMissing] = useState(false);
     const [sharingColumnMissing, setSharingColumnMissing] = useState(false);
+    const [teamAssignColumnMissing, setTeamAssignColumnMissing] = useState(false);
+    const [teamFeaturesColumnMissing, setTeamFeaturesColumnMissing] = useState(false);
+    const [dueDatesColumnMissing, setDueDatesColumnMissing] = useState(false);
+    const [voiceIdColumnMissing, setVoiceIdColumnMissing] = useState(false);
+    const [crossDeptColumnMissing, setCrossDeptColumnMissing] = useState(false);
+    const [crossDeptScopeColumnMissing, setCrossDeptScopeColumnMissing] = useState(false);
     const [notificationsColumnMissing, setNotificationsColumnMissing] = useState(false);
+    const [completionRemarkColumnMissing, setCompletionRemarkColumnMissing] = useState(false);
+    const [personSettingsTableMissing, setPersonSettingsTableMissing] = useState(false);
+    // Owner 2026-10-28: the person whose settings window is open
+    const [personFor, setPersonFor] = useState<string | null>(null);
     const [departments, setDepartments] = useState<AccessDepartment[]>([]);
     const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -80,7 +168,15 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             setSmartChatColumnMissing(Boolean(data.smartChatColumnMissing));
             setCollabColumnMissing(Boolean(data.superuserCollabColumnMissing));
             setSharingColumnMissing(Boolean(data.teamSharingColumnMissing));
+            setTeamAssignColumnMissing(Boolean(data.teamAssignColumnMissing));
+            setTeamFeaturesColumnMissing(Boolean(data.teamFeaturesColumnMissing));
+            setDueDatesColumnMissing(Boolean(data.dueDatesColumnMissing));
+            setVoiceIdColumnMissing(Boolean(data.voiceIdColumnMissing));
+            setCrossDeptColumnMissing(Boolean(data.crossDeptColumnMissing));
+            setCrossDeptScopeColumnMissing(Boolean(data.crossDeptScopeColumnMissing));
             setNotificationsColumnMissing(Boolean(data.notificationsColumnMissing));
+            setCompletionRemarkColumnMissing(Boolean(data.completionRemarkColumnMissing));
+            setPersonSettingsTableMissing(Boolean(data.personSettingsTableMissing));
             if (data.readable === false) setError('Access settings could not be read. Everyone is treated as locked until this works again.');
             setDepartments(data.departments || []);
         } catch (err) {
@@ -132,6 +228,68 @@ export default function TaskAccessPanel({ orgId }: { orgId?: string }) {
             : `Switch team sharing OFF for ${d.name}?\n\nMembers will only see themselves and the people who report to them.`;
         if (!window.confirm(text)) return;
         post(`share-${d.departmentId}`, { action: 'set_team_sharing', departmentId: d.departmentId, enabled: next });
+    };
+
+    const toggleTeamAssign = (d: AccessDepartment) => {
+        const next = !d.teamAssign;
+        const text = next
+            ? `Switch "Assign to anyone in team" ON for ${d.name}?\n\nEveryone in ${d.name} will be able to give a task to anyone else in ${d.name}, including their own manager (web Tasks tab and WhatsApp).\n\nSeeing tasks does not change: each person still sees only their own tasks and those of the people below them.`
+            : `Switch "Assign to anyone in team" OFF for ${d.name}?\n\nMembers will be able to give tasks only to the people below them.`;
+        if (!window.confirm(text)) return;
+        post(`assign-${d.departmentId}`, { action: 'set_team_assign', departmentId: d.departmentId, enabled: next });
+    };
+
+    // Owner 2026-10-19: one handler for the three new per-team switches.
+    const TEAM_FEATURE_TEXT = {
+        pending_on: {
+            on: (n: string) => `Switch "Pending on" ON for ${n}?\n\nPeople in ${n} get a "Pending on…" button on their own open tasks, to tell a colleague the task is waiting on them. The colleague gets an app notification and a WhatsApp message. Nobody can see anyone else's board because of this.`,
+            off: (n: string) => `Switch "Pending on" OFF for ${n}?\n\nThe button disappears for this team.`,
+        },
+        protect_given: {
+            on: (n: string) => `Switch "Protect given tasks" ON for ${n}?\n\nA task someone else gave a person in ${n} can no longer be deleted or renamed by that person. Only the giver, the giver's manager (or anyone above), or a superuser can.`,
+            off: (n: string) => `Switch "Protect given tasks" OFF for ${n}?\n\nPeople can delete any task on their own list again.`,
+        },
+        assigned_tab: {
+            on: (n: string) => `Switch the "Assigned by me" tab ON for ${n}?\n\nPeople in ${n} see every task they gave, with status and times, and can edit or delete them. Managers also see (view only) the tasks given by the people below them.`,
+            off: (n: string) => `Switch the "Assigned by me" tab OFF for ${n}?\n\nThe tab disappears for this team. No task is changed.`,
+        },
+        cross_dept_collab: {
+            on: (n: string) => `Switch "Work with other departments" ON for ${n}?
+
+People in ${n} can give tasks to, ask for support from, and work together with people in other departments (Send tab), and other departments can do the same with them.`,
+            off: (n: string) => `Switch "Work with other departments" OFF for ${n}?
+
+People in ${n} can no longer send anything to other departments, and other departments can no longer send anything to them. Support requests already waiting can still be answered. No task is changed or deleted.`,
+        },
+        due_dates: {
+            on: (n: string) => `Switch "Due dates" ON for ${n}?\n\nPeople in ${n} can give a task a deadline (a date, and a time if they want). Cards count down ("Due in 3 h", "Overdue by 40 min"), a task that takes several days is not "carried forward" before its deadline, and finished tasks show "Done on time" or how late. People in ${n} get ONE reminder before a deadline (2 hours before a set time, or 5 pm the day before) in the app and on WhatsApp (template task_due_soon_v1; kill switches and Pretend Mode apply).`,
+            off: (n: string) => `Switch "Due dates" OFF for ${n}?\n\nPeople in ${n} can no longer set deadlines and get no more "due soon" reminders. Deadlines already set still show on the cards. No task is changed.`,
+        },
+        voice_id: {
+            on: (n: string) => `Switch "Recognise speakers by voice" ON for ${n}?\n\nWhen someone in ${n} records a meeting in the Meeting Assistant, the people picked as present who have set up their voice (Settings → My voice) are recognised in the recording: the transcript shows their names instead of "Speaker 1", and tasks show who asked for them. Voices that are not recognised stay "Speaker N". Needs the voice server to be running.`,
+            off: (n: string) => `Switch "Recognise speakers by voice" OFF for ${n}?\n\nNew meetings started by people in ${n} keep "Speaker 1", "Speaker 2". Voices already set up are kept, and meetings already processed are not changed.`,
+        },
+    } as const;
+    type TeamFeatureKey = keyof typeof TEAM_FEATURE_TEXT;
+    const featureValue = (d: AccessDepartment, f: TeamFeatureKey) => ({ pending_on: d.pendingOn, protect_given: d.protectGiven, assigned_tab: d.assignedTab, due_dates: d.dueDates, cross_dept_collab: d.crossDeptCollab !== false, voice_id: d.voiceId })[f] === true;
+    const toggleTeamFeature = (d: AccessDepartment, feature: TeamFeatureKey) => {
+        const next = !featureValue(d, feature);
+        if (!window.confirm(next ? TEAM_FEATURE_TEXT[feature].on(d.name) : TEAM_FEATURE_TEXT[feature].off(d.name))) return;
+        post(`${feature}-${d.departmentId}`, { action: 'set_team_feature', departmentId: d.departmentId, feature, enabled: next });
+    };
+
+    // Owner 2026-10-27: who in a department may SEND to other departments (receiving stays open for everyone).
+    const setCrossDeptScope = (d: AccessDepartment, scope: 'everyone' | 'selected') => {
+        if ((d.crossDeptScope ?? 'everyone') === scope) return;
+        const text = scope === 'selected'
+            ? `Only selected people in ${d.name} may send work to other departments?\n\nNobody is ticked yet: after this, open the people list ("Show people") and tick who may send. Everyone in ${d.name} can still RECEIVE tasks and support requests from other departments.`
+            : `Let everyone in ${d.name} send work to other departments again?\n\nThe ticks are kept, in case you switch back.`;
+        if (!window.confirm(text)) return;
+        post(`scope-${d.departmentId}`, { action: 'set_cross_dept_scope', departmentId: d.departmentId, scope });
+        if (scope === 'selected') setExpanded(prev => new Set(prev).add(d.departmentId));
+    };
+    const toggleCrossDeptPerson = (m: AccessMember) => {
+        post(`xperson-${m.userId}`, { action: 'set_cross_dept_person', userId: m.userId, enabled: !m.crossDeptAllowed });
     };
 
     const toggleNotificationsDelegated = (d: AccessDepartment) => {
@@ -241,6 +399,25 @@ Their files and images go back to being handled exactly as before.`;
         post(`smart-${d.departmentId}`, { action: 'set_smart_chat', departmentId: d.departmentId, enabled: next });
     };
 
+    // Owner 2026-10-28: "Remark on completion" for a team
+    const setCompletionRemark = (d: AccessDepartment, mode: RemarkMode) => {
+        const text = {
+            off: `Switch "Remark on completion" OFF for ${d.name}?\n\nNo comment box opens when someone marks a task done (they can still add a remark afterwards).`,
+            ask: `Set "Remark on completion" to ASK for ${d.name}?\n\nWhen someone marks one of their tasks done, a box asks what was done. They can skip it.`,
+            required: `Make a remark REQUIRED for ${d.name}?\n\nA task can only be marked done with a short remark (website and WhatsApp: "done 1: what you did"). The person who gave the task gets the remark.`,
+        }[mode];
+        if (!window.confirm(text)) return;
+        post(`remark-${d.departmentId}`, { action: 'set_completion_remark', departmentId: d.departmentId, mode });
+    };
+    // Owner 2026-10-28: one person's exception (null = follow the team), or all of them back to the team
+    const setPersonSetting = (m: AccessMember, setting: string, value: string | null) => {
+        post(`p-${m.userId}-${setting}`, { action: 'set_person_setting', userId: m.userId, setting, value });
+    };
+    const resetPerson = (m: AccessMember) => {
+        if (!window.confirm(`Clear every personal setting for ${m.name}?\n\nThey follow their team's switches again.`)) return;
+        post(`p-${m.userId}-reset`, { action: 'reset_person_settings', userId: m.userId });
+    };
+
     const toggleExpanded = (id: string) => {
         setExpanded(prev => {
             const next = new Set(prev);
@@ -296,6 +473,48 @@ Their files and images go back to being handled exactly as before.`;
                 </div>
             )}
 
+            {provisioned && (teamAssignColumnMissing || teamFeaturesColumnMissing) && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> The new team switches need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261019000001_task_manager_team_controls.sql</code> once in the Supabase SQL Editor. Until then &quot;Assign to anyone in team&quot;, &quot;Pending on&quot;, &quot;Protect given tasks&quot; and &quot;Assigned by me&quot; are OFF everywhere and their buttons are disabled.</p>
+                </div>
+            )}
+
+            {provisioned && crossDeptColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> &quot;Work with other departments&quot; needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100002_task_manager_cross_department_switch.sql</code> once in the Supabase SQL Editor. Until then every department can work with other departments (as today) and the switch cannot be turned off.</p>
+                </div>
+            )}
+
+            {provisioned && !crossDeptColumnMissing && crossDeptScopeColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Choosing who can send to other departments needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100003_task_manager_cross_department_people.sql</code> once in the Supabase SQL Editor. Until then everyone in a department with the switch ON can send.</p>
+                </div>
+            )}
+
+            {provisioned && dueDatesColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Due dates need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261027100001_task_manager_due_dates.sql</code> once in the Supabase SQL Editor. Until then due dates are OFF everywhere and the switch is disabled.</p>
+                </div>
+            )}
+
+            {provisioned && voiceIdColumnMissing && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Recognising speakers by voice needs one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261103000001_voice_id.sql</code> once in the Supabase SQL Editor. Until then the switch is disabled and meetings keep &quot;Speaker 1&quot;, &quot;Speaker 2&quot;.</p>
+                </div>
+            )}
+
+            {provisioned && (completionRemarkColumnMissing || personSettingsTableMissing) && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
+                    <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Remark on completion and personal settings need one more SQL file</p>
+                    <p>Run <code className="font-mono bg-white/70 px-1 rounded">supabase/migrations/20261028100001_task_manager_person_settings_and_completion_remark.sql</code> once in the Supabase SQL Editor. Until then every team uses &quot;Ask&quot;, nobody has personal settings, and those controls are disabled.</p>
+                </div>
+            )}
+
             {provisioned && notificationsColumnMissing && (
                 <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs">
                     <p className="font-black flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Team-managed notifications need one more SQL file</p>
@@ -329,14 +548,10 @@ Their files and images go back to being handled exactly as before.`;
                     <p className="font-black text-slate-900">Natural-language chat <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">Step 4</span></p>
                     <p className="text-slate-600">Unlocked people can write normally (&ldquo;show my tasks&rdquo;, &ldquo;I finished the vendor call&rdquo;). Any change asks &ldquo;confirm?&rdquo; first. Room and ticket messages go to the existing bot.</p>
                 </div>
-                <button
-                    type="button"
-                    disabled={busyKey === 'nl-gateway'}
-                    onClick={toggleNlGateway}
-                    className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 whitespace-nowrap ${nlGateway ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
-                >
-                    {nlGateway ? 'ON' : 'OFF'}
-                </button>
+                <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                    <span className={`text-[10px] font-black uppercase tracking-wider ${nlGateway ? 'text-emerald-700' : 'text-slate-400'}`}>{nlGateway ? 'On' : 'Off'}</span>
+                    <Toggle checked={nlGateway} busy={busyKey === 'nl-gateway'} onClick={toggleNlGateway} label="Natural-language chat" tone="emerald" />
+                </div>
             </div>
 
             {([
@@ -354,14 +569,10 @@ Their files and images go back to being handled exactly as before.`;
                         <p className="font-black text-slate-900">{f.title} <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">WhatsApp bot</span></p>
                         <p className="text-slate-600">{f.body}</p>
                     </div>
-                    <button
-                        type="button"
-                        disabled={busyKey === `bot-${f.key}`}
-                        onClick={() => toggleBotFeature(f.key)}
-                        className={`px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 whitespace-nowrap ${botFeatures[f.key] ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-200 hover:bg-slate-300 text-slate-700'}`}
-                    >
-                        {botFeatures[f.key] ? 'ON' : 'OFF'}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${botFeatures[f.key] ? 'text-emerald-700' : 'text-slate-400'}`}>{botFeatures[f.key] ? 'On' : 'Off'}</span>
+                        <Toggle checked={botFeatures[f.key]} busy={busyKey === `bot-${f.key}`} onClick={() => toggleBotFeature(f.key)} label={f.title} tone="emerald" />
+                    </div>
                 </div>
             ))}
 
@@ -379,20 +590,45 @@ Their files and images go back to being handled exactly as before.`;
 
             {loading && departments.length === 0 && <p className="text-xs text-slate-500">Loading…</p>}
 
+            {(() => {
+                const d = departments.find(x => x.members.some(m => m.userId === personFor));
+                const m = d?.members.find(x => x.userId === personFor);
+                if (!d || !m) return null;
+                return (
+                    <PersonSettingsDialog
+                        member={m} dept={d} busyKey={busyKey} onClose={() => setPersonFor(null)}
+                        canEdit={provisioned && !personSettingsTableMissing} provisioned={provisioned}
+                        teamValue={key => key === 'completion_remark' ? (d.completionRemark ?? 'ask') : ({
+                            smart_chat: d.smartChatEnabled, task_import: d.taskImportEnabled, peer_assign: d.peerAssign, team_assign: d.teamAssign === true,
+                            cross_dept_collab: featureValue(d, 'cross_dept_collab'), superuser_collab: d.superuserCollabEnabled,
+                            pending_on: featureValue(d, 'pending_on'), protect_given: featureValue(d, 'protect_given'), assigned_tab: featureValue(d, 'assigned_tab'), due_dates: featureValue(d, 'due_dates'),
+                        } as Record<string, boolean>)[key] ? 'on' : 'off'}
+                        onSet={(setting, value) => setPersonSetting(m, setting, value)}
+                        onReset={() => resetPerson(m)}
+                        onManager={() => toggleManager(m)} onSuperuser={() => toggleSuperuser(m)}
+                        onKickoff={() => (m.onboarded ? undoKickoff(m) : markKickoff(m, d.name))}
+                        onCrossDeptTick={() => toggleCrossDeptPerson(m)}
+                    />
+                );
+            })()}
+
             <div className="space-y-2">
                 {departments.map(d => {
                     const isOpen = expanded.has(d.departmentId);
                     const busy = busyKey === `dept-${d.departmentId}`;
                     const noneUnlocked = d.enabled && d.onboardedCount === 0;
                     return (
-                        <div key={d.departmentId} className="border border-slate-200 rounded-2xl overflow-hidden">
-                            <div className="flex items-center justify-between gap-3 p-3 flex-wrap">
+                        <div key={d.departmentId} className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                            {/* Owner 2026-10-27: the department, its master switch, then its settings in three tidy groups */}
+                            <div className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap bg-slate-50/70 border-b border-slate-100">
                                 <button
                                     type="button"
                                     onClick={() => toggleExpanded(d.departmentId)}
-                                    className="flex items-center gap-2 text-left cursor-pointer"
+                                    aria-expanded={isOpen}
+                                    className="flex items-center gap-2 text-left cursor-pointer min-w-0"
+                                    title={isOpen ? 'Hide people' : 'Show people'}
                                 >
-                                    {isOpen ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                                    {isOpen ? <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />}
                                     <span className="text-sm font-bold text-slate-900">{d.name}</span>
                                     <span className="text-[11px] text-slate-500">{d.onboardedCount} of {d.memberCount} kickoff sent</span>
                                     {noneUnlocked && (
@@ -401,87 +637,97 @@ Their files and images go back to being handled exactly as before.`;
                                         </span>
                                     )}
                                 </button>
-                                <div className="flex items-center gap-2">
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || collabColumnMissing || busyKey === `collab-${d.departmentId}`}
-                                    onClick={() => toggleSuperuserCollab(d)}
-                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.superuserCollabEnabled
-                                            ? 'bg-amber-600 hover:bg-amber-700 text-white'
-                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                    title="This team can give tasks to a superuser and send them reminders"
-                                >
-                                    Send tasks to a superuser: {d.superuserCollabEnabled ? 'ON' : 'OFF'}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || smartChatColumnMissing || busyKey === `smart-${d.departmentId}`}
-                                    onClick={() => toggleSmartChat(d)}
-                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.smartChatEnabled
-                                            ? 'bg-violet-600 hover:bg-violet-700 text-white'
-                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                    title="People in this team can talk to the Task Manager in plain language on WhatsApp"
-                                >
-                                    Smart chat: {d.smartChatEnabled ? 'ON' : 'OFF'}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || taskImportColumnMissing || busyKey === `import-${d.departmentId}`}
-                                    onClick={() => toggleTaskImport(d)}
-                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.taskImportEnabled
-                                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                    title="People in this team can send a task list (Excel / image / text) on WhatsApp and save it to their Tasks tab"
-                                >
-                                    Task import: {d.taskImportEnabled ? 'ON' : 'OFF'}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || notificationsColumnMissing || busyKey === `notif-${d.departmentId}`}
-                                    onClick={() => toggleNotificationsDelegated(d)}
-                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.notificationsDelegated
-                                            ? 'bg-sky-600 hover:bg-sky-700 text-white'
-                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                    title="Let this team set its own notification times and wording"
-                                >
-                                    Team manages notifications: {d.notificationsDelegated ? 'ON' : 'OFF'}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || sharingColumnMissing || busyKey === `share-${d.departmentId}`}
-                                    onClick={() => toggleTeamSharing(d)}
-                                    className={`px-3 py-1.5 rounded-xl font-bold text-[11px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.peerAssign
-                                            ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                                            : 'bg-white border border-slate-300 hover:bg-slate-100 text-slate-600'
-                                    }`}
-                                    title="Members can see and assign each other's tasks"
-                                >
-                                    Team sharing: {d.peerAssign ? 'ON' : 'OFF'}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!provisioned || busy}
-                                    onClick={() => toggleDepartment(d)}
-                                    className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-black text-xs uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                                        d.enabled
-                                            ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
-                                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
-                                    }`}
-                                    title={d.enabled ? 'Click to switch OFF' : 'Click to switch ON'}
-                                >
-                                    {d.enabled ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
-                                    {d.enabled ? 'ON' : 'OFF'}
-                                </button>
+                                <div className="flex items-center gap-2.5">
+                                    <span className={`flex items-center gap-1 text-[11px] font-black uppercase tracking-wider ${d.enabled ? 'text-emerald-700' : 'text-slate-500'}`}>
+                                        {d.enabled ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                                        Task Manager {d.enabled ? 'on' : 'off'}
+                                    </span>
+                                    <Toggle checked={d.enabled} disabled={!provisioned} busy={busy} onClick={() => toggleDepartment(d)} label={`Task Manager for ${d.name}`} tone="emerald" />
                                 </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-x-6 px-4 py-2 md:grid-cols-2 xl:grid-cols-3">
+                                {([
+                                    {
+                                        title: 'WhatsApp',
+                                        rows: [
+                                            { key: 'smart', label: 'Smart chat', hint: 'Talk to the Task Manager in plain language', on: d.smartChatEnabled, disabled: !provisioned || smartChatColumnMissing, onToggle: () => toggleSmartChat(d) },
+                                            { key: 'import', label: 'Task import', hint: 'Send a task list (Excel, image, text) to save it', on: d.taskImportEnabled, disabled: !provisioned || taskImportColumnMissing, onToggle: () => toggleTaskImport(d) },
+                                        ],
+                                    },
+                                    {
+                                        title: 'Team & sharing',
+                                        rows: [
+                                            { key: 'share', label: 'Team sharing', hint: "Members see and assign each other's tasks", on: d.peerAssign, disabled: !provisioned || sharingColumnMissing, onToggle: () => toggleTeamSharing(d) },
+                                            { key: 'assign', label: 'Assign to anyone in team', hint: 'Give tasks to anyone in the team, manager included', on: d.teamAssign === true, disabled: !provisioned || teamAssignColumnMissing, onToggle: () => toggleTeamAssign(d) },
+                                            { key: 'cross_dept_collab', label: 'Work with other departments', hint: 'Give tasks, ask for support and work together across teams', on: featureValue(d, 'cross_dept_collab'), disabled: !provisioned || crossDeptColumnMissing, onToggle: () => toggleTeamFeature(d, 'cross_dept_collab') },
+                                            { key: 'collab', label: 'Send tasks to a superuser', hint: 'Give tasks and reminders to a superuser above them', on: d.superuserCollabEnabled, disabled: !provisioned || collabColumnMissing, onToggle: () => toggleSuperuserCollab(d) },
+                                            { key: 'notif', label: 'Team manages notifications', hint: 'Set its own message times and wording', on: d.notificationsDelegated, disabled: !provisioned || notificationsColumnMissing, onToggle: () => toggleNotificationsDelegated(d) },
+                                        ],
+                                    },
+                                    {
+                                        title: 'Task features',
+                                        rows: [
+                                            { key: 'pending_on', label: 'Pending on', hint: 'Tell a colleague a task is waiting on them', on: featureValue(d, 'pending_on'), disabled: !provisioned || teamFeaturesColumnMissing, onToggle: () => toggleTeamFeature(d, 'pending_on') },
+                                            { key: 'protect_given', label: 'Protect given tasks', hint: 'The holder cannot delete or rename a given task', on: featureValue(d, 'protect_given'), disabled: !provisioned || teamFeaturesColumnMissing, onToggle: () => toggleTeamFeature(d, 'protect_given') },
+                                            { key: 'assigned_tab', label: 'Assigned by me', hint: 'A tab with every task they gave, and its status', on: featureValue(d, 'assigned_tab'), disabled: !provisioned || teamFeaturesColumnMissing, onToggle: () => toggleTeamFeature(d, 'assigned_tab') },
+                                            { key: 'due_dates', label: 'Due dates', hint: 'Deadlines, countdown, a reminder and on-time tracking', on: featureValue(d, 'due_dates'), disabled: !provisioned || dueDatesColumnMissing, onToggle: () => toggleTeamFeature(d, 'due_dates') },
+                                            { key: 'voice_id', label: 'Recognise speakers by voice', hint: 'Meeting Assistant names who spoke, from voices people set up', on: featureValue(d, 'voice_id'), disabled: !provisioned || voiceIdColumnMissing, onToggle: () => toggleTeamFeature(d, 'voice_id') },
+                                        ],
+                                    },
+                                ]).map(group => (
+                                    <section key={group.title} className="py-1" aria-label={`${d.name}: ${group.title}`}>
+                                        <p className="pt-2 pb-0.5 text-[10px] font-black uppercase tracking-widest text-slate-400">{group.title}</p>
+                                        <div className="divide-y divide-slate-100">
+                                            {group.rows.map(r => (
+                                                <React.Fragment key={r.key}>
+                                                    <SettingRow label={r.label} hint={r.hint} checked={r.on} disabled={r.disabled} busy={busyKey === `${r.key}-${d.departmentId}`} onToggle={r.onToggle} />
+                                                    {/* Owner 2026-10-27: who may send, under the department switch (only while it is ON) */}
+                                                    {r.key === 'cross_dept_collab' && r.on && (
+                                                        <div className="pb-2 pl-3">
+                                                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Who can send</p>
+                                                            <div className="mt-1 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5" role="radiogroup" aria-label={`${d.name}: who can send to other departments`}>
+                                                                {([['everyone', 'Everyone'], ['selected', 'Only selected people']] as const).map(([value, text]) => {
+                                                                    const on = (d.crossDeptScope ?? 'everyone') === value;
+                                                                    return (
+                                                                        <button
+                                                                            key={value} type="button" role="radio" aria-checked={on}
+                                                                            disabled={!provisioned || crossDeptScopeColumnMissing || busyKey === `scope-${d.departmentId}`}
+                                                                            onClick={() => setCrossDeptScope(d, value)}
+                                                                            className={`rounded-md px-2.5 py-1 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${on ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+                                                                        >
+                                                                            {text}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            {d.crossDeptScope === 'selected' && (
+                                                                <p className="mt-1 text-[11px] text-slate-500">
+                                                                    {d.members.filter(x => x.crossDeptAllowed).length} of {d.members.length} ticked · open &quot;Show people&quot;, then a person&apos;s Settings to tick them. Everyone can still receive.
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </React.Fragment>
+                                            ))}
+                                            {/* Owner 2026-10-28: the comment box when a task is marked done */}
+                                            {group.title === 'Task features' && (
+                                                <div className="flex flex-wrap items-start justify-between gap-3 py-2">
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-slate-900">Remark on completion</p>
+                                                        <p className="text-[11px] leading-snug text-slate-500">A box asks what was done when a task is marked done</p>
+                                                    </div>
+                                                    <Segmented<RemarkMode>
+                                                        value={d.completionRemark ?? 'ask'} label={`${d.name}: remark on completion`}
+                                                        options={[['off', 'Off'], ['ask', 'Ask'], ['required', 'Required']]}
+                                                        disabled={!provisioned || completionRemarkColumnMissing || busyKey === `remark-${d.departmentId}`}
+                                                        onChange={mode => setCompletionRemark(d, mode)}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </section>
+                                ))}
                             </div>
 
                             {isOpen && (
@@ -489,10 +735,19 @@ Their files and images go back to being handled exactly as before.`;
                                     {d.members.length === 0 && <p className="p-3 text-xs text-slate-500">No members with a user account.</p>}
                                     {d.members.map(m => {
                                         const mBusy = busyKey === `kick-${m.userId}`;
+                                        const custom = Object.keys(m.overrides ?? {}).length;
                                         return (
                                             <div key={m.userId} className="flex items-center justify-between gap-3 px-4 py-2 flex-wrap">
                                                 <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="text-xs font-bold text-slate-900">{m.name}</span>
+                                                    {/* Owner 2026-10-28: click a person to set their own permissions */}
+                                                    <button type="button" onClick={() => setPersonFor(m.userId)} className="cursor-pointer text-xs font-bold text-slate-900 underline-offset-2 hover:text-indigo-700 hover:underline" title={`Settings for ${m.name}`}>
+                                                        {m.name}
+                                                    </button>
+                                                    {custom > 0 && (
+                                                        <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200" title="Personal settings that differ from the team">
+                                                            {custom} custom
+                                                        </span>
+                                                    )}
                                                     {m.taskRole !== 'employee' && (
                                                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{m.taskRole}</span>
                                                     )}
@@ -511,47 +766,23 @@ Their files and images go back to being handled exactly as before.`;
                                                         </span>
                                                     )}
                                                 </div>
-                                                {provisioned && m.taskRole !== 'superuser' && (
-                                                    <button
-                                                        type="button"
-                                                        disabled={busyKey === `manager-${m.userId}`}
-                                                        onClick={() => toggleManager(m)}
-                                                        className={`text-[11px] font-bold underline cursor-pointer disabled:opacity-50 mr-3 ${m.taskRole === 'reporting_manager' ? 'text-rose-600 hover:text-rose-800' : 'text-emerald-700 hover:text-emerald-900'}`}
-                                                    >
-                                                        {m.taskRole === 'reporting_manager' ? 'Remove manager' : 'Make manager'}
-                                                    </button>
-                                                )}
-                                                {provisioned && (
-                                                    <button
-                                                        type="button"
-                                                        disabled={busyKey === `super-${m.userId}`}
-                                                        onClick={() => toggleSuperuser(m)}
-                                                        className={`text-[11px] font-bold underline cursor-pointer disabled:opacity-50 mr-3 ${m.taskRole === 'superuser' ? 'text-rose-600 hover:text-rose-800' : 'text-indigo-600 hover:text-indigo-800'}`}
-                                                    >
-                                                        {m.taskRole === 'superuser' ? 'Remove superuser' : 'Make superuser'}
-                                                    </button>
-                                                )}
-                                                {provisioned && (
-                                                    m.onboarded ? (
+                                                <div className="flex items-center gap-2">
+                                                    {/* The one manual step people look for, kept on the row */}
+                                                    {provisioned && !m.onboarded && (
                                                         <button
-                                                            type="button"
-                                                            disabled={mBusy}
-                                                            onClick={() => undoKickoff(m)}
-                                                            className="text-[11px] font-bold text-slate-500 hover:text-rose-700 underline cursor-pointer disabled:opacity-50"
-                                                        >
-                                                            Undo
-                                                        </button>
-                                                    ) : (
-                                                        <button
-                                                            type="button"
-                                                            disabled={mBusy}
-                                                            onClick={() => markKickoff(m, d.name)}
+                                                            type="button" disabled={mBusy} onClick={() => markKickoff(m, d.name)}
                                                             className="px-3 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-[11px] font-bold cursor-pointer disabled:opacity-50"
                                                         >
                                                             Mark kickoff as sent (manual)
                                                         </button>
-                                                    )
-                                                )}
+                                                    )}
+                                                    <button
+                                                        type="button" onClick={() => setPersonFor(m.userId)}
+                                                        className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-black text-indigo-700 hover:bg-indigo-100 cursor-pointer"
+                                                    >
+                                                        <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" /> Settings
+                                                    </button>
+                                                </div>
                                             </div>
                                         );
                                     })}
@@ -564,3 +795,134 @@ Their files and images go back to being handled exactly as before.`;
         </div>
     );
 }
+
+/** Owner 2026-10-28: the settings a person can have their own value for, grouped like the team card. */
+const PERSON_GROUPS: ReadonlyArray<{ title: string; rows: ReadonlyArray<{ key: string; label: string; hint: string }> }> = [
+    { title: 'WhatsApp', rows: [
+        { key: 'smart_chat', label: 'Smart chat', hint: 'Talk to the Task Manager in plain language' },
+        { key: 'task_import', label: 'Task import', hint: 'Send a task list (Excel, image, text) to save it' },
+    ] },
+    { title: 'Team & sharing', rows: [
+        { key: 'peer_assign', label: 'Team sharing', hint: "See and assign teammates' tasks" },
+        { key: 'team_assign', label: 'Assign to anyone in team', hint: 'Give tasks to anyone in the team, manager included' },
+        { key: 'cross_dept_collab', label: 'Work with other departments', hint: 'Send to and receive from other teams' },
+        { key: 'superuser_collab', label: 'Send tasks to a superuser', hint: 'Give tasks and reminders to a superuser above them' },
+    ] },
+    { title: 'Task features', rows: [
+        { key: 'pending_on', label: 'Pending on', hint: 'Tell a colleague a task is waiting on them' },
+        { key: 'protect_given', label: 'Protect given tasks', hint: 'Cannot delete or rename a task someone gave them' },
+        { key: 'assigned_tab', label: 'Assigned by me', hint: 'A tab with every task they gave, and its status' },
+        { key: 'due_dates', label: 'Due dates', hint: 'Deadlines, countdown, a reminder and on-time tracking' },
+        { key: 'completion_remark', label: 'Remark on completion', hint: 'A box asks what was done when they mark a task done' },
+    ] },
+];
+
+/**
+ * Owner 2026-10-28: one person's window. Every setting follows the team ("Team · On") unless a personal value is picked;
+ * a personal value wins over the team either way. Role and kickoff actions moved here from the person's row.
+ */
+function PersonSettingsDialog({ member: m, dept: d, busyKey, canEdit, provisioned, teamValue, onSet, onReset, onClose, onManager, onSuperuser, onKickoff, onCrossDeptTick }: {
+    member: AccessMember; dept: AccessDepartment; busyKey: string | null; canEdit: boolean; provisioned: boolean;
+    teamValue: (key: string) => string;
+    onSet: (setting: string, value: string | null) => void; onReset: () => void; onClose: () => void;
+    onManager: () => void; onSuperuser: () => void; onKickoff: () => void; onCrossDeptTick: () => void;
+}) {
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [onClose]);
+    const overrides = m.overrides ?? {};
+    const custom = Object.keys(overrides).length;
+    const word = (v: string) => (v === 'on' ? 'On' : v === 'off' ? 'Off' : REMARK_LABEL[v as RemarkMode] ?? v);
+    const link = 'text-[11px] font-bold underline cursor-pointer disabled:opacity-50';
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/45 p-4 pt-[6vh] backdrop-blur-[2px]" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="person-settings-title" className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+                <header className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-6 pb-4 pt-5">
+                    <div className="min-w-0 flex-1">
+                        <h2 id="person-settings-title" className="text-lg font-black text-slate-900">{m.name}</h2>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                            <span>{d.name}</span>
+                            {m.taskRole !== 'employee' && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">{m.taskRole}</span>}
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-black border ${m.onboarded ? 'bg-emerald-100 text-emerald-900 border-emerald-300' : 'bg-slate-200 text-slate-700 border-slate-300'}`}>{m.onboarded ? '✅ Kickoff sent' : 'Not invited'}</span>
+                            {m.onboarded && m.source && <span className="text-[10px]">{SOURCE_LABEL[m.source] || m.source}{m.kickoffSentAt ? ` · ${formatWhen(m.kickoffSentAt)}` : ''}</span>}
+                        </p>
+                    </div>
+                    <button type="button" onClick={onClose} aria-label="Close" className="rounded-xl bg-black/5 p-2 text-slate-600 hover:bg-black/10 cursor-pointer"><X className="h-4 w-4" /></button>
+                </header>
+
+                <div className="space-y-5 px-6 pb-6 pt-4">
+                    {/* Role and kickoff (moved here from the row) */}
+                    {provisioned && (
+                        <section className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-slate-200 px-4 py-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Role &amp; access</p>
+                            {m.taskRole !== 'superuser' && (
+                                <button type="button" disabled={busyKey === `manager-${m.userId}`} onClick={onManager} className={`${link} ${m.taskRole === 'reporting_manager' ? 'text-rose-600 hover:text-rose-800' : 'text-emerald-700 hover:text-emerald-900'}`}>
+                                    {m.taskRole === 'reporting_manager' ? 'Remove manager' : 'Make manager'}
+                                </button>
+                            )}
+                            <button type="button" disabled={busyKey === `super-${m.userId}`} onClick={onSuperuser} className={`${link} ${m.taskRole === 'superuser' ? 'text-rose-600 hover:text-rose-800' : 'text-indigo-600 hover:text-indigo-800'}`}>
+                                {m.taskRole === 'superuser' ? 'Remove superuser' : 'Make superuser'}
+                            </button>
+                            <button type="button" disabled={busyKey === `kick-${m.userId}`} onClick={onKickoff} className={`${link} text-slate-600 hover:text-slate-900`}>
+                                {m.onboarded ? 'Undo kickoff record' : 'Mark kickoff as sent (manual)'}
+                            </button>
+                        </section>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-slate-600">Each setting follows <strong>{d.name}</strong> unless you pick a personal value. A personal value wins either way.</p>
+                        <button type="button" disabled={!canEdit || custom === 0 || busyKey === `p-${m.userId}-reset`} onClick={onReset} className="rounded-lg border border-slate-300 px-3 py-1 text-[11px] font-bold text-slate-700 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50">
+                            Reset to team{custom ? ` (${custom})` : ''}
+                        </button>
+                    </div>
+                    {!canEdit && provisioned && <p className="rounded-xl bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900">Personal settings need the SQL file 20261028100001 first.</p>}
+
+                    {PERSON_GROUPS.map(group => (
+                        <section key={group.title} aria-label={`${m.name}: ${group.title}`}>
+                            <p className="pb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">{group.title}</p>
+                            <div className="divide-y divide-slate-100">
+                                {group.rows.map(r => {
+                                    const team = teamValue(r.key);
+                                    const own = overrides[r.key] ?? null;
+                                    const choices: ReadonlyArray<readonly [string, string]> = r.key === 'completion_remark'
+                                        ? [['team', `Team · ${word(team)}`], ['off', 'Off'], ['ask', 'Ask'], ['required', 'Required']]
+                                        : [['team', `Team · ${word(team)}`], ['on', 'On'], ['off', 'Off']];
+                                    return (
+                                        <div key={r.key} className="py-2">
+                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                                                        {r.label}
+                                                        {own !== null && <span className="rounded bg-indigo-100 px-1 py-px text-[9px] font-black uppercase tracking-wider text-indigo-700">Personal</span>}
+                                                    </p>
+                                                    <p className="text-[11px] leading-snug text-slate-500">{r.hint}</p>
+                                                </div>
+                                                <Segmented<string>
+                                                    value={own ?? 'team'} options={choices} label={`${m.name}: ${r.label}`}
+                                                    disabled={!canEdit || busyKey === `p-${m.userId}-${r.key}`}
+                                                    onChange={v => onSet(r.key, v === 'team' ? null : v)}
+                                                />
+                                            </div>
+                                            {/* the existing "only selected people" tick, when the team uses it and the person follows the team */}
+                                            {r.key === 'cross_dept_collab' && own === null && team === 'on' && d.crossDeptScope === 'selected' && (
+                                                <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                                                    <input type="checkbox" checked={m.crossDeptAllowed === true} disabled={busyKey === `xperson-${m.userId}`} onChange={onCrossDeptTick} className="h-3.5 w-3.5 cursor-pointer accent-indigo-600 disabled:opacity-50" />
+                                                    Ticked in &quot;Only selected people&quot; (can send to other departments)
+                                                </label>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </section>
+                    ))}
+                    <p className="text-[11px] text-slate-500">&quot;Team manages notifications&quot; stays a team setting.</p>
+                </div>
+            </div>
+        </div>
+    );
+}
+

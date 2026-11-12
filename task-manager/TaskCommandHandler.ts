@@ -228,7 +228,7 @@ export class TaskCommandHandler {
             // themselves, everyone below them in the reporting chain, colleagues when team sharing is ON;
             // superusers may assign to anyone.
             const allEmployees = await TaskDatabaseService.getAllEmployees();
-            const deptEmployees = await PermissionService.visibleAndAssignable(employee, allEmployees);
+            const deptEmployees = await PermissionService.assignableTo(employee, allEmployees);
 
             // Match by self ('me' / 'myself'), or search available assignees
             const isSelf = targetNameQuery.toLowerCase() === 'me' || targetNameQuery.toLowerCase() === 'myself';
@@ -290,6 +290,9 @@ export class TaskCommandHandler {
 
             // Notify assigned employee via WhatsApp if they have a phone number
             // Same approved template as the Tasks tab (task_assigned_v1), so it also reaches people outside the 24-hour window.
+            if (targetEmployee.id !== employee.id) {
+                void import('./taskBell').then(({ taskBell }) => taskBell({ userId: targetEmployee.id, kind: 'TASK_ASSIGNED', title: `New task from ${employee.name}`, message: `${employee.name} gave you: ${taskTitle}`, departmentName: targetEmployee.department_name }));
+            }
             void sendTaskAssigned(targetEmployee.phone_number, {
                 titles: [taskTitle], fromLabel: personLabel(employee.name, employee.department_name), date: targetDate,
                 departmentId: targetEmployee.department_id || undefined,

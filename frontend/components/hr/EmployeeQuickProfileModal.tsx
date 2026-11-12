@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { X, Mail, Phone, Building2, MapPin, Shield, UserCheck, Lock, ExternalLink, User } from 'lucide-react';
+import { X, Mail, Phone, Building2, MapPin, Shield, UserCheck, Lock, ExternalLink, User, Users } from 'lucide-react';
 
 export interface EmployeeProfileModalData {
     isOpen: boolean;
@@ -21,6 +21,18 @@ export interface EmployeeProfileModalData {
         photo_url?: string | null;
         level?: number;
         level_status?: string;
+        // Every user configured at this escalation level in HR Admin Config.
+        // A level can own a ticket jointly, so contact details are per user, not per ticket.
+        level_users?: Array<{
+            id?: string;
+            full_name?: string;
+            employee_code?: string;
+            email?: string;
+            phone?: string;
+            designation?: string;
+            department?: string;
+            location?: string;
+        }>;
     };
 }
 
@@ -75,6 +87,13 @@ export default function EmployeeQuickProfileModal({
 
     const roleTitle = formatRole(employee.designation) || formatRole(employee.app_role) || (type === 'handler' ? 'Designated Authority' : 'Employee Submitter');
 
+    // A handler level with several configured users shows each of them with their own
+    // code, email and phone; the single-owner card is left exactly as it was.
+    const levelOwners = (type === 'handler' && !isAnonymous && Array.isArray(employee.level_users))
+        ? employee.level_users.filter(u => u && (u.full_name || u.email))
+        : [];
+    const isSharedLevel = levelOwners.length > 1;
+
     return (
         <div 
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
@@ -96,7 +115,9 @@ export default function EmployeeQuickProfileModal({
                     <div className="flex-1" />
                     <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black uppercase tracking-wider text-white px-2.5 py-1 rounded-full bg-black/30 backdrop-blur-md border border-white/20 shadow-xs">
-                            {type === 'handler' ? `Level ${employee.level || ticket.current_level} Owner` : 'Ticket Submitter'}
+                            {type === 'handler'
+                                ? `Level ${employee.level || ticket.current_level} ${isSharedLevel ? `Owners (${levelOwners.length})` : 'Owner'}`
+                                : 'Ticket Submitter'}
                         </span>
                         <button
                             type="button"
@@ -117,6 +138,10 @@ export default function EmployeeQuickProfileModal({
                             {isAnonymous ? (
                                 <div className="w-18 h-18 rounded-full bg-amber-100 dark:bg-amber-950 border-4 border-white dark:border-[#161b22] text-amber-700 dark:text-amber-300 flex items-center justify-center shadow-lg">
                                     <Lock className="w-8 h-8" />
+                                </div>
+                            ) : isSharedLevel ? (
+                                <div className="w-18 h-18 rounded-full bg-[#587e85] border-4 border-white dark:border-[#161b22] text-white flex items-center justify-center shadow-lg">
+                                    <Users className="w-8 h-8" />
                                 </div>
                             ) : employee.photo_url ? (
                                 <>
@@ -144,7 +169,7 @@ export default function EmployeeQuickProfileModal({
                             )}
                         </div>
 
-                        {employee.employee_code && employee.employee_code !== 'N/A' && !isAnonymous && (
+                        {employee.employee_code && employee.employee_code !== 'N/A' && !isAnonymous && !isSharedLevel && (
                             <span className="font-mono text-xs font-black px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#30363d] shadow-2xs">
                                 #{employee.employee_code}
                             </span>
@@ -177,25 +202,29 @@ export default function EmployeeQuickProfileModal({
 
                     {/* Information Grid */}
                     <div className="mt-4 p-3.5 bg-slate-50 dark:bg-[#0d1117] rounded-2xl border border-slate-200 dark:border-[#30363d] space-y-2.5 text-xs">
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
-                                <Building2 className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
-                                Department:
-                            </span>
-                            <span className="font-bold text-slate-900 dark:text-slate-100 text-right truncate">
-                                {isAnonymous ? 'Confidential' : (employee.department || 'Operations')}
-                            </span>
-                        </div>
+                        {!isSharedLevel && (
+                            <>
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
+                                        <Building2 className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
+                                        Department:
+                                    </span>
+                                    <span className="font-bold text-slate-900 dark:text-slate-100 text-right truncate">
+                                        {isAnonymous ? 'Confidential' : (employee.department || 'Operations')}
+                                    </span>
+                                </div>
 
-                        <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
-                            <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
-                                <MapPin className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
-                                Location:
-                            </span>
-                            <span className="font-bold text-slate-900 dark:text-slate-100 text-right truncate">
-                                {isAnonymous ? 'Hidden' : (employee.location || 'Site / HO')}
-                            </span>
-                        </div>
+                                <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
+                                    <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
+                                        <MapPin className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
+                                        Location:
+                                    </span>
+                                    <span className="font-bold text-slate-900 dark:text-slate-100 text-right truncate">
+                                        {isAnonymous ? 'Hidden' : (employee.location || 'Site / HO')}
+                                    </span>
+                                </div>
+                            </>
+                        )}
 
                         {type === 'submitter' && (
                             <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
@@ -210,7 +239,7 @@ export default function EmployeeQuickProfileModal({
                         )}
 
                         {type === 'handler' && (
-                            <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
+                            <div className={`flex items-center justify-between gap-3 ${isSharedLevel ? '' : 'pt-2 border-t border-slate-200/80 dark:border-[#21262d]'}`}>
                                 <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
                                     <Shield className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                                     Authority Level:
@@ -221,7 +250,79 @@ export default function EmployeeQuickProfileModal({
                             </div>
                         )}
 
-                        {!isAnonymous && employee.email && employee.email !== 'N/A' && (
+                        {isSharedLevel && (
+                            <div className="pt-2.5 border-t border-slate-200/80 dark:border-[#21262d] space-y-2">
+                                <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                    <Users className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
+                                    <span>Level Owners ({levelOwners.length})</span>
+                                </div>
+                                <p className="text-[10.5px] font-medium text-slate-500 dark:text-slate-400 leading-snug">
+                                    All of them own this ticket and are notified. Whoever acts on it is recorded individually.
+                                </p>
+
+                                {levelOwners.map((owner, ownerIdx) => (
+                                    <div
+                                        key={owner.id || owner.email || ownerIdx}
+                                        className="p-2.5 rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] space-y-1.5"
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <div className="font-black text-slate-900 dark:text-white text-[12px] leading-tight break-words">
+                                                    {owner.full_name || 'Assigned User'}
+                                                </div>
+                                                {(owner.designation || owner.department) && (
+                                                    <div className="text-[10.5px] font-bold text-[#587e85] dark:text-[#7ba9b1] leading-tight break-words">
+                                                        {[owner.designation, owner.department].filter(Boolean).join(' · ')}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {owner.employee_code && owner.employee_code !== 'N/A' && (
+                                                <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-[#30363d] shrink-0">
+                                                    #{owner.employee_code}
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {owner.email && owner.email !== 'N/A' && (
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <Mail className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1] shrink-0" />
+                                                <a
+                                                    href={`mailto:${owner.email}`}
+                                                    className="font-bold text-[11px] text-[#587e85] dark:text-teal-400 hover:underline truncate"
+                                                    title={owner.email}
+                                                >
+                                                    {owner.email}
+                                                </a>
+                                            </div>
+                                        )}
+
+                                        {owner.phone && owner.phone !== 'N/A' && (
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <Phone className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1] shrink-0" />
+                                                <a
+                                                    href={`tel:${owner.phone}`}
+                                                    className="font-bold text-[11px] text-[#587e85] dark:text-teal-400 hover:underline truncate"
+                                                    title={owner.phone}
+                                                >
+                                                    {owner.phone}
+                                                </a>
+                                            </div>
+                                        )}
+
+                                        {owner.location && owner.location !== 'Hidden' && (
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                                <span className="font-semibold text-[11px] text-slate-600 dark:text-slate-400 truncate" title={owner.location}>
+                                                    {owner.location}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {!isAnonymous && !isSharedLevel && employee.email && employee.email !== 'N/A' && (
                             <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
                                 <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
                                     <Mail className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />
@@ -237,7 +338,7 @@ export default function EmployeeQuickProfileModal({
                             </div>
                         )}
 
-                        {!isAnonymous && employee.phone && employee.phone !== 'N/A' && (
+                        {!isAnonymous && !isSharedLevel && employee.phone && employee.phone !== 'N/A' && (
                             <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-200/80 dark:border-[#21262d]">
                                 <span className="text-slate-600 dark:text-slate-400 text-[11.5px] font-semibold flex items-center gap-1.5 shrink-0">
                                     <Phone className="w-3.5 h-3.5 text-[#587e85] dark:text-[#7ba9b1]" />

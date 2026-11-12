@@ -5,16 +5,19 @@ import { Button } from '@/frontend/components/ui/button';
 import SearchableSelect from './SearchableSelect';
 import { pcFetch, pcJson, type Context } from './workflowTypes';
 interface Candidate { id: string; full_name: string; email: string; roles?: string[]; property_association?: string }
-interface Assignment { property_id: string; kind: string; user_id: string; is_primary: boolean }
+interface Assignment { property_id: string; kind: string; user_id: string; is_primary: boolean; property?: { name: string; petty_cash_proof_threshold?: number } }
 export default function PropertyRoutingSettings({ context, onSaved }: { context: Context; onSaved: () => void }) {
     const [property, setProperty] = useState(context.configuration_properties[0]?.id || '');
     const [users, setUsers] = useState<Candidate[]>([]);
     const [allocator, setAllocator] = useState(''); const [approver, setApprover] = useState('');
+    const [proofThreshold, setProofThreshold] = useState('500');
     const [error, setError] = useState(''); const [message, setMessage] = useState('');
     const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [retry, setRetry] = useState(0);
     useEffect(() => {
         let active = true; setLoading(true); setUsers([]); setAllocator(''); setApprover(''); setMessage(''); setError('');
         if (!property) { setLoading(false); return; }
+        const initialThreshold = context.configuration_properties.find(p => p.id === property)?.petty_cash_proof_threshold;
+        if (initialThreshold !== undefined) setProofThreshold(String(initialThreshold));
         Promise.all([
             pcFetch<{ users: Candidate[] }>(`/api/petty-cash/candidates?org_id=${context.organization_id}&property_id=${property}`),
             pcFetch<{ assignments: Assignment[] }>(`/api/petty-cash/assignments?org_id=${context.organization_id}`),
@@ -24,24 +27,55 @@ export default function PropertyRoutingSettings({ context, onSaved }: { context:
             const rows = config.assignments.filter(row => row.property_id === property && row.is_primary);
             setAllocator(rows.find(row => row.kind === 'allocator')?.user_id || '');
             setApprover(rows.find(row => row.kind === 'approver')?.user_id || '');
+            const threshold = rows[0]?.property?.petty_cash_proof_threshold;
+            if (threshold !== undefined) setProofThreshold(String(threshold));
         }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : 'Could not load routing'); })
             .finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [property, context.organization_id, retry]);
+    }, [property, context.organization_id, context.configuration_properties, retry]);
     const options = users.map(user => ({ value: user.id, label: user.full_name || user.email, description: user.email || undefined, searchText: `${user.roles?.join(' ') || ''} ${user.property_association || ''}` }));
     const unavailable = (!loading && allocator && !users.some(user => user.id === allocator)) || (!loading && approver && !users.some(user => user.id === approver));
     const ready = !loading && !error && !busy && property && allocator && approver && allocator !== approver && !unavailable;
     return <form className="pc-panel rounded-3xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm overflow-hidden" onSubmit={async event => {
         event.preventDefault(); if (!ready) return; setBusy(true); setMessage(''); setError('');
         try {
-            await pcFetch('/api/petty-cash/assignments', pcJson({ organization_id: context.organization_id, property_id: property, allocator_id: allocator, approver_id: approver, allocator_backups: [], approver_backups: [] }, 'PUT'));
-            setMessage('Routing saved. New requests will use these users; reassign pending requests explicitly.'); onSaved();
+            await pcFetch('/api/petty-cash/assignments', pcJson({
+                organization_id: context.organization_id,
+                property_id: property,
+                allocator_id: allocator,
+                approver_id: approver,
+                allocator_backups: [],
+                approver_backups: [],
+                proof_threshold: Number(proofThreshold) >= 0 ? Number(proofThreshold) : 500
+            }, 'PUT'));
+            setMessage('Routing and proof threshold saved. New requests and expenses will use these rules.'); onSaved();
         } catch (reason) { setError(reason instanceof Error ? reason.message : 'Save failed'); } finally { setBusy(false); }
     }}>
-        <div className="pc-panel-heading p-6 border-b border-slate-100 dark:border-[#30363d] flex items-center gap-3.5"><div className="pc-icon-tile w-11 h-11 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0"><Building2 size={20} /></div><div><h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Property Routing</h2><p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Configure dedicated allocator and approver routing for each managed property.</p></div></div>
+        <div className="pc-panel-heading p-6 border-b border-slate-100 dark:border-[#30363d] flex items-center gap-3.5"><div className="pc-icon-tile w-11 h-11 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0"><Building2 size={20} /></div><div><h2 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">Property Routing & Rules</h2><p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Configure dedicated allocator and approver routing and proof requirements for each managed property.</p></div></div>
         {!context.configuration_properties.length ? <div className="pc-empty p-12 text-center"><Building2 size={28} className="text-slate-400 mb-2" /><h3>No properties available</h3><p>Add a property to configure its petty cash routing.</p></div> : <>
-            <div className="pc-routing-body space-y-5">
-                <div className="max-w-xl"><SearchableSelect label="Property" value={property} options={context.configuration_properties.map(item => ({ value: item.id, label: item.name }))} onChange={setProperty} disabled={busy} /></div>
+            <div className="pc-routing-body space-y-5 p-6">
+                <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <SearchableSelect label="Property" value={property} options={context.configuration_properties.map(item => ({ value: item.id, label: item.name }))} onChange={setProperty} disabled={busy} />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                            Proof Required Limit (₹)
+                            <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                className="pc-input mt-1.5"
+                                value={proofThreshold}
+                                onChange={e => setProofThreshold(e.target.value)}
+                                placeholder="500"
+                                disabled={busy || loading}
+                                required
+                            />
+                        </label>
+                        <p className="pc-help text-[11px] text-slate-500 dark:text-slate-400 mt-1">Expenses exceeding this amount require bills/receipts. Expenses up to this amount only require purpose.</p>
+                    </div>
+                </div>
                 <div className="grid md:grid-cols-2 gap-4">
                     <div className="pc-routing-stage"><div className="flex items-center gap-2 text-primary mb-3"><UserRound size={18} /><span className="text-xs font-semibold uppercase tracking-wider">1 · Allocation</span></div><SearchableSelect label="Allocator" value={allocator} options={options} onChange={value => { setAllocator(value); if (value === approver) setApprover(''); }} disabled={busy || loading || !!error} emptyMessage="No eligible users match your search." /><p className="pc-help">Reviews the request and decides the cash amount.</p></div>
                     <div className="pc-routing-stage"><div className="flex items-center gap-2 text-primary mb-3"><ShieldCheck size={18} /><span className="text-xs font-semibold uppercase tracking-wider">2 · Approval</span></div><SearchableSelect label="Approver" value={approver} options={options.filter(option => option.value !== allocator)} onChange={setApprover} disabled={busy || loading || !!error} emptyMessage="No eligible users match your search." /><p className="pc-help">Approves the allocation before Accounts makes payment.</p></div>

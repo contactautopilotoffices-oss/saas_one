@@ -24,7 +24,7 @@ import { AGENT_MODULES } from '@/frontend/types/agentRuntime';
 import { composeAgent } from '@/backend/lib/agents/compose';
 import { composePlanWithModel } from '@/backend/lib/agents/planModel';
 import { configureFromPrompt } from '@/backend/lib/agents/configureAll';
-import { bindTools } from '@/backend/lib/agents/plan';
+import { TOOL_SLUGS } from '@/backend/lib/agents/plan';
 import { preflight } from '@/backend/lib/agents/preflight';
 
 /** Three model round-trips, run in parallel. */
@@ -49,8 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const tables = AGENT_TABLE_CATALOG.map((t) => ({ name: t.name, domain: t.domain, purpose: t.purpose }));
-    const toolSlugs = bindTools(['db_read', 'db_write', 'web_search', 'email', 'whatsapp', 'push', 'llm', 'zoho_books'])
-        .map((t) => t.slug);
+    const toolSlugs = [...TOOL_SLUGS];
 
     // Independent by design: a failure in one section must not cost the others.
     const [identity, plan, envelope, checks] = await Promise.allSettled([

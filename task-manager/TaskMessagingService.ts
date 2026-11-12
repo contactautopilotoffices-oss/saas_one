@@ -118,7 +118,8 @@ export class TaskMessagingService {
         const type = params.options?.ruleType || params.options?.messageType || 'bot_reply';
         void markReplied(params.phone); // Pretend Mode counts as answered, so the watchdog does not log pointless apologies
         void clearAnsweredObservations(params.phone);
-        void appendTurn(params.phone, 'bot', params.preview); // conversation memory: in Pretend Mode the chat still "happened"
+        // conversation memory: in Pretend Mode the chat still "happened" (a typed / template notification = an automatic message)
+        void appendTurn(params.phone, 'bot', params.preview, undefined, { auto: !!(params.options?.ruleType || params.options?.messageType) || params.preview.startsWith('[Template ') });
         await TaskDatabaseService.logAudit({
             eventType: 'whatsapp_sent',
             details: {
@@ -158,7 +159,8 @@ export class TaskMessagingService {
      * Raw network call to the AiSensy Project (Direct) API. Private on purpose:
      * every caller must pass through the gate in sendMessage / sendFreeformReply.
      */
-    private static async postFreeform(phone: string, text: string): Promise<boolean> {
+    /** `auto` (2026-11-02): a scheduled / automatic message (digest, reminder, alert) — remembered as one short line. */
+    private static async postFreeform(phone: string, text: string, auto = false): Promise<boolean> {
         const destination = this.formatPhone(phone);
         const projectId = process.env.AISENSY_PROJECT_ID;
         const password = process.env.AISENSY_PROJECT_API_KEY;
@@ -192,7 +194,7 @@ export class TaskMessagingService {
             }
             void markReplied(phone); // "never silent" ledger: this person got an answer (no-op while the switch is OFF)
             void clearAnsweredObservations(phone);
-            void appendTurn(phone, 'bot', text); // conversation memory (no-op while the switch is OFF)
+            void appendTurn(phone, 'bot', text, undefined, { auto }); // conversation memory (no-op while the switch is OFF)
 
             if (process.env.WHATSAPP_LLM_INTERPRETER_ENABLED === 'true') {
                 const body = await res.json().catch(() => null);
@@ -368,8 +370,10 @@ export class TaskMessagingService {
             return true;
         }
 
+        // 2026-11-02: a message with a rule / message type is a scheduled or automatic one (digest, reminder, alert), not a reply.
+        const auto = !!(options?.ruleType || options?.messageType);
         if (!options?.templateOnly) {
-            const sent = await this.postFreeform(phone, text);
+            const sent = await this.postFreeform(phone, text, auto);
             if (sent) return true;
             if (options?.freeformOnly) return false;
         }
@@ -385,7 +389,7 @@ export class TaskMessagingService {
             campaignName,
             templateParams: params,
         });
-        if (delivered) void appendTurn(phone, 'bot', text); // conversation memory (no-op while the switch is OFF)
+        if (delivered) void appendTurn(phone, 'bot', text, undefined, { auto }); // conversation memory (no-op while the switch is OFF)
         return delivered;
     }
 }

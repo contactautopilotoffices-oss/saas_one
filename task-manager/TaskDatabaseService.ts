@@ -21,16 +21,19 @@ import {
 /** How many days back an unfinished task stays on a person's list. One window for every message and the bot. Since
  *  2026-10-14 each department can turn this off or shorten it (1–7 days, Notifications tab); 7 is the most and the default. */
 export const CARRY_LOOKBACK_DAYS = 7;
+/** Owner 2026-10-20: a department may type any number of days up to this (7 stays the default). Every query that finds
+ *  carried tasks looks back this far, then each department's own setting narrows it. */
+export const MAX_CARRY_DAYS = 30;
 export const DEFAULT_CARRY_FORWARD: CarryForwardSetting = { enabled: true, days: CARRY_LOOKBACK_DAYS };
 
-/** A stored or submitted setting → a safe one: on/off, and a whole number of days from 1 to 7. Anything odd → the default. */
+/** A stored or submitted setting → a safe one: on/off, and a whole number of days from 1 to MAX_CARRY_DAYS. Anything odd → the default. */
 export function normalizeCarryForward(value: unknown): CarryForwardSetting {
     if (!value || typeof value !== 'object') return { ...DEFAULT_CARRY_FORWARD };
     const v = value as Record<string, unknown>;
     const days = Number(v.days);
     return {
         enabled: v.enabled !== false,
-        days: Number.isInteger(days) && days >= 1 && days <= CARRY_LOOKBACK_DAYS ? days : CARRY_LOOKBACK_DAYS,
+        days: Number.isInteger(days) && days >= 1 && days <= MAX_CARRY_DAYS ? days : CARRY_LOOKBACK_DAYS,
     };
 }
 
@@ -312,6 +315,10 @@ export class TaskDatabaseService {
         assignedDate?: string; // YYYY-MM-DD
         assignedBy?: string;
         status?: TaskStatus; // optional; omitted = 'pending' (unchanged for every existing caller)
+        // Zoho task import (2026-10-29). Only written when given, so every existing caller inserts exactly as before.
+        dueDate?: string | null; // YYYY-MM-DD
+        source?: string;
+        externalId?: string;
     }): Promise<TaskAssignment> {
         const assignedDate = params.assignedDate || new Date().toISOString().slice(0, 10);
         const status: TaskStatus = params.status || 'pending';
@@ -341,7 +348,10 @@ export class TaskDatabaseService {
                 assigned_date: assignedDate,
                 status,
                 assigned_by: params.assignedBy || null,
-                ...(status === 'completed' ? { completed_at: new Date().toISOString() } : {})
+                ...(status === 'completed' ? { completed_at: new Date().toISOString() } : {}),
+                ...(params.dueDate ? { due_date: params.dueDate } : {}),
+                ...(params.source ? { source: params.source } : {}),
+                ...(params.externalId ? { external_id: params.externalId } : {})
             })
             .select('*')
             .single();
@@ -511,8 +521,17 @@ export class TaskDatabaseService {
     static async updateAssignmentStatus(params: {
         assignmentId: string;
         status: TaskStatus;
+        skipZohoPush?: boolean; // the Zoho sync itself: the change came FROM Zoho, so there is nothing to send back
     }): Promise<TaskAssignment> {
         const completedAt = params.status === 'completed' ? new Date().toISOString() : null;
+
+        // Only a reopen goes back to Zoho, so "pending" -> "in progress" here never overwrites a custom Zoho status.
+        let wasCompleted = false;
+        if (params.status !== 'completed') {
+            const { data: before } = await supabaseAdmin
+                .from('task_assignments').select('status').eq('id', params.assignmentId).maybeSingle();
+            wasCompleted = before?.status === 'completed';
+        }
 
         const { data, error } = await supabaseAdmin
             .from('task_assignments')
@@ -528,6 +547,18 @@ export class TaskDatabaseService {
         if (error || !data) {
             console.error('[TaskDatabaseService] Error updating assignment status:', error);
             throw error || new Error('Failed to update task assignment');
+        }
+
+        // Every completion (app, WhatsApp, bot) passes through here. The push never throws, so Zoho being down
+        // cannot fail the person's action; a missed completion is retried by the next sync.
+        if (data.source === 'zoho' && !params.skipZohoPush && (params.status === 'completed' || wasCompleted)) {
+            // Loaded here because ZohoTaskSync imports this file.
+            const { ZohoTaskSync } = await import('./ZohoTaskSync');
+            await ZohoTaskSync.pushStatus({
+                userId: String(data.employee_id),
+                externalId: String(data.external_id),
+                done: params.status === 'completed',
+            });
         }
         return data as TaskAssignment;
     }

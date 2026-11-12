@@ -9,7 +9,7 @@ import {
     FileUp, Bot, Building2, Send, CalendarDays, Droplets, Coffee,
     Sparkles, DollarSign, ClipboardList, Target, TrendingUp,
     BellRing, HelpCircle, Megaphone, Radio, BookOpen, Smartphone, MessageSquarePlus,
-    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen
+    ShieldCheck, Wallet, Zap, Gauge, UserCheck, Plus, UserCircle, FileText, DoorOpen, Mic, ClipboardCheck, UserSearch
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { CapabilityDomain } from '@/frontend/types/rbac';
@@ -22,10 +22,20 @@ import SignOutModal from '../ui/SignOutModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import NotificationBell from '@/frontend/components/dashboard/NotificationBell';
 import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
+import PanelToggle from '@/frontend/components/ui/PanelToggle';
+import ResumeReminderBadge from '@/frontend/components/candidates/ResumeReminderBadge';
+
+/**
+ * Owner 2026-11-09: for these logins a collapsed sidebar is an icon rail (the Tech console's pattern), not hidden.
+ * The dashboard layout reads the same list to leave room for the rail.
+ */
+export const HR_SIDEBAR_ROLES = ['hr', 'hr_head', 'hr_manager', 'hr_ops'];
 
 interface DashboardSidebarProps {
     isOpen?: boolean;
     onClose?: () => void;
+    /** Expands the sidebar again from its icon rail (HR logins). */
+    onOpen?: () => void;
     isMobileOpen?: boolean;
     onMobileClose?: () => void;
 }
@@ -33,15 +43,16 @@ interface DashboardSidebarProps {
 export default function DashboardSidebar({
     isOpen = true,
     onClose,
+    onOpen,
     isMobileOpen,
     onMobileClose
 }: DashboardSidebarProps) {
     const pathname = usePathname();
     const params = useParams();
     const searchParams = useSearchParams();
-    const orgId = params.orgId as string;
-    const currentTab = searchParams?.get('tab');
     const { signOut, user, membership } = useAuth();
+    const orgId = (params.orgId as string) || membership?.org_id || '';
+    const currentTab = searchParams?.get('tab');
     const [showSignOutModal, setShowSignOutModal] = React.useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = React.useState(false);
 
@@ -51,7 +62,7 @@ export default function DashboardSidebar({
     // CrmOnboardingGate (email allowlist + membership.org_role) so all four
     // call sites agree. user_metadata.role is not reliably populated.
     const isBdSuperAdmin = checkBdSuperAdmin(user?.email, membership?.org_role);
-    const isCrmRoute = pathname?.split('/').includes('crm') ?? false;
+    const isCrmRoute = (pathname?.split('/').includes('crm') ?? false) || (searchParams?.get('from') === 'crm');
     // Pure BD roles (bd_rep, bd_admin) belong to the CRM workspace permanently.
     // They must never lose their CRM navigation, quick actions, or branding on shared
     // personal pages like /hr-tickets or /settings.
@@ -62,7 +73,7 @@ export default function DashboardSidebar({
     // An org super admin landing on a non-CRM page was being labelled "Staff Dashboard"
     // because the label had only three branches and staff was the fallback. Their console
     // has a name; use it.
-    const isOrgSuperAdmin = userRole === 'org_super_admin' || membership?.org_role === 'org_super_admin';
+    const isOrgSuperAdmin = ['org_super_admin', 'director', 'super_admin'].includes(userRole) || ['org_super_admin', 'director', 'super_admin'].includes(membership?.org_role || '');
     // External parties (tenants, external vendors) must not see employee HR grievance options.
     const isExternalRole = Boolean(
         rawRole && (
@@ -75,43 +86,51 @@ export default function DashboardSidebar({
     // Finance (Petty Cash + Payment Tracker) now lives in its own Accounts
     // workspace chrome — it is no longer injected into this shared sidebar.
 
-    const NAV_ITEMS = React.useMemo(() => {
+    type NavItem = { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain; beta?: boolean; badge?: 'resumes' };
+    const NAV_ITEMS = React.useMemo((): NavItem[] => {
         const isAdmin = userRole === 'org_super_admin' || userRole === 'property_admin' || membership?.org_role === 'org_super_admin';
 
         if (isBDRole) return [];
 
         if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
             return [
-                { label: 'Requests & Grievances', href: `/${orgId}/hr-tickets?tab=tickets`, icon: Ticket, domain: 'tickets' as const },
-                { label: 'Notes Tracker', href: `/${orgId}/hr-tickets?tab=notes`, icon: FileText, domain: 'tickets' as const },
-                { label: 'Org Reporting Tree', href: `/${orgId}/hr-tickets?tab=tree`, icon: GitMerge, domain: 'tickets' as const },
-                { label: 'Employee Directory', href: `/${orgId}/hr-tickets?tab=directory`, icon: Users, domain: 'tickets' as const },
-                { label: 'Identity Reconciliation', href: `/${orgId}/hr-tickets?tab=reconciliation`, icon: UserCheck, domain: 'tickets' as const },
-                { label: 'Admin Config', href: `/${orgId}/hr-tickets?tab=config`, icon: Settings, domain: 'tickets' as const },
-                { label: 'Analytics', href: `/${orgId}/hr-tickets?tab=analytics`, icon: BarChart3, domain: 'tickets' as const },
-                { label: 'Task Manager', href: `/${orgId}/hr-tickets?tab=tasks`, icon: ClipboardList, domain: 'tickets' as const },
+                { label: 'Requests & Grievances', href: '/hr-tickets?tab=tickets', icon: Ticket, domain: 'tickets' as const },
+                { label: 'Notes Tracker', href: '/hr-tickets?tab=notes', icon: FileText, domain: 'tickets' as const },
+                { label: 'Org Reporting Tree', href: '/hr-tickets?tab=tree', icon: GitMerge, domain: 'tickets' as const },
+                { label: 'Employee Directory', href: '/hr-tickets?tab=directory', icon: Users, domain: 'tickets' as const },
+                { label: 'Identity Reconciliation', href: '/hr-tickets?tab=reconciliation', icon: UserCheck, domain: 'tickets' as const },
+                { label: 'Admin Config', href: '/hr-tickets?tab=config', icon: Settings, domain: 'tickets' as const },
+                { label: 'Analytics', href: '/hr-tickets?tab=analytics', icon: BarChart3, domain: 'tickets' as const },
+                { label: 'Task Manager', href: '/hr-tickets?tab=tasks', icon: ClipboardList, domain: 'tickets' as const },
+                // Owner 2026-10-29: the HR team's own Meeting Assistant (separate from Tech's and the Super Admin's)
+                { label: 'Meeting Assistant', href: '/hr-tickets?tab=meeting_assistant', icon: Mic, domain: 'tickets' as const },
+                { label: 'Assessments', href: '/hr-tickets?tab=assessments', icon: ClipboardCheck, domain: 'tickets' as const },
+                // Owner 2026-11-07: Candidate Search (sourcing sheets, filters, resumes) for every HR login, marked beta
+                // The badge (phase 3) reminds this laptop when its resumes have not been uploaded for a week.
+                { label: 'Candidate Search', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, beta: true, badge: 'resumes' },
             ];
         }
 
-        const items: { label: string; href: string; icon: LucideIcon; domain: CapabilityDomain }[] = [
-            { label: 'Overview', href: `/${orgId}/dashboard`, icon: LayoutDashboard, domain: 'dashboards' as const },
-            { label: 'Tickets', href: `/${orgId}/dashboard`, icon: Ticket, domain: 'tickets' as const },
-            { label: 'Flow Map', href: `/${orgId}/flow-map`, icon: GitMerge, domain: 'tickets' as const },
-            { label: 'Inventory', href: `/${orgId}/procurement-management`, icon: Package, domain: 'procurement' as const },
-            { label: 'Procurement', href: `/${orgId}/procurement-management`, icon: ShoppingCart, domain: 'procurement' as const },
-            { label: 'Monthly Requisitions', href: `/${orgId}/procurement-management?tab=monthly-requisitions`, icon: FileUp, domain: 'procurement' as const },
-            { label: 'HR & Grievances', href: `/${orgId}/dashboard?tab=grievance`, icon: ShieldCheck, domain: 'tickets' as const },
-            { label: 'Staff', href: `/${orgId}/users`, icon: Users, domain: 'users' as const },
+        const dashPath = '/dashboard';
+        const items: NavItem[] = [
+            { label: 'Overview', href: dashPath, icon: LayoutDashboard, domain: 'dashboards' as const },
+            { label: 'Tickets', href: `${dashPath}?tab=requests`, icon: Ticket, domain: 'tickets' as const },
+            { label: 'Flow Map', href: orgId ? `/${orgId}/flow-map` : '/flow-map', icon: GitMerge, domain: 'tickets' as const },
+            { label: 'Inventory', href: orgId ? `/${orgId}/procurement-management` : '/procurement-management', icon: Package, domain: 'procurement' as const },
+            { label: 'Procurement', href: orgId ? `/${orgId}/procurement-management` : '/procurement-management', icon: ShoppingCart, domain: 'procurement' as const },
+            { label: 'Monthly Requisitions', href: orgId ? `/${orgId}/procurement-management?tab=monthly-requisitions` : '/procurement-management?tab=monthly-requisitions', icon: FileUp, domain: 'procurement' as const },
+            { label: 'HR & Grievances', href: `${dashPath}?tab=grievance`, icon: ShieldCheck, domain: 'tickets' as const },
+            { label: 'Staff', href: orgId ? `/${orgId}/users` : '/users', icon: Users, domain: 'users' as const },
         ];
 
         if (isAdmin || userRole === 'org_super_admin') {
-            items.push({ label: 'AI Automation', href: `/${orgId}/dashboard?tab=ai_tickets`, icon: Bot, domain: 'dashboards' as const });
-            items.push({ label: 'Roster Management', href: `/${orgId}/dashboard?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
-            items.push({ label: 'Client Support', href: `/${orgId}/dashboard?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });
+            items.push({ label: 'AI Automation', href: `${dashPath}?tab=ai_tickets`, icon: Bot, domain: 'dashboards' as const });
+            items.push({ label: 'Roster Management', href: `${dashPath}?tab=roster`, icon: CalendarDays, domain: 'dashboards' as const });
+            items.push({ label: 'Client Support', href: `${dashPath}?tab=guest_experience`, icon: Smartphone, domain: 'dashboards' as const });
         }
 
-        items.push({ label: 'Cafeteria', href: `/${orgId}/dashboard?tab=cafeteria`, icon: Coffee, domain: 'dashboards' as const });
-        items.push({ label: 'Water Level', href: `/${orgId}/dashboard?tab=water_logger`, icon: Droplets, domain: 'dashboards' as const });
+        items.push({ label: 'Cafeteria', href: `${dashPath}?tab=cafeteria`, icon: Coffee, domain: 'dashboards' as const });
+        items.push({ label: 'Water Level', href: `${dashPath}?tab=water_logger`, icon: Droplets, domain: 'dashboards' as const });
 
         // Petty Cash belongs to the general FMS for every non-tenant role — the API already
         // grants them create access (backend/lib/pettyCash/access.ts) but there was no way
@@ -120,13 +139,14 @@ export default function DashboardSidebar({
         // The Payment Tracker deliberately stays out: it is finance-only (item 7).
         // Petty Cash is rendered once in the shared personal section for every internal role.
 
-        if (userRole === 'org_super_admin') {
+        if (userRole === 'org_super_admin' || isOrgSuperAdmin) {
             items.push({ label: 'Water Analytics', href: `/${orgId}/dashboard?tab=water`, icon: Droplets, domain: 'dashboards' as const });
             // Both render as tabs of the super-admin console. Linking the standalone
             // /org-progress and /org-efficiency pages instead dropped the user into the
             // (dashboard) route group and its staff sidebar.
             items.push({ label: 'Org Progress Meter', href: `/${orgId}/dashboard?tab=org_progress`, icon: Gauge, domain: 'dashboards' as const });
             items.push({ label: 'Org Efficiency', href: `/${orgId}/dashboard?tab=org_efficiency`, icon: TrendingUp, domain: 'dashboards' as const });
+            items.push({ label: 'Business Development', href: `/${orgId}/crm`, icon: TrendingUp, domain: 'crm' as const });
         }
 
         // Ops Super Admin — electricity checker workspace: validation queue, disputes, reports.
@@ -142,46 +162,46 @@ export default function DashboardSidebar({
     const isCrmAdmin = userRole && userRole !== 'bd_rep';
     const CRM_NAV_ITEMS = React.useMemo(() => {
         const items = [
-            { label: 'Dashboard', href: `/${orgId}/crm`, icon: LayoutDashboard, domain: 'crm' as const },
-            { label: 'My Leads', href: `/${orgId}/crm/leads`, icon: UsersRound, domain: 'crm' as const },
-            { label: 'Follow Ups', href: `/${orgId}/crm/followups`, icon: BellRing, domain: 'crm' as const },
-            { label: 'Calendar', href: `/${orgId}/crm/calendar`, icon: Calendar, domain: 'crm' as const },
-            { label: 'Tasks', href: `/${orgId}/crm/tasks`, icon: ClipboardList, domain: 'crm' as const },
-            { label: 'Target', href: `/${orgId}/crm/target`, icon: Target, domain: 'crm' as const },
-            { label: 'AI Copilot', href: `/${orgId}/crm/ai`, icon: Sparkles, domain: 'crm' as const },
-            { label: 'Performance', href: `/${orgId}/crm/performance`, icon: TrendingUp, domain: 'crm' as const },
+            { label: 'Dashboard', href: '/crm', icon: LayoutDashboard, domain: 'crm' as const },
+            { label: 'My Leads', href: '/crm/leads', icon: UsersRound, domain: 'crm' as const },
+            { label: 'Follow Ups', href: '/crm/followups', icon: BellRing, domain: 'crm' as const },
+            { label: 'Calendar', href: '/crm/calendar', icon: Calendar, domain: 'crm' as const },
+            { label: 'Tasks', href: '/crm/tasks', icon: ClipboardList, domain: 'crm' as const },
+            { label: 'Target', href: '/crm/target', icon: Target, domain: 'crm' as const },
+            { label: 'AI Copilot', href: '/crm/ai', icon: Sparkles, domain: 'crm' as const },
+            { label: 'Performance', href: '/crm/performance', icon: TrendingUp, domain: 'crm' as const },
         ];
         if (isCrmAdmin) {
-            items.push({ label: 'Settings', href: `/${orgId}/crm/settings`, icon: Settings, domain: 'crm' as const });
+            items.push({ label: 'Settings', href: '/crm/settings', icon: Settings, domain: 'crm' as const });
         }
-        items.push({ label: 'Help & Support', href: `/${orgId}/crm/help`, icon: HelpCircle, domain: 'crm' as const });
+        items.push({ label: 'Help & Support', href: '/crm/help', icon: HelpCircle, domain: 'crm' as const });
         return items;
-    }, [orgId, isCrmAdmin]);
+    }, [isCrmAdmin]);
 
     // BD Super Admin (CEO) portal — grouped OVERVIEW / TOOLS sections.
     const BD_SUPER_NAV_SECTIONS = React.useMemo(() => [
         {
             title: 'Overview',
             items: [
-                { label: 'CEO Dashboard', href: `/${orgId}/crm`, icon: LayoutDashboard },
-                { label: 'Campaigns', href: `/${orgId}/crm/campaigns`, icon: Megaphone },
-                { label: 'Leads', href: `/${orgId}/crm/leads`, icon: UsersRound },
-                { label: 'ABM Tracker', href: `/${orgId}/crm/abm`, icon: Target },
-                { label: 'Team Performance', href: `/${orgId}/crm/performance`, icon: TrendingUp },
-                { label: 'Reports', href: `/${orgId}/crm/reports`, icon: BarChart3 },
+                { label: 'CEO Dashboard', href: '/crm', icon: LayoutDashboard },
+                { label: 'Campaigns', href: '/crm/campaigns', icon: Megaphone },
+                { label: 'Leads', href: '/crm/leads', icon: UsersRound },
+                { label: 'ABM Tracker', href: '/crm/abm', icon: Target },
+                { label: 'Team Performance', href: '/crm/performance', icon: TrendingUp },
+                { label: 'Reports', href: '/crm/reports', icon: BarChart3 },
             ],
         },
         {
             title: 'Tools',
             items: [
-                { label: 'AI Agent', href: `/${orgId}/crm/ai`, icon: Bot },
-                { label: 'Calendar', href: `/${orgId}/crm/calendar`, icon: Calendar },
-                { label: 'Tasks', href: `/${orgId}/crm/tasks`, icon: ClipboardList },
-                { label: 'Signals', href: `/${orgId}/crm/signals`, icon: Radio },
-                { label: 'Playbooks', href: `/${orgId}/crm/playbooks`, icon: BookOpen },
+                { label: 'AI Agent', href: '/crm/ai', icon: Bot },
+                { label: 'Calendar', href: '/crm/calendar', icon: Calendar },
+                { label: 'Tasks', href: '/crm/tasks', icon: ClipboardList },
+                { label: 'Signals', href: '/crm/signals', icon: Radio },
+                { label: 'Playbooks', href: '/crm/playbooks', icon: BookOpen },
             ],
         },
-    ], [orgId]);
+    ], []);
 
     const getUserInitials = (name: string) => {
         return name?.split(' ').map(n => n[0]).join('').toUpperCase() || 'U';
@@ -193,6 +213,36 @@ export default function DashboardSidebar({
             onMobileClose();
         }
     };
+
+    // HR roles see Petty Cash and Book Meeting Room under HR OPERATIONS; everyone else under SYSTEM & PERSONAL.
+    const isHrRole = HR_SIDEBAR_ROLES.includes(userRole);
+    // Owner 2026-11-09: the HR logins' collapsed sidebar is an icon rail, like the Tech console's. Desktop only: every
+    // rail class is lg:-prefixed, so the phone drawer is always the full menu. In the rail a link keeps its label for
+    // screen readers (sr-only) and shows it as a tooltip (title).
+    const rail = isHrRole && !isOpen;
+    const hideInRail = rail ? 'lg:hidden' : '';
+    const pettyCashAndBookRoomLinks = (
+        <>
+            <PettyCashNavLink onNavigate={handleLinkClick} />
+
+            {/* HR and CRM teams book meeting rooms here, without credits */}
+            {(isCreditFreeBookingRole(userRole) || isCreditFreeBookingRole(membership?.org_role)) && (
+                <Link
+                    href={`/${orgId}/book-room`}
+                    title={rail ? 'Book Meeting Room' : undefined}
+                    onClick={handleLinkClick}
+                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
+                        pathname?.endsWith('/book-room')
+                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
+                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
+                    }`}
+                >
+                    <DoorOpen className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
+                    <span className="truncate">Book Meeting Room</span>
+                </Link>
+            )}
+        </>
+    );
 
     return (
         <>
@@ -212,27 +262,31 @@ export default function DashboardSidebar({
 
             {/* Sidebar */}
             <aside className={`
-                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-transform duration-300 ease-in-out
-                ${isOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full'}
+                fixed inset-y-0 left-0 z-40 w-72 h-screen bg-surface border-r border-border transform transition-[transform,width] duration-300 ease-in-out
+                ${isOpen ? 'lg:translate-x-0' : isHrRole ? 'lg:translate-x-0 lg:w-20' : 'lg:-translate-x-full'}
                 ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
                 flex flex-col overflow-hidden shadow-xl lg:shadow-none
             `}>
-                {/* Collapse / Close Button (Desktop & Mobile) */}
+                {/* Collapse / Close Button (Desktop & Mobile). In the HR logins' icon rail it is hidden on desktop and the
+                    same button, pointing right, sits at the top of the rail to expand it again. */}
                 <button
                     type="button"
                     onClick={() => {
                         onClose?.();
                         onMobileClose?.();
                     }}
-                    className="absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group"
+                    className={`absolute top-4 right-3.5 p-1.5 rounded-xl bg-slate-100/90 hover:bg-slate-200 dark:bg-slate-800/90 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-all z-50 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs cursor-pointer group ${rail ? 'lg:hidden' : ''}`}
                     title="Collapse Sidebar"
                     aria-label="Collapse Sidebar"
                 >
                     <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
                 </button>
+                {rail && (
+                    <PanelToggle variant="chevron" collapsed onToggle={() => onOpen?.()} label="Expand Sidebar" className="hidden lg:inline-flex mx-auto mt-4" />
+                )}
 
-                <div className="p-6 pb-2 shrink-0">
-                    <div className="flex flex-col items-center gap-1.5 mb-4">
+                <div className={`p-6 pb-2 shrink-0 ${rail ? 'lg:px-3 lg:pt-2' : ''}`}>
+                    <div className={`flex flex-col items-center gap-1.5 mb-4 ${hideInRail}`}>
                         <img src="/autopilot-logo-new.png" alt="Autopilot" className="h-9 w-auto object-contain" />
                         <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.2em] mt-1">
                             {(() => {
@@ -256,13 +310,14 @@ export default function DashboardSidebar({
 
                     {!isExternalRole && (
                         <div className="mt-3 space-y-2">
-                            <div className="flex items-center gap-1.5 px-1">
+                            <div className={`flex items-center gap-1.5 px-1 ${hideInRail}`}>
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">
                                     QUICK ACTIONS
                                 </p>
                             </div>
-                            <div className="grid grid-cols-3 gap-2">
+                            {/* In the rail only the first action (raise a request) is kept, like the Tech console's "New" */}
+                            <div className={`grid grid-cols-3 gap-2 ${rail ? 'lg:grid-cols-1 lg:[&>*:not(:first-child)]:hidden' : ''}`}>
                                 <Link
                                     href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&action=create` : `/${orgId}/hr-tickets?action=create`}
                                     className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#587e85] hover:bg-[#48686e] text-white transition-all text-[10px] font-bold text-center gap-1 shadow-xs active:scale-95 border border-[#48686e]/40 h-13 min-w-0"
@@ -271,7 +326,26 @@ export default function DashboardSidebar({
                                     <Plus className="w-4 h-4 shrink-0" />
                                     <span className="tracking-tight whitespace-nowrap leading-none">Request</span>
                                 </Link>
-                                {(userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
+                                {(isBDRole && isCrmRoute) || (isBDRole && !isOrgSuperAdmin) ? (
+                                    <>
+                                        <Link
+                                            href={`/${orgId}/hr-tickets?tab=tickets`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-[#f6f2ec] dark:bg-[#aa895f]/20 hover:bg-[#ede5d8] dark:hover:bg-[#aa895f]/30 text-[#8f6d3d] dark:text-[#c4a479] transition-all text-[10px] font-bold text-center gap-1 border border-[#d8c4a5] dark:border-[#aa895f]/40 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="My Grievances"
+                                        >
+                                            <ShieldCheck className="w-4 h-4 shrink-0 text-[#aa895f] dark:text-[#c4a479]" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Grievance</span>
+                                        </Link>
+                                        <Link
+                                            href={`/${orgId}/crm/leads`}
+                                            className="flex flex-col items-center justify-center py-2 px-1 rounded-xl bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-all text-[10px] font-bold text-center gap-1 border border-slate-200 dark:border-slate-700 active:scale-95 shadow-xs h-13 min-w-0"
+                                            title="View Leads"
+                                        >
+                                            <UsersRound className="w-4 h-4 shrink-0 text-slate-500 dark:text-slate-400" />
+                                            <span className="tracking-tight whitespace-nowrap leading-none">Leads</span>
+                                        </Link>
+                                    </>
+                                ) : (userRole === 'hr' || userRole === 'hr_head' || isOrgSuperAdmin) ? (
                                     <>
                                         <Link
                                             href={isOrgSuperAdmin ? `/${orgId}/dashboard?tab=grievance&subtab=directory&action=add` : `/${orgId}/hr-tickets?tab=directory&action=add`}
@@ -335,11 +409,11 @@ export default function DashboardSidebar({
                 </div>
 
                 {/* Navigation */}
-                <nav className="flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2">
+                <nav className={`flex-1 px-3.5 space-y-0.5 overflow-y-auto custom-scrollbar touch-scroll min-h-0 pt-2 ${rail ? 'lg:px-3 lg:overflow-x-hidden lg:[&_a]:justify-center lg:[&_a]:px-0 lg:[&_button]:justify-center lg:[&_button]:px-0 lg:[&_a>span]:sr-only lg:[&_button>span]:sr-only' : ''}`}>
                     {/* 1. CORE OPERATIONS / HR OPERATIONS Section (For non-BD roles) */}
                     {!isBDRole && (
                         <>
-                            <div className="flex items-center gap-2 px-2 py-1 mb-1">
+                            <div className={`flex items-center gap-2 px-2 py-1 mb-1 ${hideInRail}`}>
                                 <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
                                     {['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) ? 'HR OPERATIONS' : 'CORE OPERATIONS'}
@@ -348,11 +422,17 @@ export default function DashboardSidebar({
                             {NAV_ITEMS.map((item) => {
                                 let isActive = false;
                                 if (item.href.includes('?tab=')) {
-                                    const itemTab = item.href.split('?tab=')[1];
-                                    isActive = pathname.endsWith('/hr-tickets') && (currentTab === itemTab || (!currentTab && itemTab === 'tickets'));
+                                    const [itemPath, itemQuery] = item.href.split('?');
+                                    const itemParams = new URLSearchParams(itemQuery);
+                                    const itemTab = itemParams.get('tab');
+                                    if (itemPath.endsWith('/hr-tickets')) {
+                                        isActive = pathname.endsWith('/hr-tickets') && (currentTab === itemTab || (!currentTab && itemTab === 'tickets'));
+                                    } else {
+                                        isActive = pathname === itemPath && currentTab === itemTab;
+                                    }
                                 } else if (item.href.includes('?')) {
-                                    const queryPart = item.href.split('?')[1];
-                                    isActive = pathname === item.href.split('?')[0] && (searchParams.toString().includes(queryPart));
+                                    const [itemPath, itemQuery] = item.href.split('?');
+                                    isActive = pathname === itemPath && (searchParams.toString().includes(itemQuery));
                                 } else {
                                     isActive = pathname === item.href && (!searchParams.get('tab'));
                                 }
@@ -360,6 +440,7 @@ export default function DashboardSidebar({
                                 const linkElement = (
                                     <Link
                                         href={item.href}
+                                        title={rail ? item.label : undefined}
                                         onClick={handleLinkClick}
                                         className={`
                                             flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group
@@ -371,10 +452,14 @@ export default function DashboardSidebar({
                                     >
                                         <item.icon className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-105 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                                         <span className="truncate">{item.label}</span>
+                                        {item.badge === 'resumes' && orgId && <ResumeReminderBadge orgId={orgId} />}
+                                        {item.beta && (
+                                            <span className={`ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'}`}>Beta</span>
+                                        )}
                                     </Link>
                                 );
 
-                                if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole)) {
+                                if (['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) || isOrgSuperAdmin) {
                                     return (
                                         <React.Fragment key={`${item.label}-${item.href}`}>
                                             {linkElement}
@@ -388,6 +473,7 @@ export default function DashboardSidebar({
                                     </CapabilityWrapper>
                                 );
                             })}
+                            {isHrRole && pettyCashAndBookRoomLinks}
                         </>
                     )}
 
@@ -430,7 +516,7 @@ export default function DashboardSidebar({
 
                     {/* 3. CRM Section (for BD roles, or when visiting CRM routes) */}
                     {(isCrmRoute || isBDRole) && !showBdChrome && !['hr', 'hr_head', 'property_admin', 'building_admin', 'ops_super_admin'].includes(userRole) && (
-                        <div className={isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'}>
+                        <div className={`${isBDRole ? '' : 'pt-2.5 mt-2.5 border-t border-border'} ${hideInRail}`}>
                             <p className="px-3 text-[10px] font-medium text-text-tertiary tracking-wider mb-1.5 font-body uppercase">
                                 CRM
                             </p>
@@ -464,30 +550,14 @@ export default function DashboardSidebar({
                     {/* 4. SYSTEM & PERSONAL Section (Always below primary role navigation) */}
                     {!isExternalRole && (
                         <div className="pt-3 mt-3 border-t border-slate-200/60 dark:border-slate-800 space-y-1">
-                            <div className="flex items-center gap-2 px-2 py-1 mb-2">
+                            <div className={`flex items-center gap-2 px-2 py-1 mb-2 ${hideInRail}`}>
                                 <span className="w-0.5 h-3.5 bg-[#587e85] rounded-full" />
                                 <p className="text-[10px] font-bold text-slate-400 dark:text-slate-400 tracking-wider font-mono uppercase">
                                     SYSTEM & PERSONAL
                                 </p>
                             </div>
 
-                            <PettyCashNavLink onNavigate={handleLinkClick} />
-
-                            {/* HR and CRM teams book meeting rooms here, without credits */}
-                            {(isCreditFreeBookingRole(userRole) || isCreditFreeBookingRole(membership?.org_role)) && (
-                                <Link
-                                    href={`/${orgId}/book-room`}
-                                    onClick={handleLinkClick}
-                                    className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                        pathname?.endsWith('/book-room')
-                                            ? 'bg-[#587e85] text-white shadow-xs font-bold'
-                                            : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
-                                    }`}
-                                >
-                                    <DoorOpen className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                    <span className="truncate">Book Meeting Room</span>
-                                </Link>
-                            )}
+                            {!isHrRole && pettyCashAndBookRoomLinks}
 
                             {!['hr', 'hr_head', 'hr_manager', 'hr_ops'].includes(userRole) && (
                                 <Link
@@ -506,10 +576,10 @@ export default function DashboardSidebar({
 
                             {isOrgSuperAdmin && (
                                 <Link
-                                    href={`/${orgId}/dashboard?tab=tasks`}
+                                    href={isCrmRoute ? `/${orgId}/crm/tasks` : `/${orgId}/dashboard?tab=tasks`}
                                     onClick={handleLinkClick}
                                     className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                        pathname?.includes('tab=tasks')
+                                        (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/tasks`) : pathname?.includes('tab=tasks'))
                                             ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
@@ -521,21 +591,22 @@ export default function DashboardSidebar({
 
                             {(userRole !== 'hr' && userRole !== 'hr_head' && (isOrgSuperAdmin || userRole === 'property_admin')) && (
                                 <Link
-                                    href={`/${orgId}/dashboard?tab=ai_tickets`}
+                                    href={isCrmRoute ? `/${orgId}/crm/ai` : `/${orgId}/dashboard?tab=ai_tickets`}
                                     onClick={handleLinkClick}
                                     className={`flex items-center gap-3 px-3.5 py-2 rounded-xl transition-all font-semibold text-xs sm:text-sm group ${
-                                        pathname?.includes('tab=ai_tickets')
+                                        (isCrmRoute ? pathname?.startsWith(`/${orgId}/crm/ai`) : pathname?.includes('tab=ai_tickets'))
                                             ? 'bg-[#587e85] text-white shadow-xs font-bold'
                                             : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                     }`}
                                 >
                                     <Bot className="w-4 h-4 shrink-0 transition-transform group-hover:scale-105" />
-                                    <span className="truncate">AI Automation</span>
+                                    <span className="truncate">{isCrmRoute ? 'AI Agent' : 'AI Automation'}</span>
                                 </Link>
                             )}
 
                             <button
                                 type="button"
+                                title={rail ? 'Feedback / Bug' : undefined}
                                 onClick={() => {
                                     setShowFeedbackModal(true);
                                     handleLinkClick();
@@ -547,10 +618,13 @@ export default function DashboardSidebar({
                             </button>
 
                             <Link
-                                href={`/${orgId}/settings`}
+                                href={isCrmRoute ? `/${orgId}/crm/settings` : `/${orgId}/settings`}
+                                title={rail ? 'Settings' : undefined}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile')
+                                    (isCrmRoute
+                                        ? pathname === `/${orgId}/crm/settings` && (!currentTab || currentTab !== 'profile')
+                                        : pathname?.endsWith('/settings') && (!currentTab || currentTab !== 'profile'))
                                         ? 'bg-[#587e85] text-white shadow-sm font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
@@ -560,10 +634,13 @@ export default function DashboardSidebar({
                             </Link>
 
                             <Link
-                                href={`/${orgId}/settings?tab=profile`}
+                                href={isCrmRoute ? `/${orgId}/crm/settings?tab=profile` : `/${orgId}/settings?tab=profile`}
+                                title={rail ? 'Profile' : undefined}
                                 onClick={handleLinkClick}
                                 className={`flex items-center gap-3.5 px-4 py-2.5 rounded-2xl transition-all font-semibold text-xs sm:text-sm group ${
-                                    pathname?.includes('tab=profile')
+                                    (isCrmRoute
+                                        ? pathname === `/${orgId}/crm/settings` && currentTab === 'profile'
+                                        : pathname?.includes('tab=profile'))
                                         ? 'bg-[#587e85] text-white shadow-sm font-bold'
                                         : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900'
                                 }`}
@@ -580,7 +657,7 @@ export default function DashboardSidebar({
                     {/* User Profile */}
                     {!showBdChrome && (
                         <div className="px-1.5 py-1">
-                            <div className="flex items-center gap-2.5">
+                            <div className={`flex items-center gap-2.5 ${rail ? 'lg:justify-center' : ''}`} title={rail ? (user?.user_metadata?.full_name || user?.email || undefined) : undefined}>
                                 {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
                                     <img
                                         src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
@@ -592,7 +669,7 @@ export default function DashboardSidebar({
                                         {getUserInitials(user?.email || 'User')}
                                     </div>
                                 )}
-                                <div className="flex flex-col flex-1 min-w-0">
+                                <div className={`flex flex-col flex-1 min-w-0 ${hideInRail}`}>
                                     <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                                         {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'}
                                     </span>
@@ -604,13 +681,15 @@ export default function DashboardSidebar({
                         </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-0.5">
+                    <div className={`flex items-center justify-between pt-0.5 ${rail ? 'lg:justify-center' : ''}`}>
                         <button
                             onClick={() => setShowSignOutModal(true)}
+                            title={rail ? 'Sign Out' : undefined}
+                            aria-label="Sign Out"
                             className="flex items-center gap-1.5 px-1.5 py-1 text-slate-500 hover:text-red-600 transition-colors text-xs font-bold rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30"
                         >
                             <LogOut className="w-3.5 h-3.5 shrink-0" />
-                            <span>Sign Out</span>
+                            <span className={hideInRail}>Sign Out</span>
                         </button>
                     </div>
                 </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, readOrgId } from '@/backend/lib/crm/access';
 import * as XLSX from 'xlsx';
+import { resolveCaller, isCallerError } from '@/backend/lib/auth/callerAccess';
 
 const MAX_ROWS = 5000;
 
@@ -402,6 +403,8 @@ function parseExcelDate(value: string): string | null {
 
 // GET /api/crm/import - sample template
 export async function GET(request: NextRequest) {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
     const { searchParams } = new URL(request.url);
     const format = searchParams.get('format') || 'csv';
 

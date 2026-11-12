@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { requisitionNotes, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, siteVendorQuotation, fileRevision } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { WhatsAppEventProcessor } from '@/backend/services/WhatsAppEventProcessor';
 import { EmailService } from '@/backend/services/EmailService';
@@ -23,6 +23,8 @@ export async function PATCH(
         const body = await request.json();
         const { action } = body;
         const remarks = typeof body.remarks === 'string' ? body.remarks.trim() : '';
+        // The file revision the approver was looking at; older clients send none.
+        const reviewedRevision = body.file_revision === undefined || body.file_revision === null ? null : Number(body.file_revision);
         const approver_id = user.id;
         const approver_name = user.user_metadata?.full_name || user.email || 'Approver';
         if (!id || !['approve', 'reject'].includes(action)) {
@@ -53,6 +55,11 @@ export async function PATCH(
         if (existing.status !== 'pending_approval') {
             return NextResponse.json({ error: 'This requisition is no longer awaiting approval. Refresh to see its current status.' }, { status: 409 });
         }
+        const currentRevision = fileRevision(existing);
+        if (reviewedRevision !== null && reviewedRevision !== currentRevision) {
+            return NextResponse.json({ error: `The comparison file was updated (Rev ${currentRevision}). Please review the new file before deciding.` }, { status: 409 });
+        }
+        const revisionLabel = currentRevision > 1 ? ` · Rev ${currentRevision}` : '';
         const { data: profile, error: profileError } = await adminSupabase.from('users')
             .select('is_master_admin,deleted_at').eq('id', user.id).maybeSingle();
         if (profileError) throw profileError;
@@ -103,6 +110,7 @@ export async function PATCH(
                     by_id: approver_id,
                     by_name: approver_name || 'Approver',
                     remarks: remarks || '',
+                    revision: currentRevision,
                     timestamp: new Date().toISOString()
                 }
             ]
@@ -155,7 +163,7 @@ export async function PATCH(
                 if (emailResolution.enabled && emailResolution.emails.length > 0) {
                     await EmailService.sendGenericNotificationEmail({
                         emailTo: emailResolution.emails.join(', '),
-                        subject: `[${isApproval ? 'Approved' : 'Rejected'}] Monthly Requisition for ${propertyName} (${monthName} ${existing.requisition_year})`,
+                        subject: `[${isApproval ? 'Approved' : 'Rejected'}] Monthly Requisition for ${propertyName} (${monthName} ${existing.requisition_year})${revisionLabel}`,
                         title: `Requisition ${isApproval ? 'Approved ✅' : 'Rejected ❌'}`,
                         htmlBody: `
                             <p>The monthly requisition for <b>${propertyName}</b> (${monthName} ${existing.requisition_year}) has been <b>${newStatus.toUpperCase()}</b> by <b>${approver_name || 'Approver'}</b>.</p>
@@ -186,7 +194,7 @@ export async function PATCH(
                         status: String(newStatus).toUpperCase(),
                         approver_name: approver_name || 'Approver',
                         total_amount: Number(totalAmount).toLocaleString('en-IN'),
-                        remarks: remarks || (isApproval ? 'Approved as per lowest quote' : 'Revision requested')
+                        remarks: (remarks || (isApproval ? 'Approved as per lowest quote' : 'Revision requested')) + (currentRevision > 1 ? ` (Rev ${currentRevision})` : '')
                     },
                     summaryMessage: `Requisition for ${propertyName} ${isApproval ? 'Approved' : 'Rejected'} by ${approver_name || 'Approver'}`
                 });

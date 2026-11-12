@@ -33,7 +33,8 @@ export function useDashboardContent() {
         for (const [key, value] of Object.entries(query)) {
             if (value === undefined) search.delete(key); else search.set(key, value);
         }
-        router.push(`/${orgId}/dashboard?${search.toString()}`, { scroll: false });
+        const targetPath = typeof params?.orgId === 'string' ? `/${orgId}/dashboard` : '/dashboard';
+        router.push(`${targetPath}?${search.toString()}`, { scroll: false });
     };
     return { dashboardContent: content, dashboardPropertyId: propertyId || '', dashboardRole, dashboardOrgId: orgId, navigateDashboard: navigate };
 }
