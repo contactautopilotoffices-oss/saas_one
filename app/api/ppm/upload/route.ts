@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import * as XLSX from 'xlsx';
+import { isCallerError } from '@/backend/lib/auth/callerAccess';
+import {
+    auditPpmBulkAction,
+    fetchPropertySchedulesSnapshot,
+    guardPpmAdminWrite,
+    restorePpmBackupRows,
+    summarizePpmRows,
+    writePpmBackupSnapshot,
+} from '@/backend/lib/ppm/scheduleGuard';
 
 /**
  * POST /api/ppm/upload
@@ -20,20 +28,19 @@ const MONTHS_COUNT = 12;
 
 export async function POST(request: NextRequest) {
     try {
-        const supabase = await createClient();
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
         const formData = await request.formData();
-        const file = formData.get('file') as File;
-        const organizationId = formData.get('organization_id') as string;
+        const file = formData.get('file') as File | null;
+        const organizationId = formData.get('organization_id') as string | null;
         const propertyId = formData.get('property_id') as string | null;
 
-        if (!file || !organizationId) {
-            return NextResponse.json({ error: 'file and organization_id are required' }, { status: 400 });
+        if (!file) {
+            return NextResponse.json({ error: 'file, organization_id, and property_id are required' }, { status: 400 });
         }
+
+        const caller = await guardPpmAdminWrite(request, organizationId, propertyId);
+        if (isCallerError(caller)) return caller;
+        const targetOrgId = organizationId as string;
+        const targetPropertyId = propertyId as string;
 
         const buffer = Buffer.from(await file.arrayBuffer());
         // cellDates: false — keep dates as raw Excel serial numbers.
@@ -88,8 +95,8 @@ export async function POST(request: NextRequest) {
                 else if (remark?.toLowerCase().includes('postponed')) status = 'postponed';
 
                 records.push({
-                    organization_id: organizationId,
-                    property_id: propertyId || null,
+                    organization_id: targetOrgId,
+                    property_id: targetPropertyId,
                     si_no: siNo,
                     system_name: effectiveSystemName,
                     detail_name: detailName,
@@ -111,17 +118,45 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'No valid PPM records found in the file' }, { status: 400 });
         }
 
-        // Delete existing records for this org+property before re-import
-        // NOTE: must reassign on each chain — Supabase returns a new builder object
-        let deleteQuery = supabaseAdmin
-            .from('ppm_schedules')
-            .delete()
-            .eq('organization_id', organizationId);
-        if (propertyId) deleteQuery = deleteQuery.eq('property_id', propertyId);
-        const { error: deleteError } = await deleteQuery;
-        if (deleteError) console.error('PPM delete error:', deleteError);
+        // Snapshot existing schedules before deleting so a failed insert can roll back cleanly
+        // and every replacement is recoverable from audit_logs.
+        const existingRows = await fetchPropertySchedulesSnapshot(targetOrgId, targetPropertyId);
+        const previousSummary = summarizePpmRows(existingRows);
+        let backupLogId: number | string | null = null;
 
-        // Batch insert
+        if (existingRows.length > 0) {
+            const backup = await writePpmBackupSnapshot({
+                eventBy: caller.userId,
+                organizationId: targetOrgId,
+                propertyId: targetPropertyId,
+                triggerAction: 'ppm_schedules.replaced',
+                rows: existingRows,
+            });
+            if (!backup.ok) {
+                console.error('PPM upload backup failed:', backup.error);
+                return NextResponse.json(
+                    { error: 'Failed to create safety backup before replacing schedules; existing data was kept.' },
+                    { status: 500 },
+                );
+            }
+            backupLogId = backup.backupLogId ?? null;
+
+            const { error: deleteError } = await supabaseAdmin
+                .from('ppm_schedules')
+                .delete()
+                .eq('organization_id', targetOrgId)
+                .eq('property_id', targetPropertyId);
+
+            if (deleteError) {
+                console.error('PPM delete error:', deleteError);
+                return NextResponse.json(
+                    { error: `Failed to replace existing schedules: ${deleteError.message}` },
+                    { status: 500 },
+                );
+            }
+        }
+
+        // Batch insert with automatic rollback if any batch fails
         const BATCH = 200;
         for (let i = 0; i < records.length; i += BATCH) {
             const { error: insertError } = await supabaseAdmin
@@ -129,11 +164,61 @@ export async function POST(request: NextRequest) {
                 .insert(records.slice(i, i + BATCH));
             if (insertError) {
                 console.error('PPM insert error:', insertError);
-                return NextResponse.json({ error: `Insert failed: ${insertError.message}` }, { status: 500 });
+                let rolledBack = false;
+                if (existingRows.length > 0) {
+                    const rollback = await restorePpmBackupRows(targetOrgId, targetPropertyId, existingRows);
+                    rolledBack = rollback.ok;
+                    if (!rollback.ok) {
+                        console.error('PPM upload rollback failed:', rollback.error);
+                    }
+                    await auditPpmBulkAction({
+                        eventBy: caller.userId,
+                        propertyId: targetPropertyId,
+                        action: 'ppm_schedules.upload_rollback',
+                        payload: {
+                            organization_id: targetOrgId,
+                            property_id: targetPropertyId,
+                            actor_email: caller.email,
+                            file_name: file.name,
+                            insert_error: insertError.message,
+                            rolled_back: rolledBack,
+                            backup_audit_log_id: backupLogId,
+                        },
+                    });
+                }
+                return NextResponse.json(
+                    {
+                        error: rolledBack
+                            ? `Insert failed (previous schedules restored): ${insertError.message}`
+                            : `Insert failed: ${insertError.message}`,
+                    },
+                    { status: 500 },
+                );
             }
         }
 
-        return NextResponse.json({ success: true, inserted: records.length });
+        await auditPpmBulkAction({
+            eventBy: caller.userId,
+            propertyId: targetPropertyId,
+            action: 'ppm_schedules.replaced',
+            payload: {
+                organization_id: targetOrgId,
+                property_id: targetPropertyId,
+                actor_email: caller.email,
+                file_name: file.name,
+                deleted_count: existingRows.length,
+                inserted_count: records.length,
+                previous_summary: previousSummary,
+                backup_audit_log_id: backupLogId,
+            },
+        });
+
+        return NextResponse.json({
+            success: true,
+            inserted: records.length,
+            replaced: existingRows.length,
+            backupAuditLogId: backupLogId,
+        });
     } catch (err) {
         console.error('PPM upload error:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
