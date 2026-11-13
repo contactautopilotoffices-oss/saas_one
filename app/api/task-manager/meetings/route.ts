@@ -10,6 +10,8 @@ export const dynamic = 'force-dynamic';
  * has its own meetings and only its own roles get in (requireMeetingSpace).
  *   GET                                   meetings in this space I can see + everyone in the Task Manager (for "who was present")
  *   POST { title, attendeeIds, extraNames, confidential }   start a new meeting in this space → { id }
+ *   POST { action: 'bulk', ids }           owner 2026-11-13: the notes of up to 50 ready meetings I can see, for the
+ *                                          bulk download (one combined PDF / Word file made on the phone) → { items }
  * WHO is acting always comes from the signed-in session. Plan: docs/MEETING_TASKS_SPEC.md
  */
 
@@ -30,6 +32,7 @@ export async function POST(request: NextRequest) {
     if (!guard.ok) return guard.response;
     try {
         const body = (await request.json().catch(() => null)) ?? {};
+        if (body.action === 'bulk') return NextResponse.json({ success: true, ...(await MeetingService.bulk(guard.userId, guard.space, body.ids)) });
         const result = await MeetingService.create(guard.userId, {
             title: body.title, attendeeIds: body.attendeeIds, extraNames: body.extraNames, confidential: body.confidential,
         }, guard.space);
