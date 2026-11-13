@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { canReviewChecklist } from '@/lib/sop/checklistAiReview';
 
 /**
  * POST /api/properties/[propertyId]/sop/completions/[completionId]/approve-step
  * Step-by-step checklist approval for checker/approver/admin.
  * Body: { completionItemId, step_approval_status, step_approval_notes }
+ *   (also accepts { status, notes }, which is what SOPCompletionDetail sends)
+ * Only property / org admins or the checker assigned in checklist settings may approve.
  */
 export async function POST(
     request: NextRequest,
@@ -21,7 +24,9 @@ export async function POST(
         }
 
         const body = await request.json();
-        const { completionItemId, step_approval_status, step_approval_notes } = body;
+        const { completionItemId } = body;
+        const step_approval_status = body.step_approval_status ?? body.status;
+        const step_approval_notes = body.step_approval_notes ?? body.notes;
 
         if (!completionItemId) {
             return NextResponse.json({ error: 'completionItemId is required' }, { status: 400 });
@@ -46,6 +51,11 @@ export async function POST(
             return NextResponse.json({ error: 'Completion not found' }, { status: 404 });
         }
 
+        const { allowed } = await canReviewChecklist(user.id, completion.property_id);
+        if (!allowed) {
+            return NextResponse.json({ error: 'Only the assigned checker or a property admin can approve steps' }, { status: 403 });
+        }
+
         // Update the step item
         const updatePayload: any = {
             step_approval_status,
@@ -57,13 +67,30 @@ export async function POST(
             updatePayload.step_approval_notes = step_approval_notes;
         }
 
-        const { data: updatedItem, error: itemError } = await supabaseAdmin
+        // A checker decision resolves the AI "needs review" flag
+        if (step_approval_status !== 'pending') {
+            updatePayload.ai_needs_review = false;
+        }
+
+        let { data: updatedItem, error: itemError } = await supabaseAdmin
             .from('sop_completion_items')
             .update(updatePayload)
             .eq('id', completionItemId)
             .eq('completion_id', completionId)
             .select()
             .single();
+
+        if (itemError && 'ai_needs_review' in updatePayload) {
+            // ai_needs_review column not migrated yet
+            delete updatePayload.ai_needs_review;
+            ({ data: updatedItem, error: itemError } = await supabaseAdmin
+                .from('sop_completion_items')
+                .update(updatePayload)
+                .eq('id', completionItemId)
+                .eq('completion_id', completionId)
+                .select()
+                .single());
+        }
 
         if (itemError) {
             return NextResponse.json({ error: itemError.message }, { status: 500 });
@@ -102,6 +129,13 @@ export async function POST(
             success: true,
             item: updatedItem,
             overallApprovalStatus,
+            // Flat fields read by SOPCompletionDetail
+            completion_approval_status: overallApprovalStatus,
+            step_approval_status: updatedItem?.step_approval_status,
+            step_approval_notes: updatedItem?.step_approval_notes,
+            step_approved_at: updatedItem?.step_approved_at,
+            step_approved_by: updatedItem?.step_approved_by,
+            ai_needs_review: updatedItem?.ai_needs_review,
         });
     } catch (err) {
         console.error('[Step Approval Error]:', err);
