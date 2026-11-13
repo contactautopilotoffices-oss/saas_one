@@ -277,16 +277,18 @@ export async function PUT(
                             const targetPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null')
                                 ? propertyId
                                 : existing.property_id;
-                            for (const it of unscored) {
-                                await evaluateCompletionItemCleanliness({
-                                    propertyId: targetPropId,
-                                    completionId,
-                                    completionItemId: it.id,
-                                    force: true,
-                                }).catch((err) => {
-                                    console.warn(`[Background AI Score] Item ${it.id} failed:`, err);
-                                });
-                            }
+                            await Promise.all(
+                                unscored.map((it: any) =>
+                                    evaluateCompletionItemCleanliness({
+                                        propertyId: targetPropId,
+                                        completionId,
+                                        completionItemId: it.id,
+                                        force: true,
+                                    }).catch((err) => {
+                                        console.warn(`[Background AI Score] Item ${it.id} failed:`, err);
+                                    })
+                                )
+                            );
                         }
                     } catch (bgErr) {
                         console.warn('[Background AI Score Trigger] Error:', bgErr);

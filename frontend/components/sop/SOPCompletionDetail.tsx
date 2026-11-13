@@ -278,11 +278,13 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
         const runAutoEvaluationQueue = async () => {
             setIsAutoEvaluating(true);
             try {
-                for (const it of unscoredItems) {
-                    if (isCancelled) break;
-                    autoEvaluatedRef.current.add(it.id);
-                    await triggerAIScoring(it.id);
-                }
+                await Promise.all(
+                    unscoredItems.map(async (it: any) => {
+                        if (isCancelled) return;
+                        autoEvaluatedRef.current.add(it.id);
+                        await triggerAIScoring(it.id);
+                    })
+                );
             } finally {
                 if (!isCancelled) {
                     setIsAutoEvaluating(false);
