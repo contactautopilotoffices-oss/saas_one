@@ -32,6 +32,7 @@ import type { ModuleKey } from '@/frontend/types/agentRuntime';
 import dynamic from 'next/dynamic';
 import { usePreloadTabs } from '@/frontend/lib/dashboard/preloadTabs';
 import TabLoading from './TabLoading';
+import { CALL_LANGUAGES, normalizeCallLanguage, type CallLanguage } from '@/backend/lib/voice/ticketCallScript';
 
 // Pop-ups stay mounted exactly as before (they open via isOpen); only their code moves out of this file, so the
 // dashboard itself downloads sooner and they arrive right after it, before anyone clicks (performance plan Phase 8).
@@ -146,6 +147,8 @@ interface Property {
     created_at: string;
     /** 'opex' = operational (default), 'capex' = CAPEX only. Missing until the migration is applied. */
     operation_type?: 'opex' | 'capex';
+    /** Language of the automatic ticket call. Missing until migration 20261112000001 is applied. */
+    call_language?: CallLanguage;
 }
 
 interface OrgUser {
@@ -1969,6 +1972,7 @@ const OrgAdminDashboard = () => {
                     <PropertyModal
                         property={editingProperty}
                         supportsOperationType={properties.some(p => 'operation_type' in p)}
+                        supportsCallLanguage={properties.some(p => 'call_language' in p)}
                         onClose={() => { setShowCreatePropModal(false); setEditingProperty(null); }}
                         onSave={(data: any) => editingProperty ? handleUpdateProperty(editingProperty.id, data) : handleCreateProperty(data)}
                     />
@@ -2349,8 +2353,9 @@ const UsersTab = ({ users, orgId, allProperties, onEdit, onDelete }: any) => (
     </div>
 );
 
-const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any) => {
+const PropertyModal = ({ property, supportsOperationType, supportsCallLanguage, onClose, onSave }: any) => {
     const [name, setName] = useState(property?.name || '');
+    const [callLanguage, setCallLanguage] = useState<CallLanguage>(normalizeCallLanguage(property?.call_language));
     const [operationType, setOperationType] = useState<'opex' | 'capex'>(property?.operation_type === 'capex' ? 'capex' : 'opex');
     const [code, setCode] = useState(property?.code || '');
     const [address, setAddress] = useState(property?.address || '');
@@ -2505,6 +2510,24 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
                         </div>
                     )}
 
+                    {/* Ticket call language. Hidden until the call_language column exists. */}
+                    {supportsCallLanguage && (
+                        <div>
+                            <label htmlFor="property-call-language" className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">Ticket Call Language</label>
+                            <select
+                                id="property-call-language"
+                                value={callLanguage}
+                                onChange={e => setCallLanguage(normalizeCallLanguage(e.target.value))}
+                                className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-100 transition-all"
+                            >
+                                {CALL_LANGUAGES.map(l => (
+                                    <option key={l.id} value={l.id}>{l.label}</option>
+                                ))}
+                            </select>
+                            <p className="text-[11px] text-slate-400 mt-1.5">The automatic call to the person a ticket is assigned to is spoken in this language. The ticket title is always read in English.</p>
+                        </div>
+                    )}
+
                     {/* Validation Flow Toggle */}
                     <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                         <div>
@@ -2522,7 +2545,7 @@ const PropertyModal = ({ property, supportsOperationType, onClose, onSave }: any
 
                     <div className="flex gap-3 mt-8">
                         <button onClick={onClose} className="flex-1 py-4 font-black text-slate-400 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-colors uppercase text-xs tracking-widest">Cancel</button>
-                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled, ...(supportsOperationType ? { operation_type: operationType } : {}) })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
+                        <button onClick={() => onSave({ name, code, address, image_url: imageUrl, validation_enabled: validationEnabled, ...(supportsOperationType ? { operation_type: operationType } : {}), ...(supportsCallLanguage ? { call_language: callLanguage } : {}) })} className="flex-1 py-4 font-black text-white bg-slate-900 rounded-2xl hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 uppercase text-xs tracking-widest flex items-center justify-center gap-2">
                             <Check className="w-4 h-4" /> {property ? 'Update' : 'Create'}
                         </button>
                     </div>

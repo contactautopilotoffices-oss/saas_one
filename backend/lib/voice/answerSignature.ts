@@ -30,3 +30,24 @@ export function verifyAnswer(text: string, voice: string, speed: string, sig: st
     const b = Buffer.from(sig);
     return a.length === b.length && timingSafeEqual(a, b);
 }
+
+// Multi-language calls (ticket assignment). A distinct prefix keeps these signatures from ever
+// matching a plain text= link, or each other. \u0001 never appears in a spoken script.
+
+/** sig= for an answer link that carries a segment list (segs=, base64url JSON) instead of text=. */
+export function signSegments(segs: string, voice: string, speed: string): string | null {
+    return signAnswer(`segs\u0001${segs}`, voice, speed);
+}
+
+export function verifySegments(segs: string, voice: string, speed: string, sig: string | null): boolean {
+    return verifyAnswer(`segs\u0001${segs}`, voice, speed, sig);
+}
+
+/** sig= for /api/voice/tts-audio, which Plivo fetches to play Marathi or Kannada speech. */
+export function signTtsAudio(lang: string, text: string): string | null {
+    return signAnswer(`tts\u0001${lang}\u0001${text}`, '', '');
+}
+
+export function verifyTtsAudio(lang: string, text: string, sig: string | null): boolean {
+    return verifyAnswer(`tts\u0001${lang}\u0001${text}`, '', '', sig);
+}

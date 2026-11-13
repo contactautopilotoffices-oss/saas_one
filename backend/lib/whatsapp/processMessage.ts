@@ -506,7 +506,9 @@ export async function processIncomingMessage(
                     title: ticket.title,
                     description: ticket.description
                 }],
-                propertyId
+                propertyId,
+                // afterTicketCreated below tells the assignee; without this they were told twice.
+                { notify: false }
             );
 
             const { data: assignedTicket } = await supabaseAdmin

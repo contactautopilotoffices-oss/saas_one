@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { signAnswer } from '@/backend/lib/voice/answerSignature';
+import { signAnswer, signSegments } from '@/backend/lib/voice/answerSignature';
+import { scriptToText, type VoiceSegment } from '@/backend/lib/voice/ticketCallScript';
 
 export interface TriggerVoiceCallOptions {
     organizationId?: string;
@@ -13,6 +14,17 @@ export interface TriggerVoiceCallOptions {
     speechSpeed?: string | number;
     bypassCooldown?: boolean;
     cooldownMinutes?: number;
+    /**
+     * A script spoken in several languages (e.g. a Hindi sentence around an English ticket title).
+     * When set it replaces the template, and the call is spoken segment by segment.
+     */
+    segments?: VoiceSegment[];
+    /**
+     * Throttle only an identical script to the same phone, not every call of this event type.
+     * Ticket calls use this: two different tickets in a row must both ring, but the same ticket
+     * notified twice must ring once.
+     */
+    throttleSameScriptOnly?: boolean;
     variables: {
         userName?: string;
         checklistTitle?: string;
@@ -142,6 +154,10 @@ export class VoiceCallingService {
                 return { success: false, error: 'Invalid phone number format' };
             }
 
+            const segments = options.segments && options.segments.length > 0 ? options.segments : null;
+            const rawTemplate = options.customTemplate || DEFAULT_VOICE_TEMPLATES[eventType.toLowerCase()] || DEFAULT_VOICE_TEMPLATES.checklist_started;
+            const spokenScript = segments ? scriptToText(segments) : this.renderTemplate(rawTemplate, variables);
+
             // ─────────────────────────────────────────────────────────────────
             // 15-MINUTE RECIPIENT COOLDOWN GUARD (DEDUPLICATION)
             // Blocks accidental rapid-fire loops and cron race conditions
@@ -149,13 +165,17 @@ export class VoiceCallingService {
             const cooldownMins = options.cooldownMinutes ?? 15;
             if (!bypassCooldown && eventType !== 'TEST_CALL' && cooldownMins > 0) {
                 const cutoffTime = new Date(Date.now() - cooldownMins * 60 * 1000).toISOString();
-                const { data: recentCalls } = await supabaseAdmin
+                let recentQuery = supabaseAdmin
                     .from('omnichannel_call_logs')
                     .select('id, created_at, call_status')
                     .eq('recipient_phone', formattedPhone)
                     .eq('event_type', eventType)
                     .in('call_status', ['initiated', 'in_progress', 'completed'])
-                    .gte('created_at', cutoffTime)
+                    .gte('created_at', cutoffTime);
+                if (options.throttleSameScriptOnly) {
+                    recentQuery = recentQuery.eq('spoken_script', spokenScript);
+                }
+                const { data: recentCalls } = await recentQuery
                     .order('created_at', { ascending: false })
                     .limit(1);
 
@@ -166,8 +186,6 @@ export class VoiceCallingService {
             }
 
             const config = await this.getConfig(organizationId);
-            const rawTemplate = options.customTemplate || DEFAULT_VOICE_TEMPLATES[eventType.toLowerCase()] || DEFAULT_VOICE_TEMPLATES.checklist_started;
-            const spokenScript = this.renderTemplate(rawTemplate, variables);
 
             let callId: string | null = null;
             let callStatus = 'initiated';
@@ -180,8 +198,16 @@ export class VoiceCallingService {
                     const selectedVoice = options.voiceId || config.default_voice || 'Polly.Aditi';
                     const selectedSpeed = options.speechSpeed || config.default_speed || '1.0';
                     // Signed, so the answer route speaks only what this server asked it to (no login is possible for Plivo).
-                    const answerSig = signAnswer(spokenScript, String(selectedVoice), String(selectedSpeed)) || '';
-                    const answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}&sig=${encodeURIComponent(answerSig)}`;
+                    let answerUrl: string;
+                    if (segments) {
+                        // Segments travel as base64url JSON: shorter than percent-encoded Devanagari or Kannada.
+                        const segs = Buffer.from(JSON.stringify(segments), 'utf8').toString('base64url');
+                        const segsSig = signSegments(segs, String(selectedVoice), String(selectedSpeed)) || '';
+                        answerUrl = `${baseUrl}/api/voice/plivo-answer?segs=${segs}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}&sig=${encodeURIComponent(segsSig)}`;
+                    } else {
+                        const answerSig = signAnswer(spokenScript, String(selectedVoice), String(selectedSpeed)) || '';
+                        answerUrl = `${baseUrl}/api/voice/plivo-answer?text=${encodeURIComponent(spokenScript)}&voice=${encodeURIComponent(selectedVoice)}&speed=${encodeURIComponent(String(selectedSpeed))}&sig=${encodeURIComponent(answerSig)}`;
+                    }
 
                     const fromNumber = config.plivo_virtual_number ? config.plivo_virtual_number.replace(/[^0-9]/g, '') : 'AutoPilot';
                     const toNumber = formattedPhone.replace(/[^0-9]/g, '');

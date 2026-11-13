@@ -63,17 +63,33 @@ Available Skill Groups & Issue Codes:
 - vendor: lift_breakdown (elevator), stuck_lift (trapped), fire_alarm (fire exit/alarm/extinguisher), wall_painting (paint/wall)
 - soft_services: chair_broken (seating), desk_alignment (furniture/table/workstation), deep_cleaning (carpet/pest/stains), cleaning_required (trash/dustbin/janitor)
 
-Rules:
-1. Reason about context, negation, time, and cause vs symptom.
-2. Identify the PRIMARY skill group (technical, plumbing, vendor, soft_services).
-3. Identify the PRIMARY issue code (e.g. carpentry_civil, ac_breakdown, water_leakage, fire_alarm, power_outage, etc.).
-4. Assign priority using these strict definitions:
+The skill group decides WHO is sent: technical, plumbing and vendor tickets go to maintenance technicians (MST);
+soft_services tickets go to housekeeping staff. Getting this split right matters more than anything else.
+- soft_services is ONLY housekeeping work that needs no tools or technical skill: cleaning, mopping, dusting,
+  trash/dustbin, washroom cleaning or refilling (soap, tissue), pantry/tea/water service, moving or arranging
+  furniture, chair/desk alignment, broken or wobbly chairs (seating), pest control requests, bad smell from dirt.
+- Anything that needs a technician is NOT soft_services, even if it sounds simple: anything electrical, AC,
+  lights, switches, sockets, wifi/network, plumbing leaks, taps, flush not working, doors, locks, hinges,
+  broken glass, carpentry, lifts, fire systems, generator.
+
+Rules (follow them in order, do not skip any):
+1. The ticket may be written in English, Hindi, Marathi, Kannada, or a mix written in English letters
+   (Hinglish), e.g. "nal se pani tapak raha hai", "AC band ho gaya", "washroom saaf nahi hai",
+   "light chalu nahi hai", "dustbin bhar gaya hai", or in Devanagari / Kannada script. Understand the
+   meaning in any language. Always answer in English, using only the codes listed above.
+2. Reason about context, negation, time, and cause vs symptom.
+3. Identify the PRIMARY skill group (technical, plumbing, vendor, soft_services) using the split above.
+4. Identify the PRIMARY issue code (e.g. carpentry_civil, ac_breakdown, water_leakage, fire_alarm, power_outage, etc.).
+5. Assign priority using these strict definitions:
    - Urgent: Immediate threat to life/safety — fire, flood, structural collapse, complete power failure, stuck lift with person inside.
    - High: Risk of damage, injury, or major service disruption — any leakage/water damage, electrical faults, broken door locks/emergency handles, lift malfunction, sewage issues.
    - Medium: Affects comfort or routine operations — AC not cooling, lighting issues, minor plumbing, cleaning requests, furniture issues.
    - Low: Purely cosmetic, no service impact — paint scuff, minor stain, aesthetic complaints.
-5. Flag safety risks explicitly (e.g., "Fire risk", "Security risk", "Slip hazard", "Water damage risk").
-6. Provide a concise one-line reasoning.
+6. Flag safety risks explicitly (e.g., "Fire risk", "Security risk", "Slip hazard", "Water damage risk").
+7. Provide a concise one-line reasoning, in English.
+
+Example: "3rd floor washroom mein pani bhar gaya hai aur flush kaam nahi kar raha"
+-> {"primary_category":"plumbing","primary_issue_code":"washroom_hygiene","secondary_category":null,"priority":"High","risk_flag":"Slip hazard","reasoning":"Flush fault with standing water in washroom needs a plumber."}
 
 Respond ONLY in valid JSON format matching the requested schema.`;
 }

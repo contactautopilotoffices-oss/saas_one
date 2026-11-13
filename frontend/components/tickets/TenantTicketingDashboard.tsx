@@ -334,25 +334,26 @@ export default function TenantTicketingDashboard({
                 setClassification(data.classification);
                 setShowSuccess(true);
 
-                // Upload media (photo or video) if present
-                if (mediaFile && data.ticket?.id) {
+                // Upload the photo/video and the attachments at the same time (they used to go one after
+                // another). The ticket is already created, so a failed file only shows a warning.
+                const ticketId = data.ticket?.id;
+                const uploadMedia = async () => {
+                    if (!mediaFile || !ticketId) return;
                     const formData = new FormData();
                     formData.append('file', mediaFile.file);
                     formData.append('type', 'before');
                     formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
                     const endpoint = mediaFile.type === 'video'
-                        ? `/api/tickets/${data.ticket.id}/videos`
-                        : `/api/tickets/${data.ticket.id}/photos`;
-                    await fetch(endpoint, { method: 'POST', body: formData });
-                }
-
-                // Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-                if (attachments.length > 0 && data.ticket?.id) {
-                    const failures: string[] = [];
-                    for (const file of attachments) {
-                        const err = await uploadTicketFile(data.ticket.id, file);
-                        if (err) failures.push(err);
-                    }
+                        ? `/api/tickets/${ticketId}/videos`
+                        : `/api/tickets/${ticketId}/photos`;
+                    await fetch(endpoint, { method: 'POST', body: formData }).catch(err => console.error('Media upload failed:', err));
+                };
+                const [, attachmentErrors] = await Promise.all([
+                    uploadMedia(),
+                    ticketId ? Promise.all(attachments.map(file => uploadTicketFile(ticketId, file))) : Promise.resolve([]),
+                ]);
+                if (attachments.length > 0 && ticketId) {
+                    const failures = attachmentErrors.filter((e): e is string => !!e);
                     setAttachError(failures.length
                         ? `Request created, but ${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`
                         : null);

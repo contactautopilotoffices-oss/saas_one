@@ -669,6 +669,13 @@ const MODULES_META: ModuleMeta[] = [
     }
 ];
 
+/**
+ * Events whose voice call is on unless an admin turns it off. Must match the server default in
+ * NotificationService.getOmnichannelRule, so a rule saved before voice existed shows its real state.
+ */
+const VOICE_ON_BY_DEFAULT = new Set(['visitor_approval_requested', 'ticket_assigned']);
+const isVoiceOn = (eventKey: string, channels: { voice?: boolean }) => channels.voice ?? VOICE_ON_BY_DEFAULT.has(eventKey);
+
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     petty_cash: PC_DEFAULT_RULES,
     hr_tickets: {
@@ -688,7 +695,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
         client_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
         critical_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
-        ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
+        ticket_assigned: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
         ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
@@ -1098,7 +1105,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             ...(moduleId === 'petty_cash' ? { enabled: ['email','whatsapp','push'].some(key => key === channel ? !current.channels[channel] : current.channels[key as 'email'|'whatsapp'|'push']) } : {}),
             channels: {
                 ...current.channels,
-                [channel]: !current.channels[channel]
+                [channel]: channel === 'voice' ? !isVoiceOn(eventKey, current.channels) : !current.channels[channel]
             }
         }));
     };
@@ -1601,7 +1608,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                 {module.events.map(ev => {
                                     const rule = getRule(module.id, ev.key);
                                     const reminderParts = minutesToReminderParts(rule.reminder_minutes);
-                                    const isAnyChannelOn = rule.channels.email || rule.channels.whatsapp || rule.channels.push || rule.channels.voice;
+                                    const isAnyChannelOn = rule.channels.email || rule.channels.whatsapp || rule.channels.push || isVoiceOn(ev.key, rule.channels);
 
                                     return (
                                         <div key={ev.key} data-notification-event={ev.key} className="p-4 rounded-xl hover:bg-slate-50/50 transition-colors space-y-3">
@@ -1676,7 +1683,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                         type="button"
                                                         onClick={() => toggleChannel(module.id, ev.key, 'voice')}
                                                         className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                                                            rule.channels.voice
+                                                            isVoiceOn(ev.key, rule.channels)
                                                                 ? 'bg-purple-600 text-white shadow-xs'
                                                                 : 'bg-white text-slate-400 hover:text-slate-600'
                                                         }`}
@@ -1876,7 +1883,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                     )}
 
                                                     {/* Voice Script & Voice Persona Customization (when Voice Channel is ON) */}
-                                                    {rule.channels.voice && (
+                                                    {isVoiceOn(ev.key, rule.channels) && (
                                                         <div className="pt-3 border-t border-purple-100/80 bg-purple-50/50 p-3.5 rounded-2xl space-y-3">
                                                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                                                                 <div className="flex items-center gap-1.5 text-xs font-bold text-purple-950">
@@ -1930,6 +1937,14 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 </div>
                                                             </div>
 
+                                                            {ev.key === 'ticket_assigned' ? (
+                                                                // The ticket call script is fixed per language (backend/lib/voice/ticketCallScript.ts).
+                                                                <p className="text-[11px] text-slate-600 bg-white/80 p-2.5 rounded-xl border border-purple-200/60">
+                                                                    The call says the property, the ticket title and its priority. It is spoken in the
+                                                                    property&apos;s call language (set in Property Management), and the ticket title is always read in English.
+                                                                    The voice above is used for English calls only.
+                                                                </p>
+                                                            ) : (<>
                                                             <div className="space-y-1.5">
                                                                 <div className="flex items-center justify-between">
                                                                     <span className="text-[11px] font-bold text-slate-700">Spoken Voice Script / Prompt:</span>
@@ -1962,6 +1977,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                     </button>
                                                                 ))}
                                                             </div>
+                                                            </>)}
                                                         </div>
                                                     )}
                                                 </div>
