@@ -128,59 +128,51 @@ export default function MediaCaptureModal({
         setTimeout(() => startCamera(0), 150);
     };
 
-    const stampTimestamp = (file: File): Promise<File> => new Promise((resolve) => {
-        const originalLastModified = file.lastModified;
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const maxSize = 1280;
-            let w = img.width, h = img.height;
-            if (w > h && w > maxSize) { h = (h * maxSize) / w; w = maxSize; }
-            else if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; }
-            canvas.width = w; canvas.height = h;
-            const ctx = canvas.getContext('2d')!;
-            ctx.drawImage(img, 0, 0, w, h);
-            const capturedAt = new Date(originalLastModified);
-            const ts = capturedAt.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '');
-            const fontSize = Math.max(14, Math.round(w * 0.028));
-            ctx.font = `bold ${fontSize}px monospace`;
-            const pad = Math.round(fontSize * 0.5);
-            const tw = ctx.measureText(ts).width;
-            const x = w - tw - pad * 2;
-            const y = h - fontSize - pad * 2;
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
-            ctx.beginPath();
-            ctx.roundRect(x, y, tw + pad * 2, fontSize + pad * 2, 4);
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
-            ctx.fillText(ts, x + pad, y + fontSize + pad * 0.6);
-            canvas.toBlob(blob => {
-                resolve(blob ? new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: originalLastModified }) : file);
-            }, 'image/jpeg', 0.85);
-        };
-        img.src = URL.createObjectURL(file);
+    /**
+     * Resize to at most 1280px on the long side, stamp the capture time in the corner, and encode as
+     * JPEG, all in ONE canvas pass. (It used to encode a JPEG, decode it again and encode a second
+     * time, which made capturing a photo slow on phones.)
+     */
+    const renderStampedPhoto = (source: CanvasImageSource, srcW: number, srcH: number, takenAtMs: number, name: string): Promise<File | null> => new Promise((resolve) => {
+        const maxSize = 1280;
+        const scale = Math.min(1, maxSize / Math.max(srcW, srcH));
+        const w = Math.round(srcW * scale), h = Math.round(srcH * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(null); return; }
+        ctx.drawImage(source, 0, 0, w, h);
+        const ts = new Date(takenAtMs).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).replace(',', '');
+        const fontSize = Math.max(14, Math.round(w * 0.028));
+        ctx.font = `bold ${fontSize}px monospace`;
+        const pad = Math.round(fontSize * 0.5);
+        const tw = ctx.measureText(ts).width;
+        const x = w - tw - pad * 2;
+        const y = h - fontSize - pad * 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.beginPath();
+        ctx.roundRect(x, y, tw + pad * 2, fontSize + pad * 2, 4);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(ts, x + pad, y + fontSize + pad * 0.6);
+        canvas.toBlob(blob => {
+            resolve(blob ? new File([blob], name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: takenAtMs }) : null);
+        }, 'image/jpeg', 0.85);
     });
 
-    const takePhoto = () => {
-        if (!videoRef.current || !canvasRef.current) return;
+    const takePhoto = async () => {
+        if (!videoRef.current) return;
         const v = videoRef.current;
         if (v.videoWidth === 0) return;
-        const c = canvasRef.current;
-        c.width = v.videoWidth;
-        c.height = v.videoHeight;
-        c.getContext('2d')?.drawImage(v, 0, 0);
-        c.toBlob(async blob => {
-            if (!blob) return;
-            const rawFile = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
-            const stamped = await stampTimestamp(rawFile);
-            setCapturedMedia({
-                file: stamped,
-                type: 'image',
-                preview: URL.createObjectURL(stamped),
-                takenAt: new Date(stamped.lastModified).toISOString()
-            });
-            stopCamera();
-        }, 'image/jpeg', 0.85);
+        const stamped = await renderStampedPhoto(v, v.videoWidth, v.videoHeight, Date.now(), `photo_${Date.now()}.jpg`);
+        if (!stamped) return;
+        setCapturedMedia({
+            file: stamped,
+            type: 'image',
+            preview: URL.createObjectURL(stamped),
+            takenAt: new Date(stamped.lastModified).toISOString()
+        });
+        stopCamera();
     };
 
     const startRecording = useCallback(() => {
@@ -252,26 +244,16 @@ export default function MediaCaptureModal({
         if (isImage) {
             const objectUrl = URL.createObjectURL(file);
             const img = new Image();
-            img.onload = () => {
+            img.onload = async () => {
                 URL.revokeObjectURL(objectUrl);
-                const canvas = document.createElement('canvas');
-                const max = 1280;
-                let { width, height } = img;
-                if (width > max) { height = (height * max) / width; width = max; }
-                else if (height > max) { width = (width * max) / height; height = max; }
-                canvas.width = width; canvas.height = height;
-                canvas.getContext('2d')?.drawImage(img, 0, 0, width, height);
-                canvas.toBlob(async blob => {
-                    if (!blob) return;
-                    const compressed = new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg', lastModified: file.lastModified });
-                    const stamped = await stampTimestamp(compressed);
-                    setCapturedMedia({
-                        file: stamped,
-                        type: 'image',
-                        preview: URL.createObjectURL(stamped),
-                        takenAt: new Date(stamped.lastModified).toISOString()
-                    });
-                }, 'image/jpeg', 0.85);
+                const stamped = await renderStampedPhoto(img, img.width, img.height, file.lastModified, file.name);
+                if (!stamped) return;
+                setCapturedMedia({
+                    file: stamped,
+                    type: 'image',
+                    preview: URL.createObjectURL(stamped),
+                    takenAt: new Date(stamped.lastModified).toISOString()
+                });
             };
             img.src = objectUrl;
         } else {

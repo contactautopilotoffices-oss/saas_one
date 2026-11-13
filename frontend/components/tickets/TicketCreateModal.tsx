@@ -226,31 +226,30 @@ export default function TicketCreateModal({
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to create ticket');
 
-            // 2. Upload media if present
-            if (mediaFile && data.ticket?.id) {
+            // 2. Upload the photo/video and the attachments at the same time (they used to go one after
+            //    another). The ticket is already created, so a failed file only shows a warning.
+            const ticketId = data.ticket?.id;
+            const uploadMedia = async () => {
+                if (!mediaFile || !ticketId) return;
                 const formData = new FormData();
                 formData.append('file', mediaFile.file);
                 formData.append('type', 'before');
                 formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
 
                 const endpoint = mediaFile.type === 'video'
-                    ? `/api/tickets/${data.ticket.id}/videos`
-                    : `/api/tickets/${data.ticket.id}/photos`;
+                    ? `/api/tickets/${ticketId}/videos`
+                    : `/api/tickets/${ticketId}/photos`;
 
-                const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
-                if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
-            }
-
-            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-            const failures: string[] = [];
-            if (attachments.length > 0 && data.ticket?.id) {
-                for (const file of attachments) {
-                    const err = await uploadTicketFile(data.ticket.id, file);
-                    if (err) failures.push(err);
-                }
-                if (failures.length) {
-                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
-                }
+                const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData }).catch(() => null);
+                if (!mediaResponse?.ok) console.error('Media upload failed, but ticket was created');
+            };
+            const [, attachmentErrors] = await Promise.all([
+                uploadMedia(),
+                ticketId ? Promise.all(attachments.map(file => uploadTicketFile(ticketId, file))) : Promise.resolve([]),
+            ]);
+            const failures = attachmentErrors.filter((e): e is string => !!e);
+            if (failures.length) {
+                setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
             }
 
             playTickleSound();

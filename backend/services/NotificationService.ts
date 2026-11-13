@@ -5,9 +5,10 @@ import { WhatsAppQueueService } from './WhatsAppQueueService';
 import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
 import { EmailRecipientResolver } from './EmailRecipientResolver';
-import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
+import { WhatsAppRecipientResolver, ORG_SCOPED_ROLES, DEFAULT_WHATSAPP_SERVICE_CONFIG } from './WhatsAppRecipientResolver';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 import { buildTicketAssignedScript, normalizeCallLanguage } from '@/backend/lib/voice/ticketCallScript';
+import { getRosterSnapshot, isRosteredOff } from '@/backend/lib/ticketing/roster';
 
 /**
  * Ticket + assignee pairs called in the last few minutes, by this server instance. A new ticket is
@@ -63,78 +64,26 @@ export class NotificationService {
             // Phone call to the assignee first, so it rings before the slower push/WhatsApp fan-out.
             if (assigneeId) await this.callTicketAssignee(ticket.id);
 
-            // Determine if the creator is a tenant
-            const { data: creatorMembership } = await supabaseAdmin
-                .from('property_memberships')
-                .select('role')
-                .eq('property_id', ticket.property_id)
-                .eq('user_id', creatorId)
-                .single();
-
-            const isCreatorTenant = creatorMembership?.role?.toUpperCase() === 'TENANT';
-
-
-            // 1. Resolve recipients with roles
-            const prospectiveRecipients = await this.getRelevantRecipientsWithRoles(ticket.property_id);
-
-            // Filter recipients based on user requirements:
-            // "Tenant only receive the notification about the ticket created by himself and other tenant, not created by others"
-            // If ticket is internal, tenants are excluded entirely
-            const isInternal = !!ticket.is_internal;
-            const recipients = prospectiveRecipients.filter((r: { userId: string; role: string }) => {
-                const isRecipientTenant = r.role.toUpperCase() === 'TENANT';
-                if (isRecipientTenant) {
-                    // Internal tickets: never notify tenants
-                    if (isInternal) {
-                        return false;
-                    }
-                    // "Tenant only receive the notification about the ticket created by himself"
-                    const shouldNotify = r.userId === creatorId;
-                    return shouldNotify;
-                }
-                return true; // Staff/Admin/MST see everything
-            }).map((r: { userId: string; role: string }) => r.userId);
-
-            // 1b. Also include org_super_admin users for this organization
-            if (ticket.organization_id) {
-                const { data: orgAdmins } = await supabaseAdmin
-                    .from('organization_memberships')
-                    .select('user_id')
-                    .eq('organization_id', ticket.organization_id)
-                    .eq('role', 'org_super_admin');
-                (orgAdmins || []).forEach((m: { user_id: string }) => {
-                    if (!recipients.includes(String(m.user_id))) {
-                        recipients.push(String(m.user_id));
-                    }
-                });
-            }
+            // Recipients come from Omnichannel Notification Settings: "Ticket created" for everyone
+            // told about the new ticket, "Ticket assigned" for the assignee.
+            const recipients = await this.resolveTicketPushRecipients(ticket, 'ticket_created', { assigneeId, requesterId: creatorId });
+            const assigneeGetsPush = assigneeId
+                ? (await this.resolveTicketPushRecipients(ticket, 'ticket_assigned', { assigneeId })).includes(assigneeId)
+                : false;
 
             const APP_URL = (process.env.APP_URL || '').replace(/\/$/, '');
 
-            // 2. Pre-build WhatsApp payload ONCE — poll for media up to 3x (ticket creation
-            //    triggers media upload in background so photo may not exist yet)
-            let waTicket: any = { ...ticket, raiser: (ticket.creator as any) };
-            if (!ticket.photo_before_url && !ticket.photo_after_url && !ticket.video_before_url && !ticket.video_after_url) {
-                for (let i = 0; i < 3; i++) {
-                    await new Promise(r => setTimeout(r, 3_000));
-                    const { data: polled } = await supabaseAdmin
-                        .from('tickets')
-                        .select('photo_before_url, photo_after_url, video_before_url, video_after_url')
-                        .eq('id', ticketId)
-                        .single();
-                    if (polled?.photo_before_url || polled?.photo_after_url || polled?.video_before_url || polled?.video_after_url) {
-                        waTicket = { ...waTicket, ...polled };
-                        break;
-                    }
-                }
-            }
+            // 2. Build the WhatsApp-style body once. (send() delivers push/in-app only; ticket WhatsApp
+            //    goes through the event outbox. This used to wait up to 9s here for a photo, which only
+            //    delayed the push.)
+            const waTicket: any = { ...ticket, raiser: (ticket.creator as any) };
             await this.injectAssigneePhone(waTicket);
             const waBody = this.buildWhatsAppBody(waTicket);
             const { mediaUrl: waMediaUrl, mediaType: waMediaType } = this.extractMedia(waTicket);
 
             // 3. Broadcast Logic
             if (assigneeId) {
-                await this.send({
+                if (assigneeGetsPush) await this.send({
                     userId: assigneeId,
                     ticketId: ticket.id,
                     propertyId: ticket.property_id,
@@ -223,13 +172,20 @@ export class NotificationService {
 
             const creatorId = ticket.raised_by ? String(ticket.raised_by) : null;
 
-            const prospectiveRecipients = await this.getRelevantRecipientsWithRoles(ticket.property_id);
-            const recipients = prospectiveRecipients
-                .filter((r: { userId: string; role: string }) => {
-                    if (r.role.toUpperCase() === 'TENANT') return r.userId === creatorId;
-                    return true;
-                })
-                .map((r: { userId: string; role: string }) => r.userId);
+            // WhatsApp recipients come from Omnichannel Notification Settings > Tickets > Ticket created,
+            // the same people who get the ticket-created WhatsApp.
+            if (!ticket.organization_id) return;
+            const resolved = await WhatsAppRecipientResolver.resolveRecipients({
+                organizationId: ticket.organization_id,
+                propertyId: ticket.property_id,
+                featureKey: 'ticket_created',
+                contextualUsers: {
+                    assigneeId: ticket.assigned_to ? String(ticket.assigned_to) : null,
+                    requesterId: creatorId,
+                },
+            });
+            if (!resolved.enabled || resolved.users.length === 0) return;
+            const recipients = resolved.users.map(u => u.id);
 
             const priorityEmoji: Record<string, string> = {
                 critical: '🔴', high: '🟠', medium: '🟡', low: '🟢'
@@ -329,6 +285,9 @@ export class NotificationService {
             await this.callTicketAssignee(ticket.id);
 
             const assigneeId = String(ticket.assigned_to);
+            // Omnichannel Notification Settings > Tickets > Ticket assigned decides whether the assignee gets a push.
+            const allowed = await this.resolveTicketPushRecipients(ticket, 'ticket_assigned', { assigneeId });
+            if (!allowed.includes(assigneeId)) return;
             await this.injectAssigneePhone(ticket);
             const waBody = this.buildWhatsAppBody(ticket);
             const { mediaUrl: waMediaUrl, mediaType: waMediaType } = this.extractMedia(ticket);
@@ -368,18 +327,15 @@ export class NotificationService {
             const assigneeName = ticket.assignee?.full_name || 'a team member';
             const creatorId = ticket.raised_by ? String(ticket.raised_by) : null;
 
-            const prospectiveRecipients = await this.getRelevantRecipientsWithRoles(ticket.property_id);
-            const filteredRecipients = prospectiveRecipients.filter((r: { userId: string; role: string }) => {
-                if (r.role.toUpperCase() === 'TENANT') return r.userId === creatorId;
-                return true;
-            }).map((r: { userId: string; role: string }) => r.userId);
+            // Recipients come from Omnichannel Notification Settings > Tickets > Ticket assigned.
+            const filteredRecipients = await this.resolveTicketPushRecipients(ticket, 'ticket_assigned', { assigneeId, requesterId: creatorId });
 
             await this.injectAssigneePhone(ticket);
             const waBody = this.buildWhatsAppBody(ticket);
             const { mediaUrl: waMediaUrl, mediaType: waMediaType } = this.extractMedia(ticket);
 
             // 1. Notify Assignee
-            await this.send({
+            if (filteredRecipients.includes(assigneeId)) await this.send({
                 userId: assigneeId,
                 ticketId: ticket.id,
                 propertyId: ticket.property_id,
@@ -425,13 +381,11 @@ export class NotificationService {
 
             const creatorId = ticket.raised_by ? String(ticket.raised_by) : null;
 
-            const prospectiveRecipients = await this.getRelevantRecipientsWithRoles(ticket.property_id);
-            const recipients = prospectiveRecipients
-                .filter((r: { userId: string; role: string }) => {
-                    if (r.role.toUpperCase() === 'TENANT') return r.userId === creatorId;
-                    return true;
-                })
-                .map((r: { userId: string; role: string }) => r.userId);
+            // Recipients come from Omnichannel Notification Settings > Tickets > Ticket completed.
+            const recipients = await this.resolveTicketPushRecipients(ticket, 'ticket_completed', {
+                assigneeId: ticket.assigned_to ? String(ticket.assigned_to) : null,
+                requesterId: creatorId,
+            });
 
             await this.injectAssigneePhone(ticket);
             const waBody = this.buildWhatsAppBody(ticket);
@@ -1164,6 +1118,67 @@ export class NotificationService {
         }
     }
 
+    /**
+     * Push / in-app recipients for a ticket event, from Omnichannel Notification Settings
+     * (organization_settings.notification_matrix, module "tickets"), resolved the way WhatsApp and
+     * email already are (WhatsAppRecipientResolver): the event's roles and named users, plus the
+     * assignee and requester when the event says so. Property overrides apply.
+     *
+     * - Push switched off for the event: nobody.
+     * - Event never saved by the organisation: the default roles shown in the settings page.
+     * - Tenants are never reached through a role: a tenant hears about a ticket only as its requester.
+     * - Internal tickets never reach a tenant.
+     */
+    private static async resolveTicketPushRecipients(
+        ticket: { organization_id?: string | null; property_id?: string | null; is_internal?: boolean | null; internal?: boolean | null },
+        eventKey: 'ticket_created' | 'ticket_assigned' | 'ticket_completed',
+        ctx: { assigneeId?: string | null; requesterId?: string | null }
+    ): Promise<string[]> {
+        try {
+            if (!ticket.organization_id) return ctx.assigneeId ? [ctx.assigneeId] : [];
+            const rule = await this.getOmnichannelRule(ticket.organization_id, ticket.property_id, eventKey);
+            if (!rule.channels.push) return [];
+
+            const defaults = DEFAULT_WHATSAPP_SERVICE_CONFIG[eventKey] || {};
+            const roles = ((rule.found ? rule.roles : defaults.roles) || []).map((r: string) => String(r).toLowerCase()).filter((r: string) => r !== 'tenant');
+            const notifyAssignee = rule.found ? rule.notify_assignee : defaults.notify_assignee !== false;
+            // As for WhatsApp: "Ticket assigned" never goes to the requester.
+            const notifyRequester = eventKey !== 'ticket_assigned' && (rule.found ? rule.notify_requester : defaults.notify_requester === true);
+
+            const ids = new Set<string>((rule.user_ids || []).map((u: string) => String(u)));
+            if (notifyAssignee && ctx.assigneeId) ids.add(ctx.assigneeId);
+
+            const orgRoles = roles.filter((r: string) => ORG_SCOPED_ROLES.has(r));
+            const propRoles = roles.filter((r: string) => !ORG_SCOPED_ROLES.has(r));
+            const [orgRes, propRes] = await Promise.all([
+                orgRoles.length > 0
+                    ? supabaseAdmin.from('organization_memberships').select('user_id').eq('organization_id', ticket.organization_id).eq('is_active', true).in('role', orgRoles)
+                    : Promise.resolve({ data: [] as { user_id: string }[] }),
+                ticket.property_id && propRoles.length > 0
+                    ? supabaseAdmin.from('property_memberships').select('user_id').eq('property_id', ticket.property_id).eq('is_active', true).in('role', propRoles)
+                    : Promise.resolve({ data: [] as { user_id: string }[] }),
+            ]);
+            for (const m of (orgRes.data || []) as { user_id: string }[]) ids.add(String(m.user_id));
+            for (const m of (propRes.data || []) as { user_id: string }[]) ids.add(String(m.user_id));
+
+            const isInternal = !!(ticket.is_internal ?? ticket.internal);
+            if (notifyRequester && ctx.requesterId) {
+                if (!isInternal) {
+                    ids.add(ctx.requesterId);
+                } else {
+                    const { data: reqMembership } = await supabaseAdmin
+                        .from('property_memberships').select('role')
+                        .eq('property_id', ticket.property_id).eq('user_id', ctx.requesterId).maybeSingle();
+                    if (String(reqMembership?.role || '').toLowerCase() !== 'tenant') ids.add(ctx.requesterId);
+                }
+            }
+            return [...ids];
+        } catch (err) {
+            console.error('[NotificationService] resolveTicketPushRecipients error:', err);
+            return ctx.assigneeId ? [ctx.assigneeId] : [];
+        }
+    }
+
     private static async getRelevantRecipientsWithRoles(propertyId: string) {
         const { data: members, error } = await supabaseAdmin
             .from('property_memberships')
@@ -1210,6 +1225,16 @@ export class NotificationService {
                 if (!rule.channels.voice) return;
                 voiceId = rule.voice_id;
                 speechSpeed = rule.speech_speed;
+            }
+
+            // Nobody is phoned while the roster says they are off shift (e.g. a ticket that went to the
+            // next shift's person, or an @mention of someone at home). Push and WhatsApp still reach them.
+            if (ticket.property_id) {
+                const roster = await getRosterSnapshot(supabaseAdmin, ticket.property_id);
+                if (isRosteredOff(roster, String(ticket.assigned_to))) {
+                    console.log(`[NotificationService] Assignee ${ticket.assigned_to} is off shift; ticket call skipped.`);
+                    return;
+                }
             }
 
             const { data: assignee } = await supabaseAdmin
@@ -2224,6 +2249,8 @@ export class NotificationService {
             };
 
             return {
+                /** False when the organisation never saved this event, so callers can apply their defaults. */
+                found: !!rule,
                 enabled: isMasterEnabled,
                 channels,
                 roles: rule?.roles || [],
@@ -2238,6 +2265,7 @@ export class NotificationService {
         } catch (err) {
             console.error('[NotificationService] getOmnichannelRule error:', err);
             return {
+                found: false,
                 enabled: true,
                 channels: { email: true, whatsapp: true, push: true, voice: eventKey === 'visitor_approval_requested' || eventKey === 'ticket_assigned' },
                 roles: [],

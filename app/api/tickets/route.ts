@@ -361,8 +361,22 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        // The ticket number does not depend on classification, so fetch it while the AI works
+        // (it used to wait until after). The .catch keeps an early return from leaving it unhandled;
+        // the await below still sees any error.
+        const ticketNumberPromise: Promise<string> = propId
+            ? generateNextTicketNumber(supabase, propId, orgId)
+            : Promise.resolve(`AP-GEN-${Date.now()}`);
+        ticketNumberPromise.catch(() => {});
+
+        // Classify on the title AND the description (it used to read only the title when there was one,
+        // so details written in the description, often in Hindi or Hinglish, were ignored).
+        const classificationText = title && description && !String(description).startsWith(String(title))
+            ? `${title}\n${description}`
+            : (title || description);
+
         // 1. Quick rule-based pre-pass to get DB priority BEFORE Groq runs
-        const preClassification = classifyTicketEnhanced(title || description);
+        const preClassification = classifyTicketEnhanced(classificationText);
         let categoryId = null;
         let skillGroupId = null;
         let priority = 'medium';
@@ -384,7 +398,7 @@ export async function POST(request: NextRequest) {
         }
 
         // 2. Full hybrid classification — pass DB priority so Groq uses it as anchor
-        const resolution = await resolveClassification(title || description, priority);
+        const resolution = await resolveClassification(classificationText, priority);
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
 
@@ -436,9 +450,7 @@ export async function POST(request: NextRequest) {
         }
 
         // 3. CREATE TICKET
-        const ticketNumber = propId
-            ? await generateNextTicketNumber(supabase, propId, orgId)
-            : `AP-GEN-${Date.now()}`;
+        const ticketNumber = await ticketNumberPromise;
 
         const { data: ticket, error: insertError } = await supabase
             .from('tickets')
@@ -529,10 +541,13 @@ export async function POST(request: NextRequest) {
 
         const finalTicket = updatedTicket || ticket;
 
-        // Auto-assign ticket to a resolver if not already assigned
-        if (!assignedTo && finalTicket.status === 'open') {
+        // Auto-assign when the creator did not pick someone. This runs even if a database trigger
+        // already assigned or waitlisted the ticket on insert, so the roster-aware rules in
+        // backend/lib/ticketing/assignment.ts always decide. notify: false because afterTicketCreated
+        // below already tells the assignee (it used to be told twice).
+        if (!assignedTo && ['open', 'assigned', 'waitlist'].includes(finalTicket.status)) {
             try {
-                const assignmentResult = await processIntelligentAssignment(
+                await processIntelligentAssignment(
                     supabase,
                     [{ 
                         id: finalTicket.id, 
@@ -541,7 +556,8 @@ export async function POST(request: NextRequest) {
                         title: finalTicket.title,
                         description: finalTicket.description
                     }],
-                    propId
+                    propId,
+                    { notify: false }
                 );
 
                 // Re-fetch the ticket after assignment

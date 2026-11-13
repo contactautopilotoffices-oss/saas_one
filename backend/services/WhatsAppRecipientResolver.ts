@@ -15,7 +15,8 @@ export interface FeatureWhatsAppConfig {
     reminder_minutes?: number | null;
 }
 
-const ORG_SCOPED_ROLES = new Set([
+/** Roles held in organization_memberships; every other role is a property_memberships role. */
+export const ORG_SCOPED_ROLES = new Set([
     'org_super_admin', 'master_admin', 'procurement', 'procurement_user', 'org_admin', 'owner', 'admin',
     'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'accounts'
 ]);
