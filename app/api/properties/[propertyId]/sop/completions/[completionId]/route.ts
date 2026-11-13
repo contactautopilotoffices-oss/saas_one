@@ -260,9 +260,38 @@ export async function PUT(
             }
 
             if (updates.status === 'completed') {
-                // Background evaluation: ensure all completion items with photos are evaluated and saved
+                // Background evaluation: ensure all completion items with photos are evaluated and saved (AI properties only)
                 after(async () => {
                     try {
+                        const targetPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null')
+                            ? propertyId
+                            : existing.property_id;
+
+                        if (targetPropId) {
+                            const { data: propSettings } = await supabaseAdmin
+                                .from('checklist_property_settings')
+                                .select('checklist_mode, ai_scoring_enabled')
+                                .eq('property_id', targetPropId)
+                                .maybeSingle();
+
+                            let isAiActive = false;
+                            if (propSettings) {
+                                isAiActive = propSettings.checklist_mode === 'advanced' || propSettings.ai_scoring_enabled === true;
+                            } else {
+                                const { data: prop } = await supabaseAdmin
+                                    .from('properties')
+                                    .select('checklist_mode')
+                                    .eq('id', targetPropId)
+                                    .maybeSingle();
+                                isAiActive = prop?.checklist_mode === 'advanced';
+                            }
+
+                            if (!isAiActive) {
+                                // Standard / Basic checklist: skip AI background evaluation
+                                return;
+                            }
+                        }
+
                         const { data: compItems } = await supabaseAdmin
                             .from('sop_completion_items')
                             .select('id, photo_url, photos, ai_cleanliness_score')
@@ -274,9 +303,6 @@ export async function PUT(
                         );
 
                         if (unscored.length > 0) {
-                            const targetPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null')
-                                ? propertyId
-                                : existing.property_id;
                             await Promise.all(
                                 unscored.map((it: any) =>
                                     evaluateCompletionItemCleanliness({
