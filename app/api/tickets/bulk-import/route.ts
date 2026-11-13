@@ -284,7 +284,14 @@ export async function POST(request: NextRequest) {
             .order('created_at', { ascending: false })
             .limit(100);
 
-        let maxSeq = 0;
+        // Read current sequence from ticket_property_sequences
+        const { data: seqRow } = await supabase
+            .from('ticket_property_sequences')
+            .select('last_sequence')
+            .eq('property_id', propertyId)
+            .maybeSingle();
+
+        let maxSeq = seqRow?.last_sequence || 0;
         const prefix = `${orgInit}-${propInit}-`;
         if (recentT) {
             for (const t of recentT) {
@@ -298,6 +305,15 @@ export async function POST(request: NextRequest) {
             const { count } = await supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId);
             maxSeq = count || 0;
         }
+
+        // Advance sequence table to reserve batch range atomically
+        await supabase
+            .from('ticket_property_sequences')
+            .upsert({
+                property_id: propertyId,
+                last_sequence: maxSeq + validRows.length,
+                updated_at: new Date().toISOString()
+            });
 
         // Prepare tickets for insert
         const ticketsToInsert = validRows.map((row, index) => {

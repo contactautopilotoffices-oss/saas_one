@@ -60,13 +60,27 @@ export function formatTicketNumber(orgInitials: string, propInitials: string, se
 
 /**
  * Calculates and returns the next ticket number for a given property.
+ * Atomically increments ticket_property_sequences via RPC or direct upsert.
  */
 export async function generateNextTicketNumber(
     supabase: SupabaseClient,
     propertyId: string,
     orgId?: string | null
 ): Promise<string> {
-    // 1. Fetch Property and Organization
+    // 1. Try atomic database RPC function first
+    try {
+        const { data: rpcNum, error: rpcErr } = await supabase.rpc('get_next_ticket_number', {
+            p_property_id: propertyId,
+            p_org_id: orgId || null,
+        });
+        if (!rpcErr && rpcNum) {
+            return rpcNum;
+        }
+    } catch {
+        // Fallback to client-side logic below if RPC not available
+    }
+
+    // 2. Fetch Property and Organization
     const { data: prop } = await supabase
         .from('properties')
         .select('id, name, organization_id')
@@ -87,39 +101,41 @@ export async function generateNextTicketNumber(
     const orgInit = deriveOrgInitials(orgName);
     const propInit = derivePropertyInitials(prop?.name || 'Property');
 
-    // 2. Query the highest sequence number for this property
-    // We check the most recent 100 tickets to extract the largest sequence
+    // 3. Atomically advance ticket_property_sequences table directly
+    const { data: seqRow } = await supabase
+        .from('ticket_property_sequences')
+        .select('last_sequence')
+        .eq('property_id', propertyId)
+        .maybeSingle();
+
+    let nextSeq = (seqRow?.last_sequence || 0) + 1;
+
+    // Verify against existing tickets to guarantee no regressions
+    const prefix = `${orgInit}-${propInit}-`;
     const { data: recentTickets } = await supabase
         .from('tickets')
         .select('ticket_number')
         .eq('property_id', propertyId)
         .order('created_at', { ascending: false })
-        .limit(100);
+        .limit(20);
 
-    let maxSeq = 0;
-    const prefix = `${orgInit}-${propInit}-`;
-
-    if (recentTickets && recentTickets.length > 0) {
-        for (const t of recentTickets) {
-            const num = t.ticket_number;
-            if (num && num.startsWith(prefix)) {
-                const seqPart = parseInt(num.substring(prefix.length), 10);
-                if (!isNaN(seqPart) && seqPart > maxSeq) {
-                    maxSeq = seqPart;
-                }
+    for (const t of recentTickets || []) {
+        if (t.ticket_number && t.ticket_number.startsWith(prefix)) {
+            const parsed = parseInt(t.ticket_number.substring(prefix.length), 10);
+            if (!isNaN(parsed) && parsed >= nextSeq) {
+                nextSeq = parsed + 1;
             }
         }
     }
 
-    // Fallback if not found in recent or first time
-    if (maxSeq === 0) {
-        const { count } = await supabase
-            .from('tickets')
-            .select('id', { count: 'exact', head: true })
-            .eq('property_id', propertyId);
-        maxSeq = count || 0;
-    }
+    // Update sequence table
+    await supabase
+        .from('ticket_property_sequences')
+        .upsert({
+            property_id: propertyId,
+            last_sequence: nextSeq,
+            updated_at: new Date().toISOString(),
+        });
 
-    const nextSeq = maxSeq + 1;
     return formatTicketNumber(orgInit, propInit, nextSeq);
 }

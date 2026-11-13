@@ -22,6 +22,7 @@ for (const resumeAssignment of [false, true]) test(resumeAssignment
         '@/backend/lib/ticketing/classifyTicket':{classifyTicketEnhanced:()=>({issue_code:'leak'})},'@/backend/services/WhatsAppService':{WhatsAppService:{send:()=>assert.fail('outbox owns reply')}},
         './assistant/access':{getWhatsAppProperties:async()=>[{id:'property',organization_id:'org',name:'Office'}]},
         '@/backend/lib/ticketing/assignment':{processIntelligentAssignment:async(_db,rows)=>{assert.equal(rows[0].skill_group_code,'stored-skill');assigned++;ticket.assigned_to='another-resolver';}},
+        '@/backend/lib/ticketing/ticketNumberService':{generateNextTicketNumber:async()=>'AP-PROP-001'},
         '@/backend/services/NotificationService':{NotificationService:{afterTicketCreated:async()=>{},afterCriticalTicketCreated:async()=>{}}}};
     const exports={};vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
         {exports,require:name=>{if(!(name in imports))throw new Error(name);return imports[name];},console:{log(){},error(){}},Date,Buffer});
