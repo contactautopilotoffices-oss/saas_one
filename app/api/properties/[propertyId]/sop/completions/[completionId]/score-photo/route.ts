@@ -426,48 +426,53 @@ Respond ONLY with raw JSON in exactly this shape:
         let modelUsed = '';
 
         if (engyKey) {
-            try {
-                const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${engyKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        model: 'qwen3.8-27b',
-                        messages: [
-                            {
-                                role: 'system',
-                                content: 'You are an expert cleanliness auditor. Output raw JSON only with no markdown wrapping.',
-                            },
-                            {
-                                role: 'user',
-                                content: imageContents,
-                            },
-                        ],
-                        max_tokens: 4096,
-                        temperature: 0.1,
-                        response_format: { type: 'json_object' },
-                    }),
-                });
+            const engyVisionModels = [process.env.ENGY_VISION_MODEL, 'glm-5.3-flash', 'kimi-k3.1-pro', 'kimi-k3'].filter(Boolean) as string[];
+            for (const modelToTry of engyVisionModels) {
+                if (rawText) break;
+                try {
+                    const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${engyKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: modelToTry,
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: 'You are an expert cleanliness auditor. Output raw JSON only with no markdown wrapping.',
+                                },
+                                {
+                                    role: 'user',
+                                    content: imageContents,
+                                },
+                            ],
+                            max_tokens: 4096,
+                            temperature: 0.1,
+                            response_format: { type: 'json_object' },
+                        }),
+                    });
 
-                if (engyRes.ok) {
-                    const engyData = await engyRes.json();
-                    const choiceMsg = engyData.choices?.[0]?.message;
-                    rawText = (choiceMsg?.content || '').trim();
-                    if (!rawText && choiceMsg?.reasoning_content) {
-                        const jsonMatch = choiceMsg.reasoning_content.match(/\{[\s\S]*"overall_score"[\s\S]*\}/)
-                            || choiceMsg.reasoning_content.match(/\{[\s\S]*"score"[\s\S]*\}/);
-                        if (jsonMatch) rawText = jsonMatch[0];
+                    if (engyRes.ok) {
+                        const engyData = await engyRes.json();
+                        const choiceMsg = engyData.choices?.[0]?.message;
+                        rawText = (choiceMsg?.content || '').trim();
+                        if (!rawText && choiceMsg?.reasoning_content) {
+                            const jsonMatch = choiceMsg.reasoning_content.match(/\{[\s\S]*"overall_score"[\s\S]*\}/)
+                                || choiceMsg.reasoning_content.match(/\{[\s\S]*"score"[\s\S]*\}/);
+                            if (jsonMatch) rawText = jsonMatch[0];
+                        }
+                        if (rawText) {
+                            modelUsed = `${modelToTry} (engy.ai)`;
+                            break;
+                        }
+                    } else {
+                        console.warn(`[AI Score] engy.ai model ${modelToTry} returned status:`, engyRes.status, await engyRes.text().catch(() => ''));
                     }
-                    if (rawText) {
-                        modelUsed = 'qwen3.8-27b (engy.ai)';
-                    }
-                } else {
-                    console.warn('[AI Score] engy.ai returned status:', engyRes.status, await engyRes.text().catch(() => ''));
+                } catch (engyErr) {
+                    console.warn(`[AI Score] engy.ai model ${modelToTry} request failed:`, engyErr);
                 }
-            } catch (engyErr) {
-                console.warn('[AI Score] engy.ai request failed, attempting Groq fallback:', engyErr);
             }
         }
 
