@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { evaluateCompletionItemCleanliness } from './score-photo/route';
 
 export async function GET(
     request: NextRequest,
@@ -259,8 +260,8 @@ export async function PUT(
             }
 
             if (updates.status === 'completed') {
-                // Non-blocking background evaluation: ensure all completion items with photos are evaluated
-                (async () => {
+                // Background evaluation: ensure all completion items with photos are evaluated and saved
+                after(async () => {
                     try {
                         const { data: compItems } = await supabaseAdmin
                             .from('sop_completion_items')
@@ -273,20 +274,24 @@ export async function PUT(
                         );
 
                         if (unscored.length > 0) {
-                            const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-                            const targetPropId = propertyId || existing.property_id;
+                            const targetPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null')
+                                ? propertyId
+                                : existing.property_id;
                             for (const it of unscored) {
-                                fetch(`${baseUrl}/api/properties/${targetPropId}/sop/completions/${completionId}/score-photo`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ completionItemId: it.id, force: true }),
-                                }).catch(() => {});
+                                await evaluateCompletionItemCleanliness({
+                                    propertyId: targetPropId,
+                                    completionId,
+                                    completionItemId: it.id,
+                                    force: true,
+                                }).catch((err) => {
+                                    console.warn(`[Background AI Score] Item ${it.id} failed:`, err);
+                                });
                             }
                         }
                     } catch (bgErr) {
                         console.warn('[Background AI Score Trigger] Error:', bgErr);
                     }
-                })();
+                });
                 // Notification is handled automatically via DB event_outbox trigger (trg_sop_runs_outbox)
             }
         }

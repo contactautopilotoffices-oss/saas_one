@@ -258,18 +258,14 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
             .catch(err => console.warn('[AI Check] Property settings fetch error:', err));
     }, [propertyId, completion?.property_id]);
 
-    // When AI enabled is ON, directly evaluate any completed item with photo that hasn't been scored yet (one-time only)
+    // When AI enabled is ON, directly evaluate any item with photo that hasn't been scored yet (one-time only)
     useEffect(() => {
         if (!isAIEnabled || !completion?.items) return;
-
-        // Skip automatic background evaluation if completion is already completed.
-        // Completed checklists were already scored during submission so reviewers in the Done section see stored results immediately.
-        if (completion.status === 'completed') return;
 
         // One-time evaluation guard: only evaluate if photo exists and it has NOT been evaluated before
         const unscoredItems = completion.items.filter(
             (it: any) =>
-                it.photo_url &&
+                (it.photo_url || (Array.isArray(it.photos) && it.photos.length > 0)) &&
                 (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined) &&
                 !it.ai_analyzed_at &&
                 !autoEvaluatedRef.current.has(it.id)
@@ -1182,7 +1178,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                         </div>
                                     </div>
                                     {/* ── AI Cleanliness Score & Parameter Evaluation ── */}
-                                    {item.photo_url && (isAIEnabled || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined)) && (
+                                    {(item.photo_url || (Array.isArray(item.photos) && item.photos.length > 0)) && (isAIEnabled || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined)) && (
                                         <div className="mt-2 md:mt-3">
                                             {aiScoring[item.id] || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined) ? (() => {
                                                 const isScoring = aiScoring[item.id];

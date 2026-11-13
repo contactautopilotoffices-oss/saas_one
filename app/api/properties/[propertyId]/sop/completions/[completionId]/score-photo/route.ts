@@ -17,26 +17,20 @@ import { loadImageBuffer, loadFeedbackRules, formatFeedbackRules, normalizeParam
  * Primary Model: Qwen 3.8 27B Vision via engy.ai (with fallback to Groq Qwen 3.6 27B)
  * Body: { completionItemId }
  */
-export async function POST(
-    request: NextRequest,
-    { params }: { params: Promise<{ propertyId: string; completionId: string }> }
-) {
-    const { propertyId, completionId } = await params;
-    const supabase = await createClient();
+export interface EvaluateCleanlinessParams {
+    propertyId: string;
+    completionId: string;
+    completionItemId: string;
+    force?: boolean;
+}
 
+export async function evaluateCompletionItemCleanliness({
+    propertyId,
+    completionId,
+    completionItemId,
+    force,
+}: EvaluateCleanlinessParams): Promise<NextResponse> {
     try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const body = await request.json();
-        const { completionItemId } = body;
-
-        if (!completionItemId) {
-            return NextResponse.json({ error: 'completionItemId is required' }, { status: 400 });
-        }
-
         // Verify completion belongs to this property (include date/slot for freshness verification)
         let compQuery = supabaseAdmin
             .from('sop_completions')
@@ -120,7 +114,7 @@ export async function POST(
         if (
             completionItem.ai_cleanliness_score !== null &&
             completionItem.ai_cleanliness_score !== undefined &&
-            !body.force
+            !force
         ) {
             return NextResponse.json({
                 success: true,
@@ -850,6 +844,41 @@ Respond ONLY with raw JSON in exactly this shape:
         });
     } catch (err) {
         console.error('[AI Score] Error:', err);
+        return NextResponse.json(
+            { error: err instanceof Error ? err.message : 'Unknown error' },
+            { status: 500 }
+        );
+    }
+}
+
+export async function POST(
+    request: NextRequest,
+    { params }: { params: Promise<{ propertyId: string; completionId: string }> }
+) {
+    const { propertyId, completionId } = await params;
+    const supabase = await createClient();
+
+    try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const { completionItemId, force } = body;
+
+        if (!completionItemId) {
+            return NextResponse.json({ error: 'completionItemId is required' }, { status: 400 });
+        }
+
+        return await evaluateCompletionItemCleanliness({
+            propertyId,
+            completionId,
+            completionItemId,
+            force: Boolean(force),
+        });
+    } catch (err) {
+        console.error('[AI Score POST] Error:', err);
         return NextResponse.json(
             { error: err instanceof Error ? err.message : 'Unknown error' },
             { status: 500 }
