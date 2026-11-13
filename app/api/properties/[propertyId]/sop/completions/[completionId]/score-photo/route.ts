@@ -24,6 +24,39 @@ export interface EvaluateCleanlinessParams {
     force?: boolean;
 }
 
+interface CachedBenchmark {
+    base64: string;
+    buffer: Buffer;
+    hash: string;
+    cachedAt: number;
+}
+const BENCHMARK_CACHE = new Map<string, CachedBenchmark>();
+const BENCHMARK_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
+
+async function getOptimizedImage(url: string | null | undefined, isBenchmark = false): Promise<{ base64: string; buffer: Buffer; hash: string } | null> {
+    if (!url) return null;
+    if (isBenchmark) {
+        const cached = BENCHMARK_CACHE.get(url);
+        if (cached && (Date.now() - cached.cachedAt < BENCHMARK_CACHE_TTL_MS)) {
+            return cached;
+        }
+    }
+    const buf = await loadImageBuffer(url);
+    if (!buf) return null;
+    const jpeg = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+    const result = {
+        buffer: buf,
+        base64: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
+        hash,
+        cachedAt: Date.now(),
+    };
+    if (isBenchmark) {
+        BENCHMARK_CACHE.set(url, result);
+    }
+    return result;
+}
+
 export async function evaluateCompletionItemCleanliness({
     propertyId,
     completionId,
@@ -218,36 +251,37 @@ export async function evaluateCompletionItemCleanliness({
 
         if (cadFallbackBuffer) {
             referenceUsed = 'cad';
-            const cadPng = await sharp(cadFallbackBuffer).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
+            const cadJpeg = await sharp(cadFallbackBuffer).resize({ width: 640, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
             const hash = crypto.createHash('sha256').update(cadFallbackBuffer).digest('hex');
             benchmarkItems.push({
                 id: 'cad_ref',
                 label: 'CAD Floor Plan Blueprint',
                 url: null,
                 buffer: cadFallbackBuffer,
-                base64: `data:image/png;base64,${cadPng.toString('base64')}`,
+                base64: `data:image/jpeg;base64,${cadJpeg.toString('base64')}`,
                 hash,
             });
         } else {
-            for (const b of rawBenchmarks.slice(0, 5)) {
-                try {
-                    const buf = await loadImageBuffer(b.url);
-                    if (buf) {
-                        const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
-                        const hash = crypto.createHash('sha256').update(buf).digest('hex');
-                        benchmarkItems.push({
+            const loadedBenchmarks = await Promise.all(
+                rawBenchmarks.slice(0, 5).map(async (b) => {
+                    try {
+                        const opt = await getOptimizedImage(b.url, true);
+                        if (!opt) return null;
+                        return {
                             id: b.id,
                             label: b.label,
                             url: b.url,
-                            buffer: buf,
-                            base64: `data:image/png;base64,${png.toString('base64')}`,
-                            hash,
-                        });
+                            buffer: opt.buffer,
+                            base64: opt.base64,
+                            hash: opt.hash,
+                        };
+                    } catch (bErr) {
+                        console.error(`[AI Score] Benchmark fetch failed for ${b.label}:`, bErr);
+                        return null;
                     }
-                } catch (bErr) {
-                    console.error(`[AI Score] Benchmark fetch failed for ${b.label}:`, bErr);
-                }
-            }
+                })
+            );
+            benchmarkItems.push(...(loadedBenchmarks.filter(Boolean) as any[]));
         }
 
         if (benchmarkItems.length === 0) {
@@ -258,27 +292,28 @@ export async function evaluateCompletionItemCleanliness({
             });
         }
 
-        // Fetch and optimize field photos (up to 5 photos max)
-        const fieldPhotoItems: Array<{ id: string; url: string; captured_at?: string; base64: string; buffer: Buffer; hash: string }> = [];
-        for (const p of rawFieldPhotos.slice(0, 5)) {
-            try {
-                const buf = await loadImageBuffer(p.url);
-                if (buf) {
-                    const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
-                    const hash = crypto.createHash('sha256').update(buf).digest('hex');
-                    fieldPhotoItems.push({
+        // Fetch and optimize field photos in parallel (up to 5 photos max)
+        const loadedFieldPhotos = await Promise.all(
+            rawFieldPhotos.slice(0, 5).map(async (p) => {
+                try {
+                    const opt = await getOptimizedImage(p.url, false);
+                    if (!opt) return null;
+                    return {
                         id: p.id,
                         url: p.url,
                         captured_at: p.captured_at,
-                        buffer: buf,
-                        base64: `data:image/png;base64,${png.toString('base64')}`,
-                        hash,
-                    });
+                        buffer: opt.buffer,
+                        base64: opt.base64,
+                        hash: opt.hash,
+                    };
+                } catch (pErr) {
+                    console.error(`[AI Score] Field photo fetch failed for ${p.url}:`, pErr);
+                    return null;
                 }
-            } catch (pErr) {
-                console.error(`[AI Score] Field photo fetch failed for ${p.url}:`, pErr);
-            }
-        }
+            })
+        );
+        const fieldPhotoItems: Array<{ id: string; url: string; captured_at?: string; base64: string; buffer: Buffer; hash: string }> =
+            loadedFieldPhotos.filter(Boolean) as any[];
 
         if (fieldPhotoItems.length === 0) {
             return NextResponse.json(
