@@ -832,7 +832,6 @@ export default function FilesTab({ orgId, team }: { orgId: string; team: FilesTe
                     )}
                     <div className="ml-auto flex items-center gap-2">
                         {features.bin && <ToggleChip icon={Trash2} label="Bin" active={inBin} onClick={() => openBin(!inBin)} title={inBin ? 'Back to Files' : 'Open the Bin'} />}
-                        <ToggleChip icon={Info} label="Details" active={detailsOpen} onClick={() => setDetailsOpen(o => !o)} />
                         <Chip align="right" active={false} open={openChip === 'sort'} onToggle={() => toggleChip('sort')}
                             label={<>{sort.dir === 1 ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}Sort: {sort.key === 'updatedAt' && inBin ? 'Binned' : SORT_LABELS[sort.key]}</>}>
                             {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
