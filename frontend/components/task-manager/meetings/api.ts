@@ -30,6 +30,8 @@ export interface MeetingDetail {
     /** Last "Send notes on WhatsApp" */
     notesSentAt: string | null; notesSentCount: number | null;
     voice: VoiceSummary | null;
+    /** Owner 2026-11-13: about the recording itself — pieces that never arrived, or nobody pressed Finish (null: not known) */
+    recording?: { missingPieces: number; missingSeconds: number; autoFinished: boolean } | null;
 }
 
 export interface MeetingTask {
@@ -46,18 +48,30 @@ export interface MeetingTask {
 /** Owner 2026-10-29: who the tasks are sent from */
 export type SendAs = 'autopilot' | 'me';
 
-export type Result<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; error: string; code?: string };
+/** `details` (owner 2026-11-13): extra facts with some errors, e.g. how many pieces are missing (`PIECES_MISSING`) */
+export type Result<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; error: string; code?: string; details?: Record<string, unknown> };
 
-export async function call<T = Record<string, unknown>>(url: string, body?: Record<string, unknown>): Promise<Result<T>> {
+export const OFFLINE_ERROR = 'Could not reach the server. Please check the connection and try again.';
+
+/**
+ * One call to the Meeting Assistant API. `timeoutMs` (owner 2026-11-13): a request that hangs on a bad mobile link is
+ * given up after this long, so the caller can try again instead of waiting forever (the recorder passes it on every
+ * call; a hung upload used to look like "Saving the last pieces…" for ever).
+ */
+export async function call<T = Record<string, unknown>>(url: string, body?: Record<string, unknown>, opts: { timeoutMs?: number } = {}): Promise<Result<T>> {
+    const ctl = opts.timeoutMs ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), opts.timeoutMs) : null;
     try {
         const res = await fetch(url, body
-            ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-            : { cache: 'no-store' });
+            ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl?.signal }
+            : { cache: 'no-store', signal: ctl?.signal });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) return { ok: false, error: data.error || 'That did not work', code: data.code };
+        if (!res.ok || !data.success) return { ok: false, error: data.error || 'That did not work', code: data.code, details: data.details };
         return { ok: true, ...(data as T) };
     } catch {
-        return { ok: false, error: 'Could not reach the server. Please check the connection and try again.' };
+        return { ok: false, error: OFFLINE_ERROR, code: 'OFFLINE' };
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 }
 

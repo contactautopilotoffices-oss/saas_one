@@ -13,6 +13,7 @@ import { canSee, isMeetingSpace, spacesForMemberships, spacesForRoles } from '..
 import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/meetingNotesMessage';
 import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
+import { mergeCapture, missingFromCapture, reportedSegments } from '../meetings/capture';
 
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
@@ -353,6 +354,42 @@ async function main() {
         check('asleep while identifying → try again later', !sleepy.ok && sleepy.retryable === true);
         const refused = await voiceIdentify({ files: [['https://x/a']], segments: [], candidates: [] }, { env: VENV, fetch: fakeFetch([{ status: 400, body: { ok: false, reason: 'url_not_allowed' } }]).f });
         check('bad request → give up (no retry)', !refused.ok && refused.retryable === false && refused.reason === 'url_not_allowed');
+    }
+
+    // ── Owner 2026-11-13: robust recording — the phone's report vs what reached storage ──
+    console.log('\nRobust recording: heartbeat merge');
+    {
+        const first = mergeCapture(null, { segments: { '0': { recorded: 10 } }, elapsedSeconds: 150, pieceSeconds: 15 }, new Date('2026-11-13T07:00:00Z'));
+        check('first heartbeat stored', first.segments?.['0']?.recorded === 10 && first.elapsedSeconds === 150 && first.pieceSeconds === 15 && first.at === '2026-11-13T07:00:00.000Z');
+        const later = mergeCapture(first, { segments: { '0': { recorded: 12 }, '1': { recorded: 3 } }, elapsedSeconds: 200 });
+        check('counts grow and new recordings are added', later.segments?.['0']?.recorded === 12 && later.segments?.['1']?.recorded === 3 && later.elapsedSeconds === 200);
+        const stale = mergeCapture(later, { segments: { '0': { recorded: 5 } }, elapsedSeconds: 20 });
+        check('an older page cannot lower a count or the clock', stale.segments?.['0']?.recorded === 12 && stale.segments?.['1']?.recorded === 3 && stale.elapsedSeconds === 200);
+        check('piece length kept from before when not sent', stale.pieceSeconds === 15);
+        const junk = mergeCapture(later, { segments: { x: 'y', '-1': 4, '99': 2, '2': 1e9 }, elapsedSeconds: 'soon', pieceSeconds: -3 });
+        check('junk is ignored, nothing thrown', Object.keys(junk.segments ?? {}).sort().join(',') === '0,1' && junk.elapsedSeconds === 200 && junk.pieceSeconds === 15);
+        check('plain numbers accepted as counts', mergeCapture(null, { segments: { '0': 7 } }).segments?.['0']?.recorded === 7);
+        check('reported recordings listed', reportedSegments(later).sort().join(',') === '0,1' && reportedSegments(null).length === 0);
+    }
+
+    console.log('\nRobust recording: what is missing at Finish');
+    {
+        const names = (n: number, from = 0) => Array.from({ length: n }, (_, i) => `c${String(from + i).padStart(5, '0')}.webm`);
+        const cap = { segments: { '0': { recorded: 10 } }, pieceSeconds: 15 };
+        const whole = missingFromCapture(cap, new Map([[0, names(10)]]));
+        check('all pieces arrived → nothing missing', whole.missing === 0 && whole.brokenSegments.length === 0 && whole.arrived === 10 && whole.anyStored);
+        const holes = missingFromCapture(cap, new Map([[0, names(7)]]));
+        check('3 pieces short → 3 missing, 45 s', holes.missing === 3 && holes.missingSeconds === 45);
+        const noHeader = missingFromCapture(cap, new Map([[0, names(9, 1)]]));
+        check('first piece absent → recording marked broken', noHeader.missing === 1 && noHeader.brokenSegments.join() === '0');
+        const two = missingFromCapture({ segments: { '0': { recorded: 4 }, '1': { recorded: 6 } }, pieceSeconds: 15 }, new Map([[0, names(4)], [1, names(2)]]));
+        check('counted per recording', two.missing === 4 && two.arrived === 6);
+        const unreported = missingFromCapture({ segments: { '0': { recorded: 4 } } }, new Map([[0, names(4)], [1, names(3)]]));
+        check('a recording the phone never reported (old page) is fine', unreported.missing === 0 && unreported.brokenSegments.length === 0);
+        const none = missingFromCapture(null, new Map());
+        check('no report, no audio → nothing stored', none.missing === 0 && !none.anyStored);
+        check('no report but audio → allowed (before the migration)', missingFromCapture(null, new Map([[0, names(3)]])).anyStored === true);
+        check('default piece length 30 s when the phone did not say', missingFromCapture({ segments: { '0': { recorded: 2 } } }, new Map()).missingSeconds === 60);
     }
 
     console.log(failures ? `\n${failures} FAILED` : '\nAll meeting tests passed');

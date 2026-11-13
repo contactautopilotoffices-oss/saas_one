@@ -15,7 +15,13 @@ export const maxDuration = 300;
  *   POST { action, ... }
  *     start_segment                         a new continuous recording → { segment }
  *     upload_url  { segment, seq, mimeType } a one-time private upload link for one audio piece
- *     finish                                 recording done → processing starts
+ *     upload_urls { segment, from, count, mimeType }  links for up to 20 pieces in a row (owner 2026-11-13)
+ *     heartbeat   { segments, elapsedSeconds, pieceSeconds }  the phone's half-minute report while recording (2026-11-13)
+ *     finish      { force? }                 recording done → processing starts; 409 PIECES_MISSING (with `details`)
+ *                                            while pieces the phone reported have not arrived, unless force is true
+ *     update_attendees { attendeeIds, extraNames }  change who is present, at any time (owner 2026-11-13)
+ *     rewrite_notes                          a ready meeting: write the notes and draft tasks again from the kept
+ *                                            transcript (after people were added); sent tasks stay
  *     discard                                delete the meeting (and any audio)
  *     reset_recording                        "Start over": delete the audio so far, keep the meeting open for recording
  *     retry                                  try a failed meeting again
@@ -58,7 +64,11 @@ export async function POST(request: NextRequest, { params }: Ctx) {
         switch (body.action) {
             case 'start_segment': return NextResponse.json({ success: true, ...(await MeetingService.startSegment(userId, id)) });
             case 'upload_url': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrl(userId, id, { segment: body.segment, seq: body.seq, mimeType: body.mimeType })) });
-            case 'finish': return NextResponse.json({ success: true, ...(await MeetingService.finish(userId, id)) });
+            case 'upload_urls': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrls(userId, id, { segment: body.segment, from: body.from, count: body.count, mimeType: body.mimeType })) });
+            case 'heartbeat': return NextResponse.json({ success: true, ...(await MeetingService.heartbeat(userId, id, { segments: body.segments, elapsedSeconds: body.elapsedSeconds, pieceSeconds: body.pieceSeconds })) });
+            case 'finish': return NextResponse.json({ success: true, ...(await MeetingService.finish(userId, id, { force: body.force })) });
+            case 'update_attendees': return NextResponse.json({ success: true, ...(await MeetingService.updateAttendees(userId, id, { attendeeIds: body.attendeeIds, extraNames: body.extraNames })) });
+            case 'rewrite_notes': return NextResponse.json({ success: true, ...(await MeetingService.rewriteNotes(userId, id)) });
             case 'discard': return NextResponse.json({ success: true, ...(await MeetingService.discard(userId, id)) });
             case 'reset_recording': return NextResponse.json({ success: true, ...(await MeetingService.resetRecording(userId, id)) });
             case 'retry': return NextResponse.json({ success: true, ...(await MeetingService.retry(userId, id)) });
