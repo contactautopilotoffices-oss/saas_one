@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CloudUpload, Loader2, Mic, MicOff, Pause, Play, RotateCcw, Square, Trash2, Upload, UserPlus, WifiOff, X } from 'lucide-react';
 import { call, clock, meetingUrl, type MeetingPerson, type MeetingSpace } from './api';
-import { forgetMeeting, pieceKey, rememberMeeting, requestPersistence, savePiece, storeAvailable, type StoredPiece } from './pieceStore';
+import { forgetMeeting, pendingPieces, pieceKey, rememberMeeting, requestPersistence, savePiece, storeAvailable, type StoredPiece } from './pieceStore';
 import { getUploader, type UploadProgress } from './uploader';
 import AttendeesEditor, { type Attendees } from './AttendeesEditor';
 
@@ -103,6 +103,8 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
     const [missing, setMissing] = useState<{ missing: number; missingSeconds: number } | null>(null);
     const [offerLater, setOfferLater] = useState(false);
     const [attendees, setAttendees] = useState<Attendees | null>(null);
+    /** Owner 2026-11-13: "Continue recording" — how much of this meeting was recorded before this page (clock + note) */
+    const [earlier, setEarlier] = useState<{ seconds: number; segments: number } | null>(null);
     const [editPeople, setEditPeople] = useState(false);
     const [peopleNote, setPeopleNote] = useState<string | null>(null);
 
@@ -119,6 +121,10 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
     const banked = useRef(0);
     const wake = useRef<{ release: () => Promise<void> } | null>(null);
     const started = useRef(false);
+    /** The highest recording number this page has used (the next one must be above it) */
+    const lastSegment = useRef(-1);
+    /** Set once the earlier part's time was added to the clock, so it is added only once */
+    const earlierAdded = useRef(false);
     const bars = useRef<Array<HTMLSpanElement | null>>([]);
     const meter = useRef<{ ctx: AudioContext; raf: number } | null>(null);
     const [hint, setHint] = useState<Hint>(null);
@@ -144,14 +150,23 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         return off;
     }, [meetingId, space, title, uploader]);
 
-    // ── who is present (for the chips and "+ Add person"); not needed to record, so a failure here is quiet ──
+    // ── who is present (for the chips and "+ Add person") and, after "Continue recording", how much was recorded before.
+    // Not needed to record, so a failure here is quiet. ──
     useEffect(() => {
         let live = true;
-        void call<{ meeting: Attendees }>(url, undefined, { timeoutMs: CALL_TIMEOUT_MS }).then(r => {
-            if (live && r.ok) setAttendees({ attendees: r.meeting.attendees, extraNames: r.meeting.extraNames });
+        void call<{ meeting: Attendees & { recording?: { elapsedSeconds: number; segments: number } | null } }>(url, undefined, { timeoutMs: CALL_TIMEOUT_MS }).then(r => {
+            if (!live || !r.ok) return;
+            setAttendees({ attendees: r.meeting.attendees, extraNames: r.meeting.extraNames });
+            const before = r.meeting.recording;
+            if (before && before.elapsedSeconds > 0 && !earlierAdded.current && !file) {
+                // The clock carries on from where the earlier part stopped: one meeting, one running time
+                earlierAdded.current = true;
+                banked.current += before.elapsedSeconds * 1000;
+                setEarlier({ seconds: before.elapsedSeconds, segments: before.segments });
+            }
         });
         return () => { live = false; };
-    }, [url]);
+    }, [file, url]);
 
     /** Live bars + faint/silent hint, ~14 updates a second. Bars are moved directly (no re-render per frame). */
     const startMeter = useCallback((media: MediaStream) => {
@@ -305,14 +320,22 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
     /** A new continuous recording: asks the server for its number, opens the microphone, starts recording in pieces. */
     const openMic = useCallback(async () => {
         setPhase('starting');
-        const seg = await call<{ segment: number }>(url, { action: 'start_segment' }, { timeoutMs: CALL_TIMEOUT_MS });
+        // Owner 2026-11-13: never reuse a recording number this phone still holds audio for (the server may not have
+        // heard of it yet: closed before the first report, or still uploading) — the new pieces would write over it.
+        const onPhone = await pendingPieces(meetingId);
+        const minSegment = Math.max(lastSegment.current, ...onPhone.map(p => p.segment)) + 1;
+        const seg = await call<{ segment: number }>(url, { action: 'start_segment', minSegment }, { timeoutMs: CALL_TIMEOUT_MS });
         if (!seg.ok) {
             if (seg.code === 'FINISHED') { onDone(); return; }
             failed(seg.error, seg.code === 'OFFLINE' ? { kind: 'mic' } : null);
             return;
         }
-        segment.current = seg.segment;
+        segment.current = Math.max(seg.segment, minSegment);
+        lastSegment.current = segment.current;
         nextSeq.current = 0; // pieces are numbered from 0 inside each recording (the first one carries the file header)
+        // Tell the server about this recording now, not at the first half-minute report
+        if (!recordedBySeg.current.has(segment.current)) recordedBySeg.current.set(segment.current, 0);
+        void heartbeat();
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
             failed('This browser cannot record audio. Use Chrome or Safari on the phone, or upload a recording instead.');
             return;
@@ -340,7 +363,7 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         setPhase('recording');
         startMeter(stream.current);
         void keepAwake();
-    }, [failed, keepAwake, keepPiece, micLost, onDone, startMeter, url]);
+    }, [failed, heartbeat, keepAwake, keepPiece, meetingId, micLost, onDone, startMeter, url]);
 
     /** The picked file is one piece: saved on the phone like a recorded piece, then uploaded and finished. */
     const beginFile = useCallback(async (f: File, type: string) => {
@@ -424,6 +447,8 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         if (!r.ok) { failed(r.error); return; }
         discarding.current = false;
         nextSeq.current = 0;
+        lastSegment.current = -1;
+        setEarlier(null);
         setElapsed(0);
         await rememberMeeting({ meetingId, space, title });
         await openMic();
@@ -598,6 +623,11 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
 
                 {live && (
                     <>
+                        {earlier && (
+                            <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" role="status">
+                                Earlier part of this meeting: {clock(earlier.seconds)} already recorded and saved. The clock continues from there, and everything is joined into one set of notes at the end.
+                            </p>
+                        )}
                         {/* Owner 2026-11-13: real numbers instead of "everything is saved" */}
                         <p className="mt-3 text-xs font-semibold text-zinc-500">
                             Keep the phone in the middle of the table, screen on.

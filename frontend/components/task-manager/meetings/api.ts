@@ -31,7 +31,7 @@ export interface MeetingDetail {
     notesSentAt: string | null; notesSentCount: number | null;
     voice: VoiceSummary | null;
     /** Owner 2026-11-13: about the recording itself — pieces that never arrived, or nobody pressed Finish (null: not known) */
-    recording?: { missingPieces: number; missingSeconds: number; autoFinished: boolean } | null;
+    recording?: { missingPieces: number; missingSeconds: number; autoFinished: boolean; elapsedSeconds: number; segments: number } | null;
 }
 
 export interface MeetingTask {

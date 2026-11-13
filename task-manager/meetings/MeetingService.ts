@@ -268,6 +268,9 @@ export class MeetingService {
                 missingPieces: capture.finishedWith?.missing ?? 0,
                 missingSeconds: (capture.finishedWith?.missing ?? 0) * (capture.pieceSeconds ?? 30),
                 autoFinished: capture.autoFinished === true,
+                // Time on the clock so far (the recorder continues from here after "Continue recording")
+                elapsedSeconds: capture.elapsedSeconds ?? 0,
+                segments: Object.keys(capture.segments ?? {}).length,
             } : null,
         };
     }
@@ -358,13 +361,17 @@ export class MeetingService {
     }
 
     /** A new continuous recording (first start, or after the page was reloaded): returns its number. */
-    static async startSegment(userId: string, id: string) {
+    static async startSegment(userId: string, id: string, input: { minSegment?: unknown } = {}) {
         const m = await this.owned(userId, id);
         this.stillRecording(m);
         // Owner 2026-11-13: a recording the phone reported (heartbeat) counts as used even if none of its pieces have
         // arrived yet — otherwise a reload during a signal drop would reuse the number and the late pieces would mix in.
+        // `minSegment`: the phone's own floor (it still holds audio of lower-numbered recordings that the server has
+        // not heard of yet, e.g. closed before the first heartbeat). The higher of the two wins; a number is never reused.
+        const floor = Number(input.minSegment);
         const used = [...(await this.segments(id)).map(s => Number(s.slice(1))), ...reportedSegments(m.capture)];
-        const next = used.length ? Math.max(...used) + 1 : 0;
+        let next = used.length ? Math.max(...used) + 1 : 0;
+        if (Number.isInteger(floor) && floor > next && floor < SARVAM_MAX_FILES) next = floor;
         if (next >= SARVAM_MAX_FILES) throw new MeetingError(409, `A meeting can be restarted at most ${SARVAM_MAX_FILES} times. Please finish it.`);
         return { segment: next };
     }

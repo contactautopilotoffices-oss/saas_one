@@ -13,7 +13,7 @@ export const maxDuration = 300;
  *   GET                       the meeting, its transcript, notes and task list. While it is processing, each GET also
  *                             moves it forward one step (the review screen polls this).
  *   POST { action, ... }
- *     start_segment                         a new continuous recording → { segment }
+ *     start_segment { minSegment? }         a new continuous recording → { segment } (never below the phone's own floor)
  *     upload_url  { segment, seq, mimeType } a one-time private upload link for one audio piece
  *     upload_urls { segment, from, count, mimeType }  links for up to 20 pieces in a row (owner 2026-11-13)
  *     heartbeat   { segments, elapsedSeconds, pieceSeconds }  the phone's half-minute report while recording (2026-11-13)
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest, { params }: Ctx) {
         const body = (await request.json().catch(() => null)) ?? {};
         const userId = guard.userId;
         switch (body.action) {
-            case 'start_segment': return NextResponse.json({ success: true, ...(await MeetingService.startSegment(userId, id)) });
+            case 'start_segment': return NextResponse.json({ success: true, ...(await MeetingService.startSegment(userId, id, { minSegment: body.minSegment })) });
             case 'upload_url': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrl(userId, id, { segment: body.segment, seq: body.seq, mimeType: body.mimeType })) });
             case 'upload_urls': return NextResponse.json({ success: true, ...(await MeetingService.uploadUrls(userId, id, { segment: body.segment, from: body.from, count: body.count, mimeType: body.mimeType })) });
             case 'heartbeat': return NextResponse.json({ success: true, ...(await MeetingService.heartbeat(userId, id, { segments: body.segments, elapsedSeconds: body.elapsedSeconds, pieceSeconds: body.pieceSeconds })) });
