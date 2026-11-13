@@ -361,6 +361,31 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        // Tenants/clients can NEVER create internal tickets. Force internal to false for tenant role.
+        const adminClient = createAdminClient();
+        const { data: userPropMembership } = await adminClient
+            .from('property_memberships')
+            .select('role')
+            .eq('property_id', propId)
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .maybeSingle();
+
+        let isTenant = userPropMembership?.role === 'tenant' || userPropMembership?.role === 'super_tenant';
+        if (!userPropMembership) {
+            const { data: userOrgMembership } = await adminClient
+                .from('organization_memberships')
+                .select('role')
+                .eq('organization_id', orgId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (userOrgMembership?.role === 'tenant' || userOrgMembership?.role === 'super_tenant') {
+                isTenant = true;
+            }
+        }
+
+        const effectiveInternal = isTenant ? false : internalValue;
+
         // 1. Quick rule-based pre-pass to get DB priority BEFORE Groq runs
         const preClassification = classifyTicketEnhanced(title || description);
         let categoryId = null;
@@ -459,7 +484,8 @@ export async function POST(request: NextRequest) {
                 status: assignedTo ? 'assigned' : 'open',
                 assigned_to: assignedTo || undefined,
                 raised_by: user.id,
-                internal: internalValue,
+                internal: effectiveInternal,
+                is_internal: effectiveInternal,
                 is_vague: isVague,
                 sla_hours: slaHours,
                 floor_number: extractFloorNumber(title || description) ?? undefined,
@@ -486,7 +512,6 @@ export async function POST(request: NextRequest) {
         }
 
         // Auto-attach the default escalation hierarchy (property-specific first, then org-wide fallback)
-        const adminClient = createAdminClient();
         let { data: defaultHierarchy } = await adminClient
             .from('escalation_hierarchies')
             .select('id')
