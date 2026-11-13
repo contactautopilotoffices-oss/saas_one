@@ -336,6 +336,7 @@ export default function TenantTicketingDashboard({
 
                 setDescription('');
                 setIsCritical(false);
+                setIsInternal(false);
                 setTaggedUser(null);
                 setShowMentionDropdown(false);
                 setMentionQuery('');
@@ -661,8 +662,8 @@ export default function TenantTicketingDashboard({
                                 </div>
                             )}
 
-                            {/* Internal toggle — only for staff/admin roles */}
-                            {showInternalToggle && (
+                            {/* Internal toggle — only for staff/admin roles (never shown to tenants/clients) */}
+                            {showInternalToggle && isStaff && userRole?.toLowerCase() !== 'tenant' && userRole?.toLowerCase() !== 'client' && (
                                 <div className={`flex items-center justify-between mt-4 px-4 py-3 rounded-xl border ${isDark ? 'bg-[#0d1117] border-[#21262d]' : 'bg-slate-50 border-slate-200'}`}>
                                     <div>
                                         <p className={`text-sm font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Internal ticket</p>
