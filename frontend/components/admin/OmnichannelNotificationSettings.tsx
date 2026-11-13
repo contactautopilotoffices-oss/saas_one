@@ -325,6 +325,18 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { assignee: true, requester: true }
             },
             {
+                key: 'client_ticket_created',
+                name: 'Client-Raised Ticket Alert',
+                description: 'Sent to selected Omnichannel users/roles when a ticket is raised by a client or tenant.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
+                key: 'critical_ticket_created',
+                name: 'Critical Priority Ticket Alert',
+                description: 'Sent to selected Omnichannel users/roles when a ticket is created with or escalated to Critical priority.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
                 key: 'ticket_assigned',
                 name: 'Ticket Assigned to Technician',
                 description: 'Sent to assigned technician with issue details, requester phone, and target SLA.',
@@ -681,6 +693,8 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     },
     tickets: {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+        client_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
+        critical_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true, voice: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
         ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
@@ -1004,10 +1018,14 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         return p ? p.name : 'Property';
     };
 
+    const isOptInRule = (moduleId: string, eventKey: string): boolean =>
+        moduleId === 'petty_cash' || eventKey === 'client_ticket_created' || eventKey === 'critical_ticket_created';
+
     const getRule = (moduleId: string, eventKey: string): EventNotificationRule => {
         const mod = matrix[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
         const stored = mod[eventKey];
-        const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+        const fallback = DEFAULT_NOTIFICATION_MATRIX[moduleId]?.[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+        const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || fallback;
 
         if (selectedPropertyScope === 'global') {
             return globalRule;
@@ -1033,7 +1051,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         setMatrix(prev => {
             const currentMod = prev[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
             const stored = currentMod[eventKey];
-            const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+            const fallback = DEFAULT_NOTIFICATION_MATRIX[moduleId]?.[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+            const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || fallback;
 
             if (selectedPropertyScope === 'global') {
                 const updatedGlobal = updateFn(globalRule);
@@ -1277,7 +1296,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const toggleContextual = (moduleId: string, eventKey: string, key: 'notify_assignee' | 'notify_requester' | 'notify_approver') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
-            [key]: moduleId === 'petty_cash' ? current[key] !== true : !(current[key] !== false)
+            [key]: isOptInRule(moduleId, eventKey) ? current[key] !== true : !(current[key] !== false)
         }));
     };
 
@@ -1810,7 +1829,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_assignee === true : rule.notify_assignee !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_assignee === true : rule.notify_assignee !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_assignee')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -1821,7 +1840,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_requester === true : rule.notify_requester !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_requester === true : rule.notify_requester !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_requester')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -1832,7 +1851,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_approver === true : rule.notify_approver !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_approver === true : rule.notify_approver !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_approver')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />

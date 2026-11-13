@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Paperclip } from 'lucide-react';
+import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Activity, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { playTickleSound } from '@/frontend/utils/sounds';
@@ -25,6 +25,7 @@ interface TicketCreateModalProps {
     organizations?: any[];
     properties?: any[];
     showInternalToggle?: boolean; // shown for all roles except tenant
+    showCriticalToggle?: boolean; // shown for ops_super_admin and org_super_admin
 }
 
 interface Classification {
@@ -44,9 +45,11 @@ export default function TicketCreateModal({
     organizations = [],
     properties = [],
     showInternalToggle = false,
+    showCriticalToggle = false,
 }: TicketCreateModalProps) {
     const [description, setDescription] = useState('');
     const [isInternal, setIsInternal] = useState(false);
+    const [isCritical, setIsCritical] = useState(false);
     const [mediaFile, setMediaFile] = useState<MediaFile | null>(null);
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -220,6 +223,7 @@ export default function TicketCreateModal({
                     organizationId: finalOrgId,
                     isInternal,
                     assignedTo: taggedUser?.id,
+                    ...(showCriticalToggle && isCritical ? { priority: 'critical' } : {}),
                 }),
             });
 
@@ -296,6 +300,7 @@ export default function TicketCreateModal({
     const handleReset = () => {
         setDescription('');
         setIsInternal(false);
+        setIsCritical(false);
         setMediaFile(null);
         setAttachments([]);
         setAttachmentWarning(null);
@@ -576,6 +581,32 @@ export default function TicketCreateModal({
                                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isInternal ? 'bg-amber-500' : 'bg-slate-300'}`}
                                         >
                                             <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${isInternal ? 'translate-x-6' : 'translate-x-1'}`} />
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* Critical Priority toggle — shown for ops & org super admin */}
+                                {showCriticalToggle && (
+                                    <div className={`flex items-center justify-between px-4 py-3 border rounded-xl transition-colors ${isCritical ? 'bg-rose-50 border-rose-300' : 'bg-slate-50 border-slate-200'}`}>
+                                        <div className="flex items-center gap-2.5">
+                                            <Activity className={`w-4 h-4 ${isCritical ? 'text-rose-600 animate-pulse' : 'text-rose-500'}`} />
+                                            <div>
+                                                <p className={`text-sm font-bold ${isCritical ? 'text-rose-700' : 'text-slate-700'}`}>
+                                                    {isCritical ? 'Critical Request' : 'Mark Critical'}
+                                                </p>
+                                                <p className="text-xs text-slate-400 mt-0.5">
+                                                    Flags ticket as Critical priority &amp; notifies selected Omnichannel recipients
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCritical(v => !v)}
+                                            aria-pressed={isCritical}
+                                            aria-label={isCritical ? 'Critical Request' : 'Mark Critical'}
+                                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isCritical ? 'bg-rose-500' : 'bg-slate-300'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${isCritical ? 'translate-x-6' : 'translate-x-1'}`} />
                                         </button>
                                     </div>
                                 )}

@@ -36,6 +36,10 @@ const DEFAULT_WHATSAPP_TEMPLATES: Record<string, WhatsAppTemplate> = {
     // Tickets & SLA
     ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
     ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'], is_media: true },
+    client_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+    client_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'], is_media: true },
+    critical_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+    critical_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'], is_media: true },
     ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
     ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
     ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'], is_media: true },
@@ -99,6 +103,10 @@ const TEMPLATE_CATEGORIES = [
         events: [
             { key: 'ticket_created', label: 'Ticket Created (Text Only)' },
             { key: 'ticket_created_media', label: 'Ticket Created (With Photo Media)' },
+            { key: 'client_ticket_created', label: 'Client-Raised Ticket Alert (Text Only)' },
+            { key: 'client_ticket_created_media', label: 'Client-Raised Ticket Alert (With Photo Media)' },
+            { key: 'critical_ticket_created', label: 'Critical Ticket Alert (Text Only)' },
+            { key: 'critical_ticket_created_media', label: 'Critical Ticket Alert (With Photo Media)' },
             { key: 'ticket_assigned', label: 'Ticket Assigned to Technician' },
             { key: 'ticket_updated', label: 'Ticket Status Updated' },
             { key: 'reminder_ticket_sla', label: 'Ticket SLA Deadline Reminder' }
