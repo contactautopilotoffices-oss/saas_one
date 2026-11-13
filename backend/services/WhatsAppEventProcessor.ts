@@ -1,10 +1,17 @@
 import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { requisitionNotes, batchWhatsAppOptions, reapprovalWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
+import { WhatsAppRecipientResolver, type ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 import { sanitizeWhatsAppParam, sanitizeWhatsAppParams } from '@/backend/lib/whatsapp/sanitize';
+import {
+    isCriticalPriority,
+    isInternalTicket,
+    isTicketEscalatedToCritical,
+    isTicketRaisedByClient,
+    normalizePhoneKey,
+} from '@/backend/lib/ticketing/alertClassification';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 interface DispatchOptions {
@@ -25,6 +32,7 @@ interface DispatchOptions {
         extraUserIds?: string[];
     };
     excludeUserIds?: string[];
+    excludePhones?: string[];
 }
 
 const LOCAL_TIMEZONE = 'Asia/Kolkata';
@@ -116,6 +124,10 @@ export const WhatsAppEventProcessor = {
                 // Only dispatch reassignment if assigned_to actually changed to a new user
                 if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
                     await this.handleTicketAssigned(payload);
+                }
+                // Dispatch critical ticket alert when an existing ticket is escalated to critical priority
+                if (isTicketEscalatedToCritical(payload.priority, payload.old_priority)) {
+                    await this.handleCriticalTicketEscalated(payload);
                 }
                 // Only dispatch completion if status transitioned into resolved/closed
                 if ((payload.status === 'resolved' || payload.status === 'closed') && payload.old_status && payload.status !== payload.old_status) {
@@ -283,12 +295,12 @@ export const WhatsAppEventProcessor = {
     /**
      * Shared dispatch: resolve recipients → read template → map ordered params → enqueue.
      */
-    async dispatch(options: DispatchOptions): Promise<void> {
+    async dispatch(options: DispatchOptions): Promise<ResolvedWhatsAppUser[]> {
         const { featureKey, templateEventKey, organizationId, propertyId, entityId, paramValues, summaryMessage, contextualUserIds } = options;
 
         if (!organizationId) {
             console.warn(`[WhatsAppEventProcessor] ${templateEventKey}: missing organizationId, skipping`);
-            return;
+            return [];
         }
 
         const { enabled, users, config } = await WhatsAppRecipientResolver.resolveRecipients({
@@ -306,7 +318,7 @@ export const WhatsAppEventProcessor = {
 
         if (!enabled) {
             console.log(`[WhatsAppEventProcessor] ${featureKey} WhatsApp disabled for org ${organizationId}`);
-            return;
+            return [];
         }
 
         const userMap = new Map<string, ResolvedWhatsAppUser>(users.map(u => [u.id, u]));
@@ -355,12 +367,13 @@ export const WhatsAppEventProcessor = {
         }
 
         // Strictly deduplicate by cleaned 10+ digit phone number so 1 phone number never receives multiple copies of the same alert
-        const seenPhones = new Set<string>();
+        const seenPhones = new Set<string>(
+            (options.excludePhones || []).map(p => normalizePhoneKey(p)).filter(Boolean)
+        );
         const recipients: ResolvedWhatsAppUser[] = [];
         for (const u of userMap.values()) {
             if (options.excludeUserIds?.includes(u.id)) continue;
-            const rawPhone = u.phone ? String(u.phone).replace(/[^0-9]/g, '') : '';
-            const normalizedPhone = rawPhone.length > 10 && rawPhone.startsWith('91') ? rawPhone.slice(-10) : rawPhone;
+            const normalizedPhone = normalizePhoneKey(u.phone);
             if (normalizedPhone && normalizedPhone.length >= 10 && !seenPhones.has(normalizedPhone)) {
                 seenPhones.add(normalizedPhone);
                 recipients.push(u);
@@ -369,7 +382,7 @@ export const WhatsAppEventProcessor = {
 
         if (recipients.length === 0) {
             console.log(`[WhatsAppEventProcessor] ${templateEventKey}: no recipients for org ${organizationId}`);
-            return;
+            return [];
         }
 
         // Read the org's template map
@@ -400,6 +413,10 @@ export const WhatsAppEventProcessor = {
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
             ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            client_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+            client_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            critical_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+            critical_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
             ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
@@ -451,15 +468,25 @@ export const WhatsAppEventProcessor = {
         };
 
         // Intelligent routing: if media exists and org or system default has a media-specific template, use it; otherwise standard template
-        const hasMediaTemplate = Boolean(templatesMap[`${templateEventKey}_media`] || DEFAULT_TEMPLATES[`${templateEventKey}_media`]);
+        const isTicketAlertVariant = templateEventKey === 'client_ticket_created' || templateEventKey === 'critical_ticket_created';
+        const hasMediaTemplate = Boolean(
+            templatesMap[`${templateEventKey}_media`] ||
+            DEFAULT_TEMPLATES[`${templateEventKey}_media`] ||
+            (isTicketAlertVariant && (templatesMap['ticket_created_media'] || DEFAULT_TEMPLATES['ticket_created_media']))
+        );
         const resolvedTemplateKey = (options.mediaUrl && hasMediaTemplate)
             ? `${templateEventKey}_media`
             : templateEventKey;
 
-        const template = templatesMap[resolvedTemplateKey] || templatesMap[templateEventKey] || DEFAULT_TEMPLATES[resolvedTemplateKey] || DEFAULT_TEMPLATES[templateEventKey];
+        const template = templatesMap[resolvedTemplateKey]
+            || templatesMap[templateEventKey]
+            || (isTicketAlertVariant && options.mediaUrl ? templatesMap['ticket_created_media'] : undefined)
+            || (isTicketAlertVariant ? templatesMap['ticket_created'] : undefined)
+            || DEFAULT_TEMPLATES[resolvedTemplateKey]
+            || DEFAULT_TEMPLATES[templateEventKey];
         if (!template?.campaign_name) {
             console.warn(`[WhatsAppEventProcessor] No whatsapp_templates entry for "${resolvedTemplateKey}" in org ${organizationId}, skipping`);
-            return;
+            return [];
         }
 
         // Canonical parameter signatures for Meta / AiSensy approved templates
@@ -498,6 +525,10 @@ export const WhatsAppEventProcessor = {
             'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'client_ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'client_ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'critical_ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'critical_ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
 
             'ticket_reply_v1': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
             'ticket_reply': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
@@ -679,10 +710,11 @@ export const WhatsAppEventProcessor = {
                 durableBatch: options.durableBatch
             });
         }
+
+        return recipients;
     },
 
-
-    async handleTicketCreated(payload: any): Promise<void> {
+    async buildTicketCreatedAlertContext(payload: any) {
         const ticketId = payload.ticket_id || payload.id;
         const { data: ticket } = await supabaseAdmin
             .from('tickets')
@@ -693,40 +725,117 @@ export const WhatsAppEventProcessor = {
         const propertyName = ticket?.property?.name || await this.getPropertyName(payload.property_id);
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
+        const raiserId = ticket?.raised_by || payload.raised_by || null;
+        const assigneeId = ticket?.assigned_to || payload.assigned_to || null;
 
-        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
-        const assignee = await this.getUserDetails(payload.assigned_to || ticket?.assigned_to, ticket?.assigned_to_user);
-
-        const assigneeId = ticket?.assigned_to || payload.assigned_to;
+        const raiser = await this.getUserDetails(raiserId, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(assigneeId, ticket?.assigned_to_user);
         const photoBeforeUrl = ticket?.photo_before_url || payload.photo_before_url || null;
+        const ticketNumber = ticket?.ticket_number || payload.ticket_number || 'N/A';
+        const title = ticket?.title || payload.title || 'Support Request';
+        const priority = ticket?.priority || payload.priority || 'Medium';
+
+        return {
+            ticketId,
+            ticket,
+            orgId,
+            propId,
+            raiserId,
+            assigneeId,
+            baseDispatchOptions: {
+                organizationId: orgId,
+                propertyId: propId,
+                entityId: ticketId,
+                mediaUrl: photoBeforeUrl,
+                mediaType: (photoBeforeUrl ? 'image' : undefined) as 'image' | undefined,
+                paramValues: {
+                    user_name: 'Team',
+                    ticket_number: ticketNumber,
+                    title,
+                    property: propertyName,
+                    priority,
+                    raised_by: raiser.name,
+                    raised_by_phone: raiser.phone || 'N/A',
+                    assigned_to: assignee.name || 'Unassigned',
+                    assigned_to_phone: assignee.phone || 'N/A',
+                    ticket_id: ticketId || ''
+                },
+                summaryMessage: `New ticket #${ticketNumber} (${title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
+                contextualUserIds: {
+                    requesterId: raiserId,
+                    assigneeId
+                }
+            }
+        };
+    },
+
+    async handleCriticalTicketEscalated(payload: any): Promise<void> {
+        const ctx = await this.buildTicketCreatedAlertContext(payload);
+        if (!ctx.orgId) return;
+        await this.dispatch({
+            ...ctx.baseDispatchOptions,
+            featureKey: 'critical_ticket_created',
+            templateEventKey: 'critical_ticket_created',
+            summaryMessage: `CRITICAL priority ticket #${ctx.baseDispatchOptions.paramValues.ticket_number} (${ctx.baseDispatchOptions.paramValues.title}) at ${ctx.baseDispatchOptions.paramValues.property}`
+        });
+    },
+
+    async handleTicketCreated(payload: any): Promise<void> {
+        const ctx = await this.buildTicketCreatedAlertContext(payload);
+        const { ticket, orgId, propId, raiserId, assigneeId, baseDispatchOptions } = ctx;
+
+        const dispatchedUserIds = new Set<string>();
+        const dispatchedPhones = new Set<string>();
+        const recordDispatched = (users: ResolvedWhatsAppUser[]) => {
+            users.forEach(u => {
+                if (u.id) dispatchedUserIds.add(u.id);
+                const phoneKey = normalizePhoneKey(u.phone);
+                if (phoneKey) dispatchedPhones.add(phoneKey);
+            });
+        };
 
         // 1. Dispatch "ticket_created" to Admins & Requester (excluding the assigned person)
-        await this.dispatch({
+        const standardSent = await this.dispatch({
+            ...baseDispatchOptions,
             featureKey: 'ticket_created',
             templateEventKey: 'ticket_created',
-            organizationId: orgId,
-            propertyId: propId,
-            entityId: ticketId,
-            mediaUrl: photoBeforeUrl,
-            mediaType: photoBeforeUrl ? 'image' : undefined,
-            paramValues: {
-                user_name: 'Team',
-                ticket_number: ticket?.ticket_number || payload.ticket_number || 'N/A',
-                title: ticket?.title || payload.title || 'Support Request',
-                property: propertyName,
-                priority: ticket?.priority || payload.priority || 'Medium',
-                raised_by: raiser.name,
-                raised_by_phone: raiser.phone || 'N/A',
-                assigned_to: assignee.name || 'Unassigned',
-                assigned_to_phone: assignee.phone || 'N/A',
-                ticket_id: ticketId || ''
-            },
-            summaryMessage: `New ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
-            contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by },
+            contextualUserIds: { requesterId: raiserId },
             excludeUserIds: assigneeId ? [assigneeId] : []
         });
+        recordDispatched(standardSent);
 
-        // 2. If ticket has an assigned person upon creation, send the dedicated "ticket_assigned_v1" template ONLY to the assigned technician
+        // 2. Dispatch "client_ticket_created" to selected Omnichannel users when raised by a client/tenant
+        const isClientRaised = await isTicketRaisedByClient({
+            supabase: supabaseAdmin,
+            raisedBy: raiserId,
+            propertyId: propId,
+            organizationId: orgId,
+            isInternal: isInternalTicket(ticket, payload)
+        });
+        if (isClientRaised) {
+            const clientSent = await this.dispatch({
+                ...baseDispatchOptions,
+                featureKey: 'client_ticket_created',
+                templateEventKey: 'client_ticket_created',
+                excludeUserIds: Array.from(dispatchedUserIds),
+                excludePhones: Array.from(dispatchedPhones)
+            });
+            recordDispatched(clientSent);
+        }
+
+        // 3. Dispatch "critical_ticket_created" to selected Omnichannel users when priority is critical
+        if (isCriticalPriority(ticket?.priority || payload.priority)) {
+            const criticalSent = await this.dispatch({
+                ...baseDispatchOptions,
+                featureKey: 'critical_ticket_created',
+                templateEventKey: 'critical_ticket_created',
+                excludeUserIds: Array.from(dispatchedUserIds),
+                excludePhones: Array.from(dispatchedPhones)
+            });
+            recordDispatched(criticalSent);
+        }
+
+        // 4. If ticket has an assigned person upon creation, send the dedicated "ticket_assigned_v1" template ONLY to the assigned technician
         if (assigneeId) {
             await this.handleTicketAssigned(payload);
         }
