@@ -227,6 +227,11 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                             <Pill on={f.hasResume === 'no'} onClick={() => update({ hasResume: 'no' })}>No resume</Pill>
                         </div>
                     </div>
+                    {/* Owner 2026-11-15: blacklisted people are left out of every search unless asked for. */}
+                    <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
+                        <input type="checkbox" checked={f.showBlacklisted} onChange={e => update({ showBlacklisted: e.target.checked })} className="h-4 w-4 accent-primary" />
+                        Show blacklisted
+                    </label>
                 </Gate>
 
                 <div className="space-y-1 border-t border-border-subtle pt-2.5">

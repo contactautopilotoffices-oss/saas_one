@@ -89,6 +89,13 @@ export const SUGGEST_COUNT_MAX = 20;
 export const RANK_POOL = 45;
 
 export const MAX_QUERY_LENGTH = 4000;
+/**
+ * A job description pasted or uploaded for reading (owner 2026-11-15): real JDs run to 6,000–10,000 characters, so
+ * the 4,000 of a search box is too small. Text beyond this is cut, not refused.
+ */
+export const MAX_JD_LENGTH = 20_000;
+/** An uploaded JD file (PDF, Word or text): 5 MB is far past any real one. */
+export const MAX_JD_BYTES = 5 * 1024 * 1024;
 
 /** Records the search hands to the ranker: about 3 x N, at least 20, at most 45 (one prompt stays small and fast). */
 export function comparePoolSize(topN: number): number {

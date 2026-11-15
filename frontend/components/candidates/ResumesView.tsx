@@ -1,14 +1,15 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, CircleAlert, CircleCheck, Download, FileText, Folder, FolderDown, FolderOpen, Search, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
+import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Search, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
 import {
     MATCH_REASON_LABELS, TEXT_STATUS_LABELS,
-    type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeSummary,
+    type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeSummary,
 } from '@/backend/lib/candidates/types';
 import { daysSince, PICK_LABELS, pickVerdict, RESUME_BATCH, RESUME_LINK_BATCH, RESUME_REMIND_AFTER_DAYS, sinceLastUpload, thisYearRange, type PickVerdict } from '@/backend/lib/candidates/resume-pick';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, qs } from './api';
+import CandidatePicker from './CandidatePicker';
 import { canRememberFolder, ensureReadable, folderAllowed, forgetFolder, isBrave, listFolderFiles, loadFolder, pickFolder } from './folder-store';
 import { formatCount, formatDate } from './format';
 import { Avatar, BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, FIELD, INPUT, LABEL, NUM_MD, NUM_SM, Spinner, Tag, Toggle, useUi, WELL } from './ui';
@@ -562,21 +563,26 @@ export default function ResumesView({ orgId }: { orgId: string }) {
 
     // The few files that need a person (owner 2026-11-11): text or details that could not be read, and the documents
     // kept aside. Asked again after an upload or a delete, and when the background reading finishes.
-    const [attention, setAttention] = useState<{ files: ResumeFile[]; total: number; others: ResumeFile[]; otherTotal: number } | null>(null);
+    const [attention, setAttention] = useState<{ files: ResumeFile[]; total: number; others: ResumeFile[]; otherTotal: number; removed: ResumeFile[] } | null>(null);
+    // Owner 2026-11-15 (to the mockup): files removed as not resumes are in the list too, newest first, with "Allow
+    // re-upload" and "It was a JD, fine" (which hides that row on this browser).
+    const [dismissed, setDismissed] = useState<string[]>(() => { try { return JSON.parse(localStorage.getItem('cand-resumes-dismissed') ?? '[]') as string[]; } catch { return []; } });
+    const dismiss = (id: string) => setDismissed(ids => { const next = [...ids, id]; try { localStorage.setItem('cand-resumes-dismissed', JSON.stringify(next.slice(-200))); } catch { /* fine */ } return next; });
     useEffect(() => {
         const ctrl = new AbortController();
         void Promise.all([
             api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'attention', pageSize: ATTENTION_ROWS })}`, { signal: ctrl.signal }),
             api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'other', pageSize: OTHER_ROWS })}`, { signal: ctrl.signal }),
-        ]).then(([a, o]) => {
+            api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'rejected', pageSize: OTHER_ROWS })}`, { signal: ctrl.signal }),
+        ]).then(([a, o, rj]) => {
             if (ctrl.signal.aborted) return;
-            setAttention({ files: a.ok ? a.data.files : [], total: a.ok ? a.data.total : 0, others: o.ok ? o.data.files : [], otherTotal: o.ok ? o.data.total : 0 });
+            setAttention({ files: a.ok ? a.data.files : [], total: a.ok ? a.data.total : 0, others: o.ok ? o.data.files : [], otherTotal: o.ok ? o.data.total : 0, removed: rj.ok ? rj.data.files : [] });
         });
         return () => ctrl.abort();
     }, [orgId, nonce, reading]);
     // Ticked rows of the Needs attention list; a row that is gone (deleted, or read since) drops out by itself.
     const [attnMarkedIds, setAttnMarkedIds] = useState<string[]>([]);
-    const attnRows = attention ? [...attention.files, ...attention.others] : [];
+    const attnRows = attention ? [...attention.others, ...attention.files, ...attention.removed.filter(f => !dismissed.includes(f.id))] : [];
     const attnMarked = attnRows.filter(f => attnMarkedIds.includes(f.id));
     const attnAll = attnRows.length > 0 && attnMarked.length === attnRows.length;
     const toggleAttn = (id: string) => setAttnMarkedIds(ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]));
@@ -585,6 +591,54 @@ export default function ResumesView({ orgId }: { orgId: string }) {
 
     /** Open reads the file (a PDF in the browser's viewer, a .docx as a page); download saves the original. */
     const openFile = (f: ResumeFile, inline = true) => { window.open(`/api/candidates/resumes/${encodeURIComponent(f.id)}${qs({ orgId, inline })}`, '_blank', 'noopener'); };
+
+    // Owner 2026-11-15, Needs attention: "This is a resume" on a kept-aside document, "Attach to candidate" on a file
+    // that could not be read, "Allow re-upload" on a file removed as not a resume.
+    const [markBusy, setMarkBusy] = useState(false);
+    const markResume = async (targets: ResumeFile[]) => {
+        const docs = targets.filter(f => f.other);
+        if (!docs.length || markBusy) return;
+        setMarkBusy(true);
+        let done = 0;
+        for (const f of docs) {
+            const res = await api<{ ok: true }>(`/api/candidates/resumes/${encodeURIComponent(f.id)}/mark`, { json: { orgId, as: 'resume' } });
+            if (res.ok) done += 1; else { notify(res.error, 'error'); if (res.noAccess) { reportError(res); break; } }
+        }
+        if (!mounted.current) return;
+        setMarkBusy(false);
+        if (done) { notify(`${formatCount(done)} ${done === 1 ? 'file is' : 'files are'} now a resume: matched by email or phone, details being read`, 'success'); setAttnMarkedIds([]); reloadLibrary(); }
+    };
+    const attachTo = async (f: ResumeFile, candidateId: string, name: string) => {
+        setMarkBusy(true);
+        const res = await api<{ ok: true }>(`/api/candidates/resumes/${encodeURIComponent(f.id)}`, { method: 'PATCH', json: { orgId, candidateId } });
+        if (!mounted.current) return;
+        setMarkBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        notify(`${f.fileName} attached to ${name}`, 'success');
+        reloadLibrary();
+    };
+    /** "Create candidate" on a read, unlinked file: a record named from the file, with this resume attached. */
+    const createCandidateFor = async (f: ResumeFile) => {
+        const fullName = f.fileName.replace(/\.[^.]+$/, '').replace(/[_\-.]+/g, ' ').replace(/\b(cv|resume|bio ?data|profile|updated|final|new|\d{2,4})\b/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (!fullName) { notify('Could not read a name from the file name. Add the candidate from the Candidates tab, then attach the file.', 'info'); return; }
+        setMarkBusy(true);
+        const made = await api<{ record: CandidateRecord }>('/api/candidates', { json: { orgId, fullName, candidateSource: 'Resume' } });
+        if (!made.ok) { if (mounted.current) setMarkBusy(false); notify(made.error, 'error'); if (made.noAccess) reportError(made); return; }
+        const res = await api<{ ok: true }>(`/api/candidates/resumes/${encodeURIComponent(f.id)}`, { method: 'PATCH', json: { orgId, candidateId: made.data.record.candidateId } });
+        if (!mounted.current) return;
+        setMarkBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify(`${made.data.record.fullName} created and ${f.fileName} attached. Edit the details from the Candidates tab.`, 'success');
+        reloadLibrary();
+    };
+    const allowReupload = async (f: ResumeFile) => {
+        setMarkBusy(true);
+        const res = await api<{ ok: true }>(`/api/candidates/resumes/${encodeURIComponent(f.id)}/mark`, { json: { orgId, as: 'reupload' } });
+        if (!mounted.current) return;
+        setMarkBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        notify(`Upload ${f.fileName} again: it will be kept as a resume this time`, 'success');
+    };
 
     const [deleteTargets, setDeleteTargets] = useState<ResumeFile[]>([]);
     const [deleteOpen, setDeleteOpen] = useState(false);
@@ -687,7 +741,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const team = [...deviceOptions].filter(d => d.label).sort((a, b) => (b.lastUploadedAt ?? '').localeCompare(a.lastUploadedAt ?? ''));
     const textRead = summary ? summary.total - summary.textPending - summary.unreadable : 0;
     const detailsRead = summary ? summary.total - summary.extractPending - summary.unreadable : 0;
-    const attentionCount = (attention?.total ?? 0) + (attention?.otherTotal ?? 0);
+    const attentionCount = (attention?.total ?? 0) + (attention?.otherTotal ?? 0) + (attention?.removed.filter(f => !dismissed.includes(f.id)).length ?? 0);
     const pageFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
     const pageTo = Math.min(total, page * PAGE_SIZE);
 
@@ -980,29 +1034,47 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             <div className="flex items-center gap-x-1" aria-live="polite">
                                 <span className="mr-1 text-sm font-semibold tabular-nums text-text-primary">{formatCount(attnMarked.length)} selected</span>
                                 <button type="button" onClick={() => setAttnMarkedIds([])} className={BTN_GHOST}><X className="h-4 w-4" />Clear</button>
+                                {attnMarked.some(f => f.other) && (
+                                    <button type="button" onClick={() => void markResume(attnMarked)} disabled={markBusy} className={BTN_SECONDARY}>
+                                        {markBusy ? <Spinner /> : <FileCheck className="h-4 w-4" />}This is a resume ({formatCount(attnMarked.filter(f => f.other).length)})
+                                    </button>
+                                )}
                                 <button type="button" onClick={() => askDelete(attnMarked)} className={BTN_DANGER_GHOST}><Trash2 className="h-4 w-4" />Delete selected</button>
                             </div>
                         ) : (
                             <p className="text-xs text-text-secondary">Everything else was read, matched and filed by itself.</p>
                         )}
                     </div>
-                    {/* About six rows tall, then it scrolls inside itself: the library below stays within reach. */}
-                    <ul className="max-h-[348px] divide-y divide-border-subtle overflow-y-auto overscroll-contain">
+                    {/* To the mockup (owner 2026-11-15): kind · file and why · what to do (a note, or the attach box) · the actions. */}
+                    <ul className="max-h-[420px] divide-y divide-border-subtle overflow-y-auto overscroll-contain">
                         {attnRows.map(f => {
                             const { kind, why } = attentionOf(f);
                             const on = attnMarkedIds.includes(f.id);
+                            const unread = !f.other && !f.removed;
                             return (
-                                <li key={f.id} className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5 sm:px-6 ${on ? 'bg-primary/[.04]' : ''}`}>
+                                <li key={f.id} className={`grid grid-cols-[auto_170px_minmax(0,1.3fr)_minmax(260px,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-3 max-lg:grid-cols-[auto_minmax(0,1fr)] sm:px-6 ${on ? 'bg-primary/[.04]' : ''}`}>
                                     <input type="checkbox" checked={on} onChange={() => toggleAttn(f.id)} aria-label={`Select ${f.fileName}`} className="h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
-                                    <span className="w-36 shrink-0"><Tag tone={f.other ? 'neutral' : 'warn'}>{kind}</Tag></span>
-                                    <div className="min-w-0 flex-1 basis-60">
+                                    <span><Tag tone={f.removed ? 'warn' : f.other ? 'neutral' : 'warn'}>{f.removed ? 'Removed as not a resume' : kind}</Tag></span>
+                                    <div className="min-w-0 max-lg:col-start-2">
                                         <p className="truncate text-sm font-semibold text-text-primary" title={f.fileName}>{f.fileName}</p>
-                                        <p className="text-xs leading-relaxed text-text-secondary">{why}</p>
+                                        <p className="truncate text-xs text-text-secondary" title={why}>{f.removed ? `${why} · file removed, name kept so it is not uploaded twice` : why}</p>
                                     </div>
-                                    <div className="flex shrink-0 items-center gap-x-0.5">
-                                        <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}><FileText className="h-4 w-4" />Open</button>
-                                        <button type="button" onClick={() => openFile(f, false)} className={BTN_GHOST} aria-label={`Download ${f.fileName}`} title="Download"><Download className="h-4 w-4" /></button>
-                                        <button type="button" onClick={() => askDelete([f])} className={BTN_DANGER_GHOST} aria-label={`Delete ${f.fileName}`} title="Delete"><Trash2 className="h-4 w-4" /></button>
+                                    <div className="min-w-0 max-lg:col-start-2">
+                                        {f.other && <p className="text-xs leading-relaxed text-text-secondary">If it is a resume, it will be read and linked by email or phone like any other.</p>}
+                                        {f.removed && <p className="text-xs leading-relaxed text-text-secondary">Wrongly removed? Allow it, then upload the file again and it will be kept as a resume.</p>}
+                                        {unread && (
+                                            <div>
+                                                <p className="mb-1 text-xs font-medium text-text-secondary">Attach to candidate</p>
+                                                <CandidatePicker orgId={orgId} label={`Attach ${f.fileName} to a candidate`} busy={markBusy} autoFocus={false} onCancel={() => undefined} onPick={r => void attachTo(f, r.candidateId, r.fullName)} />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="flex shrink-0 items-center justify-end gap-x-0.5 max-lg:col-start-2">
+                                        {f.other && <button type="button" onClick={() => void markResume([f])} disabled={markBusy} className={`${BTN_PRIMARY} h-9 px-3`} title="Keep this file as a resume: it is matched by email or phone and its details are read">This is a resume</button>}
+                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_SECONDARY} h-9 px-3`}>Allow re-upload</button>}
+                                        {f.removed && <button type="button" onClick={() => dismiss(f.id)} className={BTN_GHOST}>It was a JD, fine</button>}
+                                        {!f.removed && <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}>Open</button>}
+                                        {!f.removed && <button type="button" onClick={() => askDelete([f])} className={BTN_DANGER_GHOST}>Delete</button>}
                                     </div>
                                 </li>
                             );
@@ -1014,9 +1086,6 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             {attention.otherTotal > attention.others.length && <button type="button" onClick={() => showInList('other')} className="font-semibold text-primary-dark underline-offset-2 hover:underline">Show all {formatCount(attention.otherTotal)} other documents in the list</button>}
                         </p>
                     )}
-                    <p className="border-t border-border-subtle bg-surface-elevated px-4 py-2.5 text-xs leading-relaxed text-text-secondary sm:px-6">
-                        A file that could not be read can still be attached to its candidate: open the candidate and use Attach a resume. An old .doc can be saved as .docx or PDF and uploaded again.
-                    </p>
                 </section>
             )}
 
@@ -1049,6 +1118,22 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 </div>
 
                 <div className={`${CARD} flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3`}>
+                    <span className="relative min-w-[240px] flex-1">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" aria-hidden />
+                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="File name, candidate, phone" aria-label="Search file names" className={`${INPUT} pl-9`} />
+                    </span>
+                    <select aria-label="Linked to a candidate" value={linkFilter} onChange={e => setLinkFilter(e.target.value as LinkFilter)} className={FIELD}>
+                        <option value="">All</option>
+                        <option value="linked">Linked</option>
+                        <option value="unlinked">Not linked</option>
+                        <option value="attention">Could not be read</option>
+                        <option value="other">Other documents</option>
+                        <option value="rejected">Removed</option>
+                    </select>
+                    <select aria-label="Uploaded by" value={deviceFilter} onChange={e => setDeviceFilter(e.target.value)} className={FIELD}>
+                        <option value="">Any laptop</option>
+                        {deviceOptions.map(d => <option key={d.label ?? 'none'} value={d.label ?? 'none'}>{d.label ?? 'Not named'} ({formatCount(d.count)})</option>)}
+                    </select>
                     <div role="group" aria-label="Download date" className="inline-grid grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
                         {([['year', 'This year'], ['all', 'All dates'], ['custom', 'Custom']] as const).map(([id, label]) => (
                             <button key={id} type="button" onClick={() => setPreset(id)} aria-pressed={preset === id}
@@ -1063,22 +1148,6 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             <input type="date" aria-label="To" value={custom.to} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))} className={FIELD} />
                         </>
                     )}
-                    <select aria-label="Uploaded by" value={deviceFilter} onChange={e => setDeviceFilter(e.target.value)} className={FIELD}>
-                        <option value="">Uploaded by anyone</option>
-                        {deviceOptions.map(d => <option key={d.label ?? 'none'} value={d.label ?? 'none'}>{d.label ?? 'Not named'} ({formatCount(d.count)})</option>)}
-                    </select>
-                    <select aria-label="Linked to a candidate" value={linkFilter} onChange={e => setLinkFilter(e.target.value as LinkFilter)} className={FIELD}>
-                        <option value="">Linked or not</option>
-                        <option value="linked">Linked to a candidate</option>
-                        <option value="unlinked">Not linked yet</option>
-                        <option value="attention">Could not be read</option>
-                        <option value="rejected">Removed as not resumes</option>
-                        <option value="other">Other documents (kept)</option>
-                    </select>
-                    <span className="relative min-w-[200px] flex-1">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" aria-hidden />
-                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search file names" aria-label="Search file names" className={`${INPUT} pl-9`} />
-                    </span>
                 </div>
 
                 <div className={`${CARD} overflow-hidden`}>
@@ -1113,6 +1182,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         </p>
                                         <p className="text-xs text-text-tertiary">Uploaded by {f.deviceLabel ?? f.uploadedByEmail ?? 'someone'} · <span className="tabular-nums">{formatDate(f.createdAt)}</span></p>
                                         <div className="flex justify-end gap-x-1 gap-y-1">
+                                            {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`}><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                             {!f.removed && (
                                                 <>
                                                     <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}><FileText className="h-4 w-4" />Open</button>
@@ -1132,12 +1202,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                 <input type="checkbox" checked={allOnPage} onChange={e => setMarked(e.target.checked ? files.map(f => f.id) : [])} aria-label="Select every file on this page" className="h-4 w-4 accent-[var(--primary-dark)]" />
                                             </th>
                                             <th scope="col" className="px-3 py-3 font-semibold">File</th>
-                                            <th scope="col" className="px-3 py-3 text-right font-semibold">Size</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Downloaded</th>
                                             <th scope="col" className="px-3 py-3 font-semibold">Candidate</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Text</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Uploaded by</th>
+                                            <th scope="col" className="px-3 py-3 font-semibold">Details</th>
                                             <th scope="col" className="px-3 py-3 font-semibold">Uploaded</th>
+                                            <th scope="col" className="px-3 py-3 font-semibold">Laptop</th>
                                             <th scope="col" className="sticky right-0 bg-surface-elevated px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
                                         </tr>
                                     </thead>
@@ -1147,27 +1215,30 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                 <td className="py-3 pl-4">
                                                     <input type="checkbox" checked={marked.includes(f.id)} onChange={() => toggleMarked(f.id)} aria-label={`Select ${f.fileName}`} className="h-4 w-4 accent-[var(--primary-dark)]" />
                                                 </td>
-                                                <td className="max-w-[360px] px-3 py-3">
+                                                <td className="max-w-[380px] px-3 py-3">
                                                     {f.removed
                                                         ? <span className="block truncate font-semibold text-text-secondary" title={f.fileName}>{f.fileName}</span>
                                                         : <button type="button" onClick={() => openFile(f)} className="block w-full truncate text-left font-semibold text-text-primary hover:underline" title={f.fileName}>{f.fileName}</button>}
-                                                    {f.folderPath && <p className="truncate text-xs text-text-tertiary" title={f.folderPath}>{f.folderPath}</p>}
+                                                    <p className="truncate text-xs text-text-secondary" title={f.folderPath ?? undefined}>{fmtSize(f.fileSize)}{f.downloadedAt ? ` · downloaded ${formatDate(f.downloadedAt)}` : ''}{f.folderPath ? ` · ${f.folderPath}` : ''}</p>
                                                 </td>
-                                                <td className={`${NUM_SM} whitespace-nowrap px-3 py-3 text-right text-text-secondary`}>{fmtSize(f.fileSize)}</td>
-                                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-primary">{f.downloadedAt ? formatDate(f.downloadedAt) : <span className="text-text-tertiary">—</span>}</td>
-                                                <td className="max-w-[200px] px-3 py-3">
+                                                <td className="max-w-[260px] px-3 py-3">
                                                     {f.candidateName
-                                                        ? <span className="block truncate font-medium text-text-primary" title={f.matchReason ? `Matched by ${MATCH_REASON_LABELS[f.matchReason].toLowerCase()}` : undefined}>{f.candidateName}</span>
-                                                        : <span className="text-text-tertiary">—</span>}
+                                                        ? <span className="flex items-center gap-x-2"><Avatar name={f.candidateName} size="sm" /><span className="truncate font-semibold text-text-primary underline-offset-2" title={f.matchReason ? `Matched by ${MATCH_REASON_LABELS[f.matchReason].toLowerCase()}` : undefined}>{f.candidateName}</span></span>
+                                                        : f.removed || f.other ? <span className="text-text-tertiary">—</span>
+                                                        : <span className="block text-xs leading-snug text-text-secondary">Not linked · no record with this email or phone</span>}
                                                 </td>
                                                 <td className="whitespace-nowrap px-3 py-3 text-xs"><TextStatus f={f} /></td>
-                                                <td className="max-w-[200px] truncate px-3 py-3 text-text-secondary" title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
                                                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-secondary">{formatDate(f.createdAt)}</td>
+                                                <td className="max-w-[200px] truncate px-3 py-3 text-text-secondary" title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
                                                 <td className="sticky right-0 whitespace-nowrap bg-surface px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
                                                     <div className="flex justify-end gap-0.5">
+                                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`} title="Upload this file again and it will be kept as a resume"><FileCheck className="h-4 w-4" />Allow re-upload</button>}
+                                                        {!f.removed && !f.other && !f.candidateName && f.textStatus === 'ready' && (
+                                                            <button type="button" onClick={() => void createCandidateFor(f)} disabled={markBusy} className={`${BTN_SECONDARY} h-9 px-3`} title="Make a new candidate record and attach this resume to it">Create candidate</button>
+                                                        )}
                                                         {!f.removed && (
                                                             <>
-                                                                <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}><FileText className="h-4 w-4" />Open</button>
+                                                                <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}>Open</button>
                                                                 <button type="button" onClick={() => openFile(f, false)} className={BTN_GHOST} aria-label={`Download ${f.fileName}`} title="Download"><Download className="h-4 w-4" /></button>
                                                             </>
                                                         )}

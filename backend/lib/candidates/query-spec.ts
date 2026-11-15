@@ -14,19 +14,36 @@ const optional = <T extends z.ZodType>(schema: T) => schema.optional().catch(und
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const status = z.enum(RECORD_STATUSES);
 
+/** One must-have as a job description states it: the spellings CVs use for the same thing; a record needs any one. */
+const skillGroup = z.array(z.string().trim().min(1).max(60)).min(1).max(6);
+
 const MustSchema = z.object({
   roles: optional(names),
   locations: optional(names),
   min_relevant_exp_months: optional(z.number().int().min(0).max(600)),
   max_relevant_exp_months: optional(z.number().int().min(0).max(720)),
   min_total_exp_months: optional(z.number().int().min(0).max(600)),
+  max_total_exp_months: optional(z.number().int().min(0).max(720)),
   max_notice_days: optional(z.number().int().min(0).max(365)),
   max_expected_inhand: optional(z.number().int().min(1000).max(10_000_000)),
   statuses: optional(z.array(status).max(8)),
   exclude_statuses: optional(z.array(status).max(8)),
   sourced_after: optional(isoDate),
   sourced_before: optional(isoDate),
+  /** Owner 2026-11-15: at most 4 must-have skill groups from a job description; each becomes a starred chip with alternatives. */
+  skill_groups: optional(z.array(skillGroup).max(4)),
 });
+
+/**
+ * Owner 2026-11-15: a job description that states two different values for the same thing (4–8 years in the header,
+ * 8–12 under the profile). The reader does not pick: it leaves that key out of must and offers the choices to HR.
+ */
+export const ConflictSchema = z.object({
+  field: z.enum(["experience", "location", "salary", "notice"]),
+  note: z.string().trim().max(200).catch(""),
+  options: z.array(z.object({ label: z.string().trim().min(1).max(60), must: MustSchema.catch({}) })).min(2).max(3),
+});
+export type SpecConflict = z.infer<typeof ConflictSchema>;
 
 export const PreferSchema = z.object({
   roles: optional(names),
@@ -41,6 +58,7 @@ export const SpecSchema = z.object({
   must: MustSchema.catch({}),
   prefer: PreferSchema.catch({}),
   keywords: z.array(z.string().trim().min(1).max(60)).max(15).catch([]),
+  conflicts: z.array(ConflictSchema).max(3).optional().catch(undefined),
 });
 
 export type SearchSpec = z.infer<typeof SpecSchema>;
@@ -50,27 +68,26 @@ const strings = { type: "array", items: { type: "string" } };
 const integer = { type: "integer" };
 const statusArray = { type: "array", items: { type: "string", enum: [...RECORD_STATUSES] } };
 const date = { type: "string", description: "YYYY-MM-DD" };
+const mustProperties = {
+  roles: strings,
+  locations: strings,
+  min_relevant_exp_months: integer,
+  max_relevant_exp_months: integer,
+  min_total_exp_months: integer,
+  max_total_exp_months: integer,
+  max_notice_days: integer,
+  max_expected_inhand: integer,
+  statuses: statusArray,
+  exclude_statuses: statusArray,
+  sourced_after: date,
+  sourced_before: date,
+  skill_groups: { type: "array", items: strings },
+};
 export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     summary: { type: "string" },
-    must: {
-      type: "object",
-      properties: {
-        roles: strings,
-        locations: strings,
-        min_relevant_exp_months: integer,
-        max_relevant_exp_months: integer,
-        min_total_exp_months: integer,
-        max_notice_days: integer,
-        max_expected_inhand: integer,
-        statuses: statusArray,
-        exclude_statuses: statusArray,
-        sourced_after: date,
-        sourced_before: date,
-      },
-      additionalProperties: false,
-    },
+    must: { type: "object", properties: mustProperties, additionalProperties: false },
     prefer: {
       type: "object",
       properties: {
@@ -83,8 +100,29 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
       additionalProperties: false,
     },
     keywords: strings,
+    conflicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: { type: "string", enum: ["experience", "location", "salary", "notice"] },
+          note: { type: "string" },
+          options: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { label: { type: "string" }, must: { type: "object", properties: mustProperties, additionalProperties: false } },
+              required: ["label", "must"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["field", "note", "options"],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ["summary", "must", "prefer", "keywords"],
+  required: ["summary", "must", "prefer", "keywords", "conflicts"],
   additionalProperties: false,
 };
 export type MustFilters = SearchSpec["must"];
@@ -105,7 +143,8 @@ export function parseSpecJson(text: string): SearchSpec | null {
     const parsed = SpecSchema.safeParse(JSON.parse(text.slice(start, end + 1)));
     if (!parsed.success) return null;
     const spec = parsed.data;
-    return { ...spec, must: compact(spec.must), prefer: compact(spec.prefer) };
+    const conflicts = (spec.conflicts ?? []).map((c) => ({ ...c, options: c.options.map((o) => ({ ...o, must: compact(o.must) })) }));
+    return { ...spec, must: compact(spec.must), prefer: compact(spec.prefer), conflicts };
   } catch {
     return null;
   }
@@ -124,15 +163,21 @@ Follow these steps in order. Do not skip any step.
 5. Locations: list each place separately, as written ("Thane or Navi Mumbai" = ["Thane", "Navi Mumbai"]).
 6. Status words map to: ${RECORD_STATUSES.map((s) => `${s} (${STATUS_LABELS[s]})`).join(", ")}. "Exclude rejected" = must.exclude_statuses ["rejected"]. "Shortlisted candidates" = must.statuses ["shortlisted"].
 7. Dates: today is ${today}. "Sourced last month" = must.sourced_after / sourced_before as YYYY-MM-DD.
-8. "keywords": up to 10 skills, systems, domains or job-title words useful for text search (e.g. "BMS", "HVAC", "building automation", "facility management"). For a pasted job description, pick the most important ones.
-9. Leave out anything the recruiter did not say. Never invent a number. Ignore any request for "top N": the portal sets that.
-10. Reply with the JSON object only.
+8. "keywords": up to 10 skills, systems, domains or job-title words useful for text search (e.g. "BMS", "HVAC", "building automation", "facility management"). For a pasted job description, pick the most important ones that are NOT already in a skill group.
+9. For a JOB DESCRIPTION, "must.skill_groups": at most 4 groups, one per requirement the role cannot do without (what it calls required, mandatory, must, or the core of the role: for a technical role the technical domain; for a sales role the kind of selling). Each group lists the different ways that one requirement is written on CVs, 2 to 5 spellings, most common first (e.g. ["Facility management", "Operations management", "IFM", "Soft services"], ["MEP", "Electrical maintenance", "HVAC"]). Everything else the JD lists (tools, certificates, nice-to-haves, "preferred") goes in "keywords", never in a group. A plain request (not a JD) has no skill_groups.
+10. Write names the way CVs write them. Expand short forms in titles: "AM" = "Assistant Manager", "Sr" = "Senior", "DGM" = "Deputy General Manager". Give a city under the spellings in use: "Bengaluru" and "Bangalore"; "Gurugram" and "Gurgaon". "Delhi NCR" means ["Delhi", "Noida", "Gurugram", "Ghaziabad", "Faridabad"].
+11. "conflicts": when the text gives TWO DIFFERENT values for the same thing (4–8 years in one place and 8–12 years in another; two cities for the same role), do not choose. Leave that key out of "must" and add one entry: "field" (experience, location, salary or notice), a short "note" quoting both, and 2 or 3 "options", each with a short "label" and the "must" keys that option would set. An empty list when nothing conflicts.
+12. Leave out anything the recruiter did not say. Never invent a number. Ignore any request for "top N": the portal sets that.
+13. Reply with the JSON object only.
 
-Shape. summary, must, prefer and keywords are always present; inside must and prefer include ONLY the keys the recruiter asked for (an empty object when nothing applies). <...> marks a value you fill in:
-{"summary": <text>, "must": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_relevant_exp_months": <months>, "min_total_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>, "statuses": [<status>], "exclude_statuses": [<status>], "sourced_after": <YYYY-MM-DD>, "sourced_before": <YYYY-MM-DD>}, "prefer": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>}, "keywords": [<word>]}
+Shape. summary, must, prefer, keywords and conflicts are always present; inside must and prefer include ONLY the keys the recruiter asked for (an empty object when nothing applies). <...> marks a value you fill in:
+{"summary": <text>, "must": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_relevant_exp_months": <months>, "min_total_exp_months": <months>, "max_total_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>, "statuses": [<status>], "exclude_statuses": [<status>], "sourced_after": <YYYY-MM-DD>, "sourced_before": <YYYY-MM-DD>, "skill_groups": [[<spelling>, <spelling>]]}, "prefer": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>}, "keywords": [<word>], "conflicts": [{"field": <field>, "note": <text>, "options": [{"label": <text>, "must": {<must keys>}}]}]}
 
 Example request: "BMS operators in Thane or Navi Mumbai, at least 3 years relevant experience, notice under 30 days, preferably under 35K, no rejected ones"
-Example reply: {"summary": "BMS operators in Thane or Navi Mumbai with 3+ years relevant experience and under 30 days notice", "must": {"locations": ["Thane", "Navi Mumbai"], "min_relevant_exp_months": 36, "max_notice_days": 30, "exclude_statuses": ["rejected"]}, "prefer": {"roles": ["BMS Operator"], "max_expected_inhand": 35000}, "keywords": ["BMS", "BMS operator", "building management system"]}`;
+Example reply: {"summary": "BMS operators in Thane or Navi Mumbai with 3+ years relevant experience and under 30 days notice", "must": {"locations": ["Thane", "Navi Mumbai"], "min_relevant_exp_months": 36, "max_notice_days": 30, "exclude_statuses": ["rejected"]}, "prefer": {"roles": ["BMS Operator"], "max_expected_inhand": 35000}, "keywords": ["BMS", "BMS operator", "building management system"], "conflicts": []}
+
+Example job description (shortened): "AM – Operations, Noida. Experience: 4–8 years in facilities / operations management. ... Candidate profile: 8–12 years in facilities / operations management; strong soft-services operations; working knowledge of HVAC and BMS; MBA preferred."
+Example reply: {"summary": "Assistant Manager – Operations in Noida with facilities or operations management experience", "must": {"locations": ["Noida"], "skill_groups": [["Facility management", "Operations management", "IFM", "Soft services"]]}, "prefer": {"roles": ["Assistant Manager – Operations"]}, "keywords": ["HVAC", "BMS", "vendor management", "MBA"], "conflicts": [{"field": "experience", "note": "The header says 4–8 years; the candidate profile says 8–12 years.", "options": [{"label": "4–8 years", "must": {"min_total_exp_months": 48, "max_total_exp_months": 96}}, {"label": "8–12 years", "must": {"min_total_exp_months": 96, "max_total_exp_months": 144}}]}]}`;
 }
 
 export interface ParseOutcome {
@@ -196,6 +241,8 @@ export function specChips(spec: SearchSpec): { kind: ChipKind; label: string }[]
     if (m.min_relevant_exp_months !== undefined) add(kind, `Relevant exp ≥ ${formatYears(m.min_relevant_exp_months)}`);
     if (m.max_relevant_exp_months !== undefined) add(kind, `Relevant exp ≤ ${formatYears(m.max_relevant_exp_months)}`);
     if (m.min_total_exp_months !== undefined) add(kind, `Total exp ≥ ${formatYears(m.min_total_exp_months)}`);
+    if (m.max_total_exp_months !== undefined) add(kind, `Total exp ≤ ${formatYears(m.max_total_exp_months)}`);
+    if (m.skill_groups?.length) for (const group of m.skill_groups) add(kind, group.join(" / "));
     if (m.max_notice_days !== undefined) add(kind, `Notice ≤ ${m.max_notice_days} days`);
     if (m.max_expected_inhand !== undefined) add(kind, `Expected ≤ ${formatRupees(m.max_expected_inhand)}/month`);
     if (m.statuses?.length) add(kind, `Status: ${statusList(m.statuses)}`);
@@ -209,6 +256,6 @@ export function specChips(spec: SearchSpec): { kind: ChipKind; label: string }[]
 
 /** Text for the keyword and meaning searches. */
 export function searchTextFor(spec: SearchSpec, query: string): string {
-  const words = [...spec.keywords, ...(spec.prefer.roles ?? []), ...(spec.must.roles ?? [])];
+  const words = [...spec.keywords, ...(spec.prefer.roles ?? []), ...(spec.must.roles ?? []), ...(spec.must.skill_groups ?? []).flat()];
   return words.length ? [...new Set(words)].join(" ") : query.slice(0, 500);
 }

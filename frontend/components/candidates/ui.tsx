@@ -263,10 +263,14 @@ export function Dialog({
  * for the resume beside the details; its body does not scroll, so each pane inside can scroll on its own.
  */
 export function Drawer({
-    open, onClose, title, children, footer, labelId, wide = false, subtitle,
+    open, onClose, title, children, footer, labelId, wide = false, subtitle, header, panelClassName = '',
 }: {
     open: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; labelId: string;
     wide?: boolean; subtitle?: React.ReactNode;
+    /** Owner 2026-11-15: a whole header block (avatar, tags, actions) in place of the title line; the title stays for the screen reader. */
+    header?: React.ReactNode;
+    /** Extra classes on the panel, e.g. a width. */
+    panelClassName?: string;
 }) {
     useEscape(open, onClose);
     return (
@@ -283,8 +287,17 @@ export function Drawer({
                             role="dialog" aria-modal="true" aria-labelledby={labelId}
                             initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }}
                             transition={{ duration: 0.36, ease: EASE_PATIENT }}
-                            className={`${OVERLAY} flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${wide ? 'sm:max-w-xl lg:max-w-[min(1360px,calc(100vw-4rem))]' : 'sm:max-w-xl'}`}
+                            className={`${OVERLAY} flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${wide ? 'sm:max-w-xl lg:max-w-[min(1360px,calc(100vw-4rem))]' : 'sm:max-w-xl'} ${panelClassName}`}
                         >
+                            {header ? (
+                                <div className="relative shrink-0 border-b border-border-subtle">
+                                    <h2 id={labelId} className="sr-only">{title}</h2>
+                                    {header}
+                                    <button type="button" onClick={onClose} aria-label="Close" className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-lg text-text-tertiary hover:bg-muted hover:text-text-primary">
+                                        <X className="h-5 w-5" />
+                                    </button>
+                                </div>
+                            ) : (
                             <div className="flex min-h-14 shrink-0 items-center gap-x-3 gap-y-3 border-b border-border-subtle px-4 py-2 sm:min-h-16 sm:px-6">
                                 <div className="min-w-0 flex-1">
                                     <h2 id={labelId} className="truncate font-display text-lg font-semibold text-text-primary">{title}</h2>
@@ -294,6 +307,7 @@ export function Drawer({
                                     <X className="h-5 w-5" />
                                 </button>
                             </div>
+                            )}
                             <div className={wide ? 'flex min-h-0 flex-1 flex-col overflow-y-auto lg:overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6'}>{children}</div>
                             {footer && <div className="flex shrink-0 gap-x-2 gap-y-2 border-t border-border-subtle px-4 py-3 sm:justify-end sm:px-6">{footer}</div>}
                         </motion.aside>

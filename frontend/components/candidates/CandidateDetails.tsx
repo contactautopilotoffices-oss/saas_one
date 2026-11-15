@@ -1,18 +1,19 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, ExternalLink, FileText, Paperclip, PencilLine, ScanText, Search, Unlink } from 'lucide-react';
+import { Ban, Download, ExternalLink, FileText, FolderPlus, MessageSquareText, Paperclip, PencilLine, ScanText, Search, Unlink } from 'lucide-react';
 import { DEFENCE_OPTIONS, EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import { markKeywords } from '@/backend/lib/candidates/snippet';
 import {
-    MATCH_REASON_LABELS, originLabel, STATUS_LABELS, TEXT_STATUS_LABELS, type CandidateRecord, type ResumeFile, type ResumeFilesResponse,
+    BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, MATCH_REASON_LABELS, originLabel, RECORD_STATUSES, STAGE_LABELS, STATUS_LABELS, TEXT_STATUS_LABELS,
+    type BlacklistReason, type CandidateRecord, type Position, type RecordStatus, type ResumeFile, type ResumeFilesResponse, type Stage,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
-import { formatDate, formatInr, formatMonths, formatNotice } from './format';
-import { ContactActions } from './QuickView';
-import { OriginTag, WorkedOut } from './ResultCard';
+import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
+import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
+import { WorkedOut } from './ResultCard';
 import ResumeDocument, { hasProfile } from './ResumeDocument';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Drawer, EmptyState, INPUT, LABEL, Spinner, StatusBadge, Tag, useUi, WELL } from './ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Drawer, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
     return (
@@ -24,33 +25,31 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
+type Tab = 'overview' | 'resume' | 'activity' | 'positions';
+
+/** Email and phone with the middle hidden, as the panel's meta line shows them. */
+const maskEmail = (email: string) => { const [user, domain] = email.split('@'); return domain && user.length > 3 ? `${user.slice(0, 3)}•••@${domain}` : email; };
+const maskPhone = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 2)}•••• ${phone.slice(-4)}` : phone);
 
 /**
- * One candidate, read-only, so opening a card cannot change anything by accident. Edit details opens the record form.
- *
- * Redesign (owner 2026-11-11): a workspace. On a wide screen the resume's text is on the left with the search keywords
- * marked, and the details are on the right, so HR reads both without switching tabs; below that width the details come
- * first and the resume follows. The text is what the reader took out of the file (or typed out from a scan), not the
- * file's layout: "Open original" shows the file itself in a new tab. It opens the same from Search and from the
- * Candidates table, which hands over a record without the resume fields: those are fetched here.
- *
- * Second round (owner 2026-11-11): the left side is a structured resume (ResumeDocument: the same sections for every
- * candidate, then the file's own text laid out by rule), so the summary, skills and employers moved there from the
- * right side. A value worked out from the resume's employers is marked "worked out".
+ * One candidate's panel (owner 2026-11-15, to the mockup): the person at the top with the actions that matter
+ * (status, add to position, add remark, attach a resume, blacklist), then Overview · Resume · Activity · Positions.
+ * A status change opens "Change status" inline: "Others" needs a remark. Nothing here changes by accident: every
+ * action is a click on a named button, and every one of them is in the history.
  */
 export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [] }: {
     record: CandidateRecord; open: boolean; onClose: () => void; onEdit: () => void;
     orgId: string;
-    /** A resume was attached or detached (phase 2): the lists behind the panel refetch. */
+    /** Something changed (status, resume, blacklist, position): the lists behind the panel refetch. */
     onChanged?: () => void;
     /** The search's keywords, marked in the resume's text. */
     keywords?: string[];
 }) {
-    const { reportError } = useUi();
+    const { notify, reportError } = useUi();
 
-    // The Candidates table lists records without the resume fields: fetch the full record once per opening.
+    // The lists hand over a record without the resume fields or the blacklist entry: fetch the full record once per opening.
     const [full, setFull] = useState<{ id: string; record: CandidateRecord } | null>(null);
-    const needsFull = open && record.extras === undefined && full?.id !== record.id;
+    const needsFull = open && (record.extras === undefined || record.blacklist === undefined) && full?.id !== record.id;
     useEffect(() => {
         if (!needsFull) return;
         const ctrl = new AbortController();
@@ -61,10 +60,18 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         });
         return () => ctrl.abort();
     }, [needsFull, record.id, orgId, reportError]);
-    const r: CandidateRecord = full?.id === record.id ? { ...full.record, ...record, extras: record.extras ?? full.record.extras, hasResume: record.hasResume ?? full.record.hasResume, inferred: record.inferred ?? full.record.inferred } : record;
+    const r: CandidateRecord = full?.id === record.id
+        ? { ...record, ...full.record, keywordHits: record.keywordHits ?? full.record.keywordHits, resumeSnippet: record.resumeSnippet ?? full.record.resumeSnippet }
+        : record;
     const x = r.extras;
+    const replace = (saved: CandidateRecord) => { setFull({ id: record.id, record: saved }); onChanged?.(); };
 
-    // The candidate's resume files: the list on the right, and the one being read on the left.
+    const [tab, setTab] = useState<Tab>('overview');
+    const [historyNonce, setHistoryNonce] = useState(0);
+    const [focusRemark, setFocusRemark] = useState(0);
+    const [pickNonce, setPickNonce] = useState(0);
+
+    // The candidate's resume files.
     const [nonce, setNonce] = useState(0);
     const filesKey = JSON.stringify([orgId, r.candidateId, nonce]);
     const [loaded, setLoaded] = useState<Files | null>(null);
@@ -78,12 +85,68 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         });
         return () => ctrl.abort();
     }, [open, filesKey, orgId, r.candidateId, reportError]);
-    // After an attach or a detach the old list stays up until the new one arrives; another candidate's never shows.
     const mine = loaded?.candidateId === r.candidateId ? loaded : null;
     const files = mine?.files ?? [];
     const filesReady = mine !== null;
     const [viewId, setViewId] = useState<string | null>(null);
     const viewing = files.find(f => f.id === viewId) ?? files[0] ?? null;
+
+    // Status: the pill opens "Change status"; Others needs a remark.
+    const [statusOpen, setStatusOpen] = useState(false);
+    const [nextStatus, setNextStatus] = useState<RecordStatus>(r.status);
+    const [statusRemark, setStatusRemark] = useState('');
+    const [busy, setBusy] = useState(false);
+    const openStatus = () => { setNextStatus(r.status); setStatusRemark(''); setStatusOpen(o => !o); };
+    const saveStatus = async () => {
+        if (busy) return;
+        const remark = statusRemark.trim();
+        if (statusNeedsRemark(nextStatus) && !remark) return;
+        setBusy(true);
+        const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(r.id)}`, { method: 'PATCH', json: { orgId, status: nextStatus, ...(remark ? { actionRemark: remark } : {}) } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        replace(res.data.record);
+        setStatusOpen(false);
+        setHistoryNonce(n => n + 1);
+        notify(`${r.fullName}: ${STATUS_LABELS[nextStatus]}`, 'success');
+    };
+
+    // Add to position: the open positions, picked inline.
+    const [positionsOpen, setPositionsOpen] = useState(false);
+    const [positions, setPositions] = useState<Position[] | null>(null);
+    useEffect(() => {
+        if (!positionsOpen || positions) return;
+        const ctrl = new AbortController();
+        void api<{ positions: Position[] }>(`/api/candidates/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted) setPositions(res.ok ? res.data.positions : []); });
+        return () => ctrl.abort();
+    }, [positionsOpen, positions, orgId]);
+    const [membershipNonce, setMembershipNonce] = useState(0);
+    const addTo = async (p: Position) => {
+        setBusy(true);
+        const res = await api<{ added: number; skipped: number }>(`/api/candidates/positions/${encodeURIComponent(p.id)}/members`, { json: { orgId, applicationIds: [r.id] } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        setPositionsOpen(false);
+        setHistoryNonce(n => n + 1);
+        setMembershipNonce(n => n + 1);
+        notify(res.data.added ? `${r.fullName} added to ${p.title}` : `${r.fullName} is already in ${p.title}`, res.data.added ? 'success' : 'info');
+        onChanged?.();
+    };
+
+    // Blacklist, inline.
+    const [blacklistOpen, setBlacklistOpen] = useState(false);
+    const [reason, setReason] = useState<BlacklistReason>('did_not_join');
+    const [blRemark, setBlRemark] = useState('');
+    const applyBlacklist = async (method: 'POST' | 'DELETE', json: Record<string, unknown>) => {
+        setBusy(true);
+        const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(r.id)}/blacklist`, { method, json: { orgId, ...json } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        replace(res.data.record);
+        setBlacklistOpen(false);
+        setHistoryNonce(n => n + 1);
+        notify(method === 'POST' ? `${r.fullName} is blacklisted and hidden from searches` : `${r.fullName} is back in the searches`, 'success');
+    };
 
     const qualifications = x ? [x.ugQualification, x.pgQualification, x.ppgQualification].filter(q => q && q.toLowerCase() !== NO_QUALIFICATION) : [];
     const resumeRows: [string, React.ReactNode][] = x ? [
@@ -97,67 +160,229 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         ['Defence background', DEFENCE_OPTIONS.find(d => d.id === x.defenceBackground)?.label],
         ['Serving notice', x.servingNotice === null ? null : x.servingNotice ? 'Yes' : 'No'],
     ].filter(([, value]) => !!value) as [string, React.ReactNode][] : [];
-    const headline = [[r.currentDesignation, r.currentOrganization].filter(Boolean).join(' at '), r.location].filter(Boolean).join(' · ');
+    const headline = [[r.currentDesignation, r.currentOrganization].filter(Boolean).join(' @ '), r.location, [r.totalExpMonths !== null && `${formatMonths(r.totalExpMonths)} total`, r.relevantExpMonths !== null && `${formatMonths(r.relevantExpMonths)} relevant`].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    const meta = [r.email && maskEmail(r.email), r.phone && maskPhone(r.phone), r.sourcingDate && `sourced ${formatDate(r.sourcingDate)}${r.candidateSource ? ` via ${r.candidateSource}` : ''}`].filter(Boolean).join(' · ');
+    const hits = r.keywordHits ?? [];
 
-    return (
-        <Drawer
-            wide
-            open={open}
-            onClose={onClose}
-            labelId="candidate-details-title"
-            title={r.fullName}
-            subtitle={headline || undefined}
-            footer={
-                <>
-                    <button type="button" onClick={onClose} className={`${BTN_SECONDARY} flex-1 sm:flex-none`}>Close</button>
-                    <button type="button" onClick={onEdit} className={`${BTN_PRIMARY} flex-1 sm:flex-none`}><PencilLine className="h-4 w-4" />Edit details</button>
-                </>
-            }
-        >
-            <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-                <ResumePane orgId={orgId} record={r} file={viewing} files={files} ready={filesReady} error={mine?.error ?? ''} onPick={setViewId} keywords={keywords} />
-
-                <div className="order-1 px-4 py-5 sm:px-6 lg:order-2 lg:w-[440px] lg:shrink-0 lg:overflow-y-auto lg:overscroll-contain">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                        <StatusBadge status={r.status} />
-                        {r.hasResume === true && <Tag tone="success" icon={FileText}>Resume</Tag>}
+    const header = (
+        <div className="px-5 pb-0 pt-5 pr-14 sm:px-6 sm:pr-14">
+            <div className="flex items-start gap-x-4">
+                <Avatar name={r.fullName} size="lg" />
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-display text-xl font-bold leading-tight text-text-primary">{r.fullName}</span>
+                        {r.hasResume === true && <Tag tone="success" icon={FileText}>Resume{files.length > 1 ? ` · ${files.length}` : ''}</Tag>}
                         {r.hasResume === false && <Tag>No resume</Tag>}
-                        <OriginTag record={r} />
+                        <MembershipCount orgId={orgId} record={r} nonce={membershipNonce} />
+                        {r.blacklisted && <BlacklistedTag entry={r.blacklist} />}
                     </div>
-
-                    <div className="mt-4"><ContactActions record={r} /></div>
-
-                    <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3.5">
-                        <Row label="Current designation" value={r.currentDesignation && <>{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</>} />
-                        <Row label="Current company" value={r.currentOrganization && <>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</>} />
-                        <Row label="Status" value={STATUS_LABELS[r.status]} />
-                        <Row label="Location" value={r.location} />
-                        <Row label="Total experience" value={r.totalExpMonths !== null && <>{formatMonths(r.totalExpMonths)}{r.inferred?.includes('totalExpMonths') && <WorkedOut />}</>} />
-                        <Row label="Relevant experience" value={r.relevantExpMonths !== null && formatMonths(r.relevantExpMonths)} />
-                        <Row label="Notice period" value={r.noticePeriodDays !== null && formatNotice(r.noticePeriodDays)} />
-                        <Row label="Role sourced for" value={r.role} />
-                        <Row label="Current in-hand" value={r.currentInhand !== null && formatInr(r.currentInhand)} />
-                        <Row label="Expected in-hand" value={r.expectedInhand !== null && formatInr(r.expectedInhand)} />
-                        <Row label="Source" value={r.candidateSource} />
-                        <Row label="Sourced" value={r.sourcingDate ? formatDate(r.sourcingDate) : null} />
-                        <Row label="Came from" value={`${originLabel(r)}${r.sourceRow ? `, row ${r.sourceRow}` : ''}`} />
-                        <Row label="Updated" value={formatDate(r.updatedAt)} />
-                        {resumeRows.map(([label, value]) => <Row key={label} label={label} value={value} />)}
-                    </dl>
-
-                    <ResumeSection
-                        orgId={orgId} candidateId={r.candidateId} fullName={r.fullName}
-                        files={files} ready={filesReady} error={mine?.error ?? ''} viewingId={viewing?.id ?? null} onView={setViewId}
-                        onChanged={() => { setNonce(n => n + 1); onChanged?.(); }}
-                    />
-
-                    <div className="mt-5">
-                        <p className="text-xs font-medium text-text-secondary">Remark</p>
-                        <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.remark || <span className="text-text-tertiary">No remark</span>}</p>
-                    </div>
+                    {headline && <p className="mt-0.5 text-sm text-text-primary">{headline}</p>}
+                    {meta && <p className="mt-0.5 text-xs text-text-secondary">{meta}</p>}
                 </div>
             </div>
+            <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-2">
+                <button type="button" onClick={openStatus} aria-expanded={statusOpen} className={`${BTN_SECONDARY} h-9 gap-x-2 rounded-xl px-3`}>
+                    <span className={`h-2 w-2 rounded-full ${STATUS_DOT[r.status]}`} aria-hidden />{STATUS_LABELS[r.status]}<span className="text-text-tertiary" aria-hidden>▾</span>
+                </button>
+                <button type="button" onClick={() => setPositionsOpen(o => !o)} className={`${BTN_PRIMARY} h-9 rounded-xl px-3`}><FolderPlus className="h-4 w-4" />Add to position</button>
+                <button type="button" onClick={() => { setTab('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} h-9 rounded-xl px-3`}><MessageSquareText className="h-4 w-4" />Add remark</button>
+                <button type="button" onClick={() => { setTab('resume'); setPickNonce(n => n + 1); }} className={`${BTN_SECONDARY} h-9 rounded-xl px-3`}><Paperclip className="h-4 w-4" />Attach a resume</button>
+                {r.blacklist !== undefined && !r.blacklisted && (
+                    <button type="button" onClick={() => setBlacklistOpen(o => !o)} className="ml-auto inline-flex h-9 items-center gap-x-1.5 rounded-lg px-2.5 text-sm font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
+                )}
+            </div>
+            <div role="tablist" aria-label="Candidate sections" className="mt-3 flex">
+                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null]] as const).map(([id, label, n]) => (
+                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+                        className={`-mb-px h-10 border-b-2 px-3 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+                        {label}{n ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n}</span> : null}
+                        {id === 'activity' && <ActivityCount orgId={orgId} record={r} nonce={historyNonce} />}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+
+    return (
+        <Drawer open={open} onClose={onClose} labelId="candidate-details-title" title={r.fullName} header={header} panelClassName="sm:max-w-[640px]"
+            footer={<><button type="button" onClick={onClose} className={`${BTN_SECONDARY} flex-1 sm:flex-none`}>Close</button><button type="button" onClick={onEdit} className={`${BTN_PRIMARY} flex-1 sm:flex-none`}><PencilLine className="h-4 w-4" />Edit details</button></>}
+        >
+            <div className="space-y-4">
+                {/* Change status */}
+                {statusOpen && (
+                    <section className={`${CARD} px-4 py-4`} aria-label="Change status">
+                        <div className="flex items-center justify-between"><span className="font-semibold text-text-primary">Change status</span><span className="text-xs text-text-secondary">a remark is required only for Others</span></div>
+                        <div className="mt-3 grid grid-cols-2 gap-x-2 gap-y-1">
+                            {RECORD_STATUSES.map(s => (
+                                <button key={s} type="button" onClick={() => setNextStatus(s)} aria-pressed={nextStatus === s}
+                                    className={`flex h-10 items-center gap-x-3 rounded-lg px-3 text-left text-sm font-medium text-text-primary ${s === 'others' ? 'col-span-2' : ''} ${nextStatus === s ? 'bg-surface-elevated ring-1 ring-inset ring-primary' : 'hover:bg-surface-elevated'}`}>
+                                    <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[s]}`} aria-hidden />{STATUS_LABELS[s]}
+                                    {statusNeedsRemark(s) && <span className="ml-auto text-xs text-text-secondary">remark required</span>}
+                                </button>
+                            ))}
+                        </div>
+                        <label htmlFor="cand-status-remark" className="mt-3 block text-xs font-medium text-text-secondary">Remark {statusNeedsRemark(nextStatus) ? <span className="text-error">*</span> : <span>(optional)</span>}</label>
+                        <textarea id="cand-status-remark" rows={2} maxLength={REMARK_MAX} value={statusRemark} onChange={e => setStatusRemark(e.target.value)} placeholder={statusNeedsRemark(nextStatus) ? 'Why Others? e.g. Candidate moved to the Bengaluru requirement.' : 'Why, if it helps the next person'} className={`${INPUT} mt-1.5 h-auto min-h-[72px] resize-y py-2.5 leading-relaxed`} />
+                        <div className="mt-3 flex justify-end gap-x-2">
+                            <button type="button" onClick={() => setStatusOpen(false)} disabled={busy} className={BTN_GHOST}>Cancel</button>
+                            <button type="button" onClick={() => void saveStatus()} disabled={busy || nextStatus === r.status || (statusNeedsRemark(nextStatus) && !statusRemark.trim())} className={BTN_PRIMARY}>{busy && <Spinner />}Save status</button>
+                        </div>
+                    </section>
+                )}
+
+                {/* Add to position */}
+                {positionsOpen && (
+                    <section className={`${WELL} px-4 py-3`} aria-label="Add to position">
+                        <p className="text-sm font-semibold text-text-primary">Add to position</p>
+                        {positions === null ? <p className="mt-2 text-sm text-text-tertiary"><Spinner className="mr-1.5 inline h-3.5 w-3.5" />Loading</p>
+                            : positions.length === 0 ? <p className="mt-2 text-sm text-text-tertiary">No open positions. Save a job description as a position first.</p>
+                            : <ul className="mt-2 flex flex-wrap gap-1.5">{positions.map(p => <li key={p.id}><button type="button" onClick={() => void addTo(p)} disabled={busy} className={`${BTN_SECONDARY} h-8 px-3 text-xs`}>{p.title}{p.location ? ` · ${p.location}` : ''}</button></li>)}</ul>}
+                    </section>
+                )}
+
+                {/* Blacklist */}
+                {r.blacklist && (
+                    <section role="status" className="rounded-xl bg-error/[.06] px-4 py-3 ring-1 ring-inset ring-error/30">
+                        <p className="text-sm font-semibold text-red-800">Blacklisted · {BLACKLIST_REASON_LABELS[r.blacklist.reason]}</p>
+                        <p className="mt-0.5 text-xs text-text-secondary">{formatDate(r.blacklist.at)}{r.blacklist.byName ? ` by ${r.blacklist.byName}` : ''}. Hidden from every search until removed.</p>
+                        {r.blacklist.remark && <p className="mt-1 text-sm text-text-primary">“{r.blacklist.remark}”</p>}
+                        <button type="button" onClick={() => void applyBlacklist('DELETE', {})} disabled={busy} className={`${BTN_GHOST} mt-1.5 -ml-2.5 text-primary-dark`}>{busy ? <Spinner className="h-4 w-4" /> : <Ban className="h-4 w-4" />}Remove from blacklist</button>
+                    </section>
+                )}
+                {blacklistOpen && !r.blacklisted && (
+                    <section className={`${CARD} px-4 py-4 ring-1 ring-inset ring-error/30`} aria-label="Blacklist">
+                        <div className="flex flex-wrap items-baseline gap-x-2"><span className="font-semibold text-error">Blacklist {r.fullName}</span><span className="text-xs text-text-secondary">hidden from every search and ranking · any HR user can undo it, and it stays in Activity</span></div>
+                        <label htmlFor="cand-bl-reason" className="mt-3 block text-xs font-medium text-text-secondary">Reason</label>
+                        <select id="cand-bl-reason" value={reason} onChange={e => setReason(e.target.value as BlacklistReason)} className={`${INPUT} mt-1.5`}>{BLACKLIST_REASONS.map(k => <option key={k} value={k}>{BLACKLIST_REASON_LABELS[k]}</option>)}</select>
+                        <label htmlFor="cand-bl-remark" className="mt-3 block text-xs font-medium text-text-secondary">Remark <span className="text-text-tertiary">· optional, keep it factual</span></label>
+                        <input id="cand-bl-remark" value={blRemark} onChange={e => setBlRemark(e.target.value)} maxLength={REMARK_MAX} placeholder="What happened, in one line" className={`${INPUT} mt-1.5`} />
+                        <div className="mt-3 flex justify-end gap-x-2">
+                            <button type="button" onClick={() => setBlacklistOpen(false)} disabled={busy} className={BTN_GHOST}>Cancel</button>
+                            <button type="button" onClick={() => void applyBlacklist('POST', { reason, remark: blRemark.trim() })} disabled={busy} className={BTN_DANGER_FILLED}>{busy && <Spinner />}<Ban className="h-4 w-4" />Blacklist</button>
+                        </div>
+                    </section>
+                )}
+
+                {tab === 'overview' && (
+                    <>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            {(hits.length > 0 || r.resumeSnippet) && (
+                                <section className={`${CARD} px-4 py-3`} aria-label="Match">
+                                    <p className={LABEL}>Match to the search</p>
+                                    <ul className="mt-2 space-y-1.5">
+                                        {hits.map(h => <li key={h.text}><Tag tone={h.required ? 'success' : 'neutral'}>✓ {h.text} · {h.where === 'both' ? 'record + resume' : h.where}</Tag></li>)}
+                                        {hits.length === 0 && <li className="text-sm text-text-tertiary">No keyword matched on record.</li>}
+                                    </ul>
+                                </section>
+                            )}
+                            <section className={`${CARD} px-4 py-3`} aria-label="Essentials">
+                                <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+                                    <dt className="text-text-secondary">Notice</dt><dd className="font-semibold text-text-primary">{r.noticePeriodDays !== null ? `${formatNotice(r.noticePeriodDays)}${x?.servingNotice ? ' · serving' : ''}` : '—'}</dd>
+                                    <dt className="text-text-secondary">In-hand</dt><dd className="font-semibold text-text-primary">{r.currentInhand !== null || r.expectedInhand !== null ? `${r.currentInhand !== null ? formatInr(r.currentInhand) : '—'} → ${r.expectedInhand !== null ? formatInr(r.expectedInhand) : '—'} / month` : '—'}</dd>
+                                    <dt className="text-text-secondary">Relocate</dt><dd className="font-semibold text-text-primary">{x?.preferredLocations?.length ? x.preferredLocations.join(', ') : r.location ? `${r.location} only` : '—'}</dd>
+                                    <dt className="text-text-secondary">Education</dt><dd className="font-semibold text-text-primary">{[qualifications.join(', '), x?.degreeYear].filter(Boolean).join(' · ') || '—'}</dd>
+                                    <dt className="text-text-secondary">Sourced for</dt><dd className="font-semibold text-text-primary">{r.role ?? '—'}</dd>
+                                </dl>
+                            </section>
+                        </div>
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5">
+                            <Row label="Current designation" value={r.currentDesignation && <>{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</>} />
+                            <Row label="Current company" value={r.currentOrganization && <>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</>} />
+                            <Row label="Location" value={r.location} />
+                            <Row label="Total experience" value={r.totalExpMonths !== null && <>{formatMonths(r.totalExpMonths)}{r.inferred?.includes('totalExpMonths') && <WorkedOut />}</>} />
+                            <Row label="Relevant experience" value={r.relevantExpMonths !== null && formatMonths(r.relevantExpMonths)} />
+                            <Row label="Source" value={r.candidateSource} />
+                            <Row label="Came from" value={`${originLabel(r)}${r.sourceRow ? `, row ${r.sourceRow}` : ''}`} />
+                            <Row label="Updated" value={formatDate(r.updatedAt)} />
+                            {resumeRows.filter(([label]) => label !== 'Education' && label !== 'Would move to' && label !== 'Serving notice').map(([label, value]) => <Row key={label} label={label} value={value} />)}
+                        </dl>
+                        <div>
+                            <p className="text-xs font-medium text-text-secondary">Remark on the record</p>
+                            <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.remark || <span className="text-text-tertiary">No remark</span>}</p>
+                        </div>
+                    </>
+                )}
+
+                {tab === 'resume' && (
+                    <>
+                        <ResumeSection
+                            orgId={orgId} candidateId={r.candidateId} fullName={r.fullName}
+                            files={files} ready={filesReady} error={mine?.error ?? ''} viewingId={viewing?.id ?? null} onView={setViewId}
+                            onChanged={() => { setNonce(n => n + 1); setHistoryNonce(n => n + 1); onChanged?.(); }}
+                            pickNonce={pickNonce}
+                        />
+                        <ResumeReader orgId={orgId} record={r} file={viewing} ready={filesReady} keywords={keywords} />
+                    </>
+                )}
+
+                {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} />}
+
+                {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
+            </div>
         </Drawer>
+    );
+}
+
+/** The "In N positions" tag in the header. */
+function MembershipCount({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
+    const [n, setN] = useState<{ id: string; n: number } | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ memberships: unknown[] }>(`/api/candidates/${encodeURIComponent(record.id)}/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setN({ id: record.id, n: res.data.memberships.length }); });
+        return () => ctrl.abort();
+    }, [orgId, record.id, nonce]);
+    if (!n || n.id !== record.id || n.n === 0) return null;
+    return <Tag tone="info">In {n.n} {n.n === 1 ? 'position' : 'positions'}</Tag>;
+}
+
+/** The number beside the Activity tab. */
+function ActivityCount({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
+    const [n, setN] = useState<{ id: string; n: number } | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ actions: unknown[] }>(`/api/candidates/${encodeURIComponent(record.id)}/actions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setN({ id: record.id, n: res.data.actions.length }); });
+        return () => ctrl.abort();
+    }, [orgId, record.id, nonce]);
+    if (!n || n.id !== record.id || n.n === 0) return null;
+    return <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n.n}</span>;
+}
+
+/** The positions this person is in, with the stage in each. */
+function MembershipsList({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
+    const { reportError } = useUi();
+    const [state, setState] = useState<{ id: string; rows: { member: { id: string; stage: Stage; stageChangedAt: string; remark: string | null }; position: { id: string; title: string; location: string | null; status: 'open' | 'closed' } }[] } | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ memberships: NonNullable<typeof state>['rows'] }>(`/api/candidates/${encodeURIComponent(record.id)}/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (res.ok) setState({ id: record.id, rows: res.data.memberships });
+            else if (res.noAccess) reportError(res);
+            else setState({ id: record.id, rows: [] });
+        });
+        return () => ctrl.abort();
+    }, [orgId, record.id, reportError, nonce]);
+    const rows = state?.id === record.id ? state.rows : null;
+    return (
+        <section aria-label="Positions">
+            {rows === null ? (
+                <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
+            ) : rows.length === 0 ? (
+                <p className="text-sm text-text-tertiary">Not in any position yet. Use Add to position above.</p>
+            ) : (
+                <ul className="space-y-2">
+                    {rows.map(({ member, position }) => (
+                        <li key={member.id} className={`${WELL} px-3 py-2.5`}>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{position.title}{position.location ? <span className="font-normal text-text-secondary"> · {position.location}</span> : null}</span>
+                                <Tag tone={position.status === 'open' ? 'success' : 'neutral'}>{position.status === 'open' ? 'Open' : 'Closed'}</Tag>
+                            </div>
+                            <p className="mt-1 text-xs text-text-secondary">Stage <span className="font-semibold text-text-primary">{STAGE_LABELS[member.stage]}</span> since {formatDate(member.stageChangedAt)}</p>
+                            {member.remark && <p className="mt-0.5 text-xs italic text-text-secondary">“{member.remark}”</p>}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </section>
     );
 }
 
@@ -165,10 +390,8 @@ const openUrl = (orgId: string, file: ResumeFile, inline: boolean) => {
     window.open(`/api/candidates/resumes/${encodeURIComponent(file.id)}${qs({ orgId, inline })}`, '_blank', 'noopener');
 };
 
-/** The resume being read: a structured page (ResumeDocument) built from the details on record and the file's own text. */
-function ResumePane({ orgId, record, file, files, ready, error, onPick, keywords }: {
-    orgId: string; record: CandidateRecord; file: ResumeFile | null; files: ResumeFile[]; ready: boolean; error: string; onPick: (id: string) => void; keywords: string[];
-}) {
+/** The resume being read, under the file list: a structured page built from the details on record and the file's own text. */
+function ResumeReader({ orgId, record, file, ready, keywords }: { orgId: string; record: CandidateRecord; file: ResumeFile | null; ready: boolean; keywords: string[] }) {
     const [text, setText] = useState<{ id: string; text: string; fromScan: boolean; error: string } | null>(null);
     const fileId = file?.id ?? null;
     useEffect(() => {
@@ -181,59 +404,27 @@ function ResumePane({ orgId, record, file, files, ready, error, onPick, keywords
         return () => ctrl.abort();
     }, [fileId, orgId]);
     const current = text?.id === fileId ? text : null;
-    // Counted again only when the text or the keywords change (the keywords arrive as a new array on every render).
     const body = current?.text ?? '';
     const keywordKey = keywords.join('\n');
     const words = useMemo(() => (keywordKey ? keywordKey.split('\n') : []), [keywordKey]);
     const hits = useMemo(() => (body && words.length ? markKeywords(body, words).filter(p => p.hit).length : 0), [body, words]);
     const profile = hasProfile(record);
-
     return (
-        <section aria-label="Resume" className="order-2 flex min-h-0 flex-col border-t border-border-subtle bg-surface-elevated lg:order-1 lg:min-w-0 lg:flex-1 lg:border-r lg:border-t-0">
+        <section aria-label="Resume text" className={`${WELL} px-4 py-4`}>
             {file && (
-                <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle bg-surface px-4 py-2.5 sm:px-6">
-                    <FileText className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />
-                    {files.length > 1 ? (
-                        <select aria-label="Which resume to read" value={file.id} onChange={e => onPick(e.target.value)} className="h-9 min-w-0 max-w-full flex-1 truncate rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
-                            {files.map(f => <option key={f.id} value={f.id}>{f.fileName}</option>)}
-                        </select>
-                    ) : (
-                        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={file.fileName}>{file.fileName}</p>
-                    )}
-                    {current?.fromScan && <Tag tone="info" icon={ScanText} title="This file is a scan: its text was typed out by AI and may have small mistakes. Check against the original.">Typed from a scan</Tag>}
+                <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={file.fileName}>{file.fileName}</span>
+                    {current?.fromScan && <Tag tone="info" icon={ScanText} title="This file is a scan: its text was typed out by AI and may have small mistakes.">Typed from a scan</Tag>}
                     {hits > 0 && <Tag tone="neutral">{hits} keyword {hits === 1 ? 'match' : 'matches'}</Tag>}
-                    <span className="flex items-center gap-x-1 gap-y-1">
-                        <button type="button" onClick={() => openUrl(orgId, file, true)} className={BTN_GHOST}><ExternalLink className="h-4 w-4" />Open original</button>
-                        <button type="button" onClick={() => openUrl(orgId, file, false)} className={BTN_GHOST} aria-label={`Download ${file.fileName}`} title="Download"><Download className="h-4 w-4" /></button>
-                    </span>
+                    <button type="button" onClick={() => openUrl(orgId, file, true)} className={`${BTN_GHOST} h-8`}><ExternalLink className="h-4 w-4" />Open original</button>
                 </div>
             )}
-
-            <div className="min-h-0 flex-1 px-4 py-4 sm:p-6 lg:overflow-y-auto lg:overscroll-contain">
-                {!ready ? (
-                    <p className="flex items-center gap-x-2 gap-y-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading the resume</p>
-                ) : error ? (
-                    <p role="alert" className="text-sm text-error">{error}</p>
-                ) : file && !current ? (
-                    <p className="flex items-center gap-x-2 gap-y-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Reading the resume</p>
-                ) : current?.error ? (
-                    <p role="alert" className="text-sm text-error">{current.error}</p>
-                ) : !file && !profile ? (
-                    <EmptyState icon={FileText} title="No resume on file">
-                        A resume with {record.fullName}&rsquo;s email or phone is linked by itself once it is uploaded. You can also attach one from the Resume section.
-                    </EmptyState>
-                ) : file && !body && !profile ? (
-                    <EmptyState icon={FileText} title="This file's text could not be read">
-                        {file.textError ?? TEXT_STATUS_LABELS[file.textStatus]}. Use Open original to see the file itself.
-                    </EmptyState>
-                ) : (
-                    <>
-                        <ResumeDocument record={record} text={body} keywords={words} />
-                        {file && !body && <p className="mx-auto mt-3 max-w-[860px] text-xs text-text-secondary">The text of {file.fileName} could not be read, so only the details on record are shown. Use Open original to see the file itself.</p>}
-                        {!file && <p className="mx-auto mt-3 max-w-[860px] text-xs text-text-secondary">No resume file is linked to this candidate; these details were typed in. Attach a resume from the Resume section.</p>}
-                    </>
-                )}
-            </div>
+            {!ready ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading the resume</p>
+                : file && !current ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Reading the resume</p>
+                : current?.error ? <p role="alert" className="text-sm text-error">{current.error}</p>
+                : !file && !profile ? <EmptyState icon={FileText} title="No resume on file">A resume with {record.fullName}&rsquo;s email or phone is linked by itself once it is uploaded, or attach one above.</EmptyState>
+                : file && !body && !profile ? <EmptyState icon={FileText} title="This file's text could not be read">{file.textError ?? TEXT_STATUS_LABELS[file.textStatus]}. Use Open original to see the file itself.</EmptyState>
+                : <ResumeDocument record={record} text={body} keywords={words} />}
         </section>
     );
 }
@@ -243,15 +434,16 @@ type LinkFilter = '' | 'linked' | 'unlinked';
 /**
  * The candidate's resume files (owner 2026-11-10, phase 2): matched by email / phone in the background, or attached by
  * HR here. Open shows a PDF in the browser's viewer and a .docx as a page; Detach marks a wrong match so it is never
- * matched again by itself; Attach searches the files not linked to anyone yet. With more than one file, "Read" picks
- * the one shown beside the details.
+ * matched again by itself. `pickNonce` opens the picker from the panel's "Attach a resume".
  */
-function ResumeSection({ orgId, candidateId, fullName, files, ready, error, viewingId, onView, onChanged }: {
+function ResumeSection({ orgId, candidateId, fullName, files, ready, error, viewingId, onView, onChanged, pickNonce = 0 }: {
     orgId: string; candidateId: string; fullName: string; files: ResumeFile[]; ready: boolean; error: string;
-    viewingId: string | null; onView: (id: string) => void; onChanged: () => void;
+    viewingId: string | null; onView: (id: string) => void; onChanged: () => void; pickNonce?: number;
 }) {
     const { notify, reportError } = useUi();
     const [picking, setPicking] = useState(false);
+    const [seenPick, setSeenPick] = useState(pickNonce);
+    if (pickNonce !== seenPick) { setSeenPick(pickNonce); setPicking(true); }
     const [q, setQ] = useState(fullName);
     const [qDebounced, setQDebounced] = useState(fullName);
     useEffect(() => { const t = setTimeout(() => setQDebounced(q.trim()), 300); return () => clearTimeout(t); }, [q]);
@@ -285,9 +477,9 @@ function ResumeSection({ orgId, candidateId, fullName, files, ready, error, view
     };
 
     return (
-        <section className="mt-5" aria-labelledby="cand-resumes-heading">
+        <section aria-labelledby="cand-resumes-heading">
             <div className="flex items-center justify-between gap-x-2 gap-y-2">
-                <h3 id="cand-resumes-heading" className={LABEL}>Resume</h3>
+                <h3 id="cand-resumes-heading" className={LABEL}>Resume files</h3>
                 <button type="button" onClick={() => setPicking(p => !p)} className={`${BTN_GHOST} -mr-2.5`}>
                     <Paperclip className="h-4 w-4" />{picking ? 'Cancel' : 'Attach a resume'}
                 </button>
@@ -336,7 +528,7 @@ function ResumeSection({ orgId, candidateId, fullName, files, ready, error, view
                 <div className={`${WELL} mt-2 space-y-2 px-3 py-3`}>
                     <label className="relative block">
                         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" aria-hidden />
-                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search the resumes not linked to anyone yet" aria-label="Search the resumes not linked to anyone yet" className={`${INPUT} pl-9`} />
+                        <input value={q} onChange={e => setQ(e.target.value)} autoFocus placeholder="Search the resumes not linked to anyone yet" aria-label="Search the resumes not linked to anyone yet" className={`${INPUT} pl-9`} />
                     </label>
                     {!options || options.key !== optionsKey ? (
                         <p className="text-sm text-text-tertiary"><Spinner className="mr-1.5 inline h-3.5 w-3.5" />Searching</p>

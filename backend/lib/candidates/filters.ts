@@ -8,7 +8,7 @@
  * (migration 20261107000001, then resumes). Gender, age and disability are shown greyed out with no data stored: they
  * need HR / legal sign-off first.
  */
-import type { Preferences, SearchSpec } from "./query-spec";
+import type { Preferences, SearchSpec, SpecConflict } from "./query-spec";
 import { STATUS_LABELS, type CandidateRecord, type RecordStatus } from "./types";
 
 export const NOTICE_BUCKETS = [
@@ -70,6 +70,28 @@ export interface KeywordToken {
   text: string;
   /** Starred: every starred keyword must be on the record. The rest: at least one of them. */
   required: boolean;
+  /**
+   * Other ways the same thing is written (owner 2026-11-15): "MEP / HVAC / VRF" is one chip, and a record passes it
+   * when it has `text` or any one of these. Absent or empty for a plain keyword.
+   */
+  alts?: string[];
+}
+
+/** Every spelling a keyword chip accepts: its text and its alternatives, each once. */
+export function keywordTerms(k: KeywordToken): string[] {
+  const seen = new Set<string>();
+  return [k.text, ...(k.alts ?? [])].map((t) => t.trim()).filter((t) => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
+}
+
+/** How a keyword chip reads: "MEP / HVAC / VRF" for a chip with alternatives, else its text. */
+export function keywordLabel(k: KeywordToken): string {
+  return keywordTerms(k).join(" / ");
+}
+
+/** The words a search holds, flat: every chip's text and alternatives (the AI ranking and the snippets read these). */
+export function allKeywordTerms(keywords: KeywordToken[]): string[] {
+  const seen = new Set<string>();
+  return keywords.flatMap(keywordTerms).filter((t) => !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
 }
 
 export interface SearchFilters {
@@ -117,6 +139,8 @@ export interface SearchFilters {
   hasResume: "" | "yes" | "no";
   /** Show records that are blank on a field a filter uses. */
   includeBlank: boolean;
+  /** Owner 2026-11-15: blacklisted people are hidden from every search unless this is ticked. */
+  showBlacklisted: boolean;
   sort: FilterSort;
 }
 
@@ -156,6 +180,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   defence: "",
   hasResume: "",
   includeBlank: false,
+  showBlacklisted: false,
   sort: "recent",
 };
 
@@ -308,7 +333,7 @@ export function hasActiveFilter(f: SearchFilters): boolean {
 
 /** A plain sentence, so a search made by clicking reads the same as one the AI understood. */
 export function describeFilters(f: SearchFilters): string {
-  let line = f.keywords.length ? `Candidates with ${f.keywords.map((k) => k.text).join(", ")}` : "Candidates";
+  let line = f.keywords.length ? `Candidates with ${f.keywords.map(keywordLabel).join(", ")}` : "Candidates";
   if (f.locations.length) line += ` in ${f.locations.join(" or ")}`;
   const rest = filterChips(f).filter((c) => c.id !== "location").map((c) => c.label.charAt(0).toLowerCase() + c.label.slice(1));
   if (rest.length) line += `, ${rest.join(", ")}`;
@@ -363,7 +388,7 @@ export function specFromFilters(f: SearchFilters, prefer: Preferences = {}): Sea
   if (salary?.column === "expected_inhand" && salary.max !== null) must.max_expected_inhand = salary.max;
   if (f.status) must.statuses = [f.status];
   if (f.excludeStatuses.length) must.exclude_statuses = f.excludeStatuses;
-  return { summary: describeFilters(f), must, prefer, keywords: f.keywords.map((k) => k.text) };
+  return { summary: describeFilters(f), must, prefer, keywords: allKeywordTerms(f.keywords) };
 }
 
 /** The notice filter for "up to N days": every bucket that starts within it. */
@@ -377,41 +402,79 @@ export interface PreferredItem {
   label: string;
 }
 
-/** A job description read by the AI, as filter values. Anything else stays as it was. */
-export function filtersFromSpec(spec: SearchSpec): Partial<SearchFilters> {
-  const m = spec.must;
-  const out: Partial<SearchFilters> = {
-    keywords: [
-      ...(m.roles ?? []).map((text) => ({ text, required: true })),
-      ...spec.keywords.map((text) => ({ text, required: false })),
-    ].filter((k, i, all) => all.findIndex((x) => x.text.toLowerCase() === k.text.toLowerCase()) === i),
-    excludes: [],
-    locations: m.locations ?? [],
-    excludeStatuses: m.exclude_statuses ?? [],
-    status: m.statuses?.length === 1 ? m.statuses[0] : "",
-    sourcedAfter: m.sourced_after ?? null,
-    sourcedBefore: m.sourced_before ?? null,
-    notice: m.max_notice_days === undefined ? [] : noticeBucketsUpTo(m.max_notice_days),
-    expMin: null,
-    expMax: null,
-    salaryMin: null,
-    salaryMax: null,
-  };
-  const years = (months: number) => Math.round((months / 12) * 10) / 10;
+const years = (months: number) => Math.round((months / 12) * 10) / 10;
+
+/**
+ * Only the filter keys a set of must-haves names (owner 2026-11-15): what one option of a conflict changes when HR
+ * picks it, leaving every other filter as it is.
+ */
+export function mustPatch(m: SearchSpec["must"]): Partial<SearchFilters> {
+  const out: Partial<SearchFilters> = {};
+  if (m.locations?.length) out.locations = m.locations;
   if (m.min_relevant_exp_months !== undefined || m.max_relevant_exp_months !== undefined) {
     out.expBasis = "relevant";
     out.expMin = m.min_relevant_exp_months === undefined ? null : years(m.min_relevant_exp_months);
     out.expMax = m.max_relevant_exp_months === undefined ? null : years(m.max_relevant_exp_months);
-  } else if (m.min_total_exp_months !== undefined) {
+  } else if (m.min_total_exp_months !== undefined || m.max_total_exp_months !== undefined) {
     out.expBasis = "total";
-    out.expMin = years(m.min_total_exp_months);
+    out.expMin = m.min_total_exp_months === undefined ? null : years(m.min_total_exp_months);
+    out.expMax = m.max_total_exp_months === undefined ? null : years(m.max_total_exp_months);
   }
+  if (m.max_notice_days !== undefined) out.notice = noticeBucketsUpTo(m.max_notice_days);
   if (m.max_expected_inhand !== undefined) {
     out.salaryBasis = "expected";
     out.salaryUnit = "month";
     out.salaryMax = Math.round(m.max_expected_inhand / 100) / 10;
   }
+  if (m.statuses?.length === 1) out.status = m.statuses[0];
+  if (m.exclude_statuses?.length) out.excludeStatuses = m.exclude_statuses;
+  if (m.sourced_after) out.sourcedAfter = m.sourced_after;
+  if (m.sourced_before) out.sourcedBefore = m.sourced_before;
   return out;
+}
+
+/** A job description read by the AI, as filter values. Anything else stays as it was. */
+export function filtersFromSpec(spec: SearchSpec): Partial<SearchFilters> {
+  const m = spec.must;
+  // Owner 2026-11-15: a must-have skill group is one starred chip with alternatives; a title in must is a starred chip.
+  const groups: KeywordToken[] = (m.skill_groups ?? []).map((group) => {
+    const [text, ...alts] = group;
+    return alts.length ? { text, required: true, alts } : { text, required: true };
+  });
+  const inGroups = new Set(groups.flatMap(keywordTerms).map((t) => t.toLowerCase()));
+  const out: Partial<SearchFilters> = {
+    keywords: [
+      ...groups,
+      ...(m.roles ?? []).map((text) => ({ text, required: true })),
+      ...spec.keywords.map((text) => ({ text, required: false })),
+    ].filter((k, i, all) => (i < groups.length || !inGroups.has(k.text.toLowerCase())) && all.findIndex((x) => x.text.toLowerCase() === k.text.toLowerCase()) === i),
+    excludes: [],
+    locations: [],
+    excludeStatuses: [],
+    status: "",
+    sourcedAfter: null,
+    sourcedBefore: null,
+    notice: [],
+    expMin: null,
+    expMax: null,
+    salaryMin: null,
+    salaryMax: null,
+    ...mustPatch(m),
+  };
+  return out;
+}
+
+/** A conflict the reader found in a job description, with each option as the filter change it would make. */
+export interface ConflictChoice {
+  field: SpecConflict["field"];
+  note: string;
+  options: { label: string; filters: Partial<SearchFilters> }[];
+}
+
+export function conflictChoices(spec: SearchSpec): ConflictChoice[] {
+  return (spec.conflicts ?? [])
+    .map((c) => ({ field: c.field, note: c.note, options: c.options.map((o) => ({ label: o.label, filters: mustPatch(o.must) })).filter((o) => Object.keys(o.filters).length > 0) }))
+    .filter((c) => c.options.length >= 2);
 }
 
 // API shapes ---------------------------------------------------------------------------------------------------------
@@ -447,6 +510,10 @@ export interface UnderstandResponse {
   summary: string;
   aiParsed: boolean;
   notices: string[];
+  /** Owner 2026-11-15: where the job description contradicts itself; HR picks, or leaves that filter out. */
+  conflicts: ConflictChoice[];
+  /** The uploaded file's name, when the text came from a file. */
+  fileName?: string;
 }
 
 /** POST /api/candidates/suggest-keywords */

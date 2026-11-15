@@ -32,6 +32,16 @@ export async function requireCandidateAccess(orgId: unknown): Promise<AuthResult
   return { user, orgId, admin: getCandidatesAdmin() };
 }
 
+/**
+ * Who is acting, for the candidate's history (owner 2026-11-15): the signed-in person's name from the users table,
+ * else the part of their email before the @. Never fails the request.
+ */
+export async function actorFor(admin: SupabaseClient, user: User): Promise<{ id: string; name: string | null }> {
+  const { data } = await admin.from("users").select("full_name").eq("id", user.id).maybeSingle();
+  const name = (data?.full_name as string | null | undefined)?.trim() || user.email?.split("@")[0] || null;
+  return { id: user.id, name };
+}
+
 /** A 429 response if this user went over `limit` for `bucket`, else null. */
 export function rateLimited(bucket: string, userId: string, limit: { maxRequests: number; windowMs: number }): NextResponse | null {
   const { allowed, resetTime } = checkRateLimit(`candidates:${bucket}:${userId}`, limit);

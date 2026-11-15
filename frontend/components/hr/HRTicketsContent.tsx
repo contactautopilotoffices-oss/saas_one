@@ -1366,7 +1366,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         // overflow-x-clip, not -hidden (owner 2026-11-09): "hidden" makes this box a scroll container that never
         // scrolls, which stops anything inside (Candidate Search's filters) from sticking while the page scrolls.
         <div className="w-full max-w-full space-y-5 pb-12 overflow-x-clip">
-            {/* Header Action Toolbar */}
+            {/* Header Action Toolbar. Owner 2026-11-15: not on the Recruitment tab, whose own tab row is its header. */}
+            {activeTab !== 'candidates' && (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-1">
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
@@ -1374,11 +1375,8 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                             <ShieldCheck className="w-5 h-5" />
                         </div>
                         <h1 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                            {activeTab === 'candidates' ? 'Candidate Search' : activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
+                            {activeTab === 'assessments' ? 'Assessments' : activeTab === 'tasks' ? 'Task Manager' : activeTab === 'meeting_assistant' ? 'Meeting Assistant' : activeTab === 'notes' ? 'HR Notes & Remarks Ledger' : activeTab === 'tree' ? 'Organization Reporting Tree & Workload Inspector' : isHrAdmin ? 'HR Helpdesk & Grievances' : isManager ? 'Team Grievance Requests' : 'My Requests & Grievances'}
                         </h1>
-                        {activeTab === 'candidates' && (
-                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Beta</span>
-                        )}
                     </div>
                 </div>
 
@@ -1393,9 +1391,11 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                     </button>
                 </div>
             </div>
+            )}
 
-            {/* HR Console Navigation Tabs (Visible for Org Super Admin and HR Team) */}
-            {canViewOrgWide && (
+            {/* HR Console Navigation Tabs (Visible for Org Super Admin and HR Team). Owner 2026-11-15: hidden on the
+                Recruitment tab to give it the room; the sidebar leads back to the other HR screens. */}
+            {canViewOrgWide && activeTab !== 'candidates' && (
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
                     <button
                         type="button"

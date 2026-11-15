@@ -8,8 +8,68 @@
  *   sheet     = one uploaded Excel file (re-uploading the same file name asks Replace or Merge)
  */
 
+import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
+import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
+
+// Positions and their pipelines (owner 2026-11-15; the logic is in positions.ts, which is server-only: these constants
+// and shapes live here so the client components can import them without pulling the model transport in).
+export const FLOW_STAGES = ["sourced", "screening", "shortlisted", "interview", "offer", "joined"] as const;
+export const SIDE_STAGES = ["on_hold", "not_responding", "rejected", "others"] as const;
+export const STAGES = [...FLOW_STAGES, ...SIDE_STAGES] as const;
+export type Stage = (typeof STAGES)[number];
+export const STAGE_LABELS: Record<Stage, string> = {
+  sourced: "Sourced",
+  screening: "Screening",
+  shortlisted: "Shortlisted",
+  interview: "Interview",
+  offer: "Offer",
+  joined: "Joined",
+  on_hold: "On hold",
+  not_responding: "Not responding",
+  rejected: "Rejected",
+  others: "Others",
+};
+/** Stages a person must explain with a remark when they move someone there. */
+export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
+
+export interface Position {
+  id: string;
+  title: string;
+  department: string | null;
+  location: string | null;
+  jdFileName: string | null;
+  /** Only on a single position (get), not on the list. */
+  jdText?: string | null;
+  filters: Partial<SearchFilters>;
+  prefer: Preferences;
+  status: "open" | "closed";
+  targetDays: number;
+  /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
+  recruiterName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  /** Days since it was opened (until it was closed). */
+  daysOpen: number;
+  counts: Record<Stage, number>;
+}
+
+export interface PositionMember {
+  id: string;
+  positionId: string;
+  candidateId: string;
+  applicationId: string | null;
+  stage: Stage;
+  stageChangedAt: string;
+  /** Who moved them last (who added them, until the first move); null when unknown. */
+  stageChangedByName: string | null;
+  remark: string | null;
+  addedAt: string;
+  /** The person's record, when the record they were added from still exists. */
+  record: CandidateRecord | null;
+}
 
 export const RECORD_STATUSES = [
   "new",
@@ -20,6 +80,8 @@ export const RECORD_STATUSES = [
   "not_responding",
   "rejected",
   "joined",
+  // Owner 2026-11-15: anything the list above does not cover; the app requires a remark saying what (migration 20261115000002).
+  "others",
 ] as const;
 export type RecordStatus = (typeof RECORD_STATUSES)[number];
 
@@ -32,7 +94,30 @@ export const STATUS_LABELS: Record<RecordStatus, string> = {
   not_responding: "Not responding",
   rejected: "Rejected",
   joined: "Joined",
+  others: "Others",
 };
+
+/** Statuses a person must explain with a remark when they choose them. */
+export const REMARK_REQUIRED_STATUSES: readonly RecordStatus[] = ["others"];
+
+/** Why a person was blacklisted (owner 2026-11-15); the dropdown's fixed list, so reports stay usable. */
+export const BLACKLIST_REASONS = ["did_not_join", "misconduct", "false_information", "asked_not_to_contact", "other"] as const;
+export type BlacklistReason = (typeof BLACKLIST_REASONS)[number];
+export const BLACKLIST_REASON_LABELS: Record<BlacklistReason, string> = {
+  did_not_join: "Accepted an offer, did not join",
+  misconduct: "Misconduct",
+  false_information: "False information or documents",
+  asked_not_to_contact: "Asked not to be contacted",
+  other: "Other",
+};
+
+/** A person's blacklist entry, when there is one. */
+export interface Blacklist {
+  at: string;
+  byName: string | null;
+  reason: BlacklistReason;
+  remark: string | null;
+}
 
 /** Top N the HR user may ask for (owner 2026-11-02: custom number, max 30). */
 export const TOP_N_MIN = 1;
@@ -83,6 +168,19 @@ export interface CandidateRecord {
   hasResume?: boolean;
   /** The lines of the resume around the search keywords, keywords marked (filter search with keywords only). */
   resumeSnippet?: SnippetPart[];
+  /**
+   * Where each keyword chip matched (owner 2026-11-15): on the record's own fields, in the resume's text, or both.
+   * `text` is the spelling that matched (one of a chip's alternatives). Only with keywords, after the resume
+   * migrations.
+   */
+  keywordHits?: { text: string; required: boolean; where: "profile" | "resume" | "both" }[];
+  /**
+   * The person is blacklisted (owner 2026-11-15, migration 20261115000002): hidden from search unless asked for. Set
+   * on lists; the panel's full entry is `blacklist`. Absent before the migration.
+   */
+  blacklisted?: boolean;
+  /** The blacklist entry itself, loaded for the panel. null = not blacklisted; absent = not loaded. */
+  blacklist?: Blacklist | null;
   /**
    * Fields whose value was worked out from the employers the resume lists, not stated on it (owner 2026-11-11,
    * migration 20261111000004). The screens mark them; a value HR types in is no longer listed.
