@@ -3,8 +3,8 @@
  *
  *   npx tsx task-manager/voice/eval/run_voice_eval.ts [--out <folder>] [--only 1,6,16] [--no-grade] [--no-brain] [--reuse <earlier results folder>]
  *
- * MANUAL tool, NOT part of the normal test run. It calls Groq Whisper (GROQ_VOICE_API_KEY), the tidy-up AI and the brain's
- * understanding step (the existing COUNCIL_* provider), and a grader on Groq (GROQ_VOICE_API_KEY). Keys are read from
+ * MANUAL tool, NOT part of the normal test run. It calls Groq Whisper (GROQ_API_KEY), the tidy-up AI and the brain's
+ * understanding step (the existing COUNCIL_* provider), and a grader on Groq (GROQ_API_KEY). Keys are read from
  * .env / .env.local and never printed. It sends no WhatsApp message and touches no database (the brain runs on its
  * fake eval world). Results (including transcripts) are written to the --out folder.
  *
@@ -56,8 +56,8 @@ Reply with ONLY one JSON object, with the reasoning written BEFORE the score:
 interface Grade { score: number | null; reasoning: string; error?: string; tokens?: number }
 
 async function grade(truth: string, candidate: string): Promise<Grade> {
-    const key = process.env.GROQ_VOICE_API_KEY;
-    if (!key) return { score: null, reasoning: '', error: 'no GROQ_VOICE_API_KEY' };
+    const key = process.env.GROQ_API_KEY;
+    if (!key) return { score: null, reasoning: '', error: 'no GROQ_API_KEY' };
     for (let attempt = 0; attempt < 4; attempt++) {
         try {
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -84,7 +84,7 @@ async function grade(truth: string, candidate: string): Promise<Grade> {
 }
 
 async function main() {
-    if (!process.env.GROQ_VOICE_API_KEY) { console.error('GROQ_VOICE_API_KEY is not set in .env / .env.local'); process.exit(1); }
+    if (!process.env.GROQ_API_KEY) { console.error('GROQ_API_KEY is not set in .env / .env.local'); process.exit(1); }
     const outDir = arg('out') ?? path.join(ROOT, 'task-manager', 'voice', 'eval', 'results', new Date().toISOString().replace(/[:.]/g, '-'));
     fs.mkdirSync(outDir, { recursive: true });
 

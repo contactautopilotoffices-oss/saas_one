@@ -38,7 +38,7 @@ async function run() {
 
     console.log('\n3. The AI reader is checked before it is believed');
     const fake = (payload: unknown, ok = true) => (async () => ({ ok, json: async () => ({ choices: [{ message: { content: JSON.stringify(payload) } }] }) })) as unknown as typeof fetch;
-    const env = { GROQ_TASK_CHAT_API_KEY: 'k' };
+    const env = { GROQ_API_KEY: 'k' };
     const msg = 'how are the folks in procurement getting along';
     const good = await SuperuserAIInterpreter.interpret(msg, { departments: ['Procurement'] }, { env, fetch: fake({ kind: 'department_progress', subject: 'procurement', title: null }) });
     check('a grounded answer is accepted', good?.kind === 'department_progress' && (good as any).subject === 'procurement', good);
@@ -52,7 +52,7 @@ async function run() {
     check('a provider error → nothing returned (no crash)', await SuperuserAIInterpreter.interpret(msg, { departments: [] }, { env, fetch: fake({}, false) }) === null);
 
     // ── stubbed world for the router / executor ──────────────────────────────
-    process.env.GROQ_TASK_CHAT_API_KEY = 'k'; // present, but fetch below is fake
+    process.env.GROQ_API_KEY = 'k'; // present, but fetch below is fake
     const aiCalls: string[] = [];
     (globalThis as any).fetch = async (_u: string, init: any) => {
         // Owner 2026-10-28: the "AI models" setting is read from the database first; offline, that read fails → today's model

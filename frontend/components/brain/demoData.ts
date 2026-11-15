@@ -19,6 +19,7 @@ import type {
     TurnView,
 } from '@/backend/lib/aiLayer/brain/console/types';
 import type { AiInventoryItem, AiJobRow, AiKeyRow, AiModelRow, AiModelsData, AiTestResult, BrainApi, Days, Plain, Result } from './api';
+import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 import { describeChanges, skillModeOf } from './settingsDiff';
 
 const TODAY = '2026-11-14';
@@ -316,7 +317,7 @@ const AI_JOBS_DEMO: DemoJob[] = [
     J('invoice_read', 'Reading invoices', 'Reads vendor, amounts and tax from an uploaded invoice', 'Finance', 'vision', ['anthropic', 'engy'], ['qwen3.8-27b']),
     J('wiki_answer', 'Wiki answers', 'Answers questions from the organisation\'s documents', 'Documents', 'chat', CHAT, ['deepseek-v4-flash-0731'], null, true),
     J('meter_read', 'Meter photo reading', 'Reads the number on an electricity meter photo', 'Facilities', 'vision', ['anthropic', 'engy'], ['qwen3.8-27b']),
-    J('ticket_classify', 'Ticket auto-classification', 'Picks the category and priority of a new ticket', 'Tickets', 'chat', CHAT, ['groq:llama-3.3-70b-versatile'], ['anthropic:claude-haiku-5-5'], true),
+    J('ticket_classify', 'Sorting new tickets', 'Sorts every new ticket: category, team, priority and safety risk. The first model that answers is used; the rest are backups', 'Tickets', 'chat', CHAT, ['anthropic:claude-haiku-5-5', 'glm-5.3-flash']),
     J('wa_assistant_interpret', 'Assistant interpreter', 'Works out what a WhatsApp assistant message asks for', 'WhatsApp assistant', 'chat', CHAT, ['groq:llama-3.3-70b-versatile']),
     J('crm_coach', 'Call coaching: feedback', 'Writes feedback on a recorded sales call', 'CRM', 'chat', CHAT, ['groq:llama-3.3-70b-versatile'], null, true),
     J('mailbox_digest', 'Purchase mailbox digest', 'Summarises the purchase mailbox each morning', 'Procurement', 'chat', CHAT, ['deepseek-v4-flash-0731', 'glm-5.3-flash']),
@@ -326,9 +327,8 @@ const AI_JOBS_DEMO: DemoJob[] = [
 const AI_KEYS_DEMO: AiKeyRow[] = [
     { provider: 'anthropic', label: 'Anthropic (Claude)', ready: true, keys: [{ name: 'CLAUDE_API_KEY', set: true }] },
     { provider: 'engy', label: 'Engy (GLM, Qwen, DeepSeek, Kimi)', ready: true, keys: [{ name: 'ENGY_API_KEY', set: true }, { name: 'COUNCIL_API_KEY', set: true }], note: 'Works only when the council provider resolves to Engy (COUNCIL_PROVIDER=custom, or no OpenAI / Groq council key set).' },
-    { provider: 'groq', label: 'Groq (WhatsApp bot)', ready: true, keys: [{ name: 'GROQ_API_KEY', set: true }] },
-    { provider: 'gemini', label: 'Google Gemini', ready: false, keys: [{ name: 'GEMINI_API_KEY', set: false }, { name: 'GOOGLE_AI_API_KEY', set: false }] },
-    { provider: 'groq_speech', label: 'Groq speech-to-text', ready: true, keys: [{ name: 'GROQ_VOICE_API_KEY', set: true }] },
+    { provider: 'groq', label: 'Groq (text, pictures and speech; used in turn)', ready: true, keys: [{ name: 'GROQ_API_KEY', set: true }, { name: 'GROQ_API_KEY_2', set: true }, { name: 'GROQ_API_KEY_3', set: false }] },
+    { provider: 'gemini', label: 'Google Gemini (used in turn)', ready: false, keys: [{ name: 'GEMINI_API_KEY', set: false }, { name: 'GEMINI_API_KEY_2', set: false }, { name: 'GEMINI_API_KEY_3', set: false }, { name: 'GOOGLE_AI_API_KEY', set: false }] },
     { provider: 'anthropic', label: 'Anthropic (Unified brain, second key)', ready: true, keys: [{ name: 'CLAUDE_API_KEY_2', set: true }] },
 ];
 const INV = (area: string, feature: string, where: string, models: string, chosen: string, kind: AiInventoryItem['kind'], keys: Array<[string, boolean]>, modelEnv?: [string, boolean], job?: string): AiInventoryItem => ({
@@ -338,7 +338,7 @@ const INV = (area: string, feature: string, where: string, models: string, chose
 const AI_INVENTORY_DEMO: AiInventoryItem[] = [
     INV('Task Manager', 'WhatsApp bot: understanding the message', 'task-manager/brain/llm.ts', 'Claude Haiku 5.5 → glm-5.3-flash', 'AI models screen', 'chat', [['CLAUDE_API_KEY', true]], undefined, 'wa_understand'),
     INV('Task Manager', 'WhatsApp bot shadow run (comparison only)', 'task-manager/brain/shadow.ts', 'Today\'s WhatsApp chain', 'Fixed in code', 'chat', [['CLAUDE_API_KEY', true], ['COUNCIL_API_KEY', true]]),
-    INV('WhatsApp assistant', 'Assistant interpreter', 'backend/lib/whatsapp/interpreter/interpret.mjs:28', 'llama-3.3-70b-versatile (Groq)', 'Env var (default shown)', 'chat', [['GROQ_TASK_CHAT_API_KEY', true]], ['GROQ_TASK_CHAT_MODEL', false]),
+    INV('WhatsApp assistant', 'Assistant interpreter', 'backend/lib/whatsapp/interpreter/interpret.mjs:28', 'llama-3.3-70b-versatile (Groq)', 'Env var (default shown)', 'chat', [['GROQ_API_KEY', true]], ['GROQ_TASK_CHAT_MODEL', false]),
     { ...INV('HR', 'HR policy search', 'backend/lib/hr-assistant/config.ts:30', 'gemini-embedding-001', 'Fixed in code', 'embeddings', [['GEMINI_API_KEY', false], ['GOOGLE_AI_API_KEY', false]]), why: 'Changing it would make the stored search index unusable until every policy is read again.' },
     INV('Agents', 'Master Council summary, call summary, inbox reply', 'backend/lib/council/runner.ts:409', 'Council route', 'Env var', 'chat', [['OPENAI_API_KEY', false], ['GROQ_API_KEY', true], ['COUNCIL_API_KEY', true]], ['COUNCIL_MODEL', true]),
     INV('Agents', 'Master Council voice call', 'app/api/council/call/route.ts:26', 'gpt-realtime-2.1 + gpt-4o-transcribe (OpenAI)', 'Env var (default shown)', 'voice', [['OPENAI_API_KEY', false]], ['COUNCIL_REALTIME_MODEL', false]),
@@ -470,6 +470,23 @@ function summarize(turns: TurnView[]): ConversationSummary[] {
     }).sort((a, b) => b.lastAt.localeCompare(a.lastAt));
 }
 
+// ── Review → Tickets (owner 2026-11-15): how tickets were sorted. Made-up tickets, no person named. ──────────────────
+const TICKET_CHOICES: TicketReviewView['choices'] = {
+    'prop-a': [
+        { code: 'ac_breakdown', name: 'AC Breakdown', team: 'technical' }, { code: 'carpentry_civil', name: 'Carpentry & Door Repair', team: 'technical' },
+        { code: 'cleaning_required', name: 'Cleaning Required', team: 'soft_services' }, { code: 'deep_cleaning', name: 'Deep Cleaning', team: 'soft_services' },
+        { code: 'desk_alignment', name: 'Desk Alignment', team: 'soft_services' }, { code: 'fire_alarm', name: 'Fire Alarm', team: 'vendor' },
+        { code: 'lighting_issue', name: 'Lighting Issue', team: 'technical' }, { code: 'washroom_issue', name: 'Washroom / Plumbing', team: null },
+        { code: 'water_leakage', name: 'Water Leakage', team: 'plumbing' }, { code: 'wifi_down', name: 'Wi-Fi Down', team: 'technical' },
+    ],
+};
+const TICKET_QUEUE: TicketReviewView['queue'] = [
+    { id: 'tk-1', number: 'AP-SSP-1741', at: at(dayBefore(0), '10:12'), status: 'assigned', property: 'SS Plaza', text: '3rd floor A wing entrance glass door stuck in the carpet', sortedBy: 'ai', categoryCode: 'carpentry_civil', categoryName: 'Carpentry & Door Repair', team: 'technical', priority: 'medium', confidence: 78, confidenceWord: 'Medium', reason: 'Door dragging on the carpet needs a carpenter', risk: null, canMove: true, choicesKey: 'prop-a' },
+    { id: 'tk-2', number: 'AP-SSP-1738', at: at(dayBefore(0), '09:40'), status: 'open', property: 'SS Plaza', text: '2nd floor B wing MCP needs to be fixed', sortedBy: 'ai', categoryCode: 'fire_alarm', categoryName: 'Fire Alarm', team: 'vendor', priority: 'high', confidence: 52, confidenceWord: 'Low', reason: 'MCP is probably the fire alarm call point', risk: 'Fire risk', canMove: true, choicesKey: 'prop-a' },
+    { id: 'tk-3', number: 'AP-SSP-1729', at: at(dayBefore(1), '17:05'), status: 'closed', property: 'SS Plaza', text: 'workstation dusting 4th C enclosure area', sortedBy: 'rules', categoryCode: 'desk_alignment', categoryName: 'Desk Alignment', team: 'soft_services', priority: 'low', confidence: null, confidenceWord: null, reason: null, risk: null, canMove: false, choicesKey: 'prop-a' },
+    { id: 'tk-4', number: 'AP-SSP-1722', at: at(dayBefore(2), '12:31'), status: 'in_progress', property: 'SS Plaza', text: 'Lan port fixing required floor area', sortedBy: 'ai', categoryCode: 'wifi_down', categoryName: 'Wi-Fi Down', team: 'technical', priority: 'medium', confidence: 81, confidenceWord: 'Medium', reason: 'A LAN port is network work', risk: null, canMove: false, choicesKey: 'prop-a' },
+];
+
 export function createDemoApi(): BrainApi {
     const variant = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('brainDemoState');
     const empty = variant === 'empty';
@@ -515,6 +532,18 @@ export function createDemoApi(): BrainApi {
     const turns: TurnView[] = empty ? [] : [...LIVE, ...SHADOW].map(t => structuredClone(t));
     let cases = empty ? [] : structuredClone(CASES);
     const judged = { right: empty ? 0 : 41, wrong: empty ? 0 : 9 };
+    let ticketQueue: TicketReviewView['queue'] = empty ? [] : structuredClone(TICKET_QUEUE);
+    const ticketJudged = { right: empty ? 0 : 12, wrong: empty ? 0 : 3 };
+    let ticketRecent: TicketReviewView['recent'] = empty ? [] : [{ at: at(dayBefore(1), '11:02'), text: 'Drainage needs to clean 2nd C wing male washroom', verdict: 'wrong', chosen: 'cleaning_required', right: 'washroom_issue', moved: true }];
+    const ticketView = (): TicketReviewView => {
+        const sorted = empty ? 0 : 326;
+        // Judged wrong here, plus two changed with the Override button on the ticket.
+        const resorted = empty ? 0 : ticketJudged.wrong + 2;
+        return {
+            tableMissing: variant === 'noreview', queue: ticketQueue, waiting: ticketQueue.length, choices: TICKET_CHOICES, recent: ticketRecent,
+            accuracy: { days: 30, sorted, byAi: empty ? 0 : 214, byRules: empty ? 0 : 112, resorted, percent: sorted ? Math.round((100 * (sorted - resorted)) / sorted) : null, judgedRight: ticketJudged.right, judgedWrong: ticketJudged.wrong },
+        };
+    };
 
     const skillViews = (): SkillView[] => SKILL_SEEDS.map(({ calls, failed, last, ...k }) => ({
         ...k,
@@ -703,6 +732,24 @@ export function createDemoApi(): BrainApi {
                 cases = [{ id: `case-${cases.length + 10}`, text: t.userText ?? '(no words)', role: t.role ?? 'staff', channel: t.channel, verdict: body.verdict, gotOutcome: t.outcome, gotSkill: t.skillId, expectedOutcome: body.expectedOutcome, expectedSkill: body.expectedSkill, note: body.note, active: true, at: new Date().toISOString() }, ...cases];
             }
             return { ok: true, status: status(), data: structuredClone(review()) };
+        },
+        ticketReview: () => reply(ticketView),
+        postTicketReview: async body => {
+            await new Promise(r => setTimeout(r, 350));
+            if (variant === 'noreview') return { ok: false, kind: 'missing', message: 'Ticket review needs migration 20261115000003 to be applied.' };
+            const t = ticketQueue.find(x => x.id === body.ticketId);
+            if (!t) return { ok: false, kind: 'invalid', message: 'Someone has judged this ticket already.' };
+            if (body.verdict === 'wrong') {
+                if (!body.code) return { ok: false, kind: 'invalid', message: 'Choose the right category.' };
+                if (body.code === t.categoryCode) return { ok: false, kind: 'invalid', message: 'That is the category it already has. Mark it right instead.' };
+            }
+            ticketQueue = ticketQueue.filter(x => x.id !== t.id);
+            ticketJudged[body.verdict]++;
+            ticketRecent = [{ at: new Date().toISOString(), text: t.text, verdict: body.verdict, chosen: t.categoryCode, right: body.verdict === 'wrong' ? body.code : null, moved: body.verdict === 'wrong' && t.canMove }, ...ticketRecent];
+            const message = body.verdict === 'right' ? 'Marked right.'
+                : t.canMove ? 'Marked wrong. The ticket moved to the right team and the AI learns from it.'
+                    : 'Marked wrong. The AI learns from it. The ticket was not moved because it is no longer open.';
+            return { ok: true, status: status(), data: structuredClone(ticketView()), message };
         },
     };
 }

@@ -42,9 +42,9 @@ async function run() {
     check('unknown, wrong-kind and keyless picks are skipped, today\'s models remain', JSON.stringify(skip) === JSON.stringify(C.jobInfo('wa_reply')!.defaults), skip);
 
     console.log('\n3. Keys: by name only');
-    const env = { CLAUDE_API_KEY: 'x', WHATSAPP_BOT_GROQ_API_KEY_3: 'y', GROQ_TASK_CHAT_API_KEY: '', GEMINI_API_KEY: 'z', COUNCIL_PROVIDER: 'custom', COUNCIL_API_KEY: 'k', COUNCIL_BASE_URL: 'https://example.invalid/v1' };
+    const env = { CLAUDE_API_KEY: 'x', GROQ_API_KEY_3: 'y', GEMINI_API_KEY: 'z', COUNCIL_PROVIDER: 'custom', COUNCIL_API_KEY: 'k', COUNCIL_BASE_URL: 'https://example.invalid/v1' };
     check('Claude / bot Groq (any of the 5) / Gemini / Engy ready', S.keyReady('anthropic', 'wa_reply', env) && S.keyReady('groq', 'wa_reply', env) && S.keyReady('gemini', 'wa_reply', env) && S.keyReady('engy', 'wa_reply', env));
-    check('superuser chat uses its OWN Groq key (empty → not ready)', !S.keyReady('groq', 'superuser_chat', env));
+    check('superuser chat reads the shared Groq keys too (owner 2026-11-15)', S.keyReady('groq', 'superuser_chat', env) && !S.keyReady('groq', 'superuser_chat', { GROQ_TASK_CHAT_API_KEY: 'x' }));
     check('Engy plain ids only count when the council provider is Engy', !S.keyReady('engy', 'wa_reply', { OPENAI_API_KEY: 'o', COUNCIL_API_KEY: 'k', COUNCIL_BASE_URL: 'https://example.invalid/v1' }));
     const ks = JSON.stringify(S.keyStatus(env));
     check('key status never carries a value', !ks.includes('"x"') && !ks.includes('"y"') && !ks.includes('"z"') && !ks.includes('"k"') && !ks.includes('example.invalid'));
@@ -95,10 +95,10 @@ async function run() {
     const { SuperuserAIInterpreter } = await import('../SuperuserAIInterpreter');
     const seen: string[] = [];
     const fakeFetch = (async (_u: any, init: any) => { const m = JSON.parse(init.body).model; seen.push(m); if (m === 'bad') return { ok: false } as any; return { ok: true, json: async () => ({ choices: [{ message: { content: '{"kind":"org_overview","subject":null,"title":null}' } }] }) } as any; }) as any;
-    const r = await SuperuserAIInterpreter.interpret('how is the company doing', { departments: [] }, { env: { GROQ_TASK_CHAT_API_KEY: 'k' }, fetch: fakeFetch, models: ['groq:bad', 'groq:good'] });
+    const r = await SuperuserAIInterpreter.interpret('how is the company doing', { departments: [] }, { env: { GROQ_API_KEY: 'k' }, fetch: fakeFetch, models: ['groq:bad', 'groq:good'] });
     check('superuser chat: an erroring model hands over to the backup', seen.join(',') === 'bad,good' && r?.kind === 'org_overview', { seen, r });
     seen.length = 0;
-    await SuperuserAIInterpreter.interpret('how is the company doing', { departments: [] }, { env: { GROQ_TASK_CHAT_API_KEY: 'k', GROQ_TASK_CHAT_MODEL: 'llama-x' }, fetch: fakeFetch });
+    await SuperuserAIInterpreter.interpret('how is the company doing', { departments: [] }, { env: { GROQ_API_KEY: 'k', GROQ_TASK_CHAT_MODEL: 'llama-x' }, fetch: fakeFetch });
     check('superuser chat: no setting → today\'s single model', seen.join(',') === 'llama-x', seen);
     check('superuser chat: no key and only Groq models → unclear (null), as before', await SuperuserAIInterpreter.interpret('how is the company doing', { departments: [] }, { env: {}, fetch: fakeFetch }) === null);
 
@@ -127,8 +127,13 @@ async function run() {
     console.log('\n7. The rest of the application: each job only gets models its own code can call');
     const NEW_JOBS = ['assistant_interpret', 'hr_plan', 'hr_answer', 'wiki_answer', 'document_ocr', 'invoice_text', 'ocr_vision', 'bill_ocr', 'meter_ocr', 'electricity_explain', 'sop_photo', 'sop_layout', 'ticket_classify', 'admin_chatbot', 'coaching_feedback', 'mailbox_digest', 'satej_fast', 'satej_smart', 'council_default'] as const;
     check('all 19 are in the catalog', NEW_JOBS.every(j => !!C.jobInfo(j)), NEW_JOBS.filter(j => !C.jobInfo(j)));
-    check('a ticket job (Groq, text) cannot be given a Claude model, an OpenAI model or a picture-reading model',
-        ['anthropic:claude-haiku-5-5', 'openai:gpt-5.6-luna', 'groq:qwen/qwen3.8-27b', 'glm-5.3-flash'].every(m => C.modelStatus('ticket_classify', m, all).status === 'cannot') && C.modelStatus('ticket_classify', 'groq:openai/gpt-oss-20b', all).status === 'ready');
+    check('a Groq text job (admin chatbot) cannot be given a Claude model, an OpenAI model or a picture-reading model',
+        ['anthropic:claude-haiku-5-5', 'openai:gpt-5.6-luna', 'groq:qwen/qwen3.8-27b', 'glm-5.3-flash'].every(m => C.modelStatus('admin_chatbot', m, all).status === 'cannot') && C.modelStatus('admin_chatbot', 'groq:openai/gpt-oss-20b', all).status === 'ready');
+    // Owner 2026-11-15: ticket sorting runs on the shared transport, so it can use Claude, Engy, Groq and Gemini text models.
+    check('ticket sorting can use Claude, Engy, Groq and Gemini text models, but not OpenAI or a picture-only model',
+        ['anthropic:claude-haiku-5-5', 'glm-5.3-flash', 'kimi-k3.1-pro', 'groq:openai/gpt-oss-120b', 'gemini-3.1-flash-lite'].every(m => C.modelStatus('ticket_classify', m, all).status === 'ready')
+        && ['openai:gpt-5.6-luna', 'groq:qwen/qwen3.8-27b', 'whisper-large-v3'].every(m => C.modelStatus('ticket_classify', m, all).status === 'cannot'));
+    check('ticket sorting: Claude Haiku 5.5 first, GLM 5.3 Flash as backup, and backups can be saved', JSON.stringify(C.jobInfo('ticket_classify')!.defaults) === JSON.stringify(['anthropic:claude-haiku-5-5', 'glm-5.3-flash']) && !C.jobInfo('ticket_classify')!.single);
     check('a meter photo job (Groq, pictures) only gets Groq picture models', C.modelStatus('meter_ocr', 'groq:qwen/qwen3.6-27b', all).status === 'ready' && ['groq:llama-3.3-70b-versatile', 'qwen3.8-27b', 'anthropic:claude-sonnet-5-5'].every(m => C.modelStatus('meter_ocr', m, all).status === 'cannot'));
     check('an OpenAI job only gets OpenAI models', C.modelStatus('electricity_explain', 'openai:gpt-5.6-sol', all).status === 'ready' && ['glm-5.3', 'groq:llama-3.3-70b-versatile', 'anthropic:claude-opus-5-5'].every(m => C.modelStatus('electricity_explain', m, all).status === 'cannot'));
     check('scanned documents (Engy, pictures) get only Engy models that read pictures', C.modelStatus('ocr_vision', 'glm-5.3-flash', all).status === 'ready' && ['deepseek-v4-flash-0731', 'groq:qwen/qwen3.8-27b'].every(m => C.modelStatus('ocr_vision', m, all).status === 'cannot'));
@@ -138,8 +143,13 @@ async function run() {
     check('a raw provider id has no prefix', C.rawModelId('groq:qwen/qwen3.8-27b') === 'qwen/qwen3.8-27b' && C.rawModelId('openai:gpt-5.6-luna') === 'gpt-5.6-luna' && C.rawModelId('glm-5.3') === 'glm-5.3');
 
     console.log('\n8. Keys and defaults of those jobs');
-    check('they read the application\'s own Groq key, not the WhatsApp bot\'s', !S.keyReady('groq', 'ticket_classify', { WHATSAPP_BOT_GROQ_API_KEY: 'x' }) && S.keyReady('groq', 'ticket_classify', { GROQ_API_KEY: 'x' }) && S.keyReady('groq', 'sop_layout', { GROQ_LAYOUT_API_KEY: 'x' }) && S.keyReady('groq', 'assistant_interpret', { GROQ_TASK_CHAT_API_KEY: 'x' }));
-    check('the WhatsApp bot still reads its own Groq keys', S.keyReady('groq', 'wa_reply', { WHATSAPP_BOT_GROQ_API_KEY: 'x' }) && !S.keyReady('groq', 'wa_reply', { GROQ_API_KEY: 'x' }));
+    // Owner 2026-11-15: one shared set of keys per provider, nothing dedicated to any job.
+    check('every Groq job reads the shared Groq keys, any one of the three', ['ticket_classify', 'sop_layout', 'assistant_interpret', 'wa_reply', 'superuser_chat', 'voice_transcribe'].every(j => S.keyReady('groq', j as never, { GROQ_API_KEY_2: 'x' }) && !S.keyReady('groq', j as never, {})));
+    check('the old per-job key names count for nothing', ['WHATSAPP_BOT_GROQ_API_KEY', 'GROQ_TASK_CHAT_API_KEY', 'GROQ_LAYOUT_API_KEY', 'GROQ_VOICE_API_KEY'].every(n => !S.keyReady('groq', 'wa_reply', { [n]: 'x' }) && !S.keyReady('groq_speech', 'voice_transcribe', { [n]: 'x' })) && !S.keyReady('gemini', 'learning_loop', { GEMINI_AUTOTUNE_API_KEY: 'x' }));
+    check('Gemini: any of the three, or the older GOOGLE_AI_API_KEY', ['GEMINI_API_KEY', 'GEMINI_API_KEY_2', 'GEMINI_API_KEY_3', 'GOOGLE_AI_API_KEY'].every(n => S.keyReady('gemini', 'learning_loop', { [n]: 'x' })));
+    check('the key list on the screen: one Groq row with three keys, one Gemini row with four names, no per-job rows', (() => { const k = S.keyStatus({}); const g = k.filter(r => r.provider === 'groq'); return g.length === 1 && g[0].keys.map(x => x.name).join() === 'GROQ_API_KEY,GROQ_API_KEY_2,GROQ_API_KEY_3' && k.find(r => r.provider === 'gemini')!.keys.length === 4 && !k.some(r => r.provider === 'groq_speech'); })());
+    check('no job names keys of its own any more', C.AI_JOBS.every(j => !('keys' in j)));
+    check('the new models are offered: Kimi K3.1 Pro (Engy) and four Gemini models', ['kimi-k3.1-pro', 'gemini-3.1-flash-lite', 'gemini-3-flash-preview', 'gemini-4-hydrogen', 'gemini-2.5-flash-lite'].every(id => !!C.modelInfo(id)));
     check('OpenAI jobs need the OpenAI key', S.keyReady('openai', 'mailbox_digest', { OPENAI_API_KEY: 'o' }) && !S.keyReady('openai', 'mailbox_digest', {}));
     check('nothing saved and no env var → the model each job has today', NEW_JOBS.filter(j => j !== 'satej_smart' && j !== 'council_default').every(j => JSON.stringify(S.defaultsFor(j, {})) === JSON.stringify(C.jobInfo(j)!.defaults)));
     check('an env var that already changed a model still does, written as a catalog id',
@@ -213,16 +223,16 @@ async function run() {
     console.log('\n10. Saving a one-model job, and what every screen row says');
     table = { data: [], error: null };
     let oneModel = '';
-    try { await S.saveChain('ticket_classify', ['groq:openai/gpt-oss-20b', 'groq:llama-3.3-70b-versatile'], 'tech@test'); } catch (e) { oneModel = (e as Error).message; }
+    try { await S.saveChain('admin_chatbot', ['groq:openai/gpt-oss-20b', 'groq:llama-3.3-70b-versatile'], 'tech@test'); } catch (e) { oneModel = (e as Error).message; }
     check('a one-model job refuses a list of two', /uses one model/.test(oneModel), oneModel);
     let wrongKind = '';
     try { await S.saveChain('meter_ocr', ['groq:llama-3.3-70b-versatile'], 'tech@test'); } catch (e) { wrongKind = (e as Error).message; }
     check('a model that cannot do the job is refused when saving', /cannot read images/.test(wrongKind), wrongKind);
     const before = saved.length;
-    await S.saveChain('ticket_classify', ['groq:openai/gpt-oss-20b'], 'tech@test');
-    check('one model saves', saved.length === before + 1 && saved.at(-1).job === 'ticket_classify' && JSON.stringify(saved.at(-1).models) === JSON.stringify(['groq:openai/gpt-oss-20b']));
+    await S.saveChain('admin_chatbot', ['groq:openai/gpt-oss-20b'], 'tech@test');
+    check('one model saves', saved.length === before + 1 && saved.at(-1).job === 'admin_chatbot' && JSON.stringify(saved.at(-1).models) === JSON.stringify(['groq:openai/gpt-oss-20b']));
     const overview = await S.aiModelsOverview({ GROQ_API_KEY: 'k' });
-    check('the screen is told which jobs take one model', overview.jobs.find(j => j.key === 'ticket_classify')!.single === true && overview.jobs.find(j => j.key === 'hr_answer')!.single === false && overview.jobs.find(j => j.key === 'wa_reply')!.single === false);
+    check('the screen is told which jobs take one model', overview.jobs.find(j => j.key === 'admin_chatbot')!.single === true && overview.jobs.find(j => j.key === 'ticket_classify')!.single === false && overview.jobs.find(j => j.key === 'hr_answer')!.single === false && overview.jobs.find(j => j.key === 'wa_reply')!.single === false);
     const I = await import('../ai/aiInventory');
     check('every row of the inventory can either be changed (a job) or says why not', I.AI_INVENTORY.every(r => !!r.job || !!r.why), I.AI_INVENTORY.filter(r => !r.job && !r.why).map(r => r.feature));
     check('every job named in the inventory exists', I.AI_INVENTORY.every(r => !r.job || !!C.jobInfo(r.job)));
@@ -230,11 +240,11 @@ async function run() {
 
     console.log('\n11. Each call site reads its choice and keeps today\'s model as the fallback');
     const SITES: Array<[string, RegExp]> = [
-        ['backend/lib/llm/groq.ts', /modelFor\('ticket_classify', GROQ_MODEL\)/],
+        ['backend/lib/ticketing/aiClassifier.ts', /chainFor\('ticket_classify'\)/],
         ['backend/lib/coaching/groqCoach.ts', /modelFor\('coaching_feedback', GROQ_MODEL\)[\s\S]*markFailed\('coaching_feedback'\);\s+return scoreWith\(GROQ_MODEL, input\)/],
         ['app/api/master-admin-chatbot/route.ts', /runWithModel\('admin_chatbot', MODEL,/],
-        ['backend/lib/documentBank/ocr.ts', /modelFor\('document_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, apiKey, content\)/],
-        ['backend/lib/electricity/billOcr.ts', /modelFor\('bill_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, apiKey, content\)/],
+        ['backend/lib/documentBank/ocr.ts', /modelFor\('document_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, content\)/],
+        ['backend/lib/electricity/billOcr.ts', /modelFor\('bill_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, content\)/],
         ['app/api/ocr/meter/route.ts', /runWithModel\('meter_ocr', MODEL, readMeter\)/],
         ['backend/lib/wiki/ask.ts', /runWithModel\('wiki_answer', WIKI_MODEL,/],
         ['backend/lib/invoices/extract.ts', /runWithModel\('invoice_text', INVOICE_TEXT_MODEL,/],
@@ -255,7 +265,7 @@ async function run() {
     for (const [file, re] of SITES) check(file, re.test(read(file)));
     const stillConstant = SITES.map(([file]) => file).filter(file => /\bmodel: (GROQ_MODEL|LLM_MODEL|WIKI_MODEL|INVOICE_TEXT_MODEL|MODEL),/.test(read(file)) || /model: 'qwen(?:\/qwen)?3\.[68]-27b',/.test(read(file)));
     check('no call site still sends its constant in the request (each sends the model it was handed)', stillConstant.length === 0, stillConstant);
-    check('tickets and the purchase digest retry once on today\'s model before giving up to the rules', /markFailed\('ticket_classify'\);\s+return classifyWith\(GROQ_MODEL, input\)/.test(read('backend/lib/llm/groq.ts')) && /markFailed\('mailbox_digest'\);\s+return classifyOn\(LLM_MODEL, f\)/.test(read('backend/services/mailboxDigest.ts')));
+    check('the purchase digest retries once on today\'s model before giving up to the rules', /markFailed\('mailbox_digest'\);\s+return classifyOn\(LLM_MODEL, f\)/.test(read('backend/services/mailboxDigest.ts')));
     check('the stored labels name the model that really answered', /modelUsed = `\$\{engyModel\} \(engy\.ai\)`/.test(read('app/api/properties/[propertyId]/sop/completions/[completionId]/score-photo/route.ts')) && /model: called\.model \?\? MODEL/.test(read('backend/lib/documentBank/ocr.ts')) && /model: result\.model,/.test(read('app/api/electricity/tracker/explain/route.ts')));
     check('a council call that names its own model is left alone', /if \(named\) return councilChatWith\(named, messages, purpose, opts\);/.test(read('backend/lib/council/llm.ts')));
     check('the HR safety check still uses its own fixed list', /chatWithFallback\("safety check", GUARD_MODELS,/.test(read('backend/lib/hr-assistant/guardrails.ts')) && !/hrChain|modelFor/.test(read('backend/lib/hr-assistant/guardrails.ts')));

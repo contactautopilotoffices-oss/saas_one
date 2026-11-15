@@ -28,6 +28,7 @@
  */
 
 import { ocrStep } from '@/backend/lib/ocr/activity';
+import { groqKeys as groqKeysOf } from '@/backend/lib/llm/providerKeys';
 
 
 /* ---------------------------------------------------------------------------
@@ -88,7 +89,8 @@ export function resolveProvider(env: NodeJS.ProcessEnv = process.env): {
     for (const p of order) {
         const spec = { ...PROVIDERS[p] };
         if (p === 'custom') spec.baseUrl = env.COUNCIL_BASE_URL || '';
-        const key = env[spec.keyVar];
+        // Owner 2026-11-15: Groq is the shared Groq keys (GROQ_API_KEY → _2 → _3), the first that is not resting.
+        const key = p === 'groq' ? groqKeysOf(env)[0] : env[spec.keyVar];
         if (typeof key === 'string' && key.trim() && (p !== 'custom' || spec.baseUrl)) {
             return { provider: p, spec, apiKey: key.trim() };
         }

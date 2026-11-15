@@ -79,14 +79,14 @@ const metered = (inner: BrainModel): BrainModel => ({
 });
 
 /**
- * Where the grading model is called. A Groq grader uses the WhatsApp bot's Groq key when this machine has one, else the
- * project's general Groq key (GROQ_API_KEY): the grader only ever sees fake test data. Anything else goes the way the
+ * Where the grading model is called. A Groq grader uses the shared Groq keys (GROQ_API_KEY → _2 → _3): the grader only
+ * ever sees fake test data. Anything else goes the way the
  * brain's backup models go.
  */
 async function graderEndpoint(id: string): Promise<Endpoint> {
     if (id.startsWith('groq:')) {
-        const { botGroqKeys } = await import('../../task-manager/brain/llm');
-        const apiKey = botGroqKeys()[0] || String(process.env.GROQ_API_KEY ?? '').trim();
+        const { groqKeys } = await import('../../backend/lib/llm/providerKeys');
+        const apiKey = groqKeys()[0] ?? '';
         if (!apiKey) throw new Error('no Groq key is set for the grading model');
         const model = id.slice('groq:'.length);
         return { url: 'https://api.groq.com/openai/v1/chat/completions', apiKey, model, ...(/gpt-oss/.test(model) ? { extra: { reasoning_effort: 'low' } } : {}) };

@@ -23,7 +23,7 @@ export async function POST(
         // Get ticket
         const { data: ticket } = await supabase
             .from('tickets')
-            .select('id, title, description, property_id, category_id, confidence_score')
+            .select('id, title, description, property_id, organization_id, category_id, confidence_score')
             .eq('id', ticketId)
             .single();
 
@@ -31,21 +31,21 @@ export async function POST(
             return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
         }
 
-        // Re-classify using full hybrid classification engine (Groq LLM + Rules)
+        // Owner 2026-11-15: re-sorted by the AI from this property's categories (the keyword rules only if every model fails)
         const { resolveClassification } = await import('@/backend/lib/ticketing/resolver');
-        const classification = await resolveClassification(ticket.title ? `${ticket.title} ${ticket.description}` : ticket.description);
+        const classification = await resolveClassification(ticket.title ? `${ticket.title} ${ticket.description}` : ticket.description, { propertyId: ticket.property_id, organizationId: ticket.organization_id });
 
         let categoryId = null;
         let skillGroupId = null;
 
         if (classification.issue_code) {
-            // Look up category globally or for property
-            const { data: category } = await supabase
+            // The category's row: this property's own first, then the shared one
+            const { data: categories } = await supabase
                 .from('issue_categories')
-                .select('id, skill_group_id')
+                .select('id, skill_group_id, property_id')
                 .eq('code', classification.issue_code)
-                .limit(1)
-                .maybeSingle();
+                .limit(50);
+            const category = (categories ?? []).find(c => c.property_id === ticket.property_id) ?? (categories ?? []).find(c => !c.property_id) ?? (categories ?? [])[0];
 
             if (category) {
                 categoryId = category.id;
@@ -73,7 +73,9 @@ export async function POST(
                 category_id: categoryId,
                 skill_group_id: skillGroupId,
                 confidence: classification.confidence,
-                classification_source: 'rules_reeval',
+                // 'llm' when the AI sorted it, 'rule' when every model failed and the keyword rules did
+                classification_source: classification.decisionSource,
+                ...(classification.confidenceScore !== undefined ? { confidence_score: classification.confidenceScore, llm_reasoning: classification.llm_reasoning ?? null } : {}),
                 is_vague: isVague,
                 status: 'open',
                 updated_at: new Date().toISOString(),

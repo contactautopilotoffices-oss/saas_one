@@ -11,6 +11,12 @@ import type { Outcome } from '@/backend/lib/aiLayer/brain/types';
 // Types only: nothing from these server files reaches the browser bundle.
 import type { Capability, ModelInfo, ModelStatus } from '@/task-manager/ai/aiCatalog';
 import type { InventoryRow } from '@/task-manager/ai/aiInventory';
+import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
+
+/** Review → Tickets (owner 2026-11-15): judge how a ticket was sorted. code = the right category, when wrong. */
+export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; code: string | null };
+/** The judging reply also says what happened to the ticket (moved, not moved because closed, …). */
+export type TicketReviewResult = Result<TicketReviewView> & { message?: string };
 
 export type Days = 1 | 7 | 30;
 export type Track = 'live' | 'shadow';
@@ -66,6 +72,8 @@ export interface BrainApi {
     saveSettings(body: { settings: BrainSettings; updatedAt: string | null }): Promise<Result<SettingsView>>;
     review(): Promise<Result<ReviewView>>;
     postReview(body: ReviewBody): Promise<Result<ReviewView>>;
+    ticketReview(): Promise<Result<TicketReviewView>>;
+    postTicketReview(body: TicketJudgeBody): Promise<TicketReviewResult>;
     guidance(): Promise<Result<GuidanceView>>;
     postGuidance(body: GuidanceBody): Promise<GuidanceResult>;
     aiModels(): Promise<Plain<AiModelsData>>;
@@ -139,6 +147,8 @@ export function createHttpApi(orgId: string): BrainApi {
         saveSettings: body => call(`${base}/settings?${q({})}`, json('PUT', body)),
         review: () => call(`${base}/review?${q({})}`),
         postReview: body => call(`${base}/review?${q({})}`, json('POST', body)),
+        ticketReview: () => call(`${base}/tickets?${q({})}`),
+        postTicketReview: body => call<TicketReviewView>(`${base}/tickets?${q({})}`, json('POST', body)) as Promise<TicketReviewResult>,
         guidance: () => call(`${base}/guidance?${q({})}`),
         postGuidance: body => call<GuidanceView>(`${base}/guidance?${q({})}`, json('POST', body)) as Promise<GuidanceResult>,
         aiModels: () => plainCall(`/api/task-manager/ai-models?${q({})}`),

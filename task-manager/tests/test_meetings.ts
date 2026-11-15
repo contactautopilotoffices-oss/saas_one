@@ -31,7 +31,7 @@ function fakeFetch(script: Step[]) {
     }) as typeof fetch;
     return { f, calls };
 }
-const ENV = { SARVAM_API_KEY: 'sarvam-test', GROQ_VOICE_API_KEY: 'groq-test' };
+const ENV = { SARVAM_API_KEY: 'sarvam-test', GROQ_API_KEY: 'groq-test' };
 const file = (name: string, mime = 'audio/webm', size = 1000): AudioFile => ({ name, mimeType: mime, bytes: Buffer.alloc(size, 1) });
 
 async function main() {

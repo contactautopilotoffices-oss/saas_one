@@ -4,7 +4,8 @@
  * Calls the Gemini REST API directly: the app's @google/generative-ai SDK (0.24) can't
  * set outputDimensionality, and we don't want a second Google SDK just for this.
  */
-import { getGeminiApiKey } from "./clients";
+import { fetchWithKeys } from "@/backend/lib/llm/providerKeys";
+import { requireGeminiKey } from "./clients";
 import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "./config";
 
 const BATCH_SIZE = 100; // Gemini's max inputs per batchEmbedContents call
@@ -20,9 +21,11 @@ async function embed(texts: string[], taskType: TaskType): Promise<number[][]> {
   const vectors: number[][] = [];
   for (let i = 0; i < texts.length; i += BATCH_SIZE) {
     const batch = texts.slice(i, i + BATCH_SIZE);
-    const res = await fetch(ENDPOINT, {
+    requireGeminiKey();
+    // Owner 2026-11-15: the shared Gemini keys, in turn (the same embedding model on every key, so the index still matches).
+    const res = await fetchWithKeys("gemini", ENDPOINT, key => ({
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": getGeminiApiKey() },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         requests: batch.map((text) => ({
           model: `models/${EMBEDDING_MODEL}`,
@@ -31,7 +34,7 @@ async function embed(texts: string[], taskType: TaskType): Promise<number[][]> {
           outputDimensionality: EMBEDDING_DIMENSIONS,
         })),
       }),
-    });
+    }));
     if (!res.ok) {
       throw new Error(`Gemini embeddings failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
     }

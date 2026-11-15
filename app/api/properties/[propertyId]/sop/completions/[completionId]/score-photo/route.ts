@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasProviderKey, withProviderKeys } from '@/backend/lib/llm/providerKeys';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import Groq from 'groq-sdk';
@@ -577,12 +578,11 @@ Respond ONLY with raw JSON:
 
         // Groq Fallback
         if (!rawText) {
-            const groqApiKey = process.env.GROQ_API_KEY || process.env.GROQ_LAYOUT_API_KEY;
-            if (groqApiKey) {
+            // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts); no key of its own any more.
+            if (hasProviderKey('groq')) {
                 try {
-                    const groq = new Groq({ apiKey: groqApiKey });
                     const visionModel = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
-                    const completion_ = await groq.chat.completions.create({
+                    const completion_ = await withProviderKeys('groq', key => new Groq({ apiKey: key }).chat.completions.create({
                         model: visionModel,
                         messages: [
                             {
@@ -597,7 +597,7 @@ Respond ONLY with raw JSON:
                         max_tokens: 2048,
                         temperature: 0.1,
                         response_format: { type: 'json_object' },
-                    });
+                    }));
                     rawText = completion_.choices[0]?.message?.content ?? '';
                     modelUsed = `${visionModel} (groq)`;
                 } catch (groqErr: any) {

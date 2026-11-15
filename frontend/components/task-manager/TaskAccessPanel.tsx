@@ -347,7 +347,7 @@ People in ${n} can no longer send anything to other departments, and other depar
         const phase5 = feature === 'learningLoop' ? 'Capture likely mistakes for admin review? Requires Phase 5 SQL.' : feature === 'promptVersions' ? 'Use approved database prompt versions? Invalid or unavailable versions fall back to built-in instructions.' : feature === 'nightlyAutoTune' ? 'Draft and safety-test at most one candidate per night after 02:00 IST? Nothing activates automatically.' : null;
         const text = phase5 ? `Switch "${feature}" ${next ? 'ON' : 'OFF'}?\n\n${phase5}` : feature === 'voiceNotes'
             ? (next
-                ? 'Switch "Voice notes" ON?\n\nEveryone who uses the Task Manager can send a WhatsApp voice note instead of typing. It is turned into text, they see "🎙️ I heard: …", and changes still need their YES. While the sandbox is ON, only sandbox numbers can use it.\n\nNo SQL file needed. Needs GROQ_VOICE_API_KEY on the server.'
+                ? 'Switch "Voice notes" ON?\n\nEveryone who uses the Task Manager can send a WhatsApp voice note instead of typing. It is turned into text, they see "🎙️ I heard: …", and changes still need their YES. While the sandbox is ON, only sandbox numbers can use it.\n\nNo SQL file needed. Needs GROQ_API_KEY on the server.'
                 : 'Switch "Voice notes" OFF? Voice notes are ignored again; typing works as before.')
             : feature === 'teamReports'
             ? (next
