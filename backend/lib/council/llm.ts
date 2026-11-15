@@ -296,8 +296,25 @@ export async function councilChat(
     opts: { model?: string | null; /** Ask the model not to "think" first. Engy's models otherwise spend the whole output budget reasoning and return nothing on fiddly input. Ignored by other providers. */ thinkingOff?: boolean } = {},
 ): Promise<string> {
     if (isMockLlm()) return mockResponse(purpose, messages);
-    const model = (opts.model ?? '').trim() || COUNCIL_MODEL;
+    const named = (opts.model ?? '').trim();
+    if (named) return councilChatWith(named, messages, purpose, opts);
+    // Owner 2026-11-15: the shared model can be chosen in the Tech console (Brain → AI models → "Shared model").
+    // Nothing chosen = COUNCIL_MODEL, exactly as before. A chosen model that fails costs one attempt: COUNCIL_MODEL is
+    // then tried once. That is a fallback to the previous model after a failure, not a re-roll of the same call for a
+    // nicer answer (see the note above). The settings are loaded on first use, which also avoids an import cycle.
+    let runWithModel: typeof import('@/task-manager/ai/modelFor').runWithModel;
+    try { ({ runWithModel } = await import('@/task-manager/ai/modelFor')); }
+    catch { return councilChatWith(COUNCIL_MODEL, messages, purpose, opts); }
+    return runWithModel('council_default', COUNCIL_MODEL, model => councilChatWith(model, messages, purpose, opts));
+}
 
+/** One call to the provider with a given model. Throws on any failure (see councilChat). */
+async function councilChatWith(
+    model: string,
+    messages: CouncilChatMessage[],
+    purpose: CouncilPurpose,
+    opts: { thinkingOff?: boolean },
+): Promise<string> {
     const { provider, spec, apiKey } = resolveProvider();
     if (!apiKey) {
         throw new Error(

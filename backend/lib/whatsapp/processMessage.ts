@@ -62,7 +62,8 @@ function decryptWhatsAppMedia(encryptedBuffer: Buffer, mediaKeyBase64: string, m
     return Buffer.concat([decipher.update(encData), decipher.final()]);
 }
 
-async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
+/** Exported 2026-11-14 for the Unified Brain (a photo sent earlier is attached to the ticket it describes). */
+export async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
     try {
         let encryptedBuffer = preloaded;
         if (!encryptedBuffer) {

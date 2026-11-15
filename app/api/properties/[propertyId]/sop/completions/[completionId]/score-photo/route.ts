@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import Groq from 'groq-sdk';
+import { modelFor } from '@/task-manager/ai/modelFor';
 import sharp from 'sharp';
 import crypto from 'crypto';
 import { extractActualImageTimestamp, getAllowedInspectionDates } from '@/lib/sop/imageTimestampHelper';
@@ -527,6 +528,9 @@ Respond ONLY with raw JSON:
 
         if (engyKey) {
             try {
+                // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+                // If it fails, the Groq model below still takes over, as before.
+                const engyModel = await modelFor('sop_photo', 'qwen3.8-27b');
                 const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
                     method: 'POST',
                     headers: {
@@ -534,7 +538,7 @@ Respond ONLY with raw JSON:
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        model: 'qwen3.8-27b',
+                        model: engyModel,
                         messages: [
                             {
                                 role: 'system',
@@ -561,7 +565,7 @@ Respond ONLY with raw JSON:
                         if (jsonMatch) rawText = jsonMatch[0];
                     }
                     if (rawText) {
-                        modelUsed = 'qwen3.8-27b (engy.ai)';
+                        modelUsed = `${engyModel} (engy.ai)`;
                     }
                 } else {
                     console.warn('[AI Score] engy.ai returned status:', engyRes.status, await engyRes.text().catch(() => ''));

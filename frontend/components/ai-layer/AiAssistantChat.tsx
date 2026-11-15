@@ -24,6 +24,14 @@ export default function AiAssistantChat({ organizationId }: { organizationId: st
         setMessages(m => [...m, { from: 'me', text: message }]);
         setBusy(true);
         try {
+            // Unified Brain first (2026-11-14). It answers only for the people it is switched on for; for everyone else, and
+            // whenever it cannot answer, it says { handled: false } and the assistant below answers exactly as before.
+            const viaBrain = await fetch('/api/brain/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationId, message }) })
+                .then(res => (res.ok ? res.json() : null)).catch(() => null);
+            if (viaBrain?.handled === true && viaBrain.reply?.text) {
+                setMessages(m => [...m, { from: 'ai', text: viaBrain.reply.text, options: viaBrain.reply.options }]);
+                return;
+            }
             const r = await fetch('/api/ai-layer/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ organizationId, message, state: state.current }) });
             const d = await r.json();
             state.current = d.state ?? null;

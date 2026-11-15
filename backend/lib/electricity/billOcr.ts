@@ -20,6 +20,7 @@
  */
 
 import { ocrStep, withOcrActivity } from '@/backend/lib/ocr/activity';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -179,7 +180,7 @@ async function parseBillPdfImpl(pdfBytes: Buffer): Promise<BillOcrResult> {
 
     const groqStart = Date.now();
     const content = await callGroq(apiKey, text ? textContent(text) : await imageContent(pdfBytes));
-    ocrStep({ step: 'text_model', ms: Date.now() - groqStart, ok: content.ok, model: MODEL, provider: 'groq', note: content.ok ? undefined : content.error });
+    ocrStep({ step: 'text_model', ms: Date.now() - groqStart, ok: content.ok, model: content.model ?? MODEL, provider: 'groq', note: content.ok ? undefined : content.error });
     if (!content.ok) return { parsed: null, payload: content.payload, error: content.error };
 
     // The prompt asks for {fields, confidence}. Tolerate the older flat shape too, so a
@@ -259,10 +260,21 @@ async function imageContent(pdfBytes: Buffer) {
     return parts;
 }
 
-interface GroqCallOk { ok: true; fields: Record<string, unknown>; payload: Record<string, unknown> }
-interface GroqCallErr { ok: false; payload: Record<string, unknown>; error: string }
+/** `model` = the model that produced this result (set by callGroq). */
+interface GroqCallOk { ok: true; fields: Record<string, unknown>; payload: Record<string, unknown>; model?: string }
+interface GroqCallErr { ok: false; payload: Record<string, unknown>; error: string; model?: string }
 
-async function callGroq(apiKey: string, content: any[]): Promise<GroqCallOk | GroqCallErr> {
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+// A chosen model that fails costs one attempt: today's model is then tried once.
+async function callGroq(apiKey: string, content: Parameters<typeof callGroqWith>[2]): Promise<GroqCallOk | GroqCallErr> {
+    const chosen = await modelFor('bill_ocr', MODEL);
+    const first = await callGroqWith(chosen, apiKey, content);
+    if (first.ok || chosen === MODEL) return { ...first, model: chosen };
+    markFailed('bill_ocr');
+    return { ...(await callGroqWith(MODEL, apiKey, content)), model: MODEL };
+}
+
+async function callGroqWith(model: string, apiKey: string, content: any[]): Promise<GroqCallOk | GroqCallErr> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
@@ -270,7 +282,7 @@ async function callGroq(apiKey: string, content: any[]): Promise<GroqCallOk | Gr
             method: 'POST',
             headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: MODEL,
+                model,
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
                     { role: 'user', content },

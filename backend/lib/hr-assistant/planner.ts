@@ -15,6 +15,7 @@
  *      so a real question is never swallowed by small talk.
  */
 import { PLANNER_MODELS } from "./config";
+import { hrChain } from "./modelChoice";
 import { chatWithFallback } from "./llm";
 import { BOT_NAME, COMPANY_NAME } from "./identity";
 
@@ -183,7 +184,8 @@ export function formatHistory(history: readonly ChatTurn[]): string {
 export async function planWithModel(message: string, history: readonly ChatTurn[] = []): Promise<Plan> {
   const context = formatHistory(history);
   try {
-    const raw = await chatWithFallback("planner", PLANNER_MODELS, {
+    // Owner 2026-11-15: models chosen in the Tech console are tried first; today's list always follows.
+    const raw = await chatWithFallback("planner", await hrChain("hr_plan", PLANNER_MODELS), {
       system: PLANNER_PROMPT,
       user: context ? `RECENT CONVERSATION\n${context}\n\nUSER_MESSAGE\n${message}` : `USER_MESSAGE\n${message}`,
       json: true,

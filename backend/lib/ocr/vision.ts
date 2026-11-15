@@ -20,6 +20,7 @@
 import { resolveProvider, priceOf } from '@/backend/lib/council/llm';
 import { ocrStep } from '@/backend/lib/ocr/activity';
 import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
 export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'qwen3.8-27b'] as const;
@@ -159,7 +160,20 @@ async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtrac
 /** The public entry point: the read itself, plus one step in the OCR activity log (tokens and cost included). */
 export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
     const t0 = Date.now();
-    const r = await visionExtractRaw(input);
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+    // A caller that names its own model (task import, the proctor) is left alone. A chosen model that fails costs one
+    // attempt: today's model is then tried once.
+    let r: VisionExtractResult;
+    if (input.model) {
+        r = await visionExtractRaw(input);
+    } else {
+        const chosen = await modelFor('ocr_vision', DEFAULT_VISION_MODEL);
+        r = await visionExtractRaw({ ...input, model: chosen });
+        if (!r.ok && chosen !== DEFAULT_VISION_MODEL) {
+            markFailed('ocr_vision'); // rested, so the remaining page batches of this document go straight to today's model
+            r = await visionExtractRaw({ ...input, model: DEFAULT_VISION_MODEL });
+        }
+    }
     const rate = priceOf(r.model);
     ocrStep({
         step: 'vision_model', ms: Date.now() - t0, ok: r.ok, model: r.model, provider: r.provider,

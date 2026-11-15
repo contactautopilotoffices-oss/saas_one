@@ -27,8 +27,8 @@ const fmt = (iso?: string | null, withDay = true) => {
   const d = new Date(iso);
   return withDay ? d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 };
-const who = (x: any) => x?.context_snapshot?.sender?.name || 'Unknown person';
-const role = (x: any) => [x?.context_snapshot?.sender?.department, x?.context_snapshot?.sender?.role].filter(Boolean).join(' · ');
+// Owner privacy rule 2026-11-15: no sender name is shown (the API no longer sends one); only the role, when there is one.
+const role =(x: any) => [x?.context_snapshot?.sender?.department, x?.context_snapshot?.sender?.role].filter(Boolean).join(' · ');
 const titleOf = (x: any) => { const w = String(x?.ai_summary?.wanted || x?.message_text || '').replace(/^To\s+/i, '').replace(/\.$/, ''); return w.charAt(0).toUpperCase() + w.slice(1); };
 
 export default function BotReviewSection({ reviews: allReviews, developerItems, upgraded, busy, post, hasMore, loadOlder }: {
@@ -164,7 +164,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                   <button type="button" onClick={() => select(x.id)} aria-current={x.id === current?.id}
                     className="w-full text-left grid gap-1 px-3.5 py-3 pr-9 cursor-pointer">
                     <span className="text-sm font-semibold text-slate-900 truncate">{x.message_text}</span>
-                    <span className="text-[11px] text-slate-500">{who(x)} · {fmt(x.created_at)}</span>
+                    <span className="text-[11px] text-slate-500">{[role(x), fmt(x.created_at)].filter(Boolean).join(' · ')}</span>
                     <span className="flex">
                       {l?.done === 'ok' ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 rounded bg-emerald-100 text-emerald-800">Saved as test</span>
                         : l?.done === 'dev' ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 rounded bg-teal-100 text-teal-800">Sent to developer</span>
@@ -189,7 +189,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
             return (
               <div className="border border-slate-200 rounded-xl min-w-0" aria-live="polite">
                 <div className="flex flex-wrap gap-2 justify-between items-center px-4 py-3 border-b border-slate-200">
-                  <div><div className="font-black text-slate-900">{who(current)}</div><div className="text-xs text-slate-500">{[role(current), fmt(current.created_at)].filter(Boolean).join(' · ')}</div></div>
+                  <div>{role(current) && <div className="font-black text-slate-900">{role(current)}</div>}<div className="text-xs text-slate-500">{fmt(current.created_at)}</div></div>
                   <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700">Caught because: {triggerText(current.triggers)}</span>
                 </div>
 
@@ -302,7 +302,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                   <div className="bg-slate-50 rounded-lg p-2.5"><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">What to build or change</div>{s.fix || '—'}</div>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 items-center text-xs text-slate-500">
-                  <span>From {who(d)} · approved {fmt(d.reviewed_at || d.updated_at)}{d.reviewed_by ? ` by ${d.reviewed_by}` : ''}</span>
+                  <span>Approved {fmt(d.reviewed_at || d.updated_at)}{d.reviewed_by ? ` by ${d.reviewed_by}` : ''}</span>
                   <label className="flex items-center gap-1.5">Status
                     <select value={state} disabled={busy} onChange={e => void setDevState(d, e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 bg-white">
                       {DEV_STATES.map(([k, v]) => <option key={k} value={k}>{v}</option>)}

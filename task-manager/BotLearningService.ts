@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase JSON columns and admin payloads are validated at this boundary */
 import { botSwitchOn } from './BotSwitches';
 import { phoneKey } from './InboundLedger';
-import { FOLLOW_UP_TRIGGERS, RECENT_KEEP_MS, isRephrase, learningTriggers, sanitizeReplayContext, sanitizeReplyText, validateReviewLabel, type LearningTrigger } from './LearningLoop';
+import { FOLLOW_UP_TRIGGERS, RECENT_KEEP_MS, isRephrase, learningTriggers, reviewItemForScreen, sanitizeReplayContext, sanitizeReplyText, validateReviewLabel, type LearningTrigger } from './LearningLoop';
 import { TaskDatabaseService } from './TaskDatabaseService';
 import type { BrainContext } from './brain/types';
 import { BUILTIN_PROMPT_SECTIONS, type PromptSections, validatePromptSections } from './brain/prompt';
@@ -270,3 +270,9 @@ export async function activePromptSections(): Promise<PromptSections> {
 export async function saveAlertAdmins(raw: unknown, actor: string) { const botAlertAdmins = validateAlertAdmins(raw); const out = await TaskDatabaseService.saveTestingConfig({ botAlertAdmins }); await TaskDatabaseService.logAudit({ eventType: 'bot_alert_admins_updated', details: { actor, count: botAlertAdmins.length } }); return out.botAlertAdmins || []; }
 export async function purgeReviewItems(now = new Date()) { const { data, error } = await supabaseAdmin.from(REVIEW).delete().lt('expires_at', now.toISOString()).in('status', (await reviewSchemaV2()) ? ['provisional', 'recent', 'waiting', 'ignored'] : ['provisional', 'waiting', 'ignored']).select('id'); if (error) throw error; return (data || []).length; }
 export const tables = { REVIEW, CASES, PROMPTS };
+
+/** A freshly written AI summary as a screen is given it: without the sender's name (see reviewItemForScreen). */
+export async function summaryForScreen(id: string, summary: unknown): Promise<unknown> {
+    const { data } = await supabaseAdmin.from(REVIEW).select('context_snapshot').eq('id', id).maybeSingle();
+    return reviewItemForScreen({ context_snapshot: (data as any)?.context_snapshot, ai_summary: summary }).ai_summary;
+}

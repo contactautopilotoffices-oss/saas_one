@@ -12,6 +12,7 @@ import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { satejConfig } from '../config';
 import { parseJsonLoose } from '../util';
 import { mockLlm } from './mocks';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 export type SatejTask = 'structure' | 'discover' | 'analyze' | 'inbox';
 
@@ -24,15 +25,17 @@ export async function chatJSON<T>(opts: {
 }): Promise<T> {
     if (satejConfig.mockMode) return mockLlm(opts.task, opts.user) as T;
 
-    const model = opts.model === 'fast' ? satejConfig.modelFast : satejConfig.modelSmart;
-    const text = await councilChat(
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+    // (For the careful steps "today's model" is empty, which means the shared model, as before.)
+    const today = opts.model === 'fast' ? satejConfig.modelFast : satejConfig.modelSmart;
+    const text = await runWithModel(opts.model === 'fast' ? 'satej_fast' : 'satej_smart', today, model => councilChat(
         [
             { role: 'system', content: opts.system },
             { role: 'user', content: opts.user },
         ],
         'procure',
         { model: model || null },
-    );
+    ));
     const parsed = parseJsonLoose(text);
     if (!parsed || typeof parsed !== 'object') {
         throw new Error(`Engy did not return a JSON object for the ${opts.task} step`);

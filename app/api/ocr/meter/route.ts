@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withOcrActivity } from '@/backend/lib/ocr/activity';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -35,6 +36,8 @@ async function handlePost(req: NextRequest) {
         }
 
         // 2. Prepare Groq Request
+        // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+        const readMeter = async (model: string) => {
         const response = await fetch(GROQ_API_URL, {
             method: 'POST',
             headers: {
@@ -42,7 +45,7 @@ async function handlePost(req: NextRequest) {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: MODEL,
+                model,
                 messages: [
                     {
                         role: 'system',
@@ -82,7 +85,9 @@ CRITICAL INSTRUCTIONS:
         }
 
         const data = await response.json();
-        const content = JSON.parse(data.choices[0].message.content);
+        return { content: JSON.parse(data.choices[0].message.content), usage: data.usage };
+        };
+        const { content, usage } = await runWithModel('meter_ocr', MODEL, readMeter);
 
 
         // 3. Log Success and Store Results (Shadow Entry)
@@ -147,7 +152,7 @@ CRITICAL INSTRUCTIONS:
                     meter_id: meterId, 
                     content: { ...content, final_reading: finalReading, conversion_applied: conversionApplied, pf_used: pf }, 
                     photo_url: imageUrl,
-                    usage: data.usage 
+                    usage 
                 }
             });
 

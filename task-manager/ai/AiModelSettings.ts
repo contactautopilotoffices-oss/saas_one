@@ -1,10 +1,12 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveProvider } from '@/backend/lib/council/llm';
 import { TaskDatabaseService } from '../TaskDatabaseService';
-import { AI_JOBS, AiJob, MAX_CHAIN, Provider, effectiveChain, jobInfo, modelStatus } from './aiCatalog';
+import { AI_JOBS, AiJob, MAX_CHAIN, Provider, effectiveChain, jobInfo, modelStatus, rawModelId } from './aiCatalog';
 
 /**
  * Owner 2026-10-28 — which model each Task Manager AI job uses (Control Center → "AI models").
+ * Owner 2026-11-15 — the screen moved to the Tech console (Brain → AI models) and now covers every model the
+ * application calls. The jobs outside the Task Manager read their choice through task-manager/ai/modelFor.ts.
  *
  * Saved per job in task_manager_ai_models (20261028140001). Until that file is applied, or whenever it cannot be read,
  * every job runs with today's chain — exactly as before this setting existed. `chainFor` never throws: a saved model that
@@ -20,7 +22,12 @@ const GEMINI_KEYS = ['GEMINI_AUTOTUNE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_AI_API
 
 /** The key names a provider is read from, for this job (the superuser chat has its own Groq key). */
 export function keyNames(provider: Provider, job?: AiJob): string[] {
-    if (provider === 'anthropic') return ['CLAUDE_API_KEY'];
+    // 2026-11-15: a job whose own code reads a different Groq / OpenAI key than the bot's names it in the catalog.
+    const own = job ? jobInfo(job)?.keys : undefined;
+    if (own?.length && (provider === 'groq' || provider === 'openai')) return [...own];
+    if (provider === 'openai') return ['OPENAI_API_KEY'];
+    // Owner 2026-11-13: the Unified Brain has two Claude keys (two plans' monthly credit); every other job keeps the one.
+    if (provider === 'anthropic') return job === 'brain_turn' ? ['CLAUDE_API_KEY', 'CLAUDE_API_KEY_2'] : ['CLAUDE_API_KEY'];
     if (provider === 'engy') return ['COUNCIL_API_KEY', 'COUNCIL_BASE_URL'];
     if (provider === 'groq') return job === 'superuser_chat' ? ['GROQ_TASK_CHAT_API_KEY'] : BOT_GROQ_KEYS;
     if (provider === 'gemini') return GEMINI_KEYS;
@@ -40,16 +47,20 @@ export function keyReady(provider: Provider, job: AiJob, env: Env = process.env)
 
 const PROVIDER_LABEL: Record<Provider, string> = {
     anthropic: 'Anthropic (Claude)', engy: 'Engy (GLM, Qwen, DeepSeek, Kimi)', groq: 'Groq (WhatsApp bot)', gemini: 'Google Gemini', groq_speech: 'Groq speech-to-text',
+    openai: 'OpenAI',
 };
 
 /** Per provider: which key names exist and whether each is set. Never a value. */
 export function keyStatus(env: Env = process.env) {
-    const rows = (['anthropic', 'engy', 'groq', 'gemini', 'groq_speech'] as Provider[]).map(p => ({
+    const rows = (['anthropic', 'engy', 'groq', 'gemini', 'groq_speech', 'openai'] as Provider[]).map(p => ({
         provider: p, label: PROVIDER_LABEL[p], ready: keyReady(p, p === 'groq_speech' ? 'voice_transcribe' : 'wa_understand', env),
         keys: keyNames(p).map(name => ({ name, set: has(env, name) })),
         ...(p === 'engy' ? { note: 'Works only when the council provider resolves to Engy (COUNCIL_PROVIDER=custom, or no OpenAI / Groq council key set).' } : {}),
     }));
-    rows.push({ provider: 'groq', label: 'Groq (superuser chat)', ready: has(env, 'GROQ_TASK_CHAT_API_KEY'), keys: [{ name: 'GROQ_TASK_CHAT_API_KEY', set: has(env, 'GROQ_TASK_CHAT_API_KEY') }] });
+    rows.push({ provider: 'anthropic', label: 'Anthropic (Unified brain, second key)', ready: has(env, 'CLAUDE_API_KEY_2'), keys: [{ name: 'CLAUDE_API_KEY_2', set: has(env, 'CLAUDE_API_KEY_2') }] });
+    rows.push({ provider: 'groq', label: 'Groq (WhatsApp assistant)', ready: has(env, 'GROQ_TASK_CHAT_API_KEY'), keys: [{ name: 'GROQ_TASK_CHAT_API_KEY', set: has(env, 'GROQ_TASK_CHAT_API_KEY') }] });
+    // 2026-11-15: the Groq key the rest of the application uses (documents, facilities, tickets, CRM, HR)
+    rows.push({ provider: 'groq', label: 'Groq (documents, facilities, tickets, CRM, HR)', ready: has(env, 'GROQ_API_KEY'), keys: [{ name: 'GROQ_API_KEY', set: has(env, 'GROQ_API_KEY') }, { name: 'GROQ_LAYOUT_API_KEY', set: has(env, 'GROQ_LAYOUT_API_KEY') }] });
     return rows;
 }
 
@@ -61,7 +72,15 @@ export function defaultsFor(job: AiJob, env: Env = process.env): string[] {
         // Owner 2026-10-28: Claude Sonnet 5.5 drafts first; Gemini and glm stay as backups.
         return ['anthropic:claude-sonnet-5-5', ...(drafts.length ? drafts : ['gemini-3.8-flash', 'gemini-2.5-flash']), 'glm-5.3-flash'];
     }
-    return [...(jobInfo(job)?.defaults ?? [])];
+    const j = jobInfo(job);
+    // 2026-11-15: the shared model, worked out the way backend/lib/council/llm.ts does (COUNCIL_MODEL, else the provider's own default).
+    const shared = () => String(env.COUNCIL_MODEL || '').trim() || resolveProvider(env as NodeJS.ProcessEnv).spec.defaultModel || 'gpt-5.6-luna';
+    const own = j?.defaultEnv ? String(env[j.defaultEnv] || '').trim() : '';
+    if (job === 'council_default') return [shared()];
+    if (job === 'satej_smart') return [own || shared()];
+    // A job whose model an environment variable could already change: that still wins over the code's own default.
+    if (own) return [`${j?.defaultPrefix ?? ''}${own}`];
+    return [...(j?.defaults ?? [])];
 }
 
 // ── saved settings, read at most once a minute per server instance ──────────────────────────────────────────────────
@@ -111,6 +130,7 @@ export async function saveChain(job: AiJob, models: string[] | null, actor?: str
         const list = [...new Set(models.map(m => String(m).trim()).filter(Boolean))];
         if (list.length === 0) throw new Error('Choose at least a main model, or reset to the default.');
         if (list.length > MAX_CHAIN) throw new Error(`At most ${MAX_CHAIN} models (a main and ${MAX_CHAIN - 1} backups).`);
+        if (j.single && list.length !== 1) throw new Error(`"${j.label}" uses one model. Choose one, or reset to the default.`);
         for (const id of list) {
             const s = modelStatus(job, id, (p, jj) => keyReady(p, jj));
             if (s.status === 'cannot') throw new Error(`${s.reason}. Choose another model for "${j.label}".`);
@@ -121,7 +141,7 @@ export async function saveChain(job: AiJob, models: string[] | null, actor?: str
     const { error } = models === null
         ? await supabaseAdmin.from('task_manager_ai_models').delete().eq('job', job)
         : await supabaseAdmin.from('task_manager_ai_models').upsert({ job, models, updated_by: actor || null, updated_at: new Date().toISOString() }, { onConflict: 'job' });
-    if (error) throw new Error('Could not save the model setting. Run supabase/migrations/20261028140001_task_manager_ai_models.sql in the Supabase SQL Editor first.');
+    if (error) throw new Error('Could not save the model setting. The migrations 20261028140001_task_manager_ai_models.sql and 20261115000001_ai_models_all_jobs.sql must be applied first.');
     cache = null;
     await TaskDatabaseService.logAudit({ event_type: 'task_ai_models_updated', details: { job, models, actor: actor || null } });
     return { warnings };
@@ -138,14 +158,27 @@ export async function testModel(job: AiJob, model: string, env: Env = process.en
     if (jobInfo(job)?.needs === 'speech') return { ok: null, message: 'Key is set. Speech models are not test-called (a test needs a voice note).' };
     const started = Date.now();
     try {
-        if (job === 'superuser_chat' && model.startsWith('groq:')) {
-            // This job's own Groq key, exactly as the interpreter calls it
+        const ownKeys = jobInfo(job)?.keys ?? (job === 'superuser_chat' ? ['GROQ_TASK_CHAT_API_KEY'] : []);
+        const ownKey = ownKeys.map(n => String(env[n] ?? '').trim()).find(Boolean) ?? '';
+        const messages = [{ role: 'user', content: 'Reply with the word OK.' }];
+        if (model.startsWith('groq:') && ownKeys.length) {
+            // This job's own Groq key, the way its own code calls Groq (2026-11-15: every job that names its key, not only the superuser chat)
             const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', signal: AbortSignal.timeout(15_000),
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String(env.GROQ_TASK_CHAT_API_KEY ?? '').trim()}` },
-                body: JSON.stringify({ model: model.slice('groq:'.length), temperature: 0, max_tokens: 20, messages: [{ role: 'user', content: 'Reply with the word OK.' }] }),
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownKey}` },
+                body: JSON.stringify({ model: rawModelId(model), temperature: 0, max_tokens: 60, messages }),
             });
             if (!res.ok) return { ok: false, message: `Groq answered HTTP ${res.status}`, ms: Date.now() - started };
+        } else if (model.startsWith('openai:')) {
+            const raw = rawModelId(model);
+            // The newer OpenAI models take max_completion_tokens and no temperature (the same test the callers use).
+            const limits = /^(gpt-5|o[34])/.test(raw) ? { max_completion_tokens: 200 } : { max_tokens: 20, temperature: 0 };
+            const res = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST', signal: AbortSignal.timeout(20_000),
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownKey || String(env.OPENAI_API_KEY ?? '').trim()}` },
+                body: JSON.stringify({ model: raw, messages, ...limits }),
+            });
+            if (!res.ok) return { ok: false, message: `OpenAI answered HTTP ${res.status}`, ms: Date.now() - started };
         } else {
             const { engyBrainLlm } = await import('../brain/llm');
             const r = await engyBrainLlm({ timeoutMs: 15_000 }).complete({ model, system: 'Reply with the word OK and nothing else.', user: 'OK?', maxTokens: 20 });
@@ -168,7 +201,7 @@ export async function aiModelsOverview(env: Env = process.env) {
             const defaults = defaultsFor(j.key, env);
             const saved = byJob.get(j.key) ?? null;
             return {
-                key: j.key, label: j.label, hint: j.hint, group: j.group, needs: j.needs,
+                key: j.key, label: j.label, hint: j.hint, group: j.group, needs: j.needs, single: !!j.single,
                 defaults, saved, effective: effectiveChain(j.key, saved, ready, defaults),
             };
         }),

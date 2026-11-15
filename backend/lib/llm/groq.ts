@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { SkillGroup } from '../ticketing/classifyTicket';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 // Input schema (what we send to Groq)
 const LLMInputSchema = z.object({
@@ -108,7 +109,18 @@ Analyze the situation and return structured JSON.`;
 /**
  * Call Groq API with timeout and error handling
  */
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = GROQ_MODEL, as
+// before: one attempt. A chosen model that fails is rested and GROQ_MODEL is tried once; if that fails too the rules
+// verdict stands, exactly as for any failure of this step.
 export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
+    const chosen = await modelFor('ticket_classify', GROQ_MODEL);
+    const first = await classifyWith(chosen, input);
+    if (!first.fallbackUsed || chosen === GROQ_MODEL) return first;
+    markFailed('ticket_classify');
+    return classifyWith(GROQ_MODEL, input);
+}
+
+async function classifyWith(model: string, input: LLMInput): Promise<GroqResponse> {
     const startTime = Date.now();
 
     // Validate input
@@ -144,7 +156,7 @@ export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
                 'Authorization': `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-                model: GROQ_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: buildSystemPrompt() },
                     { role: 'user', content: buildUserPrompt(input) },

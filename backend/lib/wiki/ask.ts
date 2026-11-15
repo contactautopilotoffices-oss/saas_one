@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { councilChat, councilRunCost } from '@/backend/lib/council/llm';
 import { withAgentRun } from '@/backend/lib/agents/instrument';
 import { WIKI_AGENT_KEY, WIKI_NOT_PROVISIONED, isMissingTable } from './store';
+import { modelFor, runWithModel } from '@/task-manager/ai/modelFor';
 
 /**
  * Measured 2026-10-16 on real pages: the council default (a reasoning model) took
@@ -72,6 +73,9 @@ export async function askWiki(opts: { orgId: string; userId: string; question: s
     if (searchError) throw new Error(isMissingTable(searchError) ? WIKI_NOT_PROVISIONED : `Wiki search failed: ${searchError.message}`);
     const hits = (hitsRaw ?? []) as Hit[];
 
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+    // `model` is what is written down as the model that answered (the chosen one, or WIKI_MODEL if that one failed).
+    let model = await modelFor('wiki_answer', WIKI_MODEL);
     const record = async (row: {
         status: WikiAnswer['status']; answer: string | null; retrieved: string[]; cited: string[];
         cost: number | null; error?: string | null;
@@ -79,7 +83,7 @@ export async function askWiki(opts: { orgId: string; userId: string; question: s
         const { data } = await supabaseAdmin.from('wiki_questions').insert({
             organization_id: opts.orgId, asked_by: opts.userId, question,
             answer: row.answer, status: row.status, retrieved: row.retrieved, cited: row.cited,
-            model: row.status === 'answered' || row.status === 'not_found' ? WIKI_MODEL ?? 'default' : null,
+            model: row.status === 'answered' || row.status === 'not_found' ? model ?? 'default' : null,
             cost_usd: row.cost, latency_ms: Date.now() - t0, error: row.error ?? null,
         }).select('id').maybeSingle();
         return data?.id ?? null;
@@ -113,16 +117,19 @@ export async function askWiki(opts: { orgId: string; userId: string; question: s
 
     try {
         const out = await withAgentRun<{ text: string; cost: number }>(
-            { orgId: opts.orgId, agentKey: WIKI_AGENT_KEY, module: 'procurement', trigger: 'manual', model: WIKI_MODEL },
+            { orgId: opts.orgId, agentKey: WIKI_AGENT_KEY, module: 'procurement', trigger: 'manual', model },
             async (step) => {
                 const r = await step('Retrieved pages', 'fetch', { question, retrieved: slugs });
                 await r.ok();
                 const llm = await step('Answering from the pages', 'llm');
                 const before = councilRunCost().costUsd;
-                const text = await councilChat([
-                    { role: 'system', content: WIKI_SYSTEM_PROMPT },
-                    { role: 'user', content: `Question: ${question}\n\nPages:\n\n${context}` },
-                ], 'synthesis', { model: WIKI_MODEL });
+                const text = await runWithModel('wiki_answer', WIKI_MODEL, m => {
+                    model = m;
+                    return councilChat([
+                        { role: 'system', content: WIKI_SYSTEM_PROMPT },
+                        { role: 'user', content: `Question: ${question}\n\nPages:\n\n${context}` },
+                    ], 'synthesis', { model: m });
+                });
                 // councilChat keeps a process-wide running total and returns no usage, so the
                 // cost is the difference across the call — approximate if another call overlaps.
                 const cost = Math.max(0, councilRunCost().costUsd - before);

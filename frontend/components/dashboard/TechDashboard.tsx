@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
+    BrainCircuit, Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
     Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -46,10 +46,12 @@ const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/Ti
 // tickets agent strip, every ticket of the organisation) and Settings (shared Settings screen, with Change password)
 const RequestsWorkspace = dynamic(() => import('@/frontend/components/tickets/RequestsWorkspace'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+// Owner 2026-11-14: the Brain Console (Unified Brain control room), Tech only
+const BrainConsole = dynamic(() => import('@/frontend/components/brain/BrainConsole'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
-    | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files' | 'candidates'
+    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile' | 'settings';
@@ -66,6 +68,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
         items: [
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
             { id: 'control_centre', label: 'Control Centre', icon: FlaskConical },
+            { id: 'brain', label: 'Brain', icon: BrainCircuit },
             // Owner 2026-10-29: Meeting Assistant (record a meeting, review the task list, send the tasks)
             { id: 'meetings', label: 'Meeting Assistant', icon: Mic },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
@@ -327,7 +330,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
                         <div className="flex items-center gap-3">
                             {propertySelector}
                             {/* Requests view switcher: the Super Admin console's, shared */}
@@ -364,6 +367,7 @@ export default function TechDashboard() {
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                            {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
                             {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}
