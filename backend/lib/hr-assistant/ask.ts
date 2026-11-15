@@ -12,6 +12,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ANSWER_MODELS, NO_CONTEXT_MESSAGE, REFUSAL_MESSAGE, SYSTEM_PROMPT } from "./config";
+import { hrChain } from "./modelChoice";
 import { checkInput, checkOutput, type GuardResult } from "./guardrails";
 import { chatWithFallback } from "./llm";
 import { cannedReply, formatHistory, planWithModel, quickIntent, type ChatTurn, type Intent, type Plan } from "./planner";
@@ -63,7 +64,8 @@ export async function generateAnswer(
   chunks: PolicyChunk[],
   history: readonly ChatTurn[] = [],
 ): Promise<string> {
-  return chatWithFallback("answer", ANSWER_MODELS, {
+  // Owner 2026-11-15: models chosen in the Tech console are tried first; today's list always follows.
+  return chatWithFallback("answer", await hrChain("hr_answer", ANSWER_MODELS), {
     system: SYSTEM_PROMPT,
     user: buildUserMessage(question, chunks, history),
   });

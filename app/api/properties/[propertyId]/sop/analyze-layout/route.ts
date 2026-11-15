@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import Groq from 'groq-sdk';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 /**
  * POST /api/properties/[propertyId]/sop/analyze-layout
@@ -44,8 +45,10 @@ export async function POST(
         }
         const groq = new Groq({ apiKey });
 
-        const completion = await groq.chat.completions.create({
-            model: 'qwen/qwen3.6-27b',
+        // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+        // A chosen model that fails costs one attempt: today's model is then tried once.
+        const completion = await runWithModel('sop_layout', 'qwen/qwen3.6-27b', model => groq.chat.completions.create({
+            model,
             messages: [
                 {
                     role: 'user',
@@ -94,7 +97,7 @@ Important rules:
             ],
             max_tokens: 4096,
             temperature: 0.3,
-        });
+        }));
 
         let rawText = completion.choices[0]?.message?.content ?? '[]';
         rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { getMCPClient } from '@/lib/mcp-client';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -42,7 +43,10 @@ You are a SQL expert. Generate a SINGLE valid PostgreSQL SELECT query based on t
   SQL: SELECT count(u.id) FROM users u JOIN property_memberships pm ON u.id = pm.user_id JOIN properties p ON pm.property_id = p.id WHERE p.name ILIKE '%Head Office%';
 `;
 
-async function callGroq(messages: any[]) {
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+const callGroq = (messages: Parameters<typeof callGroqWith>[1]) => runWithModel('admin_chatbot', MODEL, model => callGroqWith(model, messages));
+
+async function callGroqWith(model: string, messages: any[]) {
     const response = await fetch(GROQ_API_URL, {
         method: 'POST',
         headers: {
@@ -50,7 +54,7 @@ async function callGroq(messages: any[]) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: MODEL,
+            model,
             messages,
             temperature: 0.1,
         })

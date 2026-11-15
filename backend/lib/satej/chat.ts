@@ -19,6 +19,7 @@ import { getRepo } from './repo';
 import { approveCalls, cancelRequirement, editRequirement, excludeVendor, reanalyze, resendSummary, runAgain } from './pipeline';
 import type { CallRecord, Requirement, SatejAction, SatejActionType, SatejMessage, Vendor } from './types';
 import { parseJsonLoose } from './util';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 const TABLE = 'satej_messages';
 
@@ -176,7 +177,8 @@ export async function converse(r: Requirement, text: string, author: { userId: s
         reply = `(mock) I have ${vendors.length} vendors on ${r.code}.`;
     } else {
         try {
-            const raw = await councilChat(
+            // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+            const raw = await runWithModel('satej_smart', satejConfig.modelSmart, model => councilChat(
                 [
                     { role: 'system', content: CHAT_SYSTEM(allowed) },
                     { role: 'user', content: requirementContext(r, vendors, calls) },
@@ -187,8 +189,8 @@ export async function converse(r: Requirement, text: string, author: { userId: s
                     { role: 'user', content: text },
                 ],
                 'procure',
-                { model: satejConfig.modelSmart || null },
-            );
+                { model: model || null },
+            ));
             const parsed = parseJsonLoose(raw) as { reply?: unknown; action?: unknown } | undefined;
             reply = String(parsed?.reply ?? '').trim() || raw.trim().slice(0, 1500);
             action = cleanAction(parsed?.action, allowed, vendors);

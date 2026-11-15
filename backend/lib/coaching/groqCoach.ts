@@ -8,6 +8,7 @@
 import { CoachingReportSchema, type CoachingReport } from './schema';
 import { computeOverall } from './prompts';
 import { buildCoachSystemPrompt, buildCoachUserPrompt } from './prompts';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // 70B is materially better at the nuanced sales-rubric task than 8B.
@@ -36,7 +37,17 @@ export interface CoachError {
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+// A chosen model that does not produce a report costs one attempt: today's model is then tried once.
 export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess | CoachError> {
+    const chosen = await modelFor('coaching_feedback', GROQ_MODEL);
+    const first = await scoreWith(chosen, input);
+    if (first.success || chosen === GROQ_MODEL) return first;
+    markFailed('coaching_feedback');
+    return scoreWith(GROQ_MODEL, input);
+}
+
+async function scoreWith(model: string, input: CoachInput): Promise<CoachSuccess | CoachError> {
     const startTime = Date.now();
 
     if (!input.transcriptText || input.transcriptText.trim().length < 50) {
@@ -69,7 +80,7 @@ export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess
                 Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-                model: GROQ_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: buildCoachSystemPrompt() },
                     {
