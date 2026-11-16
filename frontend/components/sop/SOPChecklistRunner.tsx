@@ -1074,26 +1074,11 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
 
             // Evidence check logic removed per user request (staff can add if they want)
 
-            // 3. Fire-and-forget AI Vision Scoring for any pending items in background (instant, non-blocking!)
+            // 3. Background AI Vision Scoring:
+            // Background evaluation for all unscored photos is reliably handled server-side
+            // via Next.js after() when updating status to 'completed'. No duplicate client-side calls needed.
             const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
             const resolvedPropId = validPropId || completion?.property_id || template?.property_id;
-
-            const itemsNeedingScore = completion.items.filter((c: any) => {
-                const hasPhoto = c.photo_url || (Array.isArray(c.photos) && c.photos.length > 0);
-                const notScoredYet = c.ai_cleanliness_score === null || c.ai_cleanliness_score === undefined || !c.ai_analyzed_at;
-                const isActivelyScoring = Boolean(aiScoring[c.id]);
-                return hasPhoto && (notScoredYet || isActivelyScoring);
-            });
-
-            // Fire in background non-blocking with keepalive so browser doesn't drop requests on unmount
-            itemsNeedingScore.forEach((c: any) => {
-                fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}/score-photo`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ completionItemId: c.id, force: true }),
-                    keepalive: true,
-                }).catch(e => console.warn('[Background AI Score] Error:', e));
-            });
 
             // Update completion status via API (instant database write)
             const submitRes = await fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}`, {

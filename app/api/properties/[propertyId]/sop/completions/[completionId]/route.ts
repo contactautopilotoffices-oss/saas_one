@@ -3,6 +3,8 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { evaluateCompletionItemCleanliness } from './score-photo/route';
 
+export const maxDuration = 300;
+
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string; completionId: string }> }
