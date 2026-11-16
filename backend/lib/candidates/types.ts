@@ -8,8 +8,68 @@
  *   sheet     = one uploaded Excel file (re-uploading the same file name asks Replace or Merge)
  */
 
+import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
+import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
+
+// Positions and their pipelines (owner 2026-11-15; the logic is in positions.ts, which is server-only: these constants
+// and shapes live here so the client components can import them without pulling the model transport in).
+export const FLOW_STAGES = ["sourced", "screening", "shortlisted", "interview", "offer", "joined"] as const;
+export const SIDE_STAGES = ["on_hold", "not_responding", "rejected", "others"] as const;
+export const STAGES = [...FLOW_STAGES, ...SIDE_STAGES] as const;
+export type Stage = (typeof STAGES)[number];
+export const STAGE_LABELS: Record<Stage, string> = {
+  sourced: "Sourced",
+  screening: "Screening",
+  shortlisted: "Shortlisted",
+  interview: "Interview",
+  offer: "Offer",
+  joined: "Joined",
+  on_hold: "On hold",
+  not_responding: "Not responding",
+  rejected: "Rejected",
+  others: "Others",
+};
+/** Stages a person must explain with a remark when they move someone there. */
+export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
+
+export interface Position {
+  id: string;
+  title: string;
+  department: string | null;
+  location: string | null;
+  jdFileName: string | null;
+  /** Only on a single position (get), not on the list. */
+  jdText?: string | null;
+  filters: Partial<SearchFilters>;
+  prefer: Preferences;
+  status: "open" | "closed";
+  targetDays: number;
+  /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
+  recruiterName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt: string | null;
+  /** Days since it was opened (until it was closed). */
+  daysOpen: number;
+  counts: Record<Stage, number>;
+}
+
+export interface PositionMember {
+  id: string;
+  positionId: string;
+  candidateId: string;
+  applicationId: string | null;
+  stage: Stage;
+  stageChangedAt: string;
+  /** Who moved them last (who added them, until the first move); null when unknown. */
+  stageChangedByName: string | null;
+  remark: string | null;
+  addedAt: string;
+  /** The person's record, when the record they were added from still exists. */
+  record: CandidateRecord | null;
+}
 
 export const RECORD_STATUSES = [
   "new",
@@ -20,6 +80,8 @@ export const RECORD_STATUSES = [
   "not_responding",
   "rejected",
   "joined",
+  // Owner 2026-11-15: anything the list above does not cover; the app requires a remark saying what (migration 20261115000002).
+  "others",
 ] as const;
 export type RecordStatus = (typeof RECORD_STATUSES)[number];
 
@@ -32,7 +94,30 @@ export const STATUS_LABELS: Record<RecordStatus, string> = {
   not_responding: "Not responding",
   rejected: "Rejected",
   joined: "Joined",
+  others: "Others",
 };
+
+/** Statuses a person must explain with a remark when they choose them. */
+export const REMARK_REQUIRED_STATUSES: readonly RecordStatus[] = ["others"];
+
+/** Why a person was blacklisted (owner 2026-11-15); the dropdown's fixed list, so reports stay usable. */
+export const BLACKLIST_REASONS = ["did_not_join", "misconduct", "false_information", "asked_not_to_contact", "other"] as const;
+export type BlacklistReason = (typeof BLACKLIST_REASONS)[number];
+export const BLACKLIST_REASON_LABELS: Record<BlacklistReason, string> = {
+  did_not_join: "Accepted an offer, did not join",
+  misconduct: "Misconduct",
+  false_information: "False information or documents",
+  asked_not_to_contact: "Asked not to be contacted",
+  other: "Other",
+};
+
+/** A person's blacklist entry, when there is one. */
+export interface Blacklist {
+  at: string;
+  byName: string | null;
+  reason: BlacklistReason;
+  remark: string | null;
+}
 
 /** Top N the HR user may ask for (owner 2026-11-02: custom number, max 30). */
 export const TOP_N_MIN = 1;
@@ -83,6 +168,19 @@ export interface CandidateRecord {
   hasResume?: boolean;
   /** The lines of the resume around the search keywords, keywords marked (filter search with keywords only). */
   resumeSnippet?: SnippetPart[];
+  /**
+   * Where each keyword chip matched (owner 2026-11-15): on the record's own fields, in the resume's text, or both.
+   * `text` is the spelling that matched (one of a chip's alternatives). Only with keywords, after the resume
+   * migrations.
+   */
+  keywordHits?: { text: string; required: boolean; where: "profile" | "resume" | "both" }[];
+  /**
+   * The person is blacklisted (owner 2026-11-15, migration 20261115000002): hidden from search unless asked for. Set
+   * on lists; the panel's full entry is `blacklist`. Absent before the migration.
+   */
+  blacklisted?: boolean;
+  /** The blacklist entry itself, loaded for the panel. null = not blacklisted; absent = not loaded. */
+  blacklist?: Blacklist | null;
   /**
    * Fields whose value was worked out from the employers the resume lists, not stated on it (owner 2026-11-11,
    * migration 20261111000004). The screens mark them; a value HR types in is no longer listed.
@@ -521,4 +619,181 @@ export interface ReindexResponse {
   remaining: number;
   /** Nothing was done this time (paused after a busy answer, or another run is working). */
   waiting: boolean;
+}
+
+// Calls (owner 2026-11-16, plan P3 + P7; migration 20261116000001) -----------------------------------------------------
+
+export type CallInputKind = "audio" | "transcript";
+/** uploading -> uploaded -> transcribing -> analysing -> done | failed. A pasted transcript starts at 'uploaded'. */
+export type CallStatus = "uploading" | "uploaded" | "transcribing" | "analysing" | "done" | "failed";
+export const CALL_STATUS_LABELS: Record<CallStatus, string> = {
+  uploading: "Uploading",
+  uploaded: "Waiting",
+  transcribing: "Transcribing",
+  analysing: "Reading the call",
+  done: "Analysed",
+  failed: "Failed",
+};
+
+export type CallSentiment = "positive" | "neutral" | "negative";
+export type CallConfidence = "high" | "medium" | "low";
+export type CallInterest = "high" | "medium" | "low" | "unclear";
+export const CALL_CONCERN_TOPICS = ["salary", "location", "commute", "notice", "shift", "role", "growth", "stability", "other"] as const;
+export type CallConcernTopic = (typeof CALL_CONCERN_TOPICS)[number];
+export const CALL_CONCERN_LABELS: Record<CallConcernTopic, string> = {
+  salary: "Salary",
+  location: "Location",
+  commute: "Commute",
+  notice: "Notice period",
+  shift: "Shift timing",
+  role: "The role",
+  growth: "Growth",
+  stability: "Stability",
+  other: "Other",
+};
+
+/** One thing the candidate said, with the words it came from and (when the transcript is stamped) when. */
+export interface CallEvidence {
+  quote: string | null;
+  /** Seconds into the call; null for a pasted transcript. */
+  at: number | null;
+}
+export interface CallFact<T> extends CallEvidence {
+  /** null = not said on the call. Never guessed. */
+  value: T | null;
+}
+
+/** The facts the model listens for, and the record fields "Apply" writes them to. */
+export const CALL_FACT_KEYS = ["currentInhand", "expectedInhand", "noticePeriodDays", "location", "reasonForChange"] as const;
+export type CallFactKey = (typeof CALL_FACT_KEYS)[number];
+export const CALL_FACT_LABELS: Record<CallFactKey, string> = {
+  currentInhand: "Current in-hand",
+  expectedInhand: "Expected in-hand",
+  noticePeriodDays: "Notice period",
+  location: "Location",
+  reasonForChange: "Reason for change",
+};
+
+/** What the model read out of one call (backend/lib/callInsights/contexts/candidateScreening.ts). Advisory only. */
+export interface CallInsights {
+  overallSentiment: CallSentiment;
+  sentimentConfidence: CallConfidence;
+  interestLevel: CallInterest;
+  summary: string;
+  suggestedNextStep: string;
+  /** In order, start to end. Seconds are set when the transcript was stamped; `share` (1–10) is the rough length. */
+  timeline: { sentiment: CallSentiment; note: string; startSeconds: number | null; endSeconds: number | null; share: number }[];
+  concerns: ({ topic: CallConcernTopic; note: string } & CallEvidence)[];
+  redFlags: ({ note: string } & CallEvidence)[];
+  facts: {
+    currentInhand: CallFact<number>;
+    expectedInhand: CallFact<number>;
+    noticePeriodDays: CallFact<number>;
+    location: CallFact<string>;
+    reasonForChange: CallFact<string>;
+  };
+  language: string;
+}
+
+export interface CallSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** One call on a candidate (GET /api/candidates/calls). The transcript comes only with a single call (get). */
+export interface CallAnalysis {
+  id: string;
+  candidateId: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  inputKind: CallInputKind;
+  fileName: string | null;
+  fileSize: number | null;
+  /** YYYY-MM-DD */
+  calledOn: string | null;
+  consentConfirmed: boolean;
+  status: CallStatus;
+  /** Why it failed, in HR's words. */
+  error: string | null;
+  attempts: number;
+  language: string | null;
+  durationSeconds: number | null;
+  /** Only on a single call. */
+  segments?: CallSegment[] | null;
+  transcriptText?: string | null;
+  result: CallInsights | null;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  /** Facts HR already applied from this call. */
+  appliedFacts: { key: CallFactKey; at: string; byName: string | null }[];
+  byName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /api/candidates/calls with a file: the row and the one-time upload link. */
+export interface PreparedCall {
+  call: CallAnalysis;
+  upload: { signedUrl: string; contentType: string } | null;
+}
+
+// Outreach (owner 2026-11-16, mockup board 7; migration 20261116000003) --------------------------------------------------
+
+export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted"] as const;
+export type OutreachKind = (typeof OUTREACH_KINDS)[number];
+export const OUTREACH_KIND_LABELS: Record<OutreachKind, string> = {
+  shortlisted: "Shortlisted",
+  not_shortlisted: "Not shortlisted",
+};
+
+/** What the Send panel shows before anyone clicks Send (GET /api/candidates/outreach/preview). */
+export interface OutreachPreview {
+  kind: OutreachKind;
+  candidateId: string;
+  applicationId: string;
+  positionId: string | null;
+  positionTitle: string | null;
+  /** The role the message names: the position's title, else the record's "sourced for" role. */
+  roleTitle: string | null;
+  /** The number it would go to, with the middle hidden. */
+  phoneMasked: string | null;
+  /** The template (= AiSensy campaign) that would be used. */
+  campaign: string;
+  /** The message as the candidate would read it, with the name and role filled in. */
+  message: string;
+  footer: string;
+  checks: {
+    notBlacklisted: boolean;
+    phoneValid: boolean;
+    notSentBefore: boolean;
+    roleNamed: boolean;
+    /** 9 am to 7 pm IST, Monday to Saturday. A warning, not a block. */
+    withinHours: boolean;
+  };
+  /** Every blocking check passed. */
+  canSend: boolean;
+  /** Why not, in one sentence, when canSend is false. */
+  blockedBy: string | null;
+  /** The earlier successful send of this kind for this position, if any. */
+  sentBefore: { at: string; byName: string | null } | null;
+}
+
+/** One attempt (GET /api/candidates/outreach, newest first). */
+export interface OutreachRecord {
+  id: string;
+  candidateId: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  kind: OutreachKind;
+  phoneMasked: string;
+  campaign: string;
+  roleTitle: string | null;
+  status: "sent" | "failed";
+  error: string | null;
+  byName: string | null;
+  at: string;
 }

@@ -54,6 +54,14 @@ export const RESUME_EXTRACTION_MIGRATION = readFileSync(path.join("supabase", "m
 export const RESUME_SCANS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261111000003_candidate_resume_scans.sql"), "utf8");
 /** Which of a person's fields were worked out from the resume's employers (owner 2026-11-11). */
 export const INFERRED_FIELDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261111000004_candidate_inferred_fields.sql"), "utf8");
+/** Recruitment step 4 (owner 2026-11-15): positions, insert-only history, blacklist, the "Others" status, the view again. */
+export const RECRUITMENT_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261115000002_recruitment_positions_actions_blacklist.sql"), "utf8")
+  .replace(/extensions\.vector\(768\)/g, "extensions.vector");
+/** Calls (owner 2026-11-16, plan P3 + P7): call_analyses. PGlite has no storage schema, so the bucket row is left out. */
+export const CALLS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000001_call_analyses.sql"), "utf8")
+  .replace(/insert into storage\.buckets[\s\S]*?on conflict \(id\) do nothing;/i, "");
+/** Outreach on WhatsApp (owner 2026-11-16): candidate_outreach and the 'outreach_sent' history action. */
+export const OUTREACH_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000003_candidate_outreach.sql"), "utf8");
 
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
@@ -70,6 +78,9 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(RESUME_EXTRACTION_MIGRATION);
   if (options.resumeFields !== false) await db.exec(RESUME_SCANS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(INFERRED_FIELDS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(RECRUITMENT_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(CALLS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(OUTREACH_MIGRATION);
   return db;
 }
 

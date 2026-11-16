@@ -27,6 +27,8 @@ export async function GET(request: Request) {
         status: params.get("status"),
         sheetId,
         deleted: params.get("deleted") === "1",
+        // Owner 2026-11-15: blacklisted people are hidden unless asked for ("only" or "all").
+        blacklisted: params.get("blacklisted") === "only" ? "only" : params.get("blacklisted") === "all" ? "all" : "hide",
         page: Number(params.get("page")) || 1,
         pageSize: Number(params.get("pageSize")) || 50,
       }),

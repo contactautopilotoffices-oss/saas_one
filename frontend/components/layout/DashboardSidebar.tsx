@@ -107,7 +107,8 @@ export default function DashboardSidebar({
                 { label: 'Assessments', href: '/hr-tickets?tab=assessments', icon: ClipboardCheck, domain: 'tickets' as const },
                 // Owner 2026-11-07: Candidate Search (sourcing sheets, filters, resumes) for every HR login, marked beta
                 // The badge (phase 3) reminds this laptop when its resumes have not been uploaded for a week.
-                { label: 'Candidate Search', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, beta: true, badge: 'resumes' },
+                // Owner 2026-11-15: Candidate Search grew into the Recruitment module (search, pipeline, candidates, resumes).
+                { label: 'Recruitment', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, badge: 'resumes' },
             ];
         }
 

@@ -15,9 +15,12 @@ import { PERMANENT_PHRASE, TypedConfirmDialog } from './DangerDialogs';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate, formatDateShort, formatInr, formatMonths, formatNotice } from './format';
 import RecordForm from './RecordForm';
+import { BlacklistedTag, RemarkDialog, statusNeedsRemark } from './Remarks';
 import {
     BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, StatusBadge, Toggle, useUi, WELL,
 } from './ui';
+
+type BlacklistFilter = 'hide' | 'only' | 'all';
 
 const PAGE_SIZE = 50;
 
@@ -38,6 +41,8 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     const [status, setStatus] = useState<RecordStatus | ''>('');
     const [sheetId, setSheetId] = useState('');
     const [deleted, setDeleted] = useState(false);
+    // Owner 2026-11-15: blacklisted people are hidden unless asked for.
+    const [blacklisted, setBlacklisted] = useState<BlacklistFilter>('hide');
     const [page, setPage] = useState(1);
     const [nonce, setNonce] = useState(0);
     const [list, setList] = useState<Loaded<CandidateListResponse> | null>(null);
@@ -62,17 +67,17 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
         return () => clearTimeout(t);
     }, [qInput, q]);
 
-    const listKey = JSON.stringify([orgId, q, status, sheetId, deleted, page, dataVersion, nonce]);
+    const listKey = JSON.stringify([orgId, q, status, sheetId, deleted, blacklisted, page, dataVersion, nonce]);
     useEffect(() => {
         const ctrl = new AbortController();
-        const path = `/api/candidates${qs({ orgId, q: q.trim(), status, sheetId, deleted, page, pageSize: PAGE_SIZE })}`;
+        const path = `/api/candidates${qs({ orgId, q: q.trim(), status, sheetId, deleted, blacklisted: blacklisted === 'hide' ? '' : blacklisted, page, pageSize: PAGE_SIZE })}`;
         void api<CandidateListResponse>(path, { signal: ctrl.signal }).then(res => {
             if (ctrl.signal.aborted) return;
             if (!res.ok) { if (res.noAccess) reportError(res); setList({ key: listKey, data: null, error: res.error }); return; }
             setList({ key: listKey, data: res.data, error: '' });
         });
         return () => ctrl.abort();
-    }, [listKey, orgId, q, status, sheetId, deleted, page, reportError]);
+    }, [listKey, orgId, q, status, sheetId, deleted, blacklisted, page, reportError]);
 
     // Live sheets, for the sheet filter.
     useEffect(() => {
@@ -94,7 +99,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
 
     const reload = () => setNonce(n => n + 1);
 
-    const selectionKey = JSON.stringify([orgId, q, status, sheetId, deleted, page]);
+    const selectionKey = JSON.stringify([orgId, q, status, sheetId, deleted, blacklisted, page]);
     const selected = selection.key === selectionKey ? selection.ids : [];
     const allOnPage = records.length > 0 && records.every(r => selected.includes(r.id));
     const toggleRow = (id: string) => setSelection(sel => {
@@ -131,9 +136,13 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
         downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(selectedRecords));
         notify(`${formatCount(selectedRecords.length)} ${selectedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
     };
-    const setStatusOfSelected = async (next: RecordStatus) => {
+    // Owner 2026-11-15: "Others" needs a remark; one remark covers every ticked record.
+    const [bulkRemark, setBulkRemark] = useState<RecordStatus | null>(null);
+    const setStatusOfSelected = async (next: RecordStatus, remark: string | null = null) => {
         const targets = selectedRecords.filter(r => r.status !== next);
         if (!targets.length || statusBusy) return;
+        if (statusNeedsRemark(next) && !remark) { setBulkRemark(next); return; }
+        setBulkRemark(null);
         setStatusBusy(true);
         let done = 0;
         let failed = 0;
@@ -142,7 +151,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
             while (at < targets.length) {
                 const record = targets[at];
                 at += 1;
-                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status: next } });
+                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status: next, ...(remark ? { actionRemark: remark } : {}) } });
                 if (res.ok) done += 1; else { failed += 1; if (res.noAccess) reportError(res); }
             }
         };
@@ -228,6 +237,11 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                             </optgroup>
                         )}
                     </select>
+                    <select aria-label="Blacklisted people" value={blacklisted} onChange={e => { setBlacklisted(e.target.value as BlacklistFilter); setPage(1); }} className={`${INPUT} sm:w-44`}>
+                        <option value="hide">Hide blacklisted</option>
+                        <option value="only">Only blacklisted</option>
+                        <option value="all">Everyone</option>
+                    </select>
                     <Toggle checked={deleted} onChange={v => { setDeleted(v); setPage(1); }} label="Show deleted" />
                     <button type="button" onClick={() => openEditor(null)} className={`${BTN_PRIMARY} col-span-2 sm:col-span-1`}>
                         <Plus className="h-4 w-4" />Add candidate
@@ -298,7 +312,10 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                             {r.role && <p className="text-sm text-primary-dark">For {r.role}</p>}
                                             <p className="break-words text-xs text-text-secondary">{[r.currentDesignation, r.location].filter(Boolean).join(' · ') || '—'}</p>
                                         </div>
-                                        <StatusBadge status={r.status} />
+                                        <span className="flex flex-col items-end gap-1">
+                                            <StatusBadge status={r.status} />
+                                            {r.blacklisted && <BlacklistedTag />}
+                                        </span>
                                     </div>
                                     <dl className="grid grid-cols-3 gap-x-2 gap-y-2">
                                         <div><dt className={LABEL}>Relevant</dt><dd className={`${NUM_SM} text-text-primary`}>{formatMonths(r.relevantExpMonths)}</dd></div>
@@ -351,7 +368,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                             <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatMonths(r.relevantExpMonths)}</td>
                                             <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatNotice(r.noticePeriodDays)}</td>
                                             <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatInr(r.expectedInhand)}</td>
-                                            <td className="px-3 py-2.5"><StatusBadge status={r.status} /></td>
+                                            <td className="px-3 py-2.5"><span className="flex flex-wrap items-center gap-1"><StatusBadge status={r.status} />{r.blacklisted && <BlacklistedTag />}</span></td>
                                             <td className="max-w-[170px] px-3 py-2.5">
                                                 <p className="truncate" title={originLabel(r)}><SourceCell r={r} /></p>
                                                 {r.hasResume !== undefined && (
@@ -444,6 +461,16 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 />
             </ModalPortal>
 
+            <RemarkDialog
+                open={bulkRemark !== null}
+                required
+                busy={statusBusy}
+                title={bulkRemark ? `${formatCount(selectedRecords.length)} ${selectedRecords.length === 1 ? 'candidate' : 'candidates'}: ${STATUS_LABELS[bulkRemark]}` : ''}
+                description={bulkRemark ? `"${STATUS_LABELS[bulkRemark]}" needs a remark; this one is kept on each of them.` : undefined}
+                placeholder="e.g. Moved to the Bengaluru requirement"
+                onClose={() => setBulkRemark(null)}
+                onSubmit={remark => { if (bulkRemark) void setStatusOfSelected(bulkRemark, remark); }}
+            />
             <TypedConfirmDialog
                 key={bulk?.key ?? 0}
                 open={!!bulk?.open && bulk.kind === 'purge'}

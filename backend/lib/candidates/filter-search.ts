@@ -10,11 +10,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import {
-  DEFENCE_OPTIONS, EDUCATION_LEVELS, EDUCATION_TYPES, EMPTY_FILTERS, filtersFromSpec, hasBlankableFilter, NO_QUALIFICATION,
-  NOTICE_BUCKETS, RESUME_FIELD_COLUMNS, RESUME_FIELDS, salaryRupees, SORTS, SOURCED_MONTHS, sourcedSince, withoutResumeFields,
-  type FieldAvailability, type FilterResponse, type OptionField, type OptionItem, type PreferredItem, type ResumeField, type SearchFilters,
+  allKeywordTerms, conflictChoices, DEFENCE_OPTIONS, EDUCATION_LEVELS, EDUCATION_TYPES, EMPTY_FILTERS, filtersFromSpec, hasBlankableFilter, keywordTerms as termsOf,
+  NO_QUALIFICATION, NOTICE_BUCKETS, RESUME_FIELD_COLUMNS, RESUME_FIELDS, salaryRupees, SORTS, SOURCED_MONTHS, sourcedSince, withoutResumeFields,
+  type FieldAvailability, type FilterResponse, type KeywordToken, type OptionField, type OptionItem, type PreferredItem, type ResumeField, type SearchFilters,
 } from "./filters";
 import { specChips, type Preferences, type SearchSpec } from "./query-spec";
+import { loadBlacklist, markBlacklisted } from "./actions";
 import { attachInferred, CandidateActionError, getRecord, markResumes, RECORD_COLUMNS, RESUME_COLUMNS, toRecord, type RecordRow } from "./records";
 import { resumeSnippet } from "./snippet";
 import { RECORD_STATUSES, type CandidateRecord } from "./types";
@@ -27,7 +28,7 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable();
 const educationLevel = z.object({ mode: z.enum(["any", "specific", "none"]), picks: z.array(word).max(20) });
 
 const FiltersSchema = z.object({
-  keywords: z.array(z.object({ text: word, required: z.boolean() })).max(20),
+  keywords: z.array(z.object({ text: word, required: z.boolean(), alts: z.array(word).max(10).optional() })).max(20),
   excludes: z.array(word).max(20),
   locations: z.array(word).max(20),
   relocate: z.boolean(),
@@ -60,6 +61,7 @@ const FiltersSchema = z.object({
   defence: z.enum(["", "any", ...DEFENCE_OPTIONS.map((d) => d.id)]),
   hasResume: z.enum(["", "yes", "no"]),
   includeBlank: z.boolean(),
+  showBlacklisted: z.boolean(),
   sort: z.enum(SORTS),
 });
 
@@ -111,14 +113,18 @@ export function applyFilters<T extends Filterable<T>>(query: T, f: SearchFilters
   };
 
   // Keywords are checked on the text HR can see on a record, so a match is always explainable; with phase 4's view
-  // (resumeText) a word that is only in the resume's text counts too (full-text search, whole words).
-  const keywordTerms = (k: string) => (resumeText ? [ilike("lookup_text", k), `resume_fts.plfts.${quoted(k)}`] : [ilike("lookup_text", k)]);
-  for (const k of f.keywords.filter((k) => k.required)) q = q.or(keywordTerms(k.text).join(","));
+  // (resumeText) a word that is only in the resume's text counts too. Owner 2026-11-15: in the resume a keyword of
+  // several words is matched as a PHRASE (phfts: the words together, in order), not as the words anywhere in the
+  // file: "technical executive" no longer finds every executive whose CV says "technical" somewhere. A chip with
+  // alternatives ("MEP / HVAC") passes when the record has any one of them.
+  const keywordTerms = (k: string) => (resumeText ? [ilike("lookup_text", k), `resume_fts.phfts.${quoted(k)}`] : [ilike("lookup_text", k)]);
+  const chipTerms = (k: KeywordToken) => termsOf(k).flatMap(keywordTerms);
+  for (const k of f.keywords.filter((k) => k.required)) q = q.or(chipTerms(k).join(","));
   const optional = f.keywords.filter((k) => !k.required);
-  if (optional.length) q = q.or(optional.flatMap((k) => keywordTerms(k.text)).join(","));
+  if (optional.length) q = q.or(optional.flatMap(chipTerms).join(","));
   for (const word of f.excludes) {
     q = q.not("lookup_text", "ilike", contains(word));
-    if (resumeText) q = q.not("resume_fts", "plfts", word);
+    if (resumeText) q = q.not("resume_fts", "phfts", word);
   }
 
   // Location: where they are, or (ticked) where they would move to. "Change preferred location" names other places.
@@ -184,8 +190,35 @@ const SORT_COLUMNS: Record<SearchFilters["sort"], { column: string; ascending: b
 /** candidate_records plus the resume columns (migration 20261107000001). */
 const FILTER_VIEW = "candidate_filter_records";
 
-function visible(client: SupabaseClient, orgId: string, columns: string, options?: { count: "exact"; head?: boolean }, view = "candidate_records") {
-  return client.from(view).select(columns, options).eq("organization_id", orgId).eq("sheet_live", true).is("deleted_at", null);
+/**
+ * Owner 2026-11-15 (migration 20261115000002): a blacklisted person is left out of every search unless HR ticks "Show
+ * blacklisted". The filter view says `blacklisted`; before that migration the column is missing, which a query
+ * reports once and is then remembered for a few minutes, like the resume columns.
+ */
+let blacklistColumnMissingAt = 0;
+const blacklistKnownMissing = (now: number) => now - blacklistColumnMissingAt < RECHECK_MS;
+/** True (and remembered) when this error says the view has no `blacklisted` column yet. */
+export function noteBlacklistMissing(error: { message?: string; code?: string } | null | undefined): boolean {
+  if (!error || !/blacklisted/.test(error.message ?? "")) return false;
+  blacklistColumnMissingAt = Date.now();
+  return true;
+}
+/** Tests only. */
+export function resetBlacklistColumnCheck(): void {
+  blacklistColumnMissingAt = 0;
+}
+
+function visible(
+  client: SupabaseClient,
+  orgId: string,
+  columns: string,
+  options?: { count: "exact"; head?: boolean },
+  view = "candidate_records",
+  showBlacklisted = false,
+) {
+  let q = client.from(view).select(columns, options).eq("organization_id", orgId).eq("sheet_live", true).is("deleted_at", null);
+  if (view === FILTER_VIEW && !showBlacklisted && !blacklistKnownMissing(Date.now())) q = q.eq("blacklisted", false);
+  return q;
 }
 
 function failed(error: { message?: string; code?: string }): never {
@@ -211,7 +244,9 @@ export function resetResumeColumnsCheck(): void {
 }
 
 async function countMatching(client: SupabaseClient, orgId: string, f: SearchFilters, allowBlank: boolean, today: string, view: string): Promise<number> {
-  const { count, error } = await applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), f, allowBlank, today, view === FILTER_VIEW);
+  const run = () => applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view, f.showBlacklisted), f, allowBlank, today, view === FILTER_VIEW);
+  let { count, error } = await run();
+  if (noteBlacklistMissing(error)) ({ count, error } = await run());
   if (error) failed(error);
   return count ?? 0;
 }
@@ -231,7 +266,7 @@ export async function filterRecords(
   const sort = SORT_COLUMNS[given.sort];
 
   const run = (f: SearchFilters, columns: string, view: string) =>
-    applyFilters(visible(client, orgId, columns, { count: "exact" }, view), f, f.includeBlank, today, view === FILTER_VIEW)
+    applyFilters(visible(client, orgId, columns, { count: "exact" }, view, f.showBlacklisted), f, f.includeBlank, today, view === FILTER_VIEW)
       .order(sort.column, { ascending: sort.ascending, nullsFirst: false })
       .order("id")
       .range(from, from + size - 1);
@@ -241,6 +276,8 @@ export async function filterRecords(
   let { data, error, count } = resumeFields
     ? await run(f, `${RECORD_COLUMNS}, ${RESUME_COLUMNS}`, FILTER_VIEW)
     : await run(f, RECORD_COLUMNS, "candidate_records");
+  // The view is there but has no `blacklisted` yet (migration 20261115000002 not applied): once more without it.
+  if (resumeFields && noteBlacklistMissing(error)) ({ data, error, count } = await run(f, `${RECORD_COLUMNS}, ${RESUME_COLUMNS}`, FILTER_VIEW));
   if (resumeFields && isMissingResumeView(error)) {
     resumeColumnsMissingAt = Date.now();
     resumeFields = false;
@@ -253,8 +290,10 @@ export async function filterRecords(
   const blankable = hasBlankableFilter(f);
   const other = blankable ? await countMatching(client, orgId, f, !f.includeBlank, today, resumeFields ? FILTER_VIEW : "candidate_records") : 0;
   const records = ((data ?? []) as unknown as RecordRow[]).map(toRecord);
-  if (resumeFields && f.keywords.length) await attachSnippets(client, orgId, records, f.keywords.map((k) => k.text));
+  if (resumeFields && f.keywords.length) await attachSnippets(client, orgId, records, f.keywords);
   if (resumeFields) await attachInferred(client, orgId, records);
+  // With "Show blacklisted" on, the list says who is blacklisted (the column is on the view; absent before the migration).
+  if (resumeFields && f.showBlacklisted && !blacklistKnownMissing(Date.now())) await markBlacklisted(client, orgId, records);
   return {
     records,
     total,
@@ -275,7 +314,9 @@ export async function keywordCounts(client: SupabaseClient, orgId: string, terms
   const view = resumeFields ? FILTER_VIEW : "candidate_records";
   return Promise.all(terms.map(async (text) => {
     const f: SearchFilters = { ...EMPTY_FILTERS, keywords: [{ text, required: true }] };
-    const { count, error } = await applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), resumeFields ? f : withoutResumeFields(f), true, today, resumeFields);
+    const run = () => applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view), resumeFields ? f : withoutResumeFields(f), true, today, resumeFields);
+    let { count, error } = await run();
+    if (noteBlacklistMissing(error)) ({ count, error } = await run());
     if (error && resumeFields && isMissingResumeView(error)) resumeColumnsMissingAt = Date.now();
     return { text, count: error ? null : count ?? 0 };
   }));
@@ -285,17 +326,64 @@ export async function keywordCounts(client: SupabaseClient, orgId: string, terms
  * Owner 2026-11-11: each result shows the lines of its resume around the keywords. One read of the page's resume
  * texts; a candidate with no resume, or whose resume does not hold the words (they matched on the sheet), gets none.
  * Never fails a search: before migration 20261111000002 there is no text to read and the cards go without.
+ *
+ * Owner 2026-11-15: the same read says WHERE each keyword chip matched (the record's own fields, the resume, or
+ * both), so a card can show it and HR sees why someone is in the list without opening the file.
  */
-async function attachSnippets(client: SupabaseClient, orgId: string, records: CandidateRecord[], keywords: string[]): Promise<void> {
-  const ids = [...new Set(records.filter((r) => r.hasResume !== false).map((r) => r.candidateId))];
-  if (!ids.length) return;
-  const { data, error } = await client.from("candidates").select("id, resume_text").eq("organization_id", orgId).in("id", ids);
-  if (error) return;
-  const texts = new Map((data ?? []).map((row) => [row.id as string, row.resume_text as string | null]));
-  for (const record of records) {
-    const snippet = resumeSnippet(texts.get(record.candidateId), keywords);
-    if (snippet) record.resumeSnippet = snippet;
+async function attachSnippets(client: SupabaseClient, orgId: string, records: CandidateRecord[], keywords: KeywordToken[]): Promise<void> {
+  const terms = allKeywordTerms(keywords);
+  // Every candidate on the page (at most 100): the text is what the search matched on, whether or not a file is linked.
+  const ids = [...new Set(records.map((r) => r.candidateId))];
+  const texts = new Map<string, string | null>();
+  if (ids.length) {
+    const { data, error } = await client.from("candidates").select("id, resume_text").eq("organization_id", orgId).in("id", ids);
+    if (!error) for (const row of data ?? []) texts.set(row.id as string, row.resume_text as string | null);
   }
+  for (const record of records) {
+    const resume = texts.get(record.candidateId) ?? null;
+    const snippet = resumeSnippet(resume, terms);
+    if (snippet) record.resumeSnippet = snippet;
+    record.keywordHits = keywordHits(record, resume, keywords);
+  }
+}
+
+/** The record's own text, as the view's lookup_text builds it (every field HR can see on the record). */
+function profileText(r: CandidateRecord): string {
+  const x = r.extras;
+  return [
+    r.fullName, r.email, r.phone, r.currentOrganization, r.currentDesignation, r.location, r.role, r.candidateSource, r.remark,
+    x?.industry, x?.ugQualification, x?.pgQualification, x?.ppgQualification, x?.institute, (x?.skills ?? []).join(" "), x?.resumeSummary,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A keyword as the resume search sees it: a whole word, or several words together in order, any white space between. */
+function inResume(text: string, term: string): boolean {
+  const words = term.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])${words.map(escapeRegex).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu");
+  return pattern.test(text);
+}
+
+/**
+ * Where each chip matched. A chip with alternatives names the one that matched. A chip that matched nowhere the
+ * page can see (a stemmed form in the resume, say) is left out rather than shown wrong.
+ */
+export function keywordHits(record: CandidateRecord, resumeText: string | null, keywords: KeywordToken[]): CandidateRecord["keywordHits"] {
+  const profile = profileText(record);
+  const resume = (resumeText ?? "").replace(/\s+/g, " ");
+  const hits: NonNullable<CandidateRecord["keywordHits"]> = [];
+  for (const chip of keywords) {
+    for (const term of termsOf(chip)) {
+      const inProfile = profile.includes(term.toLowerCase());
+      const found = resume ? inResume(resume, term) : false;
+      if (!inProfile && !found) continue;
+      hits.push({ text: term, required: chip.required, where: inProfile && found ? "both" : inProfile ? "profile" : "resume" });
+      break;
+    }
+  }
+  return hits;
 }
 
 /**
@@ -308,6 +396,8 @@ export async function getFullRecord(client: SupabaseClient, orgId: string, id: s
     if (!error && data) {
       const full = toRecord(data as unknown as RecordRow);
       await attachInferred(client, orgId, [full]);
+      full.blacklist = await loadBlacklist(client, orgId, full.candidateId);
+      full.blacklisted = full.blacklist !== null && full.blacklist !== undefined;
       return full;
     }
     if (error && !isMissingResumeView(error)) failed(error);
@@ -323,9 +413,13 @@ export async function resumeFieldAvailability(client: SupabaseClient, orgId: str
   const empty = Object.fromEntries(RESUME_FIELDS.map((field) => [field, 0])) as Record<ResumeField, number>;
   const counted = await Promise.all(RESUME_FIELDS.map(async (field) => {
     const column = RESUME_FIELD_COLUMNS[field];
-    const base = visible(client, orgId, "id", { count: "exact", head: true }, FILTER_VIEW);
-    // hasResume counts the records that have one (the column itself is never null).
-    const { count, error } = await (field === "preferredLocations" ? base.neq(column, "") : field === "hasResume" ? base.eq(column, true) : base.not(column, "is", null));
+    const run = () => {
+      const base = visible(client, orgId, "id", { count: "exact", head: true }, FILTER_VIEW);
+      // hasResume counts the records that have one (the column itself is never null).
+      return field === "preferredLocations" ? base.neq(column, "") : field === "hasResume" ? base.eq(column, true) : base.not(column, "is", null);
+    };
+    let { count, error } = await run();
+    if (noteBlacklistMissing(error)) ({ count, error } = await run());
     return { field, count: count ?? 0, error };
   }));
   const problem = counted.find((c) => c.error)?.error ?? null;
@@ -357,12 +451,14 @@ export function isOptionField(value: unknown): value is OptionField {
   return value === "keyword" || (typeof value === "string" && Object.hasOwn(OPTION_COLUMNS, value));
 }
 
-export async function filterOptions(client: SupabaseClient, orgId: string, field: OptionField, text: string): Promise<OptionItem[]> {
+export async function filterOptions(client: SupabaseClient, orgId: string, field: OptionField, text: string, today = new Date().toISOString().slice(0, 10)): Promise<OptionItem[]> {
   const typed = text.trim().slice(0, 60);
   if (!typed) return [];
   const sources = field === "keyword" ? KEYWORD_SOURCES.map((k) => OPTION_COLUMNS[k]) : [OPTION_COLUMNS[field]];
   const lists = await Promise.all(sources.map(async ({ column, kind, view }) => {
-    const { data, error } = await visible(client, orgId, column, undefined, view).ilike(column, contains(typed)).limit(OPTION_SCAN);
+    const run = () => visible(client, orgId, column, undefined, view).ilike(column, contains(typed)).limit(OPTION_SCAN);
+    let { data, error } = await run();
+    if (noteBlacklistMissing(error)) ({ data, error } = await run());
     if (view && isMissingResumeView(error)) return [];
     if (error) failed(error);
     const tally = new Map<string, OptionItem>();
@@ -385,7 +481,19 @@ export async function filterOptions(client: SupabaseClient, orgId: string, field
   for (const item of lists.flat().sort((a, b) => place(a) - place(b) || b.count - a.count)) {
     if (!unique.has(item.text.toLowerCase())) unique.set(item.text.toLowerCase(), item);
   }
-  return [...unique.values()].slice(0, OPTION_LIMIT);
+  const options = [...unique.values()].slice(0, OPTION_LIMIT);
+  // Owner 2026-11-15: the keyword box's number is the number the search will show once the word is picked (the
+  // record's fields OR a phrase in the resume), not how many records have it in that one column: "Technical
+  // Executive · 16" used to become 462 results. The column counts above still rank the list.
+  if (field === "keyword" && options.length) {
+    const counted = await keywordCounts(client, orgId, options.map((o) => o.text), today);
+    const byText = new Map(counted.map((c) => [c.text.toLowerCase(), c.count]));
+    for (const o of options) {
+      const n = byText.get(o.text.toLowerCase());
+      if (n !== null && n !== undefined) o.count = n;
+    }
+  }
+  return options;
 }
 
 // Reading a job description --------------------------------------------------------------------------------------------
@@ -401,5 +509,5 @@ export function preferredItems(prefer: Preferences): PreferredItem[] {
 }
 
 export function understoodFilters(spec: SearchSpec) {
-  return { filters: filtersFromSpec(spec), prefer: spec.prefer, preferred: preferredItems(spec.prefer) };
+  return { filters: filtersFromSpec(spec), prefer: spec.prefer, preferred: preferredItems(spec.prefer), conflicts: conflictChoices(spec) };
 }

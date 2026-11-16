@@ -177,7 +177,13 @@ interface ClaimedRow {
   file_name: string;
   storage_path: string;
   text_attempts: number | string;
+  /** Owner 2026-11-15 (migration 20261115000002): HR said this file is a resume, so the check is skipped. Absent before it. */
+  keep_as_resume?: boolean | null;
 }
+
+const CLAIM_COLUMNS = "id, file_name, storage_path, text_attempts";
+/** The error says the column of migration 20261115000002 is not there yet. */
+const keepColumnMissing = (error: { message?: string } | null | undefined) => /keep_as_resume/.test(error?.message ?? "");
 
 /** One organisation, within the time budget. Never throws. */
 export async function processResumeText(
@@ -240,13 +246,16 @@ export async function processResumeText(
     if (!ids.length) break;
 
     // Claim them: another run (the cron and an after-upload run can overlap) takes only what is still pending.
-    const claimed = await client
+    const claim = (columns: string) => client
       .from(TABLE)
       .update({ text_status: "working", updated_at: new Date(now()).toISOString() })
       .eq("organization_id", orgId)
       .eq("text_status", "pending")
       .in("id", ids)
-      .select("id, file_name, storage_path, text_attempts");
+      .select(columns);
+    let claimed = await claim(`${CLAIM_COLUMNS}, keep_as_resume`);
+    // Before migration 20261115000002 the column is missing and the statement fails whole: claim without it.
+    if (claimed.error && keepColumnMissing(claimed.error)) claimed = await claim(CLAIM_COLUMNS);
     if (claimed.error) {
       console.error("[candidates] resume text: claim failed", message(claimed.error));
       break;
@@ -288,7 +297,7 @@ export async function saveResumeText(
   client: SupabaseClient,
   storage: ResumeStorage,
   orgId: string,
-  row: { id: string; storage_path: string },
+  row: { id: string; storage_path: string; keep_as_resume?: boolean | null },
   rawText: string,
   now: () => number,
   extra: Record<string, unknown> = {},
@@ -298,7 +307,8 @@ export async function saveResumeText(
   // Postgres refuses a NUL in text or JSON ("unsupported Unicode escape sequence"); some PDFs carry one.
   const text = rawText.replace(/\u0000/g, "").slice(0, RESUME_TEXT_MAX_CHARS);
   const contacts = contactsInText(text);
-  const { verdict, reason } = looksLikeResume(text, contacts);
+  // Owner 2026-11-15: a file HR marked as a resume is never judged again.
+  const { verdict, reason } = row.keep_as_resume ? { verdict: "resume" as ResumeVerdict, reason: null } : looksLikeResume(text, contacts);
   if (verdict === "reject") {
     // Owner 2026-11-10: not a resume -> the bytes go, the row stays (status 'rejected') so the file is not uploaded again.
     const { error: rmErr } = await storage.remove([row.storage_path]);
@@ -473,6 +483,47 @@ export async function setResumeCandidate(client: SupabaseClient, orgId: string, 
     .eq("id", fileId)
     .eq("organization_id", orgId);
   if (error) failWith(candidateId ? "attach the resume" : "detach the resume", error);
+}
+
+/**
+ * "This is a resume" (owner 2026-11-15): a file the check kept aside as another document becomes a resume. Its text
+ * is already read, so it is matched by email / phone at once and queued for the details reader; the check is skipped
+ * from now on (keep_as_resume).
+ */
+export async function markAsResume(client: SupabaseClient, orgId: string, fileId: unknown): Promise<void> {
+  if (typeof fileId !== "string" || !UUID.test(fileId)) throw new CandidateActionError(400, "id must be a uuid.");
+  const file = await client.from(TABLE).select("id, status").eq("organization_id", orgId).eq("id", fileId).maybeSingle();
+  if (file.error) failWith("mark the file as a resume", file.error);
+  if (!file.data) throw new CandidateActionError(404, "That file is no longer here.");
+  if (file.data.status !== "other") throw new CandidateActionError(400, "Only a document kept aside can be marked as a resume.");
+  const at = new Date().toISOString();
+  const { error } = await client
+    .from(TABLE)
+    .update({ status: "ready", keep_as_resume: true, text_error: null, extract_status: "pending", extract_error: null, candidate_id: null, match_reason: null, matched_at: null, updated_at: at })
+    .eq("id", fileId)
+    .eq("organization_id", orgId);
+  if (error) {
+    if (keepColumnMissing(error)) throw new CandidateActionError(503, "This needs a database update first: run 20261115000002_recruitment_positions_actions_blacklist.sql in Supabase.");
+    failWith("mark the file as a resume", error);
+  }
+  await linkUnmatched(client, orgId);
+}
+
+/**
+ * "Allow re-upload" (owner 2026-11-15): a file removed as not a resume may be uploaded again, and is then kept as a
+ * resume without being judged. The row stays until the upload replaces it.
+ */
+export async function allowReupload(client: SupabaseClient, orgId: string, fileId: unknown): Promise<void> {
+  if (typeof fileId !== "string" || !UUID.test(fileId)) throw new CandidateActionError(400, "id must be a uuid.");
+  const file = await client.from(TABLE).select("id, status").eq("organization_id", orgId).eq("id", fileId).maybeSingle();
+  if (file.error) failWith("allow the upload", file.error);
+  if (!file.data) throw new CandidateActionError(404, "That file is no longer here.");
+  if (file.data.status !== "rejected") throw new CandidateActionError(400, "Only a file removed as not a resume needs this.");
+  const { error } = await client.from(TABLE).update({ keep_as_resume: true, updated_at: new Date().toISOString() }).eq("id", fileId).eq("organization_id", orgId);
+  if (error) {
+    if (keepColumnMissing(error)) throw new CandidateActionError(503, "This needs a database update first: run 20261115000002_recruitment_positions_actions_blacklist.sql in Supabase.");
+    failWith("allow the upload", error);
+  }
 }
 
 function failWith(context: string, error: { code?: string; message?: string }): never {

@@ -118,7 +118,8 @@ async function run() {
     check('migration: one new table, RLS on, nothing destructive', /CREATE TABLE IF NOT EXISTS public\.task_manager_ai_models/.test(sql) && /ENABLE ROW LEVEL SECURITY/.test(sql) && !/^\s*(DROP|DELETE|UPDATE|TRUNCATE)\b/im.test(sql) && !/ALTER TABLE public\.(?!task_manager_ai_models)/i.test(sql));
     // 2026-11-02: the Candidate Search jobs are allowed by the follow-up migration that widens the job list
     // 2026-11-15: the newest migration restates the whole list (every earlier job plus the rest of the application's)
-    const sqlJobs = read('supabase/migrations/20261115000001_ai_models_all_jobs.sql');
+    // 2026-11-16: the Recruitment calls' two jobs (call_transcribe, call_analyse) make the newest list this one
+    const sqlJobs = read('supabase/migrations/20261116000002_ai_models_call_jobs.sql');
     check('every job in the catalog is allowed by the newest job list (which replaces the earlier ones)', C.AI_JOBS.every(j => sqlJobs.includes(`'${j.key}'`)));
     const earlier = [...read('supabase/migrations/20261114000001_unified_brain_ai_model_job.sql').matchAll(/'([a-z_]+)'/g)].map(m => m[1]).filter(j => /^(wa_|voice_|import_|superuser_|learning_|duplicate_|candidate_|brain_)/.test(j));
     check('and every job that could be saved before can still be saved', earlier.length >= 16 && earlier.every(j => sqlJobs.includes(`'${j}'`)), earlier.filter(j => !sqlJobs.includes(`'${j}'`)));
@@ -251,6 +252,9 @@ async function run() {
         ['backend/lib/hr-assistant/ask.ts', /hrChain\("hr_answer", ANSWER_MODELS\)/],
         ['backend/lib/hr-assistant/planner.ts', /hrChain\("hr_plan", PLANNER_MODELS\)/],
         ['backend/lib/whatsapp/assistant/runtime.ts', /modelFor\('assistant_interpret', ''\)/],
+        // 2026-11-16: the Recruitment Calls tab reads its two chains (the candidates' chain caller for the LLM, chainFor for speech)
+        ['backend/lib/callInsights/analyse.ts', /jobCaller\("call_analyse"\)/],
+        ['backend/lib/callInsights/transcribe.ts', /chainFor\("call_transcribe"\)[\s\S]*return CALL_TRANSCRIBE_MODELS/],
     ];
     for (const [file, re] of SITES) check(file, re.test(read(file)));
     const stillConstant = SITES.map(([file]) => file).filter(file => /\bmodel: (GROQ_MODEL|LLM_MODEL|WIKI_MODEL|INVOICE_TEXT_MODEL|MODEL),/.test(read(file)) || /model: 'qwen(?:\/qwen)?3\.[68]-27b',/.test(read(file)));

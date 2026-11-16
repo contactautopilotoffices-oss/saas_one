@@ -16,6 +16,8 @@ function columnsOf(rows: Row[]): string[] {
 
 function bind(value: unknown): unknown {
   if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) return JSON.stringify(value);
+  // An array of objects is a jsonb value (a call's segments, its applied facts); an array of strings is a text[] column.
+  if (Array.isArray(value) && value.some((v) => v !== null && typeof v === "object")) return JSON.stringify(value);
   return value;
 }
 
@@ -113,10 +115,11 @@ class Query implements PromiseLike<Result> {
     this.where.push(`${column} is null`);
     return this;
   }
-  not(column: string, operator: "is" | "ilike" | "in" | "plfts", value: string | null) {
+  not(column: string, operator: "is" | "ilike" | "in" | "plfts" | "phfts", value: string | null) {
     if (operator === "ilike") this.where.push(`${column} not ilike ${this.p(value)}`);
     else if (operator === "in") this.where.push(`not (${column} = any(${this.p(String(value).replace(/[()]/g, "").split(","))}))`);
     else if (operator === "plfts") this.where.push(`not (${column} @@ plainto_tsquery('english', ${this.p(value)}))`);
+    else if (operator === "phfts") this.where.push(`not (${column} @@ phraseto_tsquery('english', ${this.p(value)}))`);
     else this.where.push(`${column} is not null`);
     return this;
   }
@@ -158,6 +161,7 @@ class Query implements PromiseLike<Result> {
     if (op === "in") return `${column} = any(${this.p(raw.replace(/^\(|\)$/g, "").split(","))})`;
     const value = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
     if (op === "plfts") return `${column} @@ plainto_tsquery('english', ${this.p(value)})`;
+    if (op === "phfts") return `${column} @@ phraseto_tsquery('english', ${this.p(value)})`;
     const sql = { ilike: "ilike", gte: ">=", lte: "<=", neq: "<>", eq: "=" }[op];
     if (!sql) throw new Error(`or(): unsupported operator ${op}`);
     if (op === "ilike") return `${column} ilike ${this.p(value)}`;
