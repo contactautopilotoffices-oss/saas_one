@@ -57,7 +57,9 @@ export const INFERRED_FIELDS_MIGRATION = readFileSync(path.join("supabase", "mig
 /** Recruitment step 4 (owner 2026-11-15): positions, insert-only history, blacklist, the "Others" status, the view again. */
 export const RECRUITMENT_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261115000002_recruitment_positions_actions_blacklist.sql"), "utf8")
   .replace(/extensions\.vector\(768\)/g, "extensions.vector");
-
+/** Calls (owner 2026-11-16, plan P3 + P7): call_analyses. PGlite has no storage schema, so the bucket row is left out. */
+export const CALLS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000001_call_analyses.sql"), "utf8")
+  .replace(/insert into storage\.buckets[\s\S]*?on conflict \(id\) do nothing;/i, "");
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(STUBS);
@@ -74,6 +76,7 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(RESUME_SCANS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(INFERRED_FIELDS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(RECRUITMENT_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(CALLS_MIGRATION);
   return db;
 }
 

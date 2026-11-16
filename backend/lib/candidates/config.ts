@@ -228,3 +228,28 @@ export const CANDIDATE_RESUME_TEXT_CHARS = 20_000;
 export const MAX_BULK_RECORDS = 20_000;
 /** Typed by the user to confirm "Clear all candidate data"; the server checks it too. */
 export const CLEAR_ALL_CONFIRMATION = "DELETE ALL";
+
+/**
+ * Calls (owner 2026-11-16, plan P3 + P7; backend/lib/callInsights, backend/lib/candidates/calls.ts). A recording
+ * made on a normal phone goes from the browser straight to the private bucket with a one-time link (like resumes),
+ * is transcribed (Control Center job 'call_transcribe', Groq Whisper, large-v3 first for Hindi / Hinglish) and read
+ * by a model (job 'call_analyse'). The limits the browser shares live in call-files.ts and are re-exported here.
+ */
+export { CALL_AUDIO_TYPES, MAX_CALL_BYTES } from "./call-files";
+export const CALL_BUCKET = "candidate-calls";
+/** How long a playback link works. */
+export const CALL_LINK_SECONDS = 10 * 60;
+/** A pasted transcript: shorter than this is not a call; longer is cut, not refused. */
+export const CALL_TRANSCRIPT_MIN_CHARS = 40;
+export const CALL_TRANSCRIPT_MAX_CHARS = 80_000;
+/** Transcript text the model reads, at most (an hour of talk is about 50,000 characters). */
+export const CALL_ANALYSE_MAX_CHARS = 60_000;
+/** One structured call per transcript: the model reasons over the whole call, so a medium effort and a long budget. */
+export const CALL_ANALYSE_CALL = { effort: "medium", maxTokens: 16_000, otherMaxTokens: 6000, timeoutMs: 75_000, budgetMs: 100_000 } as const;
+/** Today's transcription chain (job 'call_transcribe'); large-v3 first, turbo when it errors or is rate-limited. */
+export const CALL_TRANSCRIBE_MODELS = ["whisper-large-v3", "whisper-large-v3-turbo"] as const;
+/** A call left at transcribing / analysing for longer than this was cut off (the run died): shown as failed, retried by a click. */
+export const CALL_STALE_MINUTES = 10;
+export const CALL_LIST_LIMIT = 50;
+/** Prepare, confirm, poll (every few seconds while a call is being read), apply, delete. */
+export const CALL_RATE_LIMIT = { maxRequests: 90, windowMs: 60_000 };

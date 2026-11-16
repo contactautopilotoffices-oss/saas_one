@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Ban, Download, ExternalLink, FileText, FolderPlus, MessageSquareText, Paperclip, PencilLine, ScanText, Search, Unlink } from 'lucide-react';
+import { Ban, Download, ExternalLink, FileText, Paperclip, PencilLine, ScanText, Search, Unlink } from 'lucide-react';
 import { DEFENCE_OPTIONS, EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import { markKeywords } from '@/backend/lib/candidates/snippet';
 import {
@@ -9,6 +9,7 @@ import {
     type BlacklistReason, type CandidateRecord, type Position, type RecordStatus, type ResumeFile, type ResumeFilesResponse, type Stage,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
+import CallsTab from './CallsTab';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
@@ -25,7 +26,11 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
-type Tab = 'overview' | 'resume' | 'activity' | 'positions';
+type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'calls';
+/** The inline form open under the header, if any. */
+type Panel = null | 'status' | 'positions' | 'blacklist';
+/** The mockup's small header buttons (36 px, 13 px text). */
+const BTN_SM = 'h-9 rounded-xl px-3 text-[13px]';
 
 /** Email and phone with the middle hidden, as the panel's meta line shows them. */
 const maskEmail = (email: string) => { const [user, domain] = email.split('@'); return domain && user.length > 3 ? `${user.slice(0, 3)}•••@${domain}` : email; };
@@ -69,7 +74,18 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     const [tab, setTab] = useState<Tab>('overview');
     const [historyNonce, setHistoryNonce] = useState(0);
     const [focusRemark, setFocusRemark] = useState(0);
-    const [pickNonce, setPickNonce] = useState(0);
+    // Owner 2026-11-16: the Calls tab (a recorded screening call, transcribed and read); the count beside the tab.
+    const [callsNonce, setCallsNonce] = useState(0);
+
+    // Owner 2026-11-16: one inline form open at a time (Change status, Add to position, Blacklist, the resume picker).
+    // Opening one closes the others, and moving to another tab, closing the panel or opening another candidate closes
+    // it: a form never stays open behind the user's back, and the next one opens with its defaults.
+    const [panel, setPanel] = useState<Panel>(null);
+    const [picking, setPicking] = useState(false);
+    const closeForms = () => { setPanel(null); setPicking(false); };
+    const goTo = (next: Tab) => { closeForms(); setTab(next); };
+    const [seenFor, setSeenFor] = useState(`${record.id}:${open}`);
+    if (seenFor !== `${record.id}:${open}`) { setSeenFor(`${record.id}:${open}`); closeForms(); }
 
     // The candidate's resume files.
     const [nonce, setNonce] = useState(0);
@@ -92,11 +108,14 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     const viewing = files.find(f => f.id === viewId) ?? files[0] ?? null;
 
     // Status: the pill opens "Change status"; Others needs a remark.
-    const [statusOpen, setStatusOpen] = useState(false);
+    const statusOpen = panel === 'status';
     const [nextStatus, setNextStatus] = useState<RecordStatus>(r.status);
     const [statusRemark, setStatusRemark] = useState('');
     const [busy, setBusy] = useState(false);
-    const openStatus = () => { setNextStatus(r.status); setStatusRemark(''); setStatusOpen(o => !o); };
+    const openStatus = () => {
+        if (statusOpen) { setPanel(null); return; }
+        setNextStatus(r.status); setStatusRemark(''); setPicking(false); setPanel('status');
+    };
     const saveStatus = async () => {
         if (busy) return;
         const remark = statusRemark.trim();
@@ -106,13 +125,14 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         replace(res.data.record);
-        setStatusOpen(false);
+        setPanel(null);
         setHistoryNonce(n => n + 1);
         notify(`${r.fullName}: ${STATUS_LABELS[nextStatus]}`, 'success');
     };
 
     // Add to position: the open positions, picked inline.
-    const [positionsOpen, setPositionsOpen] = useState(false);
+    const positionsOpen = panel === 'positions';
+    const togglePositions = () => { setPicking(false); setPanel(positionsOpen ? null : 'positions'); };
     const [positions, setPositions] = useState<Position[] | null>(null);
     useEffect(() => {
         if (!positionsOpen || positions) return;
@@ -126,7 +146,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         const res = await api<{ added: number; skipped: number }>(`/api/candidates/positions/${encodeURIComponent(p.id)}/members`, { json: { orgId, applicationIds: [r.id] } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
-        setPositionsOpen(false);
+        setPanel(null);
         setHistoryNonce(n => n + 1);
         setMembershipNonce(n => n + 1);
         notify(res.data.added ? `${r.fullName} added to ${p.title}` : `${r.fullName} is already in ${p.title}`, res.data.added ? 'success' : 'info');
@@ -134,16 +154,20 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     };
 
     // Blacklist, inline.
-    const [blacklistOpen, setBlacklistOpen] = useState(false);
+    const blacklistOpen = panel === 'blacklist';
     const [reason, setReason] = useState<BlacklistReason>('did_not_join');
     const [blRemark, setBlRemark] = useState('');
+    const toggleBlacklist = () => {
+        if (blacklistOpen) { setPanel(null); return; }
+        setReason('did_not_join'); setBlRemark(''); setPicking(false); setPanel('blacklist');
+    };
     const applyBlacklist = async (method: 'POST' | 'DELETE', json: Record<string, unknown>) => {
         setBusy(true);
         const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(r.id)}/blacklist`, { method, json: { orgId, ...json } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         replace(res.data.record);
-        setBlacklistOpen(false);
+        setPanel(null);
         setHistoryNonce(n => n + 1);
         notify(method === 'POST' ? `${r.fullName} is blacklisted and hidden from searches` : `${r.fullName} is back in the searches`, 'success');
     };
@@ -165,8 +189,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     const hits = r.keywordHits ?? [];
 
     const header = (
-        <div className="px-5 pb-0 pt-5 pr-14 sm:px-6 sm:pr-14">
-            <div className="flex items-start gap-x-4">
+        <div className="px-5 pb-0 pt-5 sm:px-6 sm:pt-6">
+            <div className="flex items-start gap-x-3.5 pr-10">
                 <Avatar name={r.fullName} size="lg" />
                 <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -179,24 +203,26 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                     {headline && <p className="mt-0.5 text-sm text-text-primary">{headline}</p>}
                     {meta && <p className="mt-0.5 text-xs text-text-secondary">{meta}</p>}
                 </div>
+                <button type="button" onClick={() => { closeForms(); onEdit(); }} className={`${BTN_GHOST} -mt-1 shrink-0`} title="Edit details"><PencilLine className="h-4 w-4" />Edit</button>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-2">
-                <button type="button" onClick={openStatus} aria-expanded={statusOpen} className={`${BTN_SECONDARY} h-9 gap-x-2 rounded-xl px-3`}>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button type="button" onClick={openStatus} aria-expanded={statusOpen} className={`${BTN_SECONDARY} ${BTN_SM} gap-x-2 ring-[1.5px] ring-inset ring-primary`}>
                     <span className={`h-2 w-2 rounded-full ${STATUS_DOT[r.status]}`} aria-hidden />{STATUS_LABELS[r.status]}<span className="text-text-tertiary" aria-hidden>▾</span>
                 </button>
-                <button type="button" onClick={() => setPositionsOpen(o => !o)} className={`${BTN_PRIMARY} h-9 rounded-xl px-3`}><FolderPlus className="h-4 w-4" />Add to position</button>
-                <button type="button" onClick={() => { setTab('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} h-9 rounded-xl px-3`}><MessageSquareText className="h-4 w-4" />Add remark</button>
-                <button type="button" onClick={() => { setTab('resume'); setPickNonce(n => n + 1); }} className={`${BTN_SECONDARY} h-9 rounded-xl px-3`}><Paperclip className="h-4 w-4" />Attach a resume</button>
+                <button type="button" onClick={togglePositions} aria-expanded={positionsOpen} className={`${BTN_PRIMARY} ${BTN_SM}`}>Add to position</button>
+                <button type="button" onClick={() => { goTo('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Add remark</button>
+                <button type="button" onClick={() => { goTo('resume'); setPicking(true); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Attach a resume</button>
                 {r.blacklist !== undefined && !r.blacklisted && (
-                    <button type="button" onClick={() => setBlacklistOpen(o => !o)} className="ml-auto inline-flex h-9 items-center gap-x-1.5 rounded-lg px-2.5 text-sm font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
+                    <button type="button" onClick={toggleBlacklist} aria-expanded={blacklistOpen} className="ml-auto inline-flex h-9 items-center rounded-xl px-3 text-[13px] font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
                 )}
             </div>
-            <div role="tablist" aria-label="Candidate sections" className="mt-3 flex">
-                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null]] as const).map(([id, label, n]) => (
-                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-                        className={`-mb-px h-10 border-b-2 px-3 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
+            <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap">
+                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['calls', 'Calls', null]] as const).map(([id, label, n]) => (
+                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => goTo(id)}
+                        className={`-mb-px mr-5 h-10 border-b-2 px-0.5 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
                         {label}{n ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n}</span> : null}
                         {id === 'activity' && <ActivityCount orgId={orgId} record={r} nonce={historyNonce} />}
+                        {id === 'calls' && <CallsCount orgId={orgId} record={r} nonce={callsNonce} />}
                     </button>
                 ))}
             </div>
@@ -204,10 +230,10 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     );
 
     return (
-        <Drawer open={open} onClose={onClose} labelId="candidate-details-title" title={r.fullName} header={header} panelClassName="sm:max-w-[640px]"
-            footer={<><button type="button" onClick={onClose} className={`${BTN_SECONDARY} flex-1 sm:flex-none`}>Close</button><button type="button" onClick={onEdit} className={`${BTN_PRIMARY} flex-1 sm:flex-none`}><PencilLine className="h-4 w-4" />Edit details</button></>}
+        <Drawer open={open} onClose={onClose} labelId="candidate-details-title" title={r.fullName} header={header}
+            resize={{ storeKey: 'candidate-details-width', initial: 640, min: 520 }}
         >
-            <div className="space-y-4">
+            <div className="@container space-y-4">
                 {/* Change status */}
                 {statusOpen && (
                     <section className={`${CARD} px-4 py-4`} aria-label="Change status">
@@ -224,7 +250,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         <label htmlFor="cand-status-remark" className="mt-3 block text-xs font-medium text-text-secondary">Remark {statusNeedsRemark(nextStatus) ? <span className="text-error">*</span> : <span>(optional)</span>}</label>
                         <textarea id="cand-status-remark" rows={2} maxLength={REMARK_MAX} value={statusRemark} onChange={e => setStatusRemark(e.target.value)} placeholder={statusNeedsRemark(nextStatus) ? 'Why Others? e.g. Candidate moved to the Bengaluru requirement.' : 'Why, if it helps the next person'} className={`${INPUT} mt-1.5 h-auto min-h-[72px] resize-y py-2.5 leading-relaxed`} />
                         <div className="mt-3 flex justify-end gap-x-2">
-                            <button type="button" onClick={() => setStatusOpen(false)} disabled={busy} className={BTN_GHOST}>Cancel</button>
+                            <button type="button" onClick={() => setPanel(null)} disabled={busy} className={BTN_GHOST}>Cancel</button>
                             <button type="button" onClick={() => void saveStatus()} disabled={busy || nextStatus === r.status || (statusNeedsRemark(nextStatus) && !statusRemark.trim())} className={BTN_PRIMARY}>{busy && <Spinner />}Save status</button>
                         </div>
                     </section>
@@ -257,7 +283,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         <label htmlFor="cand-bl-remark" className="mt-3 block text-xs font-medium text-text-secondary">Remark <span className="text-text-tertiary">· optional, keep it factual</span></label>
                         <input id="cand-bl-remark" value={blRemark} onChange={e => setBlRemark(e.target.value)} maxLength={REMARK_MAX} placeholder="What happened, in one line" className={`${INPUT} mt-1.5`} />
                         <div className="mt-3 flex justify-end gap-x-2">
-                            <button type="button" onClick={() => setBlacklistOpen(false)} disabled={busy} className={BTN_GHOST}>Cancel</button>
+                            <button type="button" onClick={() => setPanel(null)} disabled={busy} className={BTN_GHOST}>Cancel</button>
                             <button type="button" onClick={() => void applyBlacklist('POST', { reason, remark: blRemark.trim() })} disabled={busy} className={BTN_DANGER_FILLED}>{busy && <Spinner />}<Ban className="h-4 w-4" />Blacklist</button>
                         </div>
                     </section>
@@ -265,7 +291,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
                 {tab === 'overview' && (
                     <>
-                        <div className="grid gap-3 sm:grid-cols-2">
+                        {/* Owner 2026-11-16: the cards sit side by side only when the panel is wide enough for one-line values. */}
+                        <div className="grid gap-3 @4xl:grid-cols-2">
                             {(hits.length > 0 || r.resumeSnippet) && (
                                 <section className={`${CARD} px-4 py-3`} aria-label="Match">
                                     <p className={LABEL}>Match to the search</p>
@@ -275,8 +302,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                                     </ul>
                                 </section>
                             )}
-                            <section className={`${CARD} px-4 py-3`} aria-label="Essentials">
-                                <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm">
+                            <section className={`${CARD} @container px-4 py-3 ${hits.length > 0 || r.resumeSnippet ? '' : '@4xl:col-span-2'}`} aria-label="Essentials">
+                                <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm @2xl:grid-cols-[110px_minmax(0,1fr)_110px_minmax(0,1fr)] @2xl:gap-x-5">
                                     <dt className="text-text-secondary">Notice</dt><dd className="font-semibold text-text-primary">{r.noticePeriodDays !== null ? `${formatNotice(r.noticePeriodDays)}${x?.servingNotice ? ' · serving' : ''}` : '—'}</dd>
                                     <dt className="text-text-secondary">In-hand</dt><dd className="font-semibold text-text-primary">{r.currentInhand !== null || r.expectedInhand !== null ? `${r.currentInhand !== null ? formatInr(r.currentInhand) : '—'} → ${r.expectedInhand !== null ? formatInr(r.expectedInhand) : '—'} / month` : '—'}</dd>
                                     <dt className="text-text-secondary">Relocate</dt><dd className="font-semibold text-text-primary">{x?.preferredLocations?.length ? x.preferredLocations.join(', ') : r.location ? `${r.location} only` : '—'}</dd>
@@ -285,7 +312,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                                 </dl>
                             </section>
                         </div>
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5">
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5 @2xl:grid-cols-3 @5xl:grid-cols-4">
                             <Row label="Current designation" value={r.currentDesignation && <>{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</>} />
                             <Row label="Current company" value={r.currentOrganization && <>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</>} />
                             <Row label="Location" value={r.location} />
@@ -309,7 +336,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                             orgId={orgId} candidateId={r.candidateId} fullName={r.fullName}
                             files={files} ready={filesReady} error={mine?.error ?? ''} viewingId={viewing?.id ?? null} onView={setViewId}
                             onChanged={() => { setNonce(n => n + 1); setHistoryNonce(n => n + 1); onChanged?.(); }}
-                            pickNonce={pickNonce}
+                            picking={picking} onPicking={p => { if (p) setPanel(null); setPicking(p); }}
                         />
                         <ResumeReader orgId={orgId} record={r} file={viewing} ready={filesReady} keywords={keywords} />
                     </>
@@ -318,9 +345,27 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
+
+                {tab === 'calls' && open && (
+                    <CallsTab orgId={orgId} record={r}
+                        onLogged={() => { setHistoryNonce(n => n + 1); setCallsNonce(n => n + 1); }}
+                        onRecord={saved => replace(saved)} />
+                )}
             </div>
         </Drawer>
     );
+}
+
+/** The number beside the Calls tab. */
+function CallsCount({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
+    const [n, setN] = useState<{ id: string; n: number } | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ calls: unknown[] }>(`/api/candidates/calls${qs({ orgId, candidateId: record.candidateId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setN({ id: record.id, n: res.data.calls.length }); });
+        return () => ctrl.abort();
+    }, [orgId, record.id, record.candidateId, nonce]);
+    if (!n || n.id !== record.id || n.n === 0) return null;
+    return <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n.n}</span>;
 }
 
 /** The "In N positions" tag in the header. */
@@ -434,16 +479,15 @@ type LinkFilter = '' | 'linked' | 'unlinked';
 /**
  * The candidate's resume files (owner 2026-11-10, phase 2): matched by email / phone in the background, or attached by
  * HR here. Open shows a PDF in the browser's viewer and a .docx as a page; Detach marks a wrong match so it is never
- * matched again by itself. `pickNonce` opens the picker from the panel's "Attach a resume".
+ * matched again by itself. Whether the picker is open is the panel's state (`picking`), so the header's "Attach a
+ * resume" opens it and leaving the tab closes it.
  */
-function ResumeSection({ orgId, candidateId, fullName, files, ready, error, viewingId, onView, onChanged, pickNonce = 0 }: {
+function ResumeSection({ orgId, candidateId, fullName, files, ready, error, viewingId, onView, onChanged, picking, onPicking }: {
     orgId: string; candidateId: string; fullName: string; files: ResumeFile[]; ready: boolean; error: string;
-    viewingId: string | null; onView: (id: string) => void; onChanged: () => void; pickNonce?: number;
+    viewingId: string | null; onView: (id: string) => void; onChanged: () => void; picking: boolean; onPicking: (open: boolean) => void;
 }) {
     const { notify, reportError } = useUi();
-    const [picking, setPicking] = useState(false);
-    const [seenPick, setSeenPick] = useState(pickNonce);
-    if (pickNonce !== seenPick) { setSeenPick(pickNonce); setPicking(true); }
+    const setPicking = onPicking;
     const [q, setQ] = useState(fullName);
     const [qDebounced, setQDebounced] = useState(fullName);
     useEffect(() => { const t = setTimeout(() => setQDebounced(q.trim()), 300); return () => clearTimeout(t); }, [q]);
@@ -480,7 +524,7 @@ function ResumeSection({ orgId, candidateId, fullName, files, ready, error, view
         <section aria-labelledby="cand-resumes-heading">
             <div className="flex items-center justify-between gap-x-2 gap-y-2">
                 <h3 id="cand-resumes-heading" className={LABEL}>Resume files</h3>
-                <button type="button" onClick={() => setPicking(p => !p)} className={`${BTN_GHOST} -mr-2.5`}>
+                <button type="button" onClick={() => setPicking(!picking)} className={`${BTN_GHOST} -mr-2.5`}>
                     <Paperclip className="h-4 w-4" />{picking ? 'Cancel' : 'Attach a resume'}
                 </button>
             </div>

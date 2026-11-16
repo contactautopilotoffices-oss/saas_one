@@ -16,6 +16,8 @@ function columnsOf(rows: Row[]): string[] {
 
 function bind(value: unknown): unknown {
   if (value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)) return JSON.stringify(value);
+  // An array of objects is a jsonb value (a call's segments, its applied facts); an array of strings is a text[] column.
+  if (Array.isArray(value) && value.some((v) => v !== null && typeof v === "object")) return JSON.stringify(value);
   return value;
 }
 

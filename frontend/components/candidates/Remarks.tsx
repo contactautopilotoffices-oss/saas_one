@@ -4,8 +4,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Ban, MessageSquareText, ShieldOff } from 'lucide-react';
 import type { CandidateAction } from '@/backend/lib/candidates/actions';
 import {
-    BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, REMARK_REQUIRED_STATUSES, STATUS_LABELS,
-    type Blacklist, type BlacklistReason, type CandidateRecord, type RecordStatus,
+    BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, CALL_FACT_LABELS, REMARK_REQUIRED_STATUSES, STATUS_LABELS,
+    type Blacklist, type BlacklistReason, type CallFactKey, type CandidateRecord, type RecordStatus,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatDate } from './format';
@@ -153,7 +153,17 @@ function describe(a: CandidateAction): React.ReactNode {
         case 'stage_change': return <>{a.fromValue} → <strong>{a.toValue}</strong></>;
         case 'blacklist': return <>{a.toValue && a.toValue in BLACKLIST_REASON_LABELS ? BLACKLIST_REASON_LABELS[a.toValue as BlacklistReason] : a.toValue}</>;
         case 'unblacklist': return <>Was: {a.fromValue && a.fromValue in BLACKLIST_REASON_LABELS ? BLACKLIST_REASON_LABELS[a.fromValue as BlacklistReason] : a.fromValue}</>;
-        case 'field_edit': { const fields = Array.isArray(a.meta.fields) ? (a.meta.fields as string[]) : []; return <>{fields.join(', ')}</>; }
+        case 'field_edit': {
+            // Owner 2026-11-16: a fact applied from a call names its field and says where it came from.
+            const fields = Array.isArray(a.meta.fields) ? (a.meta.fields as string[]) : [];
+            const named = fields.map(f => (f in CALL_FACT_LABELS ? CALL_FACT_LABELS[f as CallFactKey] : f));
+            return <>{named.join(', ')}{a.meta.source === 'call' ? <span className="text-text-secondary"> · from the call</span> : null}</>;
+        }
+        case 'call_logged': {
+            const position = typeof a.meta.position === 'string' ? a.meta.position : null;
+            const calledOn = typeof a.meta.calledOn === 'string' ? a.meta.calledOn : null;
+            return <>{a.toValue ?? 'Call'}{position ? ` · ${position}` : ''}{calledOn ? ` · ${formatDate(calledOn)}` : ''}</>;
+        }
         default: return <>{a.toValue ?? ''}</>;
     }
 }

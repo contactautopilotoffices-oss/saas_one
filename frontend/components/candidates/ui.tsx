@@ -258,12 +258,25 @@ export function Dialog({
     );
 }
 
+function readDrawerWidth({ storeKey, initial, min }: { storeKey: string; initial: number; min: number }): number {
+    try {
+        const saved = Number(localStorage.getItem(storeKey));
+        return Number.isFinite(saved) && saved >= min ? saved : initial;
+    } catch {
+        return initial;
+    }
+}
+
+function saveDrawerWidth(storeKey: string, width: number) {
+    try { localStorage.setItem(storeKey, String(Math.round(width))); } catch { /* a remembered width is only a convenience */ }
+}
+
 /**
  * Right-hand drawer on sm and up, full screen on phones. `wide` is the candidate's workspace (owner 2026-11-11): room
  * for the resume beside the details; its body does not scroll, so each pane inside can scroll on its own.
  */
 export function Drawer({
-    open, onClose, title, children, footer, labelId, wide = false, subtitle, header, panelClassName = '',
+    open, onClose, title, children, footer, labelId, wide = false, subtitle, header, panelClassName = '', resize,
 }: {
     open: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode; footer?: React.ReactNode; labelId: string;
     wide?: boolean; subtitle?: React.ReactNode;
@@ -271,8 +284,43 @@ export function Drawer({
     header?: React.ReactNode;
     /** Extra classes on the panel, e.g. a width. */
     panelClassName?: string;
+    /**
+     * Owner 2026-11-16: the panel's left edge drags to widen it, like the filter panel's edge. The width (px) is kept
+     * in this browser under `storeKey`; it never grows past the screen less 4rem. Phones stay full width.
+     */
+    resize?: { storeKey: string; initial: number; min: number };
 }) {
     useEscape(open, onClose);
+    const [width, setWidth] = useState(() => (resize ? readDrawerWidth(resize) : 0));
+    const dragRef = useRef<{ x: number; width: number; max: number } | null>(null);
+    const maxWidth = () => Math.max(resize?.min ?? 0, window.innerWidth - 64);
+    const onHandleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = { x: e.clientX, width: Math.min(width, maxWidth()), max: maxWidth() };
+    };
+    const onHandleMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+        const d = dragRef.current;
+        if (d && resize) setWidth(Math.max(resize.min, Math.min(d.max, d.width + d.x - e.clientX)));
+    };
+    const onHandleUp = () => {
+        if (!dragRef.current || !resize) return;
+        dragRef.current = null;
+        saveDrawerWidth(resize.storeKey, width);
+    };
+    const setAndSave = (next: number) => {
+        if (!resize) return;
+        const w = Math.max(resize.min, Math.min(maxWidth(), next));
+        setWidth(w);
+        saveDrawerWidth(resize.storeKey, w);
+    };
+    const onHandleKey = (e: React.KeyboardEvent) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        setAndSave(width + (e.key === 'ArrowLeft' ? 32 : -32));
+    };
+    const panelStyle = resize ? ({ '--drawer-w': `${width}px` } as React.CSSProperties) : undefined;
+    const widthClass = resize ? 'sm:w-[min(var(--drawer-w),calc(100vw-4rem))] sm:max-w-none' : wide ? 'sm:max-w-xl lg:max-w-[min(1360px,calc(100vw-4rem))]' : 'sm:max-w-xl';
     return (
         <ModalPortal>
             <AnimatePresence>
@@ -287,8 +335,29 @@ export function Drawer({
                             role="dialog" aria-modal="true" aria-labelledby={labelId}
                             initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }}
                             transition={{ duration: 0.36, ease: EASE_PATIENT }}
-                            className={`${OVERLAY} flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${wide ? 'sm:max-w-xl lg:max-w-[min(1360px,calc(100vw-4rem))]' : 'sm:max-w-xl'} ${panelClassName}`}
+                            style={panelStyle}
+                            className={`${OVERLAY} relative flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${widthClass} ${panelClassName}`}
                         >
+                            {resize && (
+                                <button
+                                    type="button"
+                                    role="separator"
+                                    aria-orientation="vertical"
+                                    aria-label="Resize the panel. Use the left and right arrow keys."
+                                    aria-valuemin={resize.min}
+                                    aria-valuenow={width}
+                                    title="Drag to widen. Double-click to reset."
+                                    onPointerDown={onHandleDown}
+                                    onPointerMove={onHandleMove}
+                                    onPointerUp={onHandleUp}
+                                    onPointerCancel={onHandleUp}
+                                    onKeyDown={onHandleKey}
+                                    onDoubleClick={() => setAndSave(resize.initial)}
+                                    className="group absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize touch-none items-center justify-center rounded-md sm:flex"
+                                >
+                                    <span className="block h-10 w-1 rounded-full bg-border transition-all duration-200 group-hover:h-16 group-hover:bg-primary group-focus-visible:h-16 group-focus-visible:bg-primary group-active:h-16 group-active:bg-primary" aria-hidden />
+                                </button>
+                            )}
                             {header ? (
                                 <div className="relative shrink-0 border-b border-border-subtle">
                                     <h2 id={labelId} className="sr-only">{title}</h2>

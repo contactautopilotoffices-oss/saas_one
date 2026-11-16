@@ -620,3 +620,122 @@ export interface ReindexResponse {
   /** Nothing was done this time (paused after a busy answer, or another run is working). */
   waiting: boolean;
 }
+
+// Calls (owner 2026-11-16, plan P3 + P7; migration 20261116000001) -----------------------------------------------------
+
+export type CallInputKind = "audio" | "transcript";
+/** uploading -> uploaded -> transcribing -> analysing -> done | failed. A pasted transcript starts at 'uploaded'. */
+export type CallStatus = "uploading" | "uploaded" | "transcribing" | "analysing" | "done" | "failed";
+export const CALL_STATUS_LABELS: Record<CallStatus, string> = {
+  uploading: "Uploading",
+  uploaded: "Waiting",
+  transcribing: "Transcribing",
+  analysing: "Reading the call",
+  done: "Analysed",
+  failed: "Failed",
+};
+
+export type CallSentiment = "positive" | "neutral" | "negative";
+export type CallConfidence = "high" | "medium" | "low";
+export type CallInterest = "high" | "medium" | "low" | "unclear";
+export const CALL_CONCERN_TOPICS = ["salary", "location", "commute", "notice", "shift", "role", "growth", "stability", "other"] as const;
+export type CallConcernTopic = (typeof CALL_CONCERN_TOPICS)[number];
+export const CALL_CONCERN_LABELS: Record<CallConcernTopic, string> = {
+  salary: "Salary",
+  location: "Location",
+  commute: "Commute",
+  notice: "Notice period",
+  shift: "Shift timing",
+  role: "The role",
+  growth: "Growth",
+  stability: "Stability",
+  other: "Other",
+};
+
+/** One thing the candidate said, with the words it came from and (when the transcript is stamped) when. */
+export interface CallEvidence {
+  quote: string | null;
+  /** Seconds into the call; null for a pasted transcript. */
+  at: number | null;
+}
+export interface CallFact<T> extends CallEvidence {
+  /** null = not said on the call. Never guessed. */
+  value: T | null;
+}
+
+/** The facts the model listens for, and the record fields "Apply" writes them to. */
+export const CALL_FACT_KEYS = ["currentInhand", "expectedInhand", "noticePeriodDays", "location", "reasonForChange"] as const;
+export type CallFactKey = (typeof CALL_FACT_KEYS)[number];
+export const CALL_FACT_LABELS: Record<CallFactKey, string> = {
+  currentInhand: "Current in-hand",
+  expectedInhand: "Expected in-hand",
+  noticePeriodDays: "Notice period",
+  location: "Location",
+  reasonForChange: "Reason for change",
+};
+
+/** What the model read out of one call (backend/lib/callInsights/contexts/candidateScreening.ts). Advisory only. */
+export interface CallInsights {
+  overallSentiment: CallSentiment;
+  sentimentConfidence: CallConfidence;
+  interestLevel: CallInterest;
+  summary: string;
+  suggestedNextStep: string;
+  /** In order, start to end. Seconds are set when the transcript was stamped; `share` (1–10) is the rough length. */
+  timeline: { sentiment: CallSentiment; note: string; startSeconds: number | null; endSeconds: number | null; share: number }[];
+  concerns: ({ topic: CallConcernTopic; note: string } & CallEvidence)[];
+  redFlags: ({ note: string } & CallEvidence)[];
+  facts: {
+    currentInhand: CallFact<number>;
+    expectedInhand: CallFact<number>;
+    noticePeriodDays: CallFact<number>;
+    location: CallFact<string>;
+    reasonForChange: CallFact<string>;
+  };
+  language: string;
+}
+
+export interface CallSegment {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** One call on a candidate (GET /api/candidates/calls). The transcript comes only with a single call (get). */
+export interface CallAnalysis {
+  id: string;
+  candidateId: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  inputKind: CallInputKind;
+  fileName: string | null;
+  fileSize: number | null;
+  /** YYYY-MM-DD */
+  calledOn: string | null;
+  consentConfirmed: boolean;
+  status: CallStatus;
+  /** Why it failed, in HR's words. */
+  error: string | null;
+  attempts: number;
+  language: string | null;
+  durationSeconds: number | null;
+  /** Only on a single call. */
+  segments?: CallSegment[] | null;
+  transcriptText?: string | null;
+  result: CallInsights | null;
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  /** Facts HR already applied from this call. */
+  appliedFacts: { key: CallFactKey; at: string; byName: string | null }[];
+  byName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /api/candidates/calls with a file: the row and the one-time upload link. */
+export interface PreparedCall {
+  call: CallAnalysis;
+  upload: { signedUrl: string; contentType: string } | null;
+}
