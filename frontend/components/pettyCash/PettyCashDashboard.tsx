@@ -93,7 +93,18 @@ export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: strin
     const summary = [{ key: 'received', label: 'Received', icon: ArrowDownLeft }, { key: 'spent', label: 'Spent', icon: ArrowUpRight }, { key: 'returned', label: 'Returned', icon: RotateCcw }, { key: 'balance', label: 'Available balance', icon: Wallet }] as const;
     return <div className="petty-cash-workflow space-y-6">
         <PettyCashStyles />
-        <div className="pc-panel pc-header flex flex-wrap gap-4 justify-between items-center p-6 rounded-3xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm">
+        {detailId && context ? (
+            <WorkflowRequestDetail
+                key={`${orgId}:${detailId}`}
+                context={context}
+                id={detailId}
+                initialAction={detailAction}
+                onClose={closeDetail}
+                onChanged={() => { void refresh(); }}
+            />
+        ) : (
+            <>
+                <div className="pc-panel pc-header flex flex-wrap gap-4 justify-between items-center p-6 rounded-3xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm">
             <div className="flex items-center gap-3.5">
                 <div className="pc-icon-tile w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-sm shrink-0">
                     <Wallet size={22} />
@@ -335,7 +346,8 @@ export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: strin
                 </div>
             </>}
             {showNew && context && <NewRequestModal open properties={context.properties} organizationId={orgId} routes={context.routes} canSubmit={context.wallet.can_request} blocker={context.wallet.blocker} onClose={() => setShowNew(false)} onCreated={() => { setShowNew(false); void refresh(); }} />}
-            {detailId && context && <WorkflowRequestDetail key={`${orgId}:${detailId}`} context={context} id={detailId} onClose={closeDetail} onChanged={() => { void refresh(); }} />}
         </>}
+        </>
+        )}
     </div>;
 }

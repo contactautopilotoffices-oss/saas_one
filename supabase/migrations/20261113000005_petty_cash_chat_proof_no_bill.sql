@@ -3,6 +3,12 @@
 -- while retaining the mandatory no_bill_reason when amount <= threshold.
 BEGIN;
 
+-- Ensure cancellation columns exist on petty_cash_requests
+ALTER TABLE public.petty_cash_requests 
+  ADD COLUMN IF NOT EXISTS cancel_requested_at timestamptz,
+  ADD COLUMN IF NOT EXISTS cancel_requested_by uuid,
+  ADD COLUMN IF NOT EXISTS cancel_reason text;
+
 CREATE OR REPLACE FUNCTION public.pc_expense(actor uuid, rid uuid, body jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE
