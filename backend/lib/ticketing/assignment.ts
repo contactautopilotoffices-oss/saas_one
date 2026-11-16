@@ -31,6 +31,18 @@ async function getOrgItMembers(propertyId: string): Promise<{ user_id: string; f
     }
 }
 
+/**
+ * Owner 2026-11-16: the property roles that can be handed a ticket. Soft service supervisors were missing, so
+ * soft-service tickets never reached them even once they held the `soft_services` skill.
+ */
+const ASSIGNABLE_ROLES = ['mst', 'staff', 'soft_service_supervisor'];
+
+/**
+ * Roles that only ever receive work in their own skill pool — they are deliberately kept out of the `general`
+ * pool, so a technical or plumbing ticket is never round-robined onto a soft service supervisor.
+ */
+const SKILL_ONLY_ROLES = ['soft_service_supervisor'];
+
 interface AssignmentResult {
     ticketId: string;
     assignedTo: string | null;
@@ -96,7 +108,7 @@ export async function processIntelligentAssignment(
         .select('user_id, role, users!inner(full_name)')
         .eq('property_id', propertyId)
         .eq('is_active', true)
-        .in('role', ['mst', 'staff']);
+        .in('role', ASSIGNABLE_ROLES);
 
     // Create a map of user_id -> role for quick lookup
     const userRoleMap: Record<string, string> = {};
@@ -134,7 +146,10 @@ export async function processIntelligentAssignment(
             }
         });
 
-        // Everyone (except staff technical) is in general
+        // Soft service supervisors stay in their own skill pool only (see SKILL_ONLY_ROLES), so they are not
+        // round-robined technical work. Everyone else (except staff technical) is also in general.
+        if (SKILL_ONLY_ROLES.includes(userRole)) return;
+
         mstPools.general.push(rs);
     });
 
