@@ -275,7 +275,10 @@ export async function POST(request: NextRequest) {
         // If only 'specialization' is provided (old way), wrap it in skills.
         const effectiveSkills = skills.length > 0 ? skills : (specialization ? [specialization] : []);
 
-        if ((role === 'staff' || role === 'mst') && effectiveSkills.length > 0) {
+        // Owner 2026-11-16: `soft_service_supervisor` is included so the soft service skills the invite form already
+        // offers that role are stored, and a resolver row is seeded — without it the chosen skills were dropped and
+        // no soft-service ticket could ever be assigned to a supervisor.
+        if ((role === 'staff' || role === 'mst' || role === 'soft_service_supervisor') && effectiveSkills.length > 0) {
             // 1. Insert into mst_skills (simple mapping)
             for (const skillCode of effectiveSkills) {
                 const { error: skillError } = await adminClient
@@ -297,10 +300,16 @@ export async function POST(request: NextRequest) {
                 // Staff -> soft_services
                 const VALID_MST_SKILLS = ['technical', 'plumbing', 'vendor'];
                 const VALID_STAFF_SKILLS = ['soft_services', 'technical'];
+                // A supervisor resolves soft-service work only (no `technical`, unlike staff).
+                const VALID_SUPERVISOR_SKILLS = ['soft_services'];
 
                 const skillsForResolver = role === 'mst'
                     ? effectiveSkills.filter((s: string) => VALID_MST_SKILLS.includes(s))
-                    : (role === 'staff' ? effectiveSkills.filter((s: string) => VALID_STAFF_SKILLS.includes(s)) : []);
+                    : role === 'staff'
+                        ? effectiveSkills.filter((s: string) => VALID_STAFF_SKILLS.includes(s))
+                        : (role === 'soft_service_supervisor'
+                            ? effectiveSkills.filter((s: string) => VALID_SUPERVISOR_SKILLS.includes(s))
+                            : []);
 
                 if (skillsForResolver.length > 0) {
                     const { data: skillGroups } = await adminClient
