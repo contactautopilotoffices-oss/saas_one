@@ -19,11 +19,46 @@ import { loadImageBuffer, loadFeedbackRules, formatFeedbackRules, normalizeParam
  * Primary Model: Qwen 3.8 27B Vision via engy.ai (with fallback to Groq Qwen 3.6 27B)
  * Body: { completionItemId }
  */
+export const maxDuration = 300;
+
 export interface EvaluateCleanlinessParams {
     propertyId: string;
     completionId: string;
     completionItemId: string;
     force?: boolean;
+}
+
+interface CachedBenchmark {
+    base64: string;
+    buffer: Buffer;
+    hash: string;
+    cachedAt: number;
+}
+const BENCHMARK_CACHE = new Map<string, CachedBenchmark>();
+const BENCHMARK_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
+
+async function getOptimizedImage(url: string | null | undefined, isBenchmark = false): Promise<{ base64: string; buffer: Buffer; hash: string } | null> {
+    if (!url) return null;
+    if (isBenchmark) {
+        const cached = BENCHMARK_CACHE.get(url);
+        if (cached && (Date.now() - cached.cachedAt < BENCHMARK_CACHE_TTL_MS)) {
+            return cached;
+        }
+    }
+    const buf = await loadImageBuffer(url);
+    if (!buf) return null;
+    const jpeg = await sharp(buf).resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    const hash = crypto.createHash('sha256').update(buf).digest('hex');
+    const result = {
+        buffer: buf,
+        base64: `data:image/jpeg;base64,${jpeg.toString('base64')}`,
+        hash,
+        cachedAt: Date.now(),
+    };
+    if (isBenchmark) {
+        BENCHMARK_CACHE.set(url, result);
+    }
+    return result;
 }
 
 export async function evaluateCompletionItemCleanliness({
@@ -33,7 +68,7 @@ export async function evaluateCompletionItemCleanliness({
     force,
 }: EvaluateCleanlinessParams): Promise<NextResponse> {
     try {
-        // Verify completion belongs to this property (include date/slot for freshness verification)
+        // Parallel fetch: verify completion, property settings, and completion item concurrently
         let compQuery = supabaseAdmin
             .from('sop_completions')
             .select('id, property_id, template_id, completion_date, slot_time, created_at')
@@ -43,20 +78,27 @@ export async function evaluateCompletionItemCleanliness({
             compQuery = compQuery.eq('property_id', propertyId);
         }
 
-        const { data: completion, error: completionError } = await compQuery.maybeSingle();
+        const [compRes, propSettingsRes, itemRes] = await Promise.all([
+            compQuery.maybeSingle(),
+            supabaseAdmin
+                .from('checklist_property_settings')
+                .select('*')
+                .eq('property_id', propertyId)
+                .maybeSingle(),
+            supabaseAdmin
+                .from('sop_completion_items')
+                .select('*')
+                .eq('id', completionItemId)
+                .eq('completion_id', completionId)
+                .maybeSingle(),
+        ]);
 
-        if (completionError || !completion) {
+        const completion = compRes.data;
+        if (compRes.error || !completion) {
             return NextResponse.json({ error: 'Completion not found for this property' }, { status: 404 });
         }
 
-        // Check if property is in basic mode or has AI scoring disabled
-        const { data: propSettings } = await supabaseAdmin
-            .from('checklist_property_settings')
-            .select('*')
-            .eq('property_id', propertyId)
-            .maybeSingle();
-
-        // Configured pass threshold (was hard-coded to 70)
+        const propSettings = propSettingsRes.data;
         const configuredThreshold = Number((propSettings as any)?.ai_scoring_threshold);
         const passThreshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0 && configuredThreshold <= 100
             ? Math.round(configuredThreshold)
@@ -77,7 +119,7 @@ export async function evaluateCompletionItemCleanliness({
             isBasicMode = !prop || prop.checklist_mode === 'basic';
         }
 
-        if (isBasicMode || aiScoringDisabled) {
+        if ((isBasicMode || aiScoringDisabled) && !force) {
             return NextResponse.json({
                 success: true,
                 skipped: true,
@@ -85,15 +127,8 @@ export async function evaluateCompletionItemCleanliness({
             });
         }
 
-        // Load the completion item (field photos + checked_at capture timestamp)
-        const { data: completionItem, error: itemError } = await supabaseAdmin
-            .from('sop_completion_items')
-            .select('*')
-            .eq('id', completionItemId)
-            .eq('completion_id', completionId)
-            .maybeSingle();
-
-        if (itemError || !completionItem) {
+        const completionItem = itemRes.data;
+        if (itemRes.error || !completionItem) {
             return NextResponse.json({ error: 'Completion item not found' }, { status: 404 });
         }
 
@@ -134,23 +169,26 @@ export async function evaluateCompletionItemCleanliness({
             });
         }
 
-        // Load the checklist item (reference benchmarks & sub-parameters)
-        const { data: checklistItem, error: checklistError } = await supabaseAdmin
-            .from('sop_checklist_items')
-            .select('id, title, reference_photo_url, reference_photos, reference_photo_source, cad_area_id, parameters')
-            .eq('id', completionItem.checklist_item_id)
-            .maybeSingle();
+        // Parallel fetch: checklist item (benchmarks & sub-params) and property organization
+        const [checklistItemRes, propertyRowRes] = await Promise.all([
+            supabaseAdmin
+                .from('sop_checklist_items')
+                .select('id, title, reference_photo_url, reference_photos, reference_photo_source, cad_area_id, parameters')
+                .eq('id', completionItem.checklist_item_id)
+                .maybeSingle(),
+            supabaseAdmin
+                .from('properties')
+                .select('organization_id')
+                .eq('id', completion.property_id || propertyId)
+                .maybeSingle(),
+        ]);
 
-        if (checklistError || !checklistItem) {
+        const checklistItem = checklistItemRes.data;
+        if (checklistItemRes.error || !checklistItem) {
             return NextResponse.json({ error: 'Checklist item not found' }, { status: 404 });
         }
 
-        const { data: propertyRow } = await supabaseAdmin
-            .from('properties')
-            .select('organization_id')
-            .eq('id', completion.property_id || propertyId)
-            .maybeSingle();
-        const organizationId: string | null = propertyRow?.organization_id ?? null;
+        const organizationId: string | null = propertyRowRes.data?.organization_id ?? null;
 
         // Gather clean benchmark standards: support reference_photos JSONB array with fallback to reference_photo_url
         let rawBenchmarks: Array<{ id: string; label: string; url: string; source: 'uploaded' | 'cad' }> = [];
@@ -220,36 +258,37 @@ export async function evaluateCompletionItemCleanliness({
 
         if (cadFallbackBuffer) {
             referenceUsed = 'cad';
-            const cadPng = await sharp(cadFallbackBuffer).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
+            const cadJpeg = await sharp(cadFallbackBuffer).resize({ width: 448, withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
             const hash = crypto.createHash('sha256').update(cadFallbackBuffer).digest('hex');
             benchmarkItems.push({
                 id: 'cad_ref',
                 label: 'CAD Floor Plan Blueprint',
                 url: null,
                 buffer: cadFallbackBuffer,
-                base64: `data:image/png;base64,${cadPng.toString('base64')}`,
+                base64: `data:image/jpeg;base64,${cadJpeg.toString('base64')}`,
                 hash,
             });
         } else {
-            for (const b of rawBenchmarks.slice(0, 5)) {
-                try {
-                    const buf = await loadImageBuffer(b.url);
-                    if (buf) {
-                        const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
-                        const hash = crypto.createHash('sha256').update(buf).digest('hex');
-                        benchmarkItems.push({
+            const loadedBenchmarks = await Promise.all(
+                rawBenchmarks.slice(0, 5).map(async (b) => {
+                    try {
+                        const opt = await getOptimizedImage(b.url, true);
+                        if (!opt) return null;
+                        return {
                             id: b.id,
                             label: b.label,
                             url: b.url,
-                            buffer: buf,
-                            base64: `data:image/png;base64,${png.toString('base64')}`,
-                            hash,
-                        });
+                            buffer: opt.buffer,
+                            base64: opt.base64,
+                            hash: opt.hash,
+                        };
+                    } catch (bErr) {
+                        console.error(`[AI Score] Benchmark fetch failed for ${b.label}:`, bErr);
+                        return null;
                     }
-                } catch (bErr) {
-                    console.error(`[AI Score] Benchmark fetch failed for ${b.label}:`, bErr);
-                }
-            }
+                })
+            );
+            benchmarkItems.push(...(loadedBenchmarks.filter(Boolean) as any[]));
         }
 
         if (benchmarkItems.length === 0) {
@@ -260,27 +299,28 @@ export async function evaluateCompletionItemCleanliness({
             });
         }
 
-        // Fetch and optimize field photos (up to 5 photos max)
-        const fieldPhotoItems: Array<{ id: string; url: string; captured_at?: string; base64: string; buffer: Buffer; hash: string }> = [];
-        for (const p of rawFieldPhotos.slice(0, 5)) {
-            try {
-                const buf = await loadImageBuffer(p.url);
-                if (buf) {
-                    const png = await sharp(buf).resize({ width: 640, withoutEnlargement: true }).png().toBuffer();
-                    const hash = crypto.createHash('sha256').update(buf).digest('hex');
-                    fieldPhotoItems.push({
+        // Fetch and optimize field photos in parallel (up to 5 photos max)
+        const loadedFieldPhotos = await Promise.all(
+            rawFieldPhotos.slice(0, 5).map(async (p) => {
+                try {
+                    const opt = await getOptimizedImage(p.url, false);
+                    if (!opt) return null;
+                    return {
                         id: p.id,
                         url: p.url,
                         captured_at: p.captured_at,
-                        buffer: buf,
-                        base64: `data:image/png;base64,${png.toString('base64')}`,
-                        hash,
-                    });
+                        buffer: opt.buffer,
+                        base64: opt.base64,
+                        hash: opt.hash,
+                    };
+                } catch (pErr) {
+                    console.error(`[AI Score] Field photo fetch failed for ${p.url}:`, pErr);
+                    return null;
                 }
-            } catch (pErr) {
-                console.error(`[AI Score] Field photo fetch failed for ${p.url}:`, pErr);
-            }
-        }
+            })
+        );
+        const fieldPhotoItems: Array<{ id: string; url: string; captured_at?: string; base64: string; buffer: Buffer; hash: string }> =
+            loadedFieldPhotos.filter(Boolean) as any[];
 
         if (fieldPhotoItems.length === 0) {
             return NextResponse.json(
@@ -385,7 +425,7 @@ AUDIT STEPS (do every step, in order, do not skip any):
    - Found and dirty, damaged, missing or not done: "fail", score 0-40.
    - Not visible in ANY field photo, hidden, too blurry or too dark to judge: "not_visible", score null. Do NOT guess. Do NOT mark "pass" just because the rest of the photo looks clean.
    - "found_in_photo": the Field Photo number where you saw it, or null.
-   - "reason": one concrete sentence about what you actually saw (for example "Two water stains on the left side of the mirror"), never a generic phrase.
+   - "reason": strictly one concise sentence (max 15 words) stating only what you saw. No generic phrases.
 
 4. OVERALL RESULT:
    - "overall_score" (0-100) must agree with the parameter and angle results. Any "fail" parameter caps it at 50. Any "missing" angle caps it at 60.
@@ -394,7 +434,7 @@ AUDIT STEPS (do every step, in order, do not skip any):
    - "timestamp_detected": the exact watermark text you can read, or "none".
 
 5. EXPLANATION FOR STAFF:
-   - "overall_reason": short, plain, friendly. Say what is wrong and what to do. If parameters are not visible, name them and say which angle to photograph (for example "Could not see: Dustbin lid. Please add a photo from the Washbasin angle."). If an angle is missing, say "Missing photo for: [angle label]. Please tap '+ Add Photo' to capture it."
+   - "overall_reason": strictly 1-2 concise sentences (under 30 words) summarizing key observation or action needed. Keep it crisp.
 
 Respond ONLY with raw JSON in exactly this shape:
 {
@@ -402,12 +442,12 @@ Respond ONLY with raw JSON in exactly this shape:
     { "angle_id": "<id>", "angle_label": "<label>", "parameters": ["<parameter name>"] }
   ],
   "matches": [
-    { "benchmark_id": "<id>", "benchmark_label": "<label>", "matched_photo_index": <number or null>, "status": "matched" | "angle_mismatch" | "missing", "reason": "<observation>", "cleanliness_score": <number 0..100> }
+    { "benchmark_id": "<id>", "benchmark_label": "<label>", "matched_photo_index": <number or null>, "status": "matched" | "angle_mismatch" | "missing", "reason": "<max 15 words observation>", "cleanliness_score": <number 0..100> }
   ],
   "parameters": [
-    { "name": "<exact parameter name>", "expected_angle": "<angle label>", "found_in_photo": <number or null>, "reason": "<what you saw>", "status": "pass" | "needs_attention" | "fail" | "not_visible", "score": <number or null> }
+    { "name": "<exact parameter name>", "expected_angle": "<angle label>", "found_in_photo": <number or null>, "reason": "<max 15 words observation>", "status": "pass" | "needs_attention" | "fail" | "not_visible", "score": <number or null> }
   ],
-  "overall_reason": "<summary for staff>",
+  "overall_reason": "<max 25 words summary>",
   "overall_score": <number 0..100>,
   "pass": <boolean>,
   "is_stale_image": <boolean>,
@@ -428,51 +468,57 @@ Respond ONLY with raw JSON in exactly this shape:
         let modelUsed = '';
 
         if (engyKey) {
-            try {
-                // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
-                // If it fails, the Groq model below still takes over, as before.
-                const engyModel = await modelFor('sop_photo', 'qwen3.8-27b');
-                const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${engyKey}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        model: engyModel,
-                        messages: [
-                            {
-                                role: 'system',
-                                content: 'You are an expert cleanliness auditor. Output raw JSON only with no markdown wrapping.',
-                            },
-                            {
-                                role: 'user',
-                                content: imageContents,
-                            },
-                        ],
-                        max_tokens: 4096,
-                        temperature: 0.1,
-                        response_format: { type: 'json_object' },
-                    }),
-                });
+            // Configurable model from Tech Console (Brain -> AI models), defaulting to glm-5.3-flash
+            const configuredModel = await modelFor('sop_photo', 'glm-5.3-flash').catch(() => 'glm-5.3-flash');
+            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash', 'kimi-k3.1-pro'].filter(Boolean) as string[];
+            const uniqueModels = Array.from(new Set(engyVisionModels));
+            for (const modelToTry of uniqueModels) {
+                if (rawText) break;
+                try {
+                    const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${engyKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            model: modelToTry,
+                            messages: [
+                                {
+                                    role: 'system',
+                                    content: 'You are an expert cleanliness auditor. Output raw JSON only with strictly concise descriptions.',
+                                },
+                                {
+                                    role: 'user',
+                                    content: imageContents,
+                                },
+                            ],
+                            max_tokens: 2500,
+                            temperature: 0.1,
+                            response_format: { type: 'json_object' },
+                        }),
+                        signal: AbortSignal.timeout(25000),
+                    });
 
-                if (engyRes.ok) {
-                    const engyData = await engyRes.json();
-                    const choiceMsg = engyData.choices?.[0]?.message;
-                    rawText = (choiceMsg?.content || '').trim();
-                    if (!rawText && choiceMsg?.reasoning_content) {
-                        const jsonMatch = choiceMsg.reasoning_content.match(/\{[\s\S]*"overall_score"[\s\S]*\}/)
-                            || choiceMsg.reasoning_content.match(/\{[\s\S]*"score"[\s\S]*\}/);
-                        if (jsonMatch) rawText = jsonMatch[0];
+                    if (engyRes.ok) {
+                        const engyData = await engyRes.json();
+                        const choiceMsg = engyData.choices?.[0]?.message;
+                        rawText = (choiceMsg?.content || '').trim();
+                        if (!rawText && choiceMsg?.reasoning_content) {
+                            const jsonMatch = choiceMsg.reasoning_content.match(/\{[\s\S]*"overall_score"[\s\S]*\}/)
+                                || choiceMsg.reasoning_content.match(/\{[\s\S]*"score"[\s\S]*\}/);
+                            if (jsonMatch) rawText = jsonMatch[0];
+                        }
+                        if (rawText) {
+                            modelUsed = `${modelToTry} (engy.ai)`;
+                            break;
+                        }
+                    } else {
+                        console.warn(`[AI Score] engy.ai model ${modelToTry} returned status:`, engyRes.status, await engyRes.text().catch(() => ''));
                     }
-                    if (rawText) {
-                        modelUsed = `${engyModel} (engy.ai)`;
-                    }
-                } else {
-                    console.warn('[AI Score] engy.ai returned status:', engyRes.status, await engyRes.text().catch(() => ''));
+                } catch (engyErr) {
+                    console.warn(`[AI Score] engy.ai model ${modelToTry} request failed:`, engyErr);
                 }
-            } catch (engyErr) {
-                console.warn('[AI Score] engy.ai request failed, attempting Groq fallback:', engyErr);
             }
         }
 
@@ -494,10 +540,10 @@ Respond ONLY with raw JSON in exactly this shape:
                                 content: imageContents,
                             },
                         ],
-                        max_tokens: 2048,
+                        max_tokens: 1500,
                         temperature: 0.1,
                         response_format: { type: 'json_object' },
-                    }));
+                    }, { signal: AbortSignal.timeout(10000) }));
                     rawText = completion_.choices[0]?.message?.content ?? '';
                     modelUsed = `${visionModel} (groq)`;
                 } catch (groqErr: any) {

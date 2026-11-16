@@ -111,6 +111,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
     const [isAutoEvaluating, setIsAutoEvaluating] = useState<boolean>(false);
     // Assigned checker or property/org admin: may sign off steps and correct the AI
     const [canReview, setCanReview] = useState<boolean>(false);
+    const [selectedAnglePhoto, setSelectedAnglePhoto] = useState<Record<string, string>>({});
     const autoEvaluatedRef = React.useRef<Set<string>>(new Set());
     const supabase = React.useMemo(() => createClient(), []);
 
@@ -278,11 +279,13 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
         const runAutoEvaluationQueue = async () => {
             setIsAutoEvaluating(true);
             try {
-                for (const it of unscoredItems) {
-                    if (isCancelled) break;
-                    autoEvaluatedRef.current.add(it.id);
-                    await triggerAIScoring(it.id);
-                }
+                await Promise.all(
+                    unscoredItems.map(async (it: any) => {
+                        if (isCancelled) return;
+                        autoEvaluatedRef.current.add(it.id);
+                        await triggerAIScoring(it.id);
+                    })
+                );
             } finally {
                 if (!isCancelled) {
                     setIsAutoEvaluating(false);
@@ -886,7 +889,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                     (m.benchmark_label && bm.label && m.benchmark_label.toLowerCase() === bm.label.toLowerCase())
                                                     );
 
-                                                    let execPhotoUrl = match?.matched_photo_url || null;
+                                                    let execPhotoUrl = selectedAnglePhoto[bm.id] || match?.matched_photo_url || null;
                                                     let status = match?.status || (uploadedPhotos[bIdx]?.url ? 'matched' : 'missing');
                                                     let cleanlinessScore = typeof match?.cleanliness_score === 'number'
                                                         ? match.cleanliness_score
@@ -1043,6 +1046,38 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                                     <AlertCircle size={22} className="mb-1 text-rose-500" />
                                                                                     <span className="text-[10px] font-black uppercase tracking-wider">Missing Execution Photo</span>
                                                                                     <span className="text-[9px] text-rose-500/80 font-medium mt-0.5">No photo uploaded matching this area</span>
+                                                                                </div>
+                                                                            )}
+                                                                            {/* Multi-photo switcher: allow checker to inspect/switch which uploaded photo is paired with this benchmark */}
+                                                                            {uploadedPhotos.length > 1 && (
+                                                                                <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-1 scrollbar-thin">
+                                                                                    <span className="text-[8px] font-black uppercase tracking-wider text-slate-400 mr-1 flex-shrink-0">
+                                                                                        Photo Angle:
+                                                                                    </span>
+                                                                                    {uploadedPhotos.map((p: any, pIdx: number) => {
+                                                                                        const isSelected = p.url === pair.execUrl;
+                                                                                        return (
+                                                                                            <button
+                                                                                                key={p.id || pIdx}
+                                                                                                type="button"
+                                                                                                onClick={(e) => {
+                                                                                                    e.stopPropagation();
+                                                                                                    setSelectedAnglePhoto(prev => ({ ...prev, [pair.id]: p.url }));
+                                                                                                }}
+                                                                                                className={`relative w-9 h-9 rounded-lg overflow-hidden border-2 flex-shrink-0 transition-all ${
+                                                                                                    isSelected 
+                                                                                                        ? 'border-blue-500 ring-2 ring-blue-300 scale-105 shadow-xs' 
+                                                                                                        : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-slate-400'
+                                                                                                }`}
+                                                                                                title={`Switch to Upload #${pIdx + 1}`}
+                                                                                            >
+                                                                                                <img src={p.url} alt={`Upload ${pIdx + 1}`} className="w-full h-full object-cover" />
+                                                                                                <span className="absolute bottom-0.5 right-0.5 px-1 bg-black/75 text-[6px] font-black text-white rounded">
+                                                                                                    #{pIdx + 1}
+                                                                                                </span>
+                                                                                            </button>
+                                                                                        );
+                                                                                    })}
                                                                                 </div>
                                                                             )}
                                                                         </div>
