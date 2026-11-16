@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { loadImageBuffer } from '@/lib/sop/checklistAiReview';
+import Groq from 'groq-sdk';
 import sharp from 'sharp';
 import { modelFor } from '@/task-manager/ai/modelFor';
 import { withProviderKeys } from '@/backend/lib/llm/providerKeys';
@@ -142,8 +143,8 @@ Respond ONLY with raw JSON:
         // Groq fallback if Engy did not produce a result
         if (!rawText) {
             try {
-                await withProviderKeys('groq', async (groqClient) => {
-                    const completion = await groqClient.chat.completions.create({
+                await withProviderKeys('groq', async (key) => {
+                    const completion = await new Groq({ apiKey: key }).chat.completions.create({
                         model: 'llama-3.2-11b-vision-preview',
                         messages: [
                             { role: 'system', content: 'You are an expert visual defect detector. Return raw JSON only.' },

@@ -466,9 +466,11 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         {displayArea.parameters.length > 0 ? (
                             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2">
                                 {displayArea.parameters.map((param, pIdx) => {
-                                    const pScore = param.score !== null ? param.score : score;
-                                    const pColor = pScore >= 85 ? 'bg-emerald-500' :
-                                                   pScore >= 70 ? 'bg-yellow-400' :
+                                    // The parameter's own number only; no borrowing the area score.
+                                    const pScore = param.score ?? null;
+                                    const pColor = pScore === null ? 'bg-slate-300' :
+                                                   pScore >= 85 ? 'bg-emerald-500' :
+                                                   pScore >= passThreshold ? 'bg-yellow-400' :
                                                    pScore >= 50 ? 'bg-amber-500' : 'bg-rose-500';
 
                                     return (
@@ -484,7 +486,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                                                 <div
                                                     className={`h-full rounded-full transition-all duration-500 ${pColor}`}
-                                                    style={{ width: `${Math.min(100, Math.max(10, pScore || 80))}%` }}
+                                                    style={{ width: pScore === null ? '100%' : `${Math.min(100, Math.max(10, pScore))}%` }}
                                                 />
                                             </div>
                                         </div>

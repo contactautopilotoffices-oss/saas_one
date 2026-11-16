@@ -60,7 +60,9 @@ export interface AreaAuditScore {
         matched_photo_url?: string;
         cleanliness_score?: number;
         reason?: string;
-        status?: 'matched' | 'missing';
+        // The scorer also returns 'angle_mismatch' for a photo that shows the area from the
+        // wrong viewpoint; it was missing here, so the report collapsed it into a pass.
+        status?: 'matched' | 'angle_mismatch' | 'missing';
     }>;
 }
 
@@ -288,14 +290,7 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
             const allProofs: Array<{ url: string; label?: string; captured_at?: string }> = [];
             const allBenchmarks: Array<{ id?: string; url: string; label?: string }> = [];
             const allParams: AreaAuditScore['parameters'] = [];
-            const allMatches: Array<{
-                benchmark_id?: string;
-                benchmark_label?: string;
-                matched_photo_url?: string;
-                cleanliness_score?: number;
-                reason?: string;
-                status?: 'matched' | 'missing';
-            }> = [];
+            const allMatches: AreaAuditScore['aiPhotoMatches'] = [];
             let reason = '';
             // The scorer's own verdicts, collected across every step linked to this area.
             let anyScored = false;
