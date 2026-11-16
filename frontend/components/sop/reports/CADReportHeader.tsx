@@ -32,7 +32,11 @@ interface CADReportHeaderProps {
     onChangeDate: (date: string) => void;
     searchQuery: string;
     onSearchChange: (q: string) => void;
-    overallScore: number;
+    /** null when no area in the selected period has an AI score yet. */
+    overallScore: number | null;
+    /** How many of the floor's areas the score is actually built from. */
+    scoreCoverage?: { scored: number; total: number; needsReview: number };
+    passThreshold?: number;
     onExportPDF: () => void;
     onExportExcel: () => void;
     onNavigateView?: (view: string) => void;
@@ -52,6 +56,8 @@ export const CADReportHeader: React.FC<CADReportHeaderProps> = ({
     searchQuery,
     onSearchChange,
     overallScore,
+    scoreCoverage,
+    passThreshold = 70,
     onExportPDF,
     onExportExcel,
     onNavigateView,
@@ -70,16 +76,19 @@ export const CADReportHeader: React.FC<CADReportHeaderProps> = ({
     };
 
     // Color code overall score
-    const scoreColor = overallScore >= 85 
+    const hasScore = typeof overallScore === 'number';
+    const scoreColor = !hasScore
+        ? '#cbd5e1' // Slate — nothing scored yet, so the gauge stays neutral
+        : overallScore >= 85
         ? '#10b981' // Emerald
-        : overallScore >= 70 
+        : overallScore >= passThreshold
         ? '#f59e0b' // Amber
-        : overallScore >= 50 
+        : overallScore >= 50
         ? '#f97316' // Orange
         : '#ef4444'; // Red
 
     // Semi-circle gauge math (top half arc)
-    const arcPercent = Math.min(100, Math.max(0, overallScore)) / 100;
+    const arcPercent = hasScore ? Math.min(100, Math.max(0, overallScore)) / 100 : 0;
     // Semi-circle perimeter for r=28 is PI * 28 = 87.96
     const r = 28;
     const semiCircumference = Math.PI * r;
@@ -268,9 +277,23 @@ export const CADReportHeader: React.FC<CADReportHeaderProps> = ({
                             <div className="flex flex-col text-right">
                                 <span className="text-[8px] font-black uppercase tracking-wider text-slate-400">Overall Score</span>
                                 <div className="flex items-baseline gap-0.5 justify-end">
-                                    <span className="text-sm font-black text-slate-900 leading-none">{overallScore}</span>
+                                    <span className={`text-sm font-black leading-none ${hasScore ? 'text-slate-900' : 'text-slate-400'}`}>
+                                        {hasScore ? overallScore : '—'}
+                                    </span>
                                     <span className="text-[9px] font-bold text-slate-400">/100</span>
                                 </div>
+                                {scoreCoverage && scoreCoverage.total > 0 && (
+                                    <span
+                                        className="text-[8px] font-bold text-slate-400 leading-none mt-0.5"
+                                        title={
+                                            hasScore
+                                                ? `Averaged over the ${scoreCoverage.scored} area${scoreCoverage.scored === 1 ? '' : 's'} the AI scored. ${scoreCoverage.total - scoreCoverage.scored} not evaluated.`
+                                                : 'No area in this period has been scored by the AI yet.'
+                                        }
+                                    >
+                                        {scoreCoverage.scored}/{scoreCoverage.total} areas scored
+                                    </span>
+                                )}
                             </div>
 
                             {/* Prominent Radial Arc Gauge */}
