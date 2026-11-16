@@ -119,4 +119,17 @@ test('property proof threshold business logic checks', () => {
     const txn4 = { amount: 750, documents: [], description: 'Team tea' };
     const requiresProof4 = txn4.amount > propertyBThreshold;
     assert.equal(requiresProof4, false, '₹750 on ₹1000 limit does not require proof');
+
+    // No-bill flow with chat screenshot proof (₹250 on property A)
+    const txnChatProof = {
+        amount: 250,
+        documents: [{ id: 'doc1', file_name: 'whatsapp_approval.png' }],
+        has_no_bill: true,
+        no_bill_reason: 'Auto rickshaw fare - driver gives no receipt',
+        description: 'Site visit travel'
+    };
+    const isNoBill5 = txnChatProof.amount <= propertyAThreshold && txnChatProof.has_no_bill;
+    assert.equal(isNoBill5, true, 'Expense is eligible for no-bill chat proof');
+    assert.ok(txnChatProof.no_bill_reason.length >= 10, 'No-bill reason satisfies minimum 10 chars');
+    assert.equal(txnChatProof.documents.length, 1, 'Chat screenshot proof is attached');
 });

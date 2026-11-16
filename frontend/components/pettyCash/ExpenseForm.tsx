@@ -5,7 +5,7 @@ import { inr, PC_CATEGORIES, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/r
 import ProofUpload from './ProofUpload';
 import { pcFetch, pcJson, pettyCashToday, type Context, type Upload, type Expense } from './workflowTypes';
 import type { PettyCashOcrData } from '@/app/api/petty-cash/ocr/route';
-import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert, Building2, Users, FileCheck2, FileWarning } from 'lucide-react';
+import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert, Building2, Users, FileCheck2, FileWarning, MessageSquareText, Receipt } from 'lucide-react';
 
 export default function ExpenseForm({
     context,
@@ -42,13 +42,15 @@ export default function ExpenseForm({
     const [paymentRef, setPaymentRef] = useState(correction?.payment_ref || '');
     const [description, setDescription] = useState(correction?.description || '');
     const [noBillReason, setNoBillReason] = useState('');
+    const [noBillMode, setNoBillMode] = useState(false);
     const [ocrData, setOcrData] = useState<PettyCashOcrData | null>(null);
 
     const effectiveThreshold = proofThreshold ?? 500;
     const spendAmount = Number(amount) || 0;
     const requiresProof = !correction && spendAmount > effectiveThreshold;
     const missingProof = requiresProof && proofs.length === 0;
-    const needsNoBillReason = !correction && !requiresProof && proofs.length === 0;
+    const isNoBillActive = !correction && !requiresProof && noBillMode;
+    const needsNoBillReason = !correction && !requiresProof && (noBillMode || proofs.length === 0);
     const missingNoBillReason = needsNoBillReason && noBillReason.trim().length < 10;
     const billBeforeRequest = !correction && !!requestDate && !!expenseDate && expenseDate < requestDate;
 
@@ -120,6 +122,7 @@ export default function ExpenseForm({
                             )
                         );
                     } else {
+                        const isNoBillSubmit = !correction && !requiresProof && (noBillMode || proofs.length === 0);
                         await pcFetch(
                             `/api/petty-cash/${requestId}/expenses`,
                             pcJson({
@@ -133,7 +136,8 @@ export default function ExpenseForm({
                                 payment_ref: paymentRef,
                                 spend_mode: spendMode,
                                 documents: proofs,
-                                ...(proofs.length === 0 ? { no_bill_reason: noBillReason.trim() } : {}),
+                                has_no_bill: isNoBillSubmit,
+                                ...(isNoBillSubmit || noBillReason.trim() ? { no_bill_reason: noBillReason.trim() } : {}),
                                 idempotency_key: key
                             })
                         );
@@ -419,37 +423,129 @@ export default function ExpenseForm({
                 </div>
             )}
 
-            <ProofUpload
-                org={context.organization_id}
-                requestId={requestId}
-                value={proofs}
-                onChange={newProofs => {
-                    setProofs(newProofs);
-                    if (newProofs.length === 0) {
-                        setOcrData(null);
-                        setError('');
-                    }
-                }}
-                disabled={busy}
-                onBusyChange={setUploading}
-                onOcrExtracted={handleOcrExtracted}
-                label={correction ? 'Replacement bills / receipts' : requiresProof ? 'Bills / receipts / payment screenshots (Required)' : 'Bills / receipts / payment screenshots (Optional)'}
-            />
+            {/* Documentation Choice when below threshold */}
+            {!correction && spendAmount > 0 && !requiresProof && (
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-[#21262d] rounded-xl text-xs font-semibold">
+                    <button
+                        type="button"
+                        onClick={() => { setNoBillMode(false); }}
+                        className={`flex-1 py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            !noBillMode
+                                ? 'bg-white dark:bg-[#161b22] text-slate-900 dark:text-white shadow-sm font-bold'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <Receipt size={14} /> Upload Bill / Receipt
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setNoBillMode(true); setOcrData(null); }}
+                        className={`flex-1 py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            noBillMode
+                                ? 'bg-white dark:bg-[#161b22] text-amber-700 dark:text-amber-400 shadow-sm font-bold'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <MessageSquareText size={14} /> No Bill (Upload Proof / Reason)
+                    </button>
+                </div>
+            )}
 
-            {needsNoBillReason && (
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Reason there is no bill <span className="text-rose-500">*</span>
-                    <textarea
-                        className="pc-input mt-1.5"
-                        name="no_bill_reason"
-                        value={noBillReason}
-                        onChange={e => setNoBillReason(e.target.value)}
-                        placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
-                        required
-                        minLength={10}
-                        maxLength={500}
+            {isNoBillActive ? (
+                <div className="space-y-3 p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40">
+                    <div className="text-xs text-amber-900 dark:text-amber-200">
+                        <p className="font-bold flex items-center gap-1.5">
+                            <MessageSquareText size={14} className="text-amber-600 dark:text-amber-400" />
+                            No-Bill Expense (Informal Purchase Proof)
+                        </p>
+                        <p className="text-[11px] opacity-90 mt-0.5">
+                            If the vendor gave no bill, you can attach a <strong>WhatsApp chat approval screenshot</strong>, supervisor message, or photo proof. A declared reason is required below.
+                        </p>
+                    </div>
+
+                    <ProofUpload
+                        org={context.organization_id}
+                        requestId={requestId}
+                        value={proofs}
+                        onChange={setProofs}
+                        disabled={busy}
+                        onBusyChange={setUploading}
+                        label="Supervisor Chat / WhatsApp Approval Proof (Screenshot or photo — Optional)"
                     />
-                </label>
+
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Reason there is no bill <span className="text-rose-500">*</span>
+                        <textarea
+                            className="pc-input mt-1.5"
+                            name="no_bill_reason"
+                            value={noBillReason}
+                            onChange={e => setNoBillReason(e.target.value)}
+                            placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
+                            required
+                            minLength={10}
+                            maxLength={500}
+                        />
+                    </label>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-slate-400 font-medium">Quick reason:</span>
+                        {[
+                            { label: 'Auto / Cab', text: 'Auto / cab fare — unmetered driver gives no printed bill' },
+                            { label: 'Daily Wage Labor', text: 'Daily wage coolie / loading labor payment' },
+                            { label: 'Tea & Refreshment', text: 'Tea and pantry refreshments from local tea stall' },
+                            { label: 'Local Small Vendor', text: 'Emergency local hardware / stationery from unorganized shop' }
+                        ].map(chip => (
+                            <button
+                                key={chip.label}
+                                type="button"
+                                onClick={() => setNoBillReason(chip.text)}
+                                className="text-[10px] px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#161b22] text-amber-800 dark:text-amber-300 hover:border-amber-500 transition-colors"
+                            >
+                                + {chip.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <>
+                    <ProofUpload
+                        org={context.organization_id}
+                        requestId={requestId}
+                        value={proofs}
+                        onChange={newProofs => {
+                            setProofs(newProofs);
+                            if (newProofs.length === 0) {
+                                setOcrData(null);
+                                setError('');
+                            }
+                        }}
+                        disabled={busy}
+                        onBusyChange={setUploading}
+                        onOcrExtracted={handleOcrExtracted}
+                        label={correction ? 'Replacement bills / receipts' : requiresProof ? 'Bills / receipts / payment screenshots (Required)' : 'Bills / receipts / payment screenshots (Optional)'}
+                    />
+
+                    {needsNoBillReason && (
+                        <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                                Reason there is no bill <span className="text-rose-500">*</span>
+                                <textarea
+                                    className="pc-input mt-1.5"
+                                    name="no_bill_reason"
+                                    value={noBillReason}
+                                    onChange={e => setNoBillReason(e.target.value)}
+                                    placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
+                                    required
+                                    minLength={10}
+                                    maxLength={500}
+                                />
+                            </label>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                Tip: If you have a WhatsApp chat or supervisor approval screenshot, click <strong>&quot;No Bill (Upload Proof / Reason)&quot;</strong> above to attach it as proof.
+                            </p>
+                        </div>
+                    )}
+                </>
             )}
 
             {billBeforeRequest && (
