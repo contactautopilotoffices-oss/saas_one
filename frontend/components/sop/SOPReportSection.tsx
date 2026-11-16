@@ -36,6 +36,8 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
         filteredAreas,
         selectedArea,
         overallScore,
+        scoreCoverage,
+        passThreshold,
         statusCounts,
         categoryMetrics,
         recentAudits,
@@ -75,6 +77,8 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
                 overallScore={overallScore}
+                scoreCoverage={scoreCoverage}
+                passThreshold={passThreshold}
                 onExportPDF={handleExportPDF}
                 onExportExcel={handleExportExcel}
             />
@@ -101,6 +105,7 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                             onSelectArea={setSelectedAreaId}
                             selectedFloor={selectedFloor}
                             onSelectFloor={setSelectedFloor}
+                            passThreshold={passThreshold}
                         />
                     </div>
 
@@ -109,6 +114,8 @@ const SOPReportSection: React.FC<SOPReportSectionProps> = ({ propertyId, isAdmin
                         <CADAreaInspector
                             area={selectedArea}
                             floorName={`${cadTemplate?.title || 'D Wing'} • ${selectedFloor}`}
+                            propertyId={propertyId}
+                            passThreshold={passThreshold}
                         />
                     </div>
                 </div>

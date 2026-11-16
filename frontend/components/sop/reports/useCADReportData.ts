@@ -23,12 +23,32 @@ export interface AreaAuditScore {
     benchmarkPhoto?: string;
     capturedAt?: string;
     reason?: string;
+    completionId?: string;
+    propertyId?: string;
+    /** The scorer's own rule-based verdict (sop_completion_items.ai_pass), not a score band. */
+    aiPass?: boolean | null;
+    /** The scorer flagged this step for a human checker (unseen parameter, missing angle, wrong angle). */
+    needsReview?: boolean;
+    /** Whether the AI compared against uploaded reference photos or a CAD crop. */
+    referenceUsed?: 'cad' | 'uploaded' | null;
+    analyzedAt?: string | null;
+    /** True when no linked step has been AI-scored yet, so every number here is absent rather than zero. */
+    notEvaluated?: boolean;
+    /** The scorer's injected "Timestamp & Anti-Spoofing" system parameter, verbatim. */
+    antiSpoofing?: {
+        status: 'pass' | 'fail' | 'unknown';
+        score: number | null;
+        reason: string;
+    };
     parameters: Array<{
         name: string;
         score: number | null;
-        status: 'pass' | 'fail' | 'warning' | 'needs_attention' | 'not_visible' | 'not_in_frame';
+        status: 'pass' | 'fail' | 'warning' | 'needs_attention' | 'not_visible' | 'not_in_frame' | 'not_evaluated';
         reason?: string;
         reviewed_by_checker?: boolean;
+        photo_url?: string;
+        /** Set by the scorer for the Timestamp & Anti-Spoofing row it injects itself. */
+        system?: boolean;
     }>;
     linkedItemIds: string[];
     linkedTitles: string[];
@@ -88,6 +108,29 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
     const [completions, setCompletions] = useState<any[]>([]);
     const [templateChecklistItems, setTemplateChecklistItems] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    /**
+     * The property's own pass mark, the same one the scorer applies when the checklist is submitted
+     * (score-photo route reads checklist_property_settings.ai_scoring_threshold, falling back to 70).
+     * The report must band scores against this, not against a number of its own.
+     */
+    const [passThreshold, setPassThreshold] = useState(70);
+
+    useEffect(() => {
+        if (!propertyId) return;
+        let cancelled = false;
+        (async () => {
+            const { data } = await supabase
+                .from('checklist_property_settings')
+                .select('ai_scoring_threshold')
+                .eq('property_id', propertyId)
+                .maybeSingle();
+            const raw = Number(data?.ai_scoring_threshold);
+            if (!cancelled && Number.isFinite(raw) && raw > 0 && raw <= 100) {
+                setPassThreshold(Math.round(raw));
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [propertyId]);
 
     // 1. Fetch all templates for property
     useEffect(() => {
@@ -176,6 +219,10 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                         ai_cleanliness_reason,
                         ai_parameter_scores,
                         ai_photo_matches,
+                        ai_pass,
+                        ai_needs_review,
+                        ai_reference_used,
+                        ai_analyzed_at,
                         checked_at
                     )
                 `)
@@ -250,6 +297,12 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 status?: 'matched' | 'missing';
             }> = [];
             let reason = '';
+            // The scorer's own verdicts, collected across every step linked to this area.
+            let anyScored = false;
+            let allPass: boolean | null = null;
+            let needsReview = false;
+            let referenceUsed: 'cad' | 'uploaded' | null = null;
+            let analyzedAt: string | null = null;
 
             linkedIds.forEach(stepId => {
                 const ci = compItemMap.get(stepId);
@@ -268,9 +321,20 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 if (ci) {
                     if (ci.ai_cleanliness_score !== null && ci.ai_cleanliness_score !== undefined) {
                         scores.push(Number(ci.ai_cleanliness_score));
+                        anyScored = true;
                     }
                     if (ci.ai_cleanliness_reason && !reason) {
                         reason = ci.ai_cleanliness_reason;
+                    }
+                    // Carry the scorer's verdict through unchanged. ai_pass is null on rows scored
+                    // before that column existed, so it stays null rather than being read as a fail.
+                    if (typeof ci.ai_pass === 'boolean') {
+                        allPass = allPass === null ? ci.ai_pass : (allPass && ci.ai_pass);
+                    }
+                    if (ci.ai_needs_review === true) needsReview = true;
+                    if (!referenceUsed && ci.ai_reference_used) referenceUsed = ci.ai_reference_used;
+                    if (ci.ai_analyzed_at && (!analyzedAt || ci.ai_analyzed_at > analyzedAt)) {
+                        analyzedAt = ci.ai_analyzed_at;
                     }
                     if (Array.isArray(ci.photos) && ci.photos.length > 0) {
                         ci.photos.forEach((p: any, pIdx: number) => {
@@ -287,6 +351,13 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                         try { rawMatches = JSON.parse(rawMatches); } catch { rawMatches = []; }
                     }
                     if (Array.isArray(rawMatches)) {
+                        rawMatches.forEach((m: any) => {
+                            // A reference angle with no matching photo, or one shot from the wrong
+                            // viewpoint, is what the scorer flags for review — mirror that here.
+                            if (m?.status === 'missing' || m?.status === 'angle_mismatch') {
+                                needsReview = true;
+                            }
+                        });
                         allMatches.push(...rawMatches.map((m: any) => ({
                             ...m,
                             matched_photo_url: maskStorageUrl(m.matched_photo_url),
@@ -303,29 +374,43 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                         pScores.forEach(ps => {
                             // A checker correction overrides the AI verdict in the report
                             const reviewed = Boolean(ps.reviewer_status);
+                            const resolvedStatus = ps.reviewer_status || ps.status
+                                || (typeof ps.score === 'number'
+                                    ? (ps.score >= passThreshold ? 'pass' : 'fail')
+                                    : 'not_evaluated');
+                            // Anything the AI could not see sends the step to a human, exactly as the
+                            // scorer decides it at submit time.
+                            if (resolvedStatus === 'not_visible' || resolvedStatus === 'not_in_frame') {
+                                needsReview = true;
+                            }
                             allParams.push({
                                 name: ps.name || 'Check',
                                 score: reviewed ? null : (ps.score !== undefined ? ps.score : null),
-                                status: ps.reviewer_status || ps.status || (ps.score >= 75 ? 'pass' : 'fail'),
+                                status: resolvedStatus,
+                                system: Boolean(ps.system),
                                 reason: reviewed
                                     ? `Checker: ${ps.reviewer_verdict === 'correct' ? 'AI was right' : 'corrected'}${ps.reviewer_note ? ` · ${ps.reviewer_note}` : ''}`
                                     : ps.reason,
                                 reviewed_by_checker: reviewed,
+                                photo_url: ps.found_in_photo_url || (allProofs[0]?.url ? allProofs[0].url : undefined),
                             });
                         });
                     }
                 }
             });
 
-            // Fallback default parameters if none audited yet
+            // No AI verdict for this area yet: still list the parameters the template expects, so the
+            // report shows what WILL be checked — but as "not evaluated", never as a pass. Marking an
+            // unexamined parameter green is what made the report disagree with the submit-time audit.
             if (allParams.length === 0 && linkedIds.length > 0) {
                 const firstTmpl = tmplItemMap.get(linkedIds[0]);
                 if (Array.isArray(firstTmpl?.parameters) && firstTmpl.parameters.length > 0) {
                     firstTmpl.parameters.forEach((p: any) => {
                         allParams.push({
                             name: p.name || p.title,
-                            score: scores.length > 0 ? scores[0] : null,
-                            status: scores.length > 0 ? (scores[0] >= 75 ? 'pass' : 'fail') : 'pass',
+                            score: null,
+                            status: 'not_evaluated',
+                            reason: 'Not evaluated by AI yet.',
                         });
                     });
                 }
@@ -343,13 +428,25 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
 
             const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
 
+            // Bands hang off the property's pass mark so the map, the legend and the inspector all
+            // agree with the verdict the scorer reached at submit time.
             let status: 'excellent' | 'good' | 'attention' | 'poor' | 'uninspected' = 'uninspected';
             if (avgScore !== null) {
-                if (avgScore >= 90) status = 'excellent';
-                else if (avgScore >= 70) status = 'good';
+                if (avgScore >= 85) status = 'excellent';
+                else if (avgScore >= passThreshold) status = 'good';
                 else if (avgScore >= 50) status = 'attention';
                 else status = 'poor';
             }
+
+            // The scorer injects this row itself; it is the only real anti-spoofing evidence there is.
+            const spoofParam = allParams.find(p => p.system || /timestamp\s*&\s*anti-?spoofing/i.test(p.name));
+            const antiSpoofing = spoofParam
+                ? {
+                    status: (spoofParam.status === 'pass' ? 'pass' : 'fail') as 'pass' | 'fail',
+                    score: spoofParam.score,
+                    reason: spoofParam.reason || '',
+                }
+                : { status: 'unknown' as const, score: null, reason: '' };
 
             return {
                 areaId: area.id,
@@ -367,9 +464,17 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
                 allProofs,
                 allBenchmarks,
                 aiPhotoMatches: allMatches,
+                completionId: latestCompletion?.id,
+                propertyId,
+                aiPass: allPass,
+                needsReview,
+                referenceUsed,
+                analyzedAt,
+                notEvaluated: !anyScored,
+                antiSpoofing,
             };
         });
-    }, [cadTemplate, completions, selectedTemplateId, templateChecklistItems]);
+    }, [cadTemplate, completions, selectedTemplateId, templateChecklistItems, passThreshold]);
 
     // Filtered areas based on search
     const filteredAreas = useMemo(() => {
@@ -388,12 +493,20 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
         return areaAudits.find(a => a.areaId === selectedAreaId) || areaAudits[0] || null;
     }, [areaAudits, selectedAreaId]);
 
-    // Overall Score
+    // Overall Score — null when nothing has been scored. It used to fall back to a demo 74, which
+    // showed a confident number for a floor the AI had never looked at.
     const overallScore = useMemo(() => {
         const scored = areaAudits.filter(a => a.score !== null);
-        if (scored.length === 0) return 74; // Fallback demo target
+        if (scored.length === 0) return null;
         return Math.round(scored.reduce((sum, a) => sum + (a.score as number), 0) / scored.length);
     }, [areaAudits]);
+
+    /** How much of the floor the overall score actually covers. */
+    const scoreCoverage = useMemo(() => ({
+        scored: areaAudits.filter(a => a.score !== null).length,
+        total: areaAudits.length,
+        needsReview: areaAudits.filter(a => a.needsReview).length,
+    }), [areaAudits]);
 
     // Status Counts for Donut Chart
     const statusCounts = useMemo(() => {
@@ -418,11 +531,13 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
 
     // Category Breakdown for Bar Chart
     const categoryMetrics: CategoryMetric[] = useMemo(() => {
+        // Only scored areas count. Substituting 70 for an un-inspected area, as this did before,
+        // invented a passing grade for work nobody had looked at.
         const map = new Map<string, { sum: number; count: number }>();
         areaAudits.forEach(a => {
+            if (a.score === null) return;
             const current = map.get(a.category) || { sum: 0, count: 0 };
-            const s = a.score !== null ? a.score : 70;
-            map.set(a.category, { sum: current.sum + s, count: current.count + 1 });
+            map.set(a.category, { sum: current.sum + a.score, count: current.count + 1 });
         });
 
         const list: CategoryMetric[] = [];
@@ -447,45 +562,37 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
 
     // Recent Audit Stream from Real Data
     const recentAudits: RecentAudit[] = useMemo(() => {
-        const audited = areaAudits.filter(a => a.score !== null);
-        if (audited.length > 0) {
-            return audited.slice(0, 4).map((a) => ({
+        // Audited areas only. The old fallback dressed un-inspected areas up with invented
+        // scores of 85 / 90 / 78, which read as a finished audit that never happened.
+        return areaAudits
+            .filter(a => a.score !== null)
+            .slice(0, 4)
+            .map((a) => ({
                 id: a.areaId,
                 areaName: a.label,
                 location: `${cadTemplate?.title || 'D Wing'} • 1st Floor`,
-                score: a.score!,
+                score: a.score as number,
                 status: a.status as any,
                 photoUrl: maskStorageUrl(a.previewPhoto || a.benchmarkPhoto),
-                timestamp: a.capturedAt ? new Date(a.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' Today' : 'Today',
+                timestamp: a.capturedAt
+                    ? new Date(a.capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : '—',
             }));
-        }
-
-        // Fallback to top areas in floor plan
-        return areaAudits.slice(0, 4).map((a, idx) => ({
-            id: a.areaId,
-            areaName: a.label,
-            location: `${cadTemplate?.title || 'D Wing'} • 1st Floor`,
-            score: a.score || (idx === 0 ? 85 : idx === 1 ? 90 : 78),
-            status: a.status as any,
-            photoUrl: maskStorageUrl(a.previewPhoto || a.benchmarkPhoto),
-            timestamp: 'Today',
-        }));
     }, [areaAudits, cadTemplate]);
 
     // AI Insights & Recommendations from Real Audit Observations
     const aiInsights: AIInsight[] = useMemo(() => {
         const insights: AIInsight[] = [];
 
-        // 1. Critical: Failed anti-spoofing or gallery uploads
-        const failedAntiSpoof = areaAudits.find(a =>
-            a.score !== null && a.score <= 30 && a.reason?.toLowerCase().includes('gallery')
-        );
+        // 1. Critical: the scorer's own anti-spoofing verdict, not a guess from the wording of a reason.
+        const failedAntiSpoof = areaAudits.find(a => a.antiSpoofing?.status === 'fail');
         if (failedAntiSpoof) {
             insights.push({
                 id: 'anti_spoof_critical',
                 type: 'critical',
-                title: `Anti-Spoofing Alert: ${failedAntiSpoof.label}`,
-                description: `Score ${failedAntiSpoof.score}/100. ${failedAntiSpoof.reason || 'Gallery photo upload detected instead of live camera capture.'}`,
+                title: `Photo integrity failed: ${failedAntiSpoof.label}`,
+                description: failedAntiSpoof.antiSpoofing?.reason
+                    || 'The submitted photo did not pass the live-capture check.',
             });
         }
 
@@ -494,54 +601,69 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
         const scoredWashrooms = washrooms.filter(w => w.score !== null);
         if (scoredWashrooms.length > 0) {
             const avgWashroom = Math.round(scoredWashrooms.reduce((s, w) => s + (w.score || 0), 0) / scoredWashrooms.length);
-            if (avgWashroom < 75) {
+            if (avgWashroom < passThreshold) {
                 insights.push({
                     id: 'washrooms_alert',
                     type: 'warning',
                     title: 'Washroom Areas Need Attention',
-                    description: `Average cleanliness score is ${avgWashroom} (below target 75). Mirrors, hand dryers, and cubicle moisture require recheck.`,
+                    description: `Average cleanliness score is ${avgWashroom}, below the ${passThreshold} pass mark set for this property.`,
                 });
             }
         }
 
-        // 3. High Performance Cleanliness
-        const highScorers = areaAudits.filter(a => (a.score || 0) >= 90).map(a => a.label);
+        // 3. Steps the scorer could not finish on its own and handed to a checker.
+        const review = areaAudits.filter(a => a.needsReview);
+        if (review.length > 0) {
+            const unseen = review
+                .flatMap(a => a.parameters.filter(p => p.status === 'not_visible' || p.status === 'not_in_frame').map(p => p.name))
+                .filter((v, i, arr) => arr.indexOf(v) === i)
+                .slice(0, 3);
+            insights.push({
+                id: 'needs_checker_review',
+                type: 'warning',
+                title: `${review.length} ${review.length === 1 ? 'area needs' : 'areas need'} checker review`,
+                description: unseen.length > 0
+                    ? `The AI could not see ${unseen.join(', ')} in the photos submitted. A checker has to confirm these before the score stands.`
+                    : `${review.map(a => a.label).slice(0, 3).join(', ')} came back with a missing or wrong-angle photo.`,
+            });
+        }
+
+        // 4. High performance — stated from the scores only, with no claim about timestamps.
+        const highScorers = areaAudits.filter(a => (a.score ?? 0) >= 90).map(a => a.label);
         if (highScorers.length > 0) {
             insights.push({
                 id: 'high_performance',
                 type: 'success',
-                title: 'Consistent High Performance',
-                description: `${highScorers.slice(0, 3).join(', ')} achieved 90+ ratings with verified live timestamps and clean surfaces.`,
-            });
-        } else {
-            insights.push({
-                id: 'high_performance_general',
-                type: 'success',
-                title: 'High Cleaning Compliance',
-                description: 'Open workstations and common meeting rooms show strong compliance with daily standard operating procedures.',
+                title: 'Consistent high performance',
+                description: `${highScorers.slice(0, 3).join(', ')} scored 90 or above.`,
             });
         }
 
-        // 4. Focus / Follow-up Action
+        // 5. Follow-up target, drawn from the AI's own explanation for the weakest area.
         const attentionAreas = areaAudits.filter(a => a.status === 'attention' || a.status === 'poor');
         if (attentionAreas.length > 0) {
+            const worst = [...attentionAreas].sort((a, b) => (a.score ?? 0) - (b.score ?? 0))[0];
             insights.push({
                 id: 'focus_followup',
                 type: 'info',
-                title: `Follow-up Target: ${attentionAreas[0].label}`,
-                description: attentionAreas[0].reason || 'Scheduled for follow-up wipe-down and parameter verification in the next round.',
+                title: `Follow-up target: ${worst.label}`,
+                description: worst.reason || `Scored ${worst.score}/100, below the ${passThreshold} pass mark.`,
             });
-        } else {
+        }
+
+        // 6. Coverage — say plainly how much of the floor this report actually covers.
+        const unscored = areaAudits.filter(a => a.score === null).length;
+        if (unscored > 0) {
             insights.push({
-                id: 'focus_area_default',
+                id: 'coverage_gap',
                 type: 'info',
-                title: 'Afternoon Round Scheduled',
-                description: 'Afternoon post-lunch audit scheduled for Cafeteria, Pantries, and high-traffic circulation passages.',
+                title: `${unscored} of ${areaAudits.length} areas not evaluated`,
+                description: 'No AI-scored photo was submitted for these areas in the selected period, so they are excluded from the scores above.',
             });
         }
 
         return insights;
-    }, [areaAudits]);
+    }, [areaAudits, passThreshold]);
 
     return {
         selectedDate,
@@ -562,6 +684,8 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
         filteredAreas,
         selectedArea,
         overallScore,
+        scoreCoverage,
+        passThreshold,
         statusCounts,
         categoryMetrics,
         recentAudits,
