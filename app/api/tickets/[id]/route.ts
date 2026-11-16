@@ -659,48 +659,10 @@ export async function PATCH(
             return NextResponse.json({ error: 'Failed to update ticket' }, { status: 500 });
         }
 
-        // Trigger Web Push Notifications asynchronously
-        try {
-
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-
-            // Check for assignment
-            if (updates.assigned_to) {
-                NotificationService.afterTicketAssigned(ticketId).catch(err => {
-                    console.error('[Ticket Update API] Notification trigger error (Assigned):', err);
-                });
-            }
-
-            // Check for waitlist
-            if (updates.status === 'waitlist') {
-                NotificationService.afterTicketWaitlisted(ticketId).catch(err => {
-                    console.error('[Ticket Update API] Notification trigger error (Waitlisted):', err);
-                });
-            }
-
-            // Check for pending validation (non-internal MST complete, awaiting tenant approval)
-            if (updates.status === 'pending_validation') {
-                NotificationService.afterTicketPendingValidation(ticketId).catch(err => {
-                    console.error('[Ticket Update API] Notification trigger error (PendingValidation):', err);
-                });
-            }
-
-            // Check for completion (admin-forced or tenant-validated)
-            if (updates.status === 'closed' || updates.status === 'resolved') {
-                NotificationService.afterTicketCompleted(ticketId).catch(err => {
-                    console.error('[Ticket Update API] Notification trigger error (Completed):', err);
-                });
-            }
-
-            // Check for validation outcome (approved or rejected)
-            if (action === 'validate') {
-                NotificationService.afterTicketValidated(ticketId, validation_approved === true).catch(err => {
-                    console.error('[Ticket Update API] Notification trigger error (Validated):', err);
-                });
-            }
-        } catch (err) {
-            console.error('[Ticket Update API] Failed to load NotificationService:', err);
-        }
+        // Notifications are not sent from here. The UPDATE above fires trg_tickets_outbox with the old
+        // and new status, assignee, priority and validation_status, and the Omnichannel matrix decides
+        // the recipients and the channels for assignment, waitlist, approval-needed, completion and
+        // the client's approval or rejection.
 
         return NextResponse.json({ success: true, ticket });
     } catch (error) {
