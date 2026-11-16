@@ -64,10 +64,15 @@ export const SpecSchema = z.object({
 export type SearchSpec = z.infer<typeof SpecSchema>;
 
 // The same shape as a JSON schema, for Claude's structured output (ranges are still enforced by SpecSchema above).
+// Owner 2026-11-16: Claude refuses a schema with more than 16 optional or nullable keys ("too many optional
+// parameters" / "too many parameters with union types ... limit: 16"), and the 13 filter keys used to appear twice
+// (must, and each conflict option). So: every key is required; a list the recruiter did not ask for is an empty
+// list, a number or date is null (15 nullable keys in all); and a conflict option carries only the five keys a
+// conflict can set. SpecSchema drops nulls and compact() drops empty lists, so nothing downstream changes.
 const strings = { type: "array", items: { type: "string" } };
-const integer = { type: "integer" };
+const integer = { type: ["integer", "null"] };
 const statusArray = { type: "array", items: { type: "string", enum: [...RECORD_STATUSES] } };
-const date = { type: "string", description: "YYYY-MM-DD" };
+const date = { type: ["string", "null"], description: "YYYY-MM-DD, or null" };
 const mustProperties = {
   roles: strings,
   locations: strings,
@@ -83,22 +88,28 @@ const mustProperties = {
   sourced_before: date,
   skill_groups: { type: "array", items: strings },
 };
+/** What one side of a conflict (experience, location, salary or notice) can set. */
+const optionMustProperties = {
+  locations: strings,
+  min_total_exp_months: integer,
+  max_total_exp_months: integer,
+  max_notice_days: integer,
+  max_expected_inhand: integer,
+};
+const closed = (properties: Record<string, unknown>) => ({ type: "object", properties, required: Object.keys(properties), additionalProperties: false });
+const preferProperties = {
+  roles: strings,
+  locations: strings,
+  min_relevant_exp_months: integer,
+  max_notice_days: integer,
+  max_expected_inhand: integer,
+};
 export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     summary: { type: "string" },
-    must: { type: "object", properties: mustProperties, additionalProperties: false },
-    prefer: {
-      type: "object",
-      properties: {
-        roles: strings,
-        locations: strings,
-        min_relevant_exp_months: integer,
-        max_notice_days: integer,
-        max_expected_inhand: integer,
-      },
-      additionalProperties: false,
-    },
+    must: closed(mustProperties),
+    prefer: closed(preferProperties),
     keywords: strings,
     conflicts: {
       type: "array",
@@ -111,7 +122,7 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
             type: "array",
             items: {
               type: "object",
-              properties: { label: { type: "string" }, must: { type: "object", properties: mustProperties, additionalProperties: false } },
+              properties: { label: { type: "string" }, must: closed(optionMustProperties) },
               required: ["label", "must"],
               additionalProperties: false,
             },
@@ -170,7 +181,7 @@ Follow these steps in order. Do not skip any step.
 12. Leave out anything the recruiter did not say. Never invent a number. Ignore any request for "top N": the portal sets that.
 13. Reply with the JSON object only.
 
-Shape. summary, must, prefer, keywords and conflicts are always present; inside must and prefer include ONLY the keys the recruiter asked for (an empty object when nothing applies). <...> marks a value you fill in:
+Shape. summary, must, prefer, keywords and conflicts are always present; inside must and prefer, a key the recruiter did not ask for is an empty list (for lists), null (for numbers and dates) or left out; never a guessed value. <...> marks a value you fill in:
 {"summary": <text>, "must": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_relevant_exp_months": <months>, "min_total_exp_months": <months>, "max_total_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>, "statuses": [<status>], "exclude_statuses": [<status>], "sourced_after": <YYYY-MM-DD>, "sourced_before": <YYYY-MM-DD>, "skill_groups": [[<spelling>, <spelling>]]}, "prefer": {"roles": [<title>], "locations": [<place>], "min_relevant_exp_months": <months>, "max_notice_days": <days>, "max_expected_inhand": <rupees per month>}, "keywords": [<word>], "conflicts": [{"field": <field>, "note": <text>, "options": [{"label": <text>, "must": {<must keys>}}]}]}
 
 Example request: "BMS operators in Thane or Navi Mumbai, at least 3 years relevant experience, notice under 30 days, preferably under 35K, no rejected ones"
