@@ -16,7 +16,7 @@ import Loader from '@/frontend/components/ui/Loader';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
 import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
 import SettingsView from './SettingsView';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import NotificationBell from './NotificationBell';
 import PendingActionsBell from './PendingActionsBell';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -922,7 +922,7 @@ const SuperTenantDashboard = () => {
                     <p className="text-sm text-text-tertiary mt-1">Try adjusting your filters or raising a new request.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className={`${TICKET_GRID_CLASS} gap-3`}>
                     {filteredTickets.map(t => (
                         <TicketCard
                             key={t.id}

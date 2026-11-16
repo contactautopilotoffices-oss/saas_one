@@ -115,21 +115,25 @@ async function run() {
     check('two-step reading is a code setting, off for now', LLM.TWO_STEP_READING === false);
     check('replies and the rewrite also use Haiku first, then GLM, then Qwen', JSON.stringify(LLM.BRAIN_REPLY_MODELS) === HAIKU_THEN_BACKUPS && JSON.stringify(LLM.BRAIN_REWRITE_MODELS) === HAIKU_THEN_BACKUPS);
     check('voice-note clean-up is not the chatbot: it keeps its cheap models', JSON.stringify((await import('../voice/VoiceCleanup')).VOICE_CLEANUP_MODELS) === JSON.stringify(['qwen3.8-27b', 'glm-5.3-flash']));
-    check('the bot uses its OWN keys, in order, never the shared GROQ_API_KEY',
-        JSON.stringify(LLM.botGroqKeys({ GROQ_API_KEY: 'shared', WHATSAPP_BOT_GROQ_API_KEY: 'a', WHATSAPP_BOT_GROQ_API_KEY_3: 'c', WHATSAPP_BOT_GROQ_API_KEY_2: 'b' })) === JSON.stringify(['a', 'b', 'c'])
-        && LLM.botGroqKeys({ GROQ_API_KEY: 'shared' }).length === 0);
-    const saveEnv = () => Object.fromEntries(['GROQ_API_KEY', ...LLM.BOT_GROQ_KEY_NAMES].map(n => [n, process.env[n]]));
+    // Owner 2026-11-15: the bot has no Groq key of its own any more; it uses the shared GROQ_API_KEY → _2 → _3.
+    const PK = await import('../../backend/lib/llm/providerKeys');
+    PK._resetKeyRests();
+    check('the bot uses the shared Groq keys, in order; the old bot key names are not read',
+        JSON.stringify(LLM.groqKeys({ GROQ_API_KEY: 'a', GROQ_API_KEY_3: 'c', GROQ_API_KEY_2: 'b', WHATSAPP_BOT_GROQ_API_KEY: 'old' })) === JSON.stringify(['a', 'b', 'c'])
+        && LLM.groqKeys({ WHATSAPP_BOT_GROQ_API_KEY: 'old' }).length === 0);
+    const KEY_NAMES = [...PK.PROVIDER_KEY_NAMES.groq, 'WHATSAPP_BOT_GROQ_API_KEY'];
+    const saveEnv = () => Object.fromEntries(KEY_NAMES.map(n => [n, process.env[n]]));
     const restoreEnv = (e: Record<string, string | undefined>) => { for (const [n, v] of Object.entries(e)) { if (v === undefined) delete process.env[n]; else process.env[n] = v; } };
     const before = saveEnv();
-    for (const n of ['GROQ_API_KEY', ...LLM.BOT_GROQ_KEY_NAMES]) delete process.env[n];
+    for (const n of KEY_NAMES) delete process.env[n];
     {
-        process.env.GROQ_API_KEY = 'shared-key-must-not-be-used';
+        process.env.WHATSAPP_BOT_GROQ_API_KEY = 'old-bot-key-must-not-be-used';
         let err = ''; try { await LLM.groqComplete({ model: 'groq:openai/gpt-oss-120b', system: 's', user: 'u' }); } catch (e) { err = String((e as Error).message); }
-        check('no bot key -> a clear error at once (the backup model takes over), nothing sent, shared key ignored', /no WhatsApp bot Groq key/.test(err) && net.length === 0, err);
-        delete process.env.GROQ_API_KEY;
+        check('no Groq key -> a clear error at once (the backup model takes over), nothing sent, the old bot key ignored', /no Groq key is configured/.test(err) && net.length === 0, err);
+        delete process.env.WHATSAPP_BOT_GROQ_API_KEY;
     }
     {
-        process.env.WHATSAPP_BOT_GROQ_API_KEY = 'acct-1'; process.env.WHATSAPP_BOT_GROQ_API_KEY_2 = 'acct-2'; process.env.WHATSAPP_BOT_GROQ_API_KEY_3 = 'acct-3';
+        process.env.GROQ_API_KEY = 'acct-1'; process.env.GROQ_API_KEY_2 = 'acct-2'; process.env.GROQ_API_KEY_3 = 'acct-3';
         const sent: any[] = [];
         (globalThis as any).fetch = async (u: any, init: any) => {
             const key = String(init.headers.Authorization).slice(7); sent.push({ u: String(u), key, body: JSON.parse(init.body) });
@@ -139,10 +143,13 @@ async function run() {
         const r = await LLM.engyBrainLlm().complete({ model: 'groq:openai/gpt-oss-120b', system: 's', user: 'u', json: true });
         check('"groq:" models go to Groq with low thinking', sent[0]?.u.includes('api.groq.com') && sent[0]?.body.model === 'openai/gpt-oss-120b' && sent[0]?.body.reasoning_effort === 'low' && r.text === '{"a":1}', sent[0]);
         check('account 1 rate-limited -> account 2 answers, account 3 not needed', sent.map(x => x.key).join() === 'acct-1,acct-2', sent.map(x => x.key));
+        check('the used-up account is rested: the next call starts with account 2', LLM.groqKeys().join() === 'acct-2,acct-3,acct-1');
+        PK._resetKeyRests();
         sent.length = 0;
         (globalThis as any).fetch = async (_u: any, init: any) => { sent.push(String(init.headers.Authorization).slice(7)); return { ok: false, status: 401, json: async () => ({}) }; };
         let err = ''; try { await LLM.groqComplete({ model: 'groq:openai/gpt-oss-120b', system: 's', user: 'u' }); } catch (e) { err = String((e as Error).message); }
-        check('every account fails -> all tried once, then a clear error (no key in the message)', sent.join() === 'acct-1,acct-2,acct-3' && /every WhatsApp bot Groq key failed/.test(err) && !/acct-/.test(err), { sent, err });
+        check('every account fails -> all tried once, then a clear error (no key in the message)', sent.join() === 'acct-1,acct-2,acct-3' && /every Groq key failed/.test(err) && !/acct-/.test(err), { sent, err });
+        PK._resetKeyRests();
         (globalThis as any).fetch = async (u: any) => { net.push(String(u)); throw new Error('network must not be used'); };
     }
     restoreEnv(before);

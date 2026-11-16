@@ -21,7 +21,7 @@ function harness({signedIn=true,role='org_super_admin',approved=true}={}) {
         '@/backend/lib/whatsapp/interpreter/organization-users.mjs':{getOrganizationUsers:async(_admin,orgId)=>{directoryReads.push(orgId);return [{id:uid,name:'Test Member',email:'member@example.com',phone:'919000000000',selectable:true}];}},
         '@/backend/lib/whatsapp/interpreter/interpret.mjs':{interpretTurn:async (input,opts)=>{calls.push(input);options.push(opts);return {ok:true,intent:'details',fields:{start:'3 pm',end:'4 pm'}};}}};
     const exports={};vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-        {exports,require:name=>{if(!imports[name])throw new Error(name);return imports[name];},process:{env:{GROQ_TASK_CHAT_API_KEY:'not-exposed'}},Date});
+        {exports,require:name=>{if(!imports[name])throw new Error(name);return imports[name];},process:{env:{GROQ_API_KEY:'not-exposed'}},Date});
     return {...exports,writes,calls,options,directoryReads};
 }
 const request=(method='GET',body,organizationId=org)=>new next.NextRequest(`https://example.com/api/whatsapp-assistant/settings?organizationId=${organizationId}`,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});

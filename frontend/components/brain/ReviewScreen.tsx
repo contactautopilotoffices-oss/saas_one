@@ -17,11 +17,15 @@ import { AnimatePresence, motion } from 'framer-motion';
 import AnswerPicker, { type Answer } from '@/frontend/components/ai-layer/AnswerPicker';
 // The task assistant's own review (moved here from the Control Centre); it calls its own guarded API.
 import BotLearningPanel from '@/frontend/components/task-manager/BotLearningPanel';
+// Review → Tickets: how new tickets were sorted (owner 2026-11-15). Loaded only when its tab is chosen.
+import TicketReview from './TicketReview';
 
 export default function ReviewScreen() {
     const { acceptReview, status } = useBrain();
     const [mode, setMode] = useState<'focus' | 'list'>('focus');
     const [source, setSource] = useState<Source>('brain');
+    // The Tickets count is known once that tab has loaded (it is not fetched before).
+    const [ticketsWaiting, setTicketsWaiting] = useState<number | null>(null);
     const v = useView(api => api.review().then(r => { if (r.ok) acceptReview(r.data); return r; }), 'review');
     const off = !!status?.reviewMissing;
     const replace = (d: ReviewView) => { acceptReview(d); v.mutate(() => d); };
@@ -29,7 +33,7 @@ export default function ReviewScreen() {
     return (
         <Screen title="Review" sub="Messages the brain may have got wrong, one at a time. Say whether it was right; if not, what should have happened. Each wrong answer becomes a test case."
             actions={source === 'brain' ? <Segmented label="Layout" value={mode} onChange={setMode} options={[{ value: 'focus', label: 'One at a time', icon: Rows3 }, { value: 'list', label: 'List', icon: List }]} /> : undefined}>
-            {off && (
+            {off && source !== 'tickets' && (
                 <div className={cx(s.banner, s.bannerWarn)} role="note">
                     <CircleSlash className="mt-0.5 h-4 w-4 shrink-0 text-(--bc-warn-text)" />
                     <p className="text-[13px] text-(--bc-ink-2)">Marking is not available yet: the review tables (migration 20261114000003) are not applied. The queue can be read but not marked.</p>
@@ -46,9 +50,11 @@ export default function ReviewScreen() {
                             { value: 'brain', label: <>The brain<span className={cx(s.tab, 'text-(--bc-ink-3)')}>{int(v.data.queue.length)}</span></> },
                             { value: 'task_assistant', label: OTHER_BOT_LABEL.task_assistant },
                             { value: 'ai_assistant', label: <>{OTHER_BOT_LABEL.ai_assistant}<span className={cx(s.tab, 'text-(--bc-ink-3)')}>{int(v.data.others.filter(o => o.state === 'waiting').length)}</span></> },
+                            { value: 'tickets', label: <>Tickets{ticketsWaiting !== null && <span className={cx(s.tab, 'text-(--bc-ink-3)')}>{int(ticketsWaiting)}</span>}</> },
                         ]} />
                     </div>
-                    {source === 'task_assistant' ? <TaskAssistant />
+                    {source === 'tickets' ? <TicketReview onCount={setTicketsWaiting} />
+                        : source === 'task_assistant' ? <TaskAssistant />
                         : source === 'ai_assistant' ? <AiAssistant d={v.data} onReplace={replace} />
                             : <>
                     <Progress d={v.data} />
@@ -69,7 +75,7 @@ export default function ReviewScreen() {
     );
 }
 
-type Source = 'brain' | OtherBotItem['bot'];
+type Source = 'brain' | OtherBotItem['bot'] | 'tickets';
 
 /** The task assistant's own review panel, open from the start (it used to be a card in the Control Centre). */
 function TaskAssistant() {

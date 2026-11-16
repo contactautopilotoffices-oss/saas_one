@@ -2,9 +2,9 @@
  * Owner 2026-10-28 — the Task Manager's AI jobs, the models each can use, and today's default chain for each.
  * Pure data and pure decisions (no database, no network, no key values): shared by the server, the Control Center
  * screen and the tests. A model id carries its provider the way the transports already read it:
- *   'anthropic:…'  Claude (CLAUDE_API_KEY)          'groq:…'   Groq (the job's own Groq key)
+ *   'anthropic:…'  Claude (CLAUDE_API_KEY)          'groq:…'   Groq (the shared GROQ_API_KEY → _2 → _3)
  *   'gemini-…'     Google Gemini                     plain id   the council provider (Engy: COUNCIL_PROVIDER=custom)
- *   'whisper-…'    Groq speech-to-text (GROQ_VOICE_API_KEY)
+ *   'whisper-…'    Groq speech-to-text (the same Groq keys)    'sarvam:…' Sarvam speech-to-text (SARVAM_API_KEY)
  */
 
 export type AiJob =
@@ -36,7 +36,7 @@ export type AiJob =
     | 'call_transcribe' | 'call_analyse';
 
 export type Capability = 'chat' | 'vision' | 'speech';
-export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai';
+export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai' | 'sarvam';
 
 export interface ModelInfo { id: string; label: string; provider: Provider; can: readonly Capability[]; note?: string }
 
@@ -56,6 +56,8 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'glm-5.2', label: 'GLM 5.2 (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'glm-5.3', label: 'GLM 5.3 (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'kimi-k3', label: 'Kimi K3 (Engy)', provider: 'engy', can: ['chat'] },
+    // 2026-11-15 (owner): on the Engy key. Text only until it has read a picture here.
+    { id: 'kimi-k3.1-pro', label: 'Kimi K3.1 Pro (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'groq:openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', provider: 'groq', can: ['chat'], note: 'very fast' },
     { id: 'groq:openai/gpt-oss-20b', label: 'GPT-OSS 20B (Groq)', provider: 'groq', can: ['chat'], note: 'very fast' },
     { id: 'groq:llama-3.3-70b-versatile', label: 'Llama 3.3 70B (Groq)', provider: 'groq', can: ['chat'], note: 'very fast' },
@@ -69,6 +71,13 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'openai:gpt-5.6-sol', label: 'GPT 5.6 Sol (OpenAI)', provider: 'openai', can: ['chat'] },
     { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini', can: ['chat'] },
+    // 2026-11-15 (owner): the other Gemini models on the key. Text only until each has read a picture here.
+    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', provider: 'gemini', can: ['chat'] },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', provider: 'gemini', can: ['chat'] },
+    { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', provider: 'gemini', can: ['chat'] },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', provider: 'gemini', can: ['chat'] },
+    // 2026-11-15 (owner: "sarvam goes first"): built for Indian languages. Voice notes up to 30 s; longer ones go to Whisper.
+    { id: 'sarvam:saaras:v4', label: 'Sarvam Saaras v4', provider: 'sarvam', can: ['speech'], note: 'Indian languages; notes up to 30 s' },
     { id: 'whisper-large-v3', label: 'Whisper Large v3 (Groq)', provider: 'groq_speech', can: ['speech'], note: 'better on Hindi / Hinglish' },
     { id: 'whisper-large-v3-turbo', label: 'Whisper Large v3 Turbo (Groq)', provider: 'groq_speech', can: ['speech'], note: 'faster' },
 ];
@@ -90,8 +99,6 @@ export interface JobInfo {
      * fails, that one request is repeated with today's model (task-manager/ai/modelFor.ts).
      */
     single?: boolean;
-    /** The environment variables this job's Groq / OpenAI calls read their key from, when they are not the bot's own. */
-    keys?: readonly string[];
     /** An environment variable that could already change this job's model. It still does, when nothing is saved here. */
     defaultEnv?: string;
     /** How a raw id from `defaultEnv` is written as a catalog id ('groq:' / 'openai:'); plain ids need none. */
@@ -122,13 +129,12 @@ const BRAIN_TURN_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonne
 const CALL_ANALYSE_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5'] as const;
 const CALL_TRANSCRIBE_DEFAULT = ['whisper-large-v3', 'whisper-large-v3-turbo'] as const;
 
-const GROQ_APP_KEY = ['GROQ_API_KEY'] as const;
 
 export const AI_JOBS: readonly JobInfo[] = [
     { key: 'wa_understand', label: 'Understanding the message', hint: 'Reads what the person wants (the step that decides actions)', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
     { key: 'wa_reply', label: 'Writing the reply', hint: 'Turns the settled facts into a short WhatsApp message', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
     { key: 'wa_tidy', label: 'Tidying the message', hint: 'Rewrites a follow-up ("make it tomorrow") using the earlier chat', group: 'WhatsApp bot', needs: 'chat', providers: CHAT_PROVIDERS, defaults: BRAIN_DEFAULT },
-    { key: 'voice_transcribe', label: 'Speech to text', hint: 'Turns a WhatsApp voice note into text', group: 'Voice notes', needs: 'speech', providers: ['groq_speech'], defaults: ['whisper-large-v3', 'whisper-large-v3-turbo'] },
+    { key: 'voice_transcribe', label: 'Speech to text', hint: 'Turns a WhatsApp voice note into text', group: 'Voice notes', needs: 'speech', providers: ['sarvam', 'groq_speech'], defaults: ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'] },
     { key: 'voice_cleanup', label: 'Cleaning up the text', hint: 'Fixes the transcript before the bot reads it', group: 'Voice notes', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['qwen3.8-27b', 'glm-5.3-flash'] },
     { key: 'import_image', label: 'Reading photos and screenshots', hint: 'Reads a task list from an image', group: 'Task import', needs: 'vision', providers: ['anthropic', 'engy'], defaults: IMPORT_DEFAULT },
     { key: 'import_text', label: 'Reading text and Excel', hint: 'Turns a pasted list or a sheet into tasks', group: 'Task import', needs: 'chat', providers: ['anthropic', 'engy'], defaults: IMPORT_DEFAULT },
@@ -146,22 +152,24 @@ export const AI_JOBS: readonly JobInfo[] = [
 
     // ── Owner 2026-11-15: the rest of the application (Brain → AI models) ──
     // `providers` is the provider each job's own code calls; `defaults` is the model it had on 2026-11-15.
-    { key: 'assistant_interpret', label: 'Reading the message', hint: 'The older WhatsApp assistant (meeting rooms and tickets): works out what the person wants', group: 'WhatsApp assistant', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, keys: ['GROQ_TASK_CHAT_API_KEY'], defaultEnv: 'GROQ_TASK_CHAT_MODEL', defaultPrefix: 'groq:' },
-    { key: 'hr_plan', label: 'Working out the question', hint: 'HR assistant: decides what to look up in the HR policies. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'], keys: GROQ_APP_KEY },
-    { key: 'hr_answer', label: 'Writing the answer', hint: 'HR assistant: writes the answer from the HR policies it found. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'], keys: GROQ_APP_KEY },
+    { key: 'assistant_interpret', label: 'Reading the message', hint: 'The older WhatsApp assistant (meeting rooms and tickets): works out what the person wants', group: 'WhatsApp assistant', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, defaultEnv: 'GROQ_TASK_CHAT_MODEL', defaultPrefix: 'groq:' },
+    { key: 'hr_plan', label: 'Working out the question', hint: 'HR assistant: decides what to look up in the HR policies. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
+    { key: 'hr_answer', label: 'Writing the answer', hint: 'HR assistant: writes the answer from the HR policies it found. The first model that answers is used; the rest are backups', group: 'HR', needs: 'chat', providers: ['groq', 'engy'], defaults: ['groq:openai/gpt-oss-20b', 'qwen3.8-27b', 'glm-5.3-flash'] },
     { key: 'wiki_answer', label: 'Wiki answers', hint: 'Answers a question from the organisation wiki (also what the brain\'s knowledge skill uses)', group: 'Documents', needs: 'chat', providers: ['engy'], defaults: ['deepseek-v4-flash-0731'], single: true, defaultEnv: 'WIKI_MODEL' },
-    { key: 'document_ocr', label: 'Reading uploaded documents', hint: 'Document Bank: reads the details out of an uploaded document or picture', group: 'Documents', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true, keys: GROQ_APP_KEY },
+    { key: 'document_ocr', label: 'Reading uploaded documents', hint: 'Document Bank: reads the details out of an uploaded document or picture', group: 'Documents', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'invoice_text', label: 'Reading invoices from text', hint: 'Reads supplier, amounts and line items out of an invoice PDF that has text in it', group: 'Finance', needs: 'chat', providers: ['engy'], defaults: ['deepseek-v4-flash-0731'], single: true, defaultEnv: 'INVOICE_EXTRACT_MODEL' },
     { key: 'ocr_vision', label: 'Reading scanned documents', hint: 'Reads invoices, petty-cash bills and scanned PDFs that are pictures', group: 'Finance', needs: 'vision', providers: ['engy'], defaults: ['qwen3.8-27b'], single: true, defaultEnv: 'OCR_VISION_MODEL' },
-    { key: 'bill_ocr', label: 'Reading electricity bills', hint: 'Reads units, amounts and dates out of an electricity bill PDF', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true, keys: GROQ_APP_KEY },
-    { key: 'meter_ocr', label: 'Reading meter photos', hint: 'Reads the number off a photo of an electricity meter', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true, keys: GROQ_APP_KEY },
-    { key: 'electricity_explain', label: 'Electricity "Explain"', hint: 'Writes the plain-words explanation of a month\'s electricity figures', group: 'Facilities', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-luna'], single: true, keys: ['OPENAI_API_KEY'], defaultEnv: 'ELECTRICITY_EXPLAIN_MODEL', defaultPrefix: 'openai:' },
+    { key: 'bill_ocr', label: 'Reading electricity bills', hint: 'Reads units, amounts and dates out of an electricity bill PDF', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
+    { key: 'meter_ocr', label: 'Reading meter photos', hint: 'Reads the number off a photo of an electricity meter', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
+    { key: 'electricity_explain', label: 'Electricity "Explain"', hint: 'Writes the plain-words explanation of a month\'s electricity figures', group: 'Facilities', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-luna'], single: true, defaultEnv: 'ELECTRICITY_EXPLAIN_MODEL', defaultPrefix: 'openai:' },
     { key: 'sop_photo', label: 'Scoring SOP photos', hint: 'Compares a checklist photo with its reference photo. If this model fails, the second model already in the code takes over', group: 'Facilities', needs: 'vision', providers: ['engy'], defaults: ['qwen3.8-27b'], single: true },
-    { key: 'sop_layout', label: 'Reading SOP floor plans', hint: 'Finds the areas on an uploaded floor plan', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.6-27b'], single: true, keys: ['GROQ_API_KEY', 'GROQ_LAYOUT_API_KEY'] },
-    { key: 'ticket_classify', label: 'Sorting new tickets', hint: 'Picks the category and priority of a new ticket when the rules alone are not sure. If it fails, the rules decide, as today', group: 'Tickets', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, keys: GROQ_APP_KEY },
-    { key: 'admin_chatbot', label: 'Master admin chatbot', hint: 'Turns a master admin\'s question into a read-only database query and words the result', group: 'Admin', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, keys: GROQ_APP_KEY },
-    { key: 'coaching_feedback', label: 'Call coaching feedback', hint: 'Scores a recorded sales call and writes the coaching notes', group: 'CRM', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true, keys: GROQ_APP_KEY },
-    { key: 'mailbox_digest', label: 'Purchase mailbox digest', hint: 'Sorts purchase mailbox threads for the daily digest (only when the digest\'s AI step is switched on)', group: 'Procurement', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-terra'], single: true, keys: ['OPENAI_API_KEY'], defaultEnv: 'MAILBOX_DIGEST_MODEL', defaultPrefix: 'openai:' },
+    { key: 'sop_layout', label: 'Reading SOP floor plans', hint: 'Finds the areas on an uploaded floor plan', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.6-27b'], single: true },
+    // Owner 2026-11-15: "everything to go to the llm model ... configurable from the brain". Every ticket (app, WhatsApp,
+    // re-sort, Snags upload) is sorted by this chain (backend/lib/ticketing/aiClassifier.ts); main first, then backups.
+    { key: 'ticket_classify', label: 'Sorting new tickets', hint: 'Sorts every new ticket: picks the category from your category list, the team, the priority (it can only raise a category\'s usual priority) and a safety risk. The first model that answers is used; the rest are backups. If all fail, the old keyword rules decide', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-haiku-5-5', 'glm-5.3-flash'] },
+    { key: 'admin_chatbot', label: 'Master admin chatbot', hint: 'Turns a master admin\'s question into a read-only database query and words the result', group: 'Admin', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
+    { key: 'coaching_feedback', label: 'Call coaching feedback', hint: 'Scores a recorded sales call and writes the coaching notes', group: 'CRM', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
+    { key: 'mailbox_digest', label: 'Purchase mailbox digest', hint: 'Sorts purchase mailbox threads for the daily digest (only when the digest\'s AI step is switched on)', group: 'Procurement', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-terra'], single: true, defaultEnv: 'MAILBOX_DIGEST_MODEL', defaultPrefix: 'openai:' },
     { key: 'satej_fast', label: 'Satej: quick steps', hint: 'Procurement assistant: the short, frequent steps (reading replies, small decisions)', group: 'Procurement', needs: 'chat', providers: ['engy'], defaults: ['deepseek-v4-flash-0731'], single: true, defaultEnv: 'SATEJ_MODEL_FAST' },
     // `defaults` is empty on purpose: with nothing saved these two use the shared model (COUNCIL_MODEL), which is only known at run time.
     { key: 'satej_smart', label: 'Satej: careful steps', hint: 'Procurement assistant: comparing quotes, planning and the chat. Uses the shared model below unless one is chosen here', group: 'Procurement', needs: 'chat', providers: ['engy'], defaults: [], single: true, defaultEnv: 'SATEJ_MODEL_SMART' },

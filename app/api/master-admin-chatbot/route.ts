@@ -3,8 +3,8 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { getMCPClient } from '@/lib/mcp-client';
 import { runWithModel } from '@/task-manager/ai/modelFor';
+import { fetchWithKeys } from '@/backend/lib/llm/providerKeys';
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const MODEL = 'llama-3.3-70b-versatile';
 
@@ -47,10 +47,10 @@ You are a SQL expert. Generate a SINGLE valid PostgreSQL SELECT query based on t
 const callGroq = (messages: Parameters<typeof callGroqWith>[1]) => runWithModel('admin_chatbot', MODEL, model => callGroqWith(model, messages));
 
 async function callGroqWith(model: string, messages: any[]) {
-    const response = await fetch(GROQ_API_URL, {
+    const response = await fetchWithKeys('groq', GROQ_API_URL, key => ({
         method: 'POST',
         headers: {
-            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Authorization': `Bearer ${key}`,
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -58,7 +58,7 @@ async function callGroqWith(model: string, messages: any[]) {
             messages,
             temperature: 0.1,
         })
-    });
+    }));
 
     if (!response.ok) {
         const err = await response.text();

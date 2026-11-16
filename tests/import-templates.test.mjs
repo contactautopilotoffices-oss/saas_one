@@ -203,6 +203,8 @@ test('Snag template downloads .xlsx & .csv and round-trips through POST /api/tic
         '@/frontend/utils/supabase/server': { createClient: async () => sb.client },
         '@/backend/lib/excel/templateHelpers': templateHelpers,
         '@/backend/lib/ticketing': { classifyTicket: () => ({ issue_code: 'HVAC-01', skill_group: 'technical', confidence: 'high' }) },
+        // 2026-11-15: rows are sorted by the AI (a stand-in here: no model is called)
+        '@/backend/lib/ticketing/resolver': { resolveImportRows: async (texts) => texts.map(() => ({ issue_code: 'HVAC-01', skill_group: 'technical', confidence: 'high', priority: 'medium', risk_flag: null, reasoning: 'test', source: 'llm' })) },
         '@/backend/lib/ticketing/assignment': { processIntelligentAssignment: async () => {} },
         '@/backend/lib/ticketing/ticketNumberService': {
             deriveOrgInitials: () => 'ORG',

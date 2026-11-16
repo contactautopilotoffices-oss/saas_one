@@ -14,7 +14,7 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import PanelToggle from '@/frontend/components/ui/PanelToggle';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import TabLoading from './TabLoading';
-import { isRequestsView, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
+import { isRequestsView, RequestsNewButton, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
 
 /**
  * Tech console (owner 2026-10-22): the Tech team's own dashboard. It is a separate copy, not the Super Admin console:
@@ -332,15 +332,19 @@ export default function TechDashboard() {
                     </div>
                     {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
                         <div className="flex items-center gap-3">
-                            {propertySelector}
+                            {/* Owner 2026-11-15: on the Requests tab the property choice moves into the page below `lg`, and the
+                                header shows a New button on phones, so the "Requests" heading always has room. */}
+                            {activeTab === 'requests' ? <div className="hidden lg:block">{propertySelector}</div> : propertySelector}
+                            {activeTab === 'requests' && <RequestsNewButton className="md:hidden" onClick={() => setShowTicketCreate(true)} />}
                             {/* Requests view switcher: the Super Admin console's, shared */}
                             {activeTab === 'requests' && <RequestsViewSwitcher view={requestsView} onChange={view => setQuery({ view })} />}
                         </div>
                     )}
                 </header>
 
-                <div className="p-4 md:p-8">
-                    {errorMsg && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
+                {/* Requests tab: the list sets its own 12px phone padding (RequestsWorkspace), so no side padding here below `lg`. */}
+                <div className={activeTab === 'requests' ? 'pt-3 pb-4 lg:p-8' : 'p-4 md:p-8'}>
+                    {errorMsg &&<p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
 
                     {needsProperty && selectedPropertyId === 'all' ? (
                         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -362,6 +366,7 @@ export default function TechDashboard() {
                                     onPropertyChange={pickProperty}
                                     showAgentPulse={true}
                                     onNewRequest={() => setShowTicketCreate(true)}
+                                    onViewChange={view => setQuery({ view })}
                                 />
                             )}
                             {activeTab === 'settings' && <SettingsView />}

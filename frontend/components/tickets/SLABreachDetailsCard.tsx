@@ -4,8 +4,23 @@ import React from 'react';
 import { AlertCircle, Clock } from 'lucide-react';
 import { formatDuration } from '@/frontend/utils/date';
 
-export function SLABadge({ slaDeadline, isBreached }: { slaDeadline: string | null; isBreached: boolean }) {
+export function SLABadge({ slaDeadline, isBreached, readable = false }: {
+    slaDeadline: string | null; isBreached: boolean;
+    /** Ticket card chip size (12px, darker text). Same words and meaning; off by default so other lists are unchanged. */
+    readable?: boolean;
+}) {
     if (!slaDeadline && !isBreached) return null;
+    if (readable) {
+        return isBreached ? (
+            <span className="inline-flex h-6 items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 text-xs font-bold uppercase tracking-[0.02em] text-red-800">
+                ⚠️ Late / breached
+            </span>
+        ) : (
+            <span className="inline-flex h-6 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-bold uppercase tracking-[0.02em] text-emerald-700">
+                Within SLA
+            </span>
+        );
+    }
     if (isBreached) {
         return (
             <span className="px-2 py-0.5 text-[10px] font-black uppercase text-red-400 bg-red-500/20 rounded-md border border-red-500/30 flex items-center gap-1">

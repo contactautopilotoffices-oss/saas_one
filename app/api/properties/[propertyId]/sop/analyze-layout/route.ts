@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasProviderKey, withProviderKeys } from '@/backend/lib/llm/providerKeys';
 import { createClient } from '@/frontend/utils/supabase/server';
 import Groq from 'groq-sdk';
 import { runWithModel } from '@/task-manager/ai/modelFor';
@@ -39,15 +40,14 @@ export async function POST(
         const base64 = Buffer.from(arrayBuffer).toString('base64');
         const imageUrl = `data:${file.type};base64,${base64}`;
 
-        const apiKey = process.env.GROQ_API_KEY || process.env.GROQ_LAYOUT_API_KEY;
-        if (!apiKey) {
+        // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts); no key of its own any more.
+        if (!hasProviderKey('groq')) {
             return NextResponse.json({ error: 'Layout AI service not configured' }, { status: 503 });
         }
-        const groq = new Groq({ apiKey });
 
         // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
         // A chosen model that fails costs one attempt: today's model is then tried once.
-        const completion = await runWithModel('sop_layout', 'qwen/qwen3.6-27b', model => groq.chat.completions.create({
+        const completion = await runWithModel('sop_layout', 'qwen/qwen3.6-27b', model => withProviderKeys('groq', key => new Groq({ apiKey: key }).chat.completions.create({
             model,
             messages: [
                 {
@@ -97,7 +97,7 @@ Important rules:
             ],
             max_tokens: 4096,
             temperature: 0.3,
-        }));
+        })));
 
         let rawText = completion.choices[0]?.message?.content ?? '[]';
         rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();

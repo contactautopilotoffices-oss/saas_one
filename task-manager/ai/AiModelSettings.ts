@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveProvider } from '@/backend/lib/council/llm';
+import { PROVIDER_KEY_NAMES, fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 import { TaskDatabaseService } from '../TaskDatabaseService';
 import { AI_JOBS, AiJob, MAX_CHAIN, Provider, effectiveChain, jobInfo, modelStatus, rawModelId } from './aiCatalog';
 
@@ -17,21 +18,19 @@ import { AI_JOBS, AiJob, MAX_CHAIN, Provider, effectiveChain, jobInfo, modelStat
 type Env = Record<string, string | undefined>;
 const has = (env: Env, name: string) => !!String(env[name] ?? '').trim();
 
-const BOT_GROQ_KEYS = ['WHATSAPP_BOT_GROQ_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_GROQ_API_KEY_${n}`)];
-const GEMINI_KEYS = ['GEMINI_AUTOTUNE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_AI_API_KEY'];
-
-/** The key names a provider is read from, for this job (the superuser chat has its own Groq key). */
+/**
+ * The key names a provider is read from. Owner 2026-11-15: ONE shared set per provider, nothing dedicated to any job:
+ * Groq (chat and speech) GROQ_API_KEY → _2 → _3, Gemini GEMINI_API_KEY → _2 → _3 (then the older GOOGLE_AI_API_KEY),
+ * used in turn by backend/lib/llm/providerKeys.ts.
+ */
 export function keyNames(provider: Provider, job?: AiJob): string[] {
-    // 2026-11-15: a job whose own code reads a different Groq / OpenAI key than the bot's names it in the catalog.
-    const own = job ? jobInfo(job)?.keys : undefined;
-    if (own?.length && (provider === 'groq' || provider === 'openai')) return [...own];
     if (provider === 'openai') return ['OPENAI_API_KEY'];
+    if (provider === 'sarvam') return ['SARVAM_API_KEY'];
     // Owner 2026-11-13: the Unified Brain has two Claude keys (two plans' monthly credit); every other job keeps the one.
     if (provider === 'anthropic') return job === 'brain_turn' ? ['CLAUDE_API_KEY', 'CLAUDE_API_KEY_2'] : ['CLAUDE_API_KEY'];
     if (provider === 'engy') return ['COUNCIL_API_KEY', 'COUNCIL_BASE_URL'];
-    if (provider === 'groq') return job === 'superuser_chat' ? ['GROQ_TASK_CHAT_API_KEY'] : BOT_GROQ_KEYS;
-    if (provider === 'gemini') return GEMINI_KEYS;
-    return ['GROQ_VOICE_API_KEY'];
+    if (provider === 'gemini') return [...PROVIDER_KEY_NAMES.gemini];
+    return [...PROVIDER_KEY_NAMES.groq];   // groq and groq_speech
 }
 
 /** Can this provider be called for this job right now (its key is set)? */
@@ -41,26 +40,25 @@ export function keyReady(provider: Provider, job: AiJob, env: Env = process.env)
         const r = resolveProvider(env as NodeJS.ProcessEnv);
         return r.provider === 'custom' && !!r.apiKey;
     }
-    if (provider === 'gemini') return GEMINI_KEYS.some(n => has(env, n));
+    if (provider === 'gemini') return hasProviderKey('gemini', env);
+    if (provider === 'groq' || provider === 'groq_speech') return hasProviderKey('groq', env);
     return keyNames(provider, job).some(n => has(env, n));
 }
 
 const PROVIDER_LABEL: Record<Provider, string> = {
-    anthropic: 'Anthropic (Claude)', engy: 'Engy (GLM, Qwen, DeepSeek, Kimi)', groq: 'Groq (WhatsApp bot)', gemini: 'Google Gemini', groq_speech: 'Groq speech-to-text',
+    anthropic: 'Anthropic (Claude)', engy: 'Engy (GLM, Qwen, DeepSeek, Kimi)', groq: 'Groq (text, pictures and speech; used in turn)', gemini: 'Google Gemini (used in turn)', groq_speech: 'Groq speech-to-text', sarvam: 'Sarvam (speech-to-text: voice notes and meeting notes)',
     openai: 'OpenAI',
 };
 
 /** Per provider: which key names exist and whether each is set. Never a value. */
 export function keyStatus(env: Env = process.env) {
-    const rows = (['anthropic', 'engy', 'groq', 'gemini', 'groq_speech', 'openai'] as Provider[]).map(p => ({
-        provider: p, label: PROVIDER_LABEL[p], ready: keyReady(p, p === 'groq_speech' ? 'voice_transcribe' : 'wa_understand', env),
+    // Speech-to-text uses the same Groq keys, so it has no row of its own (owner 2026-11-15).
+    const rows = (['anthropic', 'engy', 'groq', 'gemini', 'openai', 'sarvam'] as Provider[]).map(p => ({
+        provider: p, label: PROVIDER_LABEL[p], ready: keyReady(p, 'wa_understand', env),
         keys: keyNames(p).map(name => ({ name, set: has(env, name) })),
         ...(p === 'engy' ? { note: 'Works only when the council provider resolves to Engy (COUNCIL_PROVIDER=custom, or no OpenAI / Groq council key set).' } : {}),
     }));
     rows.push({ provider: 'anthropic', label: 'Anthropic (Unified brain, second key)', ready: has(env, 'CLAUDE_API_KEY_2'), keys: [{ name: 'CLAUDE_API_KEY_2', set: has(env, 'CLAUDE_API_KEY_2') }] });
-    rows.push({ provider: 'groq', label: 'Groq (WhatsApp assistant)', ready: has(env, 'GROQ_TASK_CHAT_API_KEY'), keys: [{ name: 'GROQ_TASK_CHAT_API_KEY', set: has(env, 'GROQ_TASK_CHAT_API_KEY') }] });
-    // 2026-11-15: the Groq key the rest of the application uses (documents, facilities, tickets, CRM, HR)
-    rows.push({ provider: 'groq', label: 'Groq (documents, facilities, tickets, CRM, HR)', ready: has(env, 'GROQ_API_KEY'), keys: [{ name: 'GROQ_API_KEY', set: has(env, 'GROQ_API_KEY') }, { name: 'GROQ_LAYOUT_API_KEY', set: has(env, 'GROQ_LAYOUT_API_KEY') }] });
     return rows;
 }
 
@@ -158,16 +156,14 @@ export async function testModel(job: AiJob, model: string, env: Env = process.en
     if (jobInfo(job)?.needs === 'speech') return { ok: null, message: 'Key is set. Speech models are not test-called (a test needs a voice note).' };
     const started = Date.now();
     try {
-        const ownKeys = jobInfo(job)?.keys ?? (job === 'superuser_chat' ? ['GROQ_TASK_CHAT_API_KEY'] : []);
-        const ownKey = ownKeys.map(n => String(env[n] ?? '').trim()).find(Boolean) ?? '';
         const messages = [{ role: 'user', content: 'Reply with the word OK.' }];
-        if (model.startsWith('groq:') && ownKeys.length) {
-            // This job's own Groq key, the way its own code calls Groq (2026-11-15: every job that names its key, not only the superuser chat)
-            const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        if (model.startsWith('groq:')) {
+            // The shared Groq keys, in turn, as every Groq caller uses them (owner 2026-11-15)
+            const res = await fetchWithKeys('groq', 'https://api.groq.com/openai/v1/chat/completions', key => ({
                 method: 'POST', signal: AbortSignal.timeout(15_000),
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownKey}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
                 body: JSON.stringify({ model: rawModelId(model), temperature: 0, max_tokens: 60, messages }),
-            });
+            }), env);
             if (!res.ok) return { ok: false, message: `Groq answered HTTP ${res.status}`, ms: Date.now() - started };
         } else if (model.startsWith('openai:')) {
             const raw = rawModelId(model);
@@ -175,7 +171,7 @@ export async function testModel(job: AiJob, model: string, env: Env = process.en
             const limits = /^(gpt-5|o[34])/.test(raw) ? { max_completion_tokens: 200 } : { max_tokens: 20, temperature: 0 };
             const res = await fetch('https://api.openai.com/v1/chat/completions', {
                 method: 'POST', signal: AbortSignal.timeout(20_000),
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownKey || String(env.OPENAI_API_KEY ?? '').trim()}` },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${String(env.OPENAI_API_KEY ?? '').trim()}` },
                 body: JSON.stringify({ model: raw, messages, ...limits }),
             });
             if (!res.ok) return { ok: false, message: `OpenAI answered HTTP ${res.status}`, ms: Date.now() - started };

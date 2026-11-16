@@ -6,7 +6,9 @@
  * a one-call test per model, API keys by name, and the read-only list of models chosen elsewhere.
  *
  * Jobs and groups are rendered purely from the server's reply: new jobs appear here without a change on this side.
- * A model is offered for a job only when it can do that job; a model without its key is shown but cannot be picked.
+ * Every job's dropdown lists every model in the catalog (owner 2026-11-15, "Option A"), so no model ever seems missing:
+ * the ones the job can use come first and can be picked; a model without its key, then a model the job cannot use
+ * (wrong ability, or a provider the job cannot call yet), are shown greyed out with the server's reason beside them.
  * If a chosen model stops working the job moves to the next one and finally to its default, so a setting can never
  * stop a job (task-manager/ai/aiCatalog.ts effectiveChain).
  */
@@ -216,6 +218,19 @@ function TestLine({ t }: { t: AiTestResult | undefined }) {
         : <span className="flex items-start gap-[4px] text-[12px] text-(--bc-bad-text)"><OctagonAlert className="mt-px h-3.5 w-3.5 shrink-0" />Failed{t.ms !== undefined ? ` after ${duration(t.ms)}` : ''}: {t.message}</span>;
 }
 
+/**
+ * The server's reason, shortened for a dropdown option that already starts with the model's name:
+ * "GLM 5.2 (Engy) cannot read images" → "can't read images"; "This job cannot call X yet" → "this job can't use this
+ * provider yet". Anything else is shown as sent, starting lower-case so it reads on after the "·".
+ */
+function offerReason(label: string, st: { status: string; reason: string }): string {
+    if (st.status === 'no_key') return 'API key missing';
+    const r = st.reason.trim();
+    if (/^This job cannot call .+ yet\.?$/.test(r)) return "this job can't use this provider yet";
+    if (r.startsWith(`${label} cannot `)) return `can't ${r.slice(label.length + ' cannot '.length).replace(/\.$/, '')}`;
+    return r ? r.charAt(0).toLowerCase() + r.slice(1) : "can't be used by this job";
+}
+
 function JobRow({ job, models, maxChain, name, readOnly, open, onToggle, draft, setDraft, busy, disabled, tests, onTest, onSave, notice }: {
     job: AiJobRow; models: AiModelRow[]; maxChain: number; name: (id: string) => string; readOnly: boolean; open: boolean; onToggle: () => void;
     draft: string[]; setDraft: (list: string[]) => void; busy: string | null; disabled: boolean;
@@ -228,9 +243,16 @@ function JobRow({ job, models, maxChain, name, readOnly, open, onToggle, draft, 
     const chosen = single ? draft.slice(0, 1) : draft;
     const changed = JSON.stringify(chosen) !== JSON.stringify(job.saved ?? []);
     const statusOf = (id: string) => models.find(x => x.id === id)?.status[job.key] ?? { status: 'cannot' as const, reason: 'Unknown model' };
-    // Offered for this job: models that can do it. Ready ones can be picked; keyless ones are shown but cannot be.
-    const offer = models.filter(x => !chosen.includes(x.id) && (x.status[job.key]?.status ?? 'cannot') !== 'cannot')
-        .sort((a, b) => Number(a.status[job.key].status !== 'ready') - Number(b.status[job.key].status !== 'ready'));
+    // Every model not already chosen, in three groups: usable, key missing, and ones this job cannot use. Only the
+    // first group can be picked; the others stay visible, greyed out, with the reason, so no model seems missing.
+    const stOf = (x: AiModelRow) => x.status[job.key] ?? { status: 'cannot' as const, reason: 'Unknown job' };
+    const rest = models.filter(x => !chosen.includes(x.id));
+    const offerGroups = ([['ready', 'Can be used'], ['no_key', 'Key missing'], ['cannot', "This job can't use"]] as const)
+        .map(([status, label]) => ({ status, label, list: rest.filter(x => stOf(x).status === status) }))
+        .filter(g => g.list.length > 0);
+    const usable = offerGroups.find(g => g.status === 'ready')?.list.length ?? 0;
+    const greyed = rest.length - usable;
+    const hintId = `${panel}-offer-hint`;
     const lock = readOnly || !!busy || disabled;
     const move = (i: number, d: number) => { const n = [...draft]; [n[i], n[i + d]] = [n[i + d], n[i]]; setDraft(n); };
     const now = job.effective[0];
@@ -293,20 +315,40 @@ function JobRow({ job, models, maxChain, name, readOnly, open, onToggle, draft, 
                                         </ol>
                                     )}
                                     {single || chosen.length < maxChain ? (
-                                        <label className="flex min-w-0 flex-col gap-[4px]">
-                                            <span className="sr-only">{single ? `Choose the model for ${job.label}` : `Add a model to ${job.label}`}</span>
-                                            <span className="relative min-w-0">
-                                                <Plus className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-(--bc-ink-3)" />
-                                                <select className={cx(s.input, 'pl-9!')} value="" disabled={lock || offer.length === 0}
-                                                    onChange={e => { if (e.target.value) setDraft(single ? [e.target.value] : [...chosen, e.target.value]); }}>
-                                                    <option value="">{offer.length === 0 ? 'No other model can do this job' : single ? (chosen.length ? 'Change the model' : 'Choose the model') : chosen.length === 0 ? 'Choose a main model' : `Add backup ${chosen.length}`}</option>
-                                                    {offer.map(x => {
-                                                        const st = x.status[job.key];
-                                                        return <option key={x.id} value={x.id} disabled={st.status !== 'ready'}>{x.label}{st.status === 'no_key' ? ' · API key missing' : ''}{x.note ? ` · ${x.note}` : ''}</option>;
-                                                    })}
-                                                </select>
-                                            </span>
-                                        </label>
+                                        <div className="flex min-w-0 flex-col gap-[4px]">
+                                            {greyed > 0 && (
+                                                <p id={hintId} className="text-[12.5px] leading-snug text-(--bc-ink-3)">
+                                                    Every model is listed. Greyed-out ones cannot be used by this job; the reason is shown beside each.
+                                                </p>
+                                            )}
+                                            <label className="flex min-w-0 flex-col gap-[4px]">
+                                                <span className="sr-only">{single ? `Choose the model for ${job.label}` : `Add a model to ${job.label}`}</span>
+                                                <span className="relative min-w-0">
+                                                    <Plus className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-(--bc-ink-3)" />
+                                                    <select className={cx(s.input, 'pl-9!')} value="" disabled={lock || rest.length === 0} aria-describedby={greyed > 0 ? hintId : undefined}
+                                                        onChange={e => {
+                                                            const id = e.target.value;
+                                                            // Only a usable model can be added, even if a disabled option were somehow chosen.
+                                                            const x = rest.find(r => r.id === id);
+                                                            if (x && stOf(x).status === 'ready') setDraft(single ? [id] : [...chosen, id]);
+                                                        }}>
+                                                        <option value="">{usable === 0 ? 'No other model can be used for this job' : single ? (chosen.length ? 'Change the model' : 'Choose the model') : chosen.length === 0 ? 'Choose a main model' : `Add backup ${chosen.length}`}</option>
+                                                        {offerGroups.map(g => (
+                                                            <optgroup key={g.status} label={g.label}>
+                                                                {g.list.map(x => {
+                                                                    const st = stOf(x);
+                                                                    return (
+                                                                        <option key={x.id} value={x.id} disabled={st.status !== 'ready'}>
+                                                                            {x.label}{st.status === 'ready' ? (x.note ? ` · ${x.note}` : '') : ` · ${offerReason(x.label, st)}`}
+                                                                        </option>
+                                                                    );
+                                                                })}
+                                                            </optgroup>
+                                                        ))}
+                                                    </select>
+                                                </span>
+                                            </label>
+                                        </div>
                                     ) : <p className="text-[12px] text-(--bc-ink-3)">At most {int(maxChain)} models: a main model and {int(maxChain - 1)} backups.</p>}
                                 </div>
 

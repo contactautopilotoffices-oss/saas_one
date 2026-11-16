@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
         if (error) throw error;
         const parsed = settingsSchema.safeParse(data?.config || defaultSettings);
         return NextResponse.json({ config:parsed.success ? parsed.data : defaultSettings, userId:auth.user?.id,
-            readiness:{ llm:!!process.env.GROQ_TASK_CHAT_API_KEY, projectApi:!!process.env.AISENSY_PROJECT_ID && !!process.env.AISENSY_PROJECT_API_KEY,
+            readiness:{ llm:['GROQ_API_KEY','GROQ_API_KEY_2','GROQ_API_KEY_3'].some(n => !!process.env[n]?.trim()), projectApi:!!process.env.AISENSY_PROJECT_ID && !!process.env.AISENSY_PROJECT_API_KEY,
                 globalEnabled:process.env.WHATSAPP_LLM_INTERPRETER_ENABLED === 'true' && process.env.AISENSY_ASSISTANT_ENABLED === 'true' } });
     } catch { return NextResponse.json({error:req.nextUrl.searchParams.get('view')==='users'
         ? 'Organization users could not be loaded. Retry loading settings.'

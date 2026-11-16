@@ -1,4 +1,5 @@
 import { GROQ_TRANSCRIBE_URL } from '../voice/VoiceTranscriber';
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 
 /**
  * Meeting Notes — speech to text for a whole meeting (up to ~1 hour, 3–10 people, one phone on the table).
@@ -6,7 +7,7 @@ import { GROQ_TRANSCRIBE_URL } from '../voice/VoiceTranscriber';
  * Primary: Sarvam batch speech-to-text (SARVAM_API_KEY) — handles Hinglish, labels speakers ("Speaker 1", "Speaker 2"),
  * takes a 2-hour file as one job. It is ASYNCHRONOUS: `startSarvamJob` uploads and starts, `checkSarvamJob` is called
  * again on later polls until the job is done.
- * Backup: Groq Whisper (GROQ_VOICE_API_KEY, the voice-note key) — synchronous, no speaker labels.
+ * Backup: Groq Whisper (the shared Groq keys GROQ_API_KEY → _2 → _3, owner 2026-11-15) — synchronous, no speaker labels.
  *
  * Takes audio BYTES (reading them from storage is the caller's job). Never throws: every failure is a typed result.
  * Never logs what was said — only provider names, status codes and reasons.
@@ -237,8 +238,7 @@ export async function transcribeWithWhisper(files: AudioFile[], deps: SttDeps & 
     try {
         const env = deps.env ?? process.env;
         const doFetch = deps.fetch ?? fetch;
-        const key = String(env.GROQ_VOICE_API_KEY ?? '').trim();
-        if (!key) return fail('no_key', 'GROQ_VOICE_API_KEY is not configured');
+        if (!hasProviderKey('groq', env)) return fail('no_key', 'no Groq key is set (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)');
         if (files.length === 0) return fail('silent', 'no audio');
 
         const perFile: TranscriptLine[][] = [];
@@ -256,7 +256,7 @@ export async function transcribeWithWhisper(files: AudioFile[], deps: SttDeps & 
                     form.append('model', model);
                     form.append('response_format', 'verbose_json');
                     form.append('temperature', '0');
-                    const res = await doFetch(GROQ_TRANSCRIBE_URL, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS) });
+                    const res = await fetchWithKeys('groq', GROQ_TRANSCRIBE_URL, key => ({ method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS) }), env, doFetch);
                     if (!res.ok) { lastStatus = res.status; throw new Error(`HTTP ${res.status}`); }
                     const j = (await res.json()) as WhisperVerbose | null;
                     const segs = Array.isArray(j?.segments) ? j!.segments! : [];

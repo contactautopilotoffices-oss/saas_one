@@ -23,7 +23,7 @@ import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
 import SettingsView from './SettingsView';
 import Loader from '@/frontend/components/ui/Loader';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
 import PPMCalendar from '@/frontend/components/ppm/PPMCalendar';
 import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
@@ -1323,7 +1323,7 @@ const RequestsTab = ({ activeTickets, completedTickets, onNavigate, isLoading, o
             {filter === 'all' ? (
                 <>
                     {isLoading ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                        <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6`}>
                             {[1, 2, 3].map(i => (
                                 <div key={i} className="h-40 bg-slate-50 rounded-3xl animate-pulse border border-slate-100" />
                             ))}
@@ -1337,7 +1337,7 @@ const RequestsTab = ({ activeTickets, completedTickets, onNavigate, isLoading, o
                             <p className="text-slate-500 max-w-xs mx-auto">{hasActiveFilters ? 'Try adjusting your filters.' : 'No support requests have been raised yet.'}</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                        <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6`}>
                             {applySorting(applyFilters([...scopedActive, ...scopedCompleted]))
                                 .map(ticket => {
                                     const isCompleted = ['resolved', 'closed'].includes(ticket.status);
@@ -1393,7 +1393,7 @@ const RequestsTab = ({ activeTickets, completedTickets, onNavigate, isLoading, o
                             <p className="text-slate-500 max-w-xs mx-auto">No tickets match the selected filter.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                        <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6`}>
                             {displayedTickets.map(ticket => (
                                 <TicketCard
                                     key={ticket.id}
