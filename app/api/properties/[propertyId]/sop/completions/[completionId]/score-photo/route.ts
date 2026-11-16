@@ -108,7 +108,7 @@ export async function evaluateCompletionItemCleanliness({
             isBasicMode = !prop || prop.checklist_mode === 'basic';
         }
 
-        if (isBasicMode || aiScoringDisabled) {
+        if ((isBasicMode || aiScoringDisabled) && !force) {
             return NextResponse.json({
                 success: true,
                 skipped: true,
