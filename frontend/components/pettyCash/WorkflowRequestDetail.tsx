@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState, useMemo } from 'react';
-import { inr, PC_STATUS_META, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
+import { inr, PC_STATUS_META, PC_PAYMENT_MODES, PC_CATEGORIES } from '@/frontend/lib/pettyCash/roles';
 import { Button } from '@/frontend/components/ui/button';
 import ProofUpload from './ProofUpload';
 import ExpenseForm from './ExpenseForm';
@@ -25,6 +25,7 @@ import {
     FileText,
     Coins,
     RotateCcw,
+    Pencil,
     X,
     XCircle,
     PlusCircle,
@@ -65,6 +66,11 @@ export default function WorkflowRequestDetail({
     const [expense, setExpense] = useState(false);
     const [correction, setCorrection] = useState<Expense>();
     const [showVisionAudit, setShowVisionAudit] = useState(false);
+    const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+    const [editCategory, setEditCategory] = useState('');
+    const [editCustomCategory, setEditCustomCategory] = useState('');
+    const [editDescription, setEditDescription] = useState('');
+    const [editSaving, setEditSaving] = useState(false);
 
     useEffect(() => {
         if (initialAction) {
@@ -119,6 +125,7 @@ export default function WorkflowRequestDetail({
         setProofs([]);
         setExpense(false);
         setCorrection(undefined);
+        setEditingExpense(null);
         await refresh();
         onChanged();
     };
@@ -127,7 +134,7 @@ export default function WorkflowRequestDetail({
     const owner = r?.requester_id === context.user_id;
     const canAllocate = r?.workflow_version === 2 && r.status === 'submitted' && r.assigned_allocator_id === context.user_id && !owner;
     const canApprove = r?.workflow_version === 2 && r.status === 'pending_approval' && r?.assigned_approver_id === context.user_id && !owner;
-    const finance = context.caps.canDisburse && r && !owner;
+    const finance = (context.caps.canDisburse || context.caps.isAdmin) && r && !owner;
     const funded = !!r && ['paid', 'settlement_submitted', 'closed'].includes(r.status);
     const missingCredit = !!(r?.workflow_version === 2 && funded && Number(r.paid_amount) > 0 && detail?.wallet && detail.wallet.received === 0);
     const cancelPending = !!(r?.cancel_requested_at && r.status === 'paid');
@@ -1088,26 +1095,36 @@ export default function WorkflowRequestDetail({
                                     showRequest={false}
                                     busy={busy}
                                     expenses={exportReadyExpenses}
-                            onCorrect={owner ? entry => { setCorrection(entry); setExpense(false); } : undefined}
-                            onWithdraw={(owner || finance) && r?.status !== 'closed' ? async entry => {
-                                const remark = window.prompt(`Withdraw the ₹${entry.amount} expense "${entry.description}"? Its amount goes back to the wallet and must be returned to accounts. Reason:`);
-                                if (!remark?.trim()) return;
-                                setBusy(true);
-                                setError('');
-                                try {
-                                    await pcFetch(`/api/petty-cash/expenses/${entry.id}`, pcJson({
-                                        organization_id: context.organization_id,
-                                        action: 'withdraw',
-                                        remark
-                                    }, 'PATCH'));
-                                    await changed();
-                                } catch (reason) {
-                                    setError(reason instanceof Error ? reason.message : 'Withdraw failed');
-                                } finally {
-                                    setBusy(false);
-                                }
-                            } : undefined}
-                            onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
+                                    onEdit={(owner || finance) && r?.status !== 'closed' ? entry => {
+                                        setEditingExpense(entry);
+                                        setEditCategory(entry.category);
+                                        setEditCustomCategory(!PC_CATEGORIES.includes(entry.category) ? entry.category : '');
+                                        setEditDescription(entry.description);
+                                    } : undefined}
+                                    onCorrect={owner ? entry => { setCorrection(entry); setExpense(false); } : undefined}
+                                    onWithdraw={(owner || finance) && r?.status !== 'closed' ? async entry => {
+                                        const isPending = entry.review_status === 'pending';
+                                        const confirmText = isPending
+                                            ? `Revert this ₹${entry.amount} expense ("${entry.description}")?\n\nThis will remove the transaction and restore ₹${entry.amount} back to your available petty cash float.\n\nReason for reverting:`
+                                            : `Withdraw the ₹${entry.amount} rejected expense ("${entry.description}")?\n\nReason:`;
+                                        const remark = window.prompt(confirmText, isPending ? 'Uploaded wrong transaction by mistake' : '');
+                                        if (!remark?.trim()) return;
+                                        setBusy(true);
+                                        setError('');
+                                        try {
+                                            await pcFetch(`/api/petty-cash/expenses/${entry.id}`, pcJson({
+                                                organization_id: context.organization_id,
+                                                action: 'withdraw',
+                                                remark: remark.trim()
+                                            }, 'PATCH'));
+                                            await changed();
+                                        } catch (reason) {
+                                            setError(reason instanceof Error ? reason.message : 'Withdraw failed');
+                                        } finally {
+                                            setBusy(false);
+                                        }
+                                    } : undefined}
+                                    onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
                                 const remark = reviewStatus === 'rejected' ? window.prompt('Reason for rejecting proof') : undefined;
                                 if (reviewStatus === 'rejected' && !remark?.trim()) return;
                                 setBusy(true);
@@ -1220,6 +1237,120 @@ export default function WorkflowRequestDetail({
                                     </div>
                                 );
                             })}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Edit Expense Category & Description Modal */}
+            {editingExpense && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+                    <div className="bg-white dark:bg-card-dark rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 w-full max-w-lg p-6 space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                                    <Pencil size={15} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-slate-900 dark:text-white text-base">Edit Expense Details</h3>
+                                    <p className="text-xs text-text-secondary">
+                                        {inr(editingExpense.amount)} · {editingExpense.vendor} ({pettyCashDate(editingExpense.expense_date)})
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setEditingExpense(null)}
+                                disabled={editSaving}
+                                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                                    Category
+                                </label>
+                                <select
+                                    value={editCategory}
+                                    onChange={e => setEditCategory(e.target.value)}
+                                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                >
+                                    {PC_CATEGORIES.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                    {!PC_CATEGORIES.includes(editCategory) && editCategory !== 'Other' && (
+                                        <option value={editCategory}>{editCategory}</option>
+                                    )}
+                                    <option value="Other">Other (Custom)</option>
+                                </select>
+                                {editCategory === 'Other' && (
+                                    <input
+                                        type="text"
+                                        placeholder="Enter custom category"
+                                        value={editCustomCategory}
+                                        onChange={e => setEditCustomCategory(e.target.value)}
+                                        className="mt-2 w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    />
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                                    Description / Purpose
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    value={editDescription}
+                                    onChange={e => setEditDescription(e.target.value)}
+                                    placeholder="Explain the expense purpose..."
+                                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                />
+                            </div>
+                        </div>
+
+                        {error && (
+                            <div className="text-xs text-rose-600 bg-rose-50 dark:bg-rose-950/40 p-2.5 rounded-lg border border-rose-200 dark:border-rose-900">
+                                {error}
+                            </div>
+                        )}
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={editSaving}
+                                onClick={() => setEditingExpense(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="solid"
+                                size="sm"
+                                disabled={editSaving || !editDescription.trim()}
+                                onClick={async () => {
+                                    const finalCat = editCategory === 'Other' && editCustomCategory.trim() ? editCustomCategory.trim() : editCategory;
+                                    if (!finalCat || !editDescription.trim()) return;
+                                    setEditSaving(true);
+                                    setError('');
+                                    try {
+                                        await pcFetch(`/api/petty-cash/expenses/${editingExpense.id}`, pcJson({
+                                            organization_id: context.organization_id,
+                                            action: 'update',
+                                            category: finalCat,
+                                            description: editDescription.trim()
+                                        }, 'PATCH'));
+                                        setEditingExpense(null);
+                                        await changed();
+                                    } catch (err) {
+                                        setError(err instanceof Error ? err.message : 'Failed to update expense');
+                                    } finally {
+                                        setEditSaving(false);
+                                    }
+                                }}
+                            >
+                                {editSaving ? 'Saving...' : 'Save Changes'}
+                            </Button>
                         </div>
                     </div>
                 </div>
