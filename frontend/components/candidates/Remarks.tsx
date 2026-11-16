@@ -142,7 +142,7 @@ export function BlacklistedTag({ entry }: { entry?: Blacklist | null }) {
 const ACTION_LABEL: Record<CandidateAction['action'], string> = {
     status_change: 'Status', stage_change: 'Stage', remark: 'Remark', blacklist: 'Blacklisted', unblacklist: 'Blacklist removed',
     resume_attached: 'Resume attached', resume_marked: 'Marked as a resume', added_to_position: 'Added to position',
-    removed_from_position: 'Removed from position', call_logged: 'Call', field_edit: 'Details edited',
+    removed_from_position: 'Removed from position', call_logged: 'Call', field_edit: 'Details edited', outreach_sent: 'WhatsApp sent',
 };
 
 const statusLabel = (value: string | null) => (value && value in STATUS_LABELS ? STATUS_LABELS[value as RecordStatus] : value ?? '');
@@ -158,6 +158,11 @@ function describe(a: CandidateAction): React.ReactNode {
             const fields = Array.isArray(a.meta.fields) ? (a.meta.fields as string[]) : [];
             const named = fields.map(f => (f in CALL_FACT_LABELS ? CALL_FACT_LABELS[f as CallFactKey] : f));
             return <>{named.join(', ')}{a.meta.source === 'call' ? <span className="text-text-secondary"> · from the call</span> : null}</>;
+        }
+        case 'outreach_sent': {
+            const position = typeof a.meta.position === 'string' ? a.meta.position : null;
+            const phone = typeof a.meta.phone === 'string' ? a.meta.phone : null;
+            return <>{a.toValue ?? ''}{position ? ` · ${position}` : ''}{phone ? <span className="text-text-secondary"> · to {phone}</span> : null}</>;
         }
         case 'call_logged': {
             const position = typeof a.meta.position === 'string' ? a.meta.position : null;

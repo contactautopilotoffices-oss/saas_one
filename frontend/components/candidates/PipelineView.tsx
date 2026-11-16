@@ -9,6 +9,7 @@ import { api, qs } from './api';
 import CandidateDetails from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate } from './format';
+import { OutreachDialog, outreachKindFor } from './OutreachPanel';
 import { RemarkDialog } from './Remarks';
 import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
@@ -157,6 +158,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [nonce, setNonce] = useState(0);
     const [busy, setBusy] = useState(false);
     const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: Stage } | null>(null);
+    // Owner 2026-11-16: right after a drop on Shortlisted or Rejected, offer to tell the candidate on WhatsApp.
+    const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; kind: 'shortlisted' | 'not_shortlisted'; remark: string | null; open: boolean } | null>(null);
     const [details, setDetails] = useState<{ record: CandidateRecord; open: boolean } | null>(null);
     const [view, setView] = useState<'board' | 'table'>('board');
     const [dragging, setDragging] = useState<PositionMember | null>(null);
@@ -204,6 +207,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         setPendingMove(null);
         notify(`${member.record?.fullName ?? 'Candidate'} → ${STAGE_LABELS[stage]}`, 'success');
         refresh();
+        const kind = outreachKindFor(stage);
+        if (kind && member.record) setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, kind, remark, open: true });
     };
     const remove = async (member: PositionMember) => {
         if (!position) return;
@@ -243,6 +248,12 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                 description={pendingMove ? `"${STAGE_LABELS[pendingMove.stage]}" needs a remark, so the next person knows what it means.` : undefined}
                 onClose={() => { if (!busy) setPendingMove(null); }}
                 onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage, remark); }}
+            />
+            <OutreachDialog
+                orgId={orgId} open={!!outreach?.open} record={outreach?.record ?? null}
+                positionId={outreach?.positionId ?? null} positionTitle={outreach?.positionTitle ?? null} kind={outreach?.kind ?? 'shortlisted'} movedRemark={outreach?.remark ?? null}
+                onClose={() => setOutreach(o => (o ? { ...o, open: false } : o))}
+                onSent={() => { setOutreach(o => (o ? { ...o, open: false } : o)); refresh(); }}
             />
 
             {/* Position row */}

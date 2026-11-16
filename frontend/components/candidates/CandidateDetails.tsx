@@ -11,6 +11,7 @@ import {
 import { api, qs } from './api';
 import CallsTab from './CallsTab';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
+import { OutreachSection } from './OutreachPanel';
 import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
 import ResumeDocument, { hasProfile } from './ResumeDocument';
@@ -28,7 +29,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
 type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'calls';
 /** The inline form open under the header, if any. */
-type Panel = null | 'status' | 'positions' | 'blacklist';
+type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach';
 /** The mockup's small header buttons (36 px, 13 px text). */
 const BTN_SM = 'h-9 rounded-xl px-3 text-[13px]';
 
@@ -212,6 +213,9 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 <button type="button" onClick={togglePositions} aria-expanded={positionsOpen} className={`${BTN_PRIMARY} ${BTN_SM}`}>Add to position</button>
                 <button type="button" onClick={() => { goTo('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Add remark</button>
                 <button type="button" onClick={() => { goTo('resume'); setPicking(true); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Attach a resume</button>
+                {!r.blacklisted && (
+                    <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'outreach' ? null : 'outreach'); }} aria-expanded={panel === 'outreach'} className={`${BTN_SECONDARY} ${BTN_SM}`} title="Tell the candidate on WhatsApp">Send update</button>
+                )}
                 {r.blacklist !== undefined && !r.blacklisted && (
                     <button type="button" onClick={toggleBlacklist} aria-expanded={blacklistOpen} className="ml-auto inline-flex h-9 items-center rounded-xl px-3 text-[13px] font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
                 )}
@@ -264,6 +268,11 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                             : positions.length === 0 ? <p className="mt-2 text-sm text-text-tertiary">No open positions. Save a job description as a position first.</p>
                             : <ul className="mt-2 flex flex-wrap gap-1.5">{positions.map(p => <li key={p.id}><button type="button" onClick={() => void addTo(p)} disabled={busy} className={`${BTN_SECONDARY} h-8 px-3 text-xs`}>{p.title}{p.location ? ` · ${p.location}` : ''}</button></li>)}</ul>}
                     </section>
+                )}
+
+                {/* Send update on WhatsApp (owner 2026-11-16) */}
+                {panel === 'outreach' && !r.blacklisted && (
+                    <OutreachSection orgId={orgId} record={r} onClose={() => setPanel(null)} onSent={() => { setPanel(null); setHistoryNonce(n => n + 1); onChanged?.(); }} />
                 )}
 
                 {/* Blacklist */}

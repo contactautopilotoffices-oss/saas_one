@@ -19,6 +19,8 @@ import { BLACKLIST_REASONS, REMARK_REQUIRED_STATUSES, STATUS_LABELS, type Blackl
 export const ACTION_TYPES = [
   "status_change", "stage_change", "remark", "blacklist", "unblacklist", "resume_attached", "resume_marked",
   "added_to_position", "removed_from_position", "call_logged", "field_edit",
+  // Owner 2026-11-16: a WhatsApp update sent to the candidate (migration 20261116000003)
+  "outreach_sent",
 ] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 

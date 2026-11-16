@@ -739,3 +739,61 @@ export interface PreparedCall {
   call: CallAnalysis;
   upload: { signedUrl: string; contentType: string } | null;
 }
+
+// Outreach (owner 2026-11-16, mockup board 7; migration 20261116000003) --------------------------------------------------
+
+export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted"] as const;
+export type OutreachKind = (typeof OUTREACH_KINDS)[number];
+export const OUTREACH_KIND_LABELS: Record<OutreachKind, string> = {
+  shortlisted: "Shortlisted",
+  not_shortlisted: "Not shortlisted",
+};
+
+/** What the Send panel shows before anyone clicks Send (GET /api/candidates/outreach/preview). */
+export interface OutreachPreview {
+  kind: OutreachKind;
+  candidateId: string;
+  applicationId: string;
+  positionId: string | null;
+  positionTitle: string | null;
+  /** The role the message names: the position's title, else the record's "sourced for" role. */
+  roleTitle: string | null;
+  /** The number it would go to, with the middle hidden. */
+  phoneMasked: string | null;
+  /** The template (= AiSensy campaign) that would be used. */
+  campaign: string;
+  /** The message as the candidate would read it, with the name and role filled in. */
+  message: string;
+  footer: string;
+  checks: {
+    notBlacklisted: boolean;
+    phoneValid: boolean;
+    notSentBefore: boolean;
+    roleNamed: boolean;
+    /** 9 am to 7 pm IST, Monday to Saturday. A warning, not a block. */
+    withinHours: boolean;
+  };
+  /** Every blocking check passed. */
+  canSend: boolean;
+  /** Why not, in one sentence, when canSend is false. */
+  blockedBy: string | null;
+  /** The earlier successful send of this kind for this position, if any. */
+  sentBefore: { at: string; byName: string | null } | null;
+}
+
+/** One attempt (GET /api/candidates/outreach, newest first). */
+export interface OutreachRecord {
+  id: string;
+  candidateId: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  kind: OutreachKind;
+  phoneMasked: string;
+  campaign: string;
+  roleTitle: string | null;
+  status: "sent" | "failed";
+  error: string | null;
+  byName: string | null;
+  at: string;
+}
