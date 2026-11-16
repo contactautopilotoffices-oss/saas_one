@@ -1,6 +1,5 @@
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { NotificationService } from '@/backend/services/NotificationService';
 
 /**
  * Active members of the property's organisation who hold the org-level 'it' role, with lower-cased full names.
@@ -288,10 +287,8 @@ export async function processIntelligentAssignment(
                     .eq('user_id', assignedTo)
                     .eq('property_id', propertyId);
 
-                // Trigger Notification
-                NotificationService.afterTicketAssigned(ticket.id, true).catch(err => {
-                    console.error('[Intelligent Assignment] Notification failed:', err);
-                });
+                // Notifications: the assignment itself fires trg_tickets_outbox, and the Omnichannel
+                // matrix decides who is told and on which channel.
             }
 
             results.push({ ticketId: ticket.id, assignedTo, status: assignedTo ? 'assigned' : 'open' });
