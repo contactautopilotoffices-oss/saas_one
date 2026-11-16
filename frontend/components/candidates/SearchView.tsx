@@ -3,24 +3,28 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleAlert, Download, ListFilter, Sparkles, X } from 'lucide-react';
 import {
-    blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
-    type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
+    allKeywordTerms, blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
+    type ConflictChoice, type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
 } from '@/backend/lib/candidates/filters';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
-import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
+import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type Position, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
-import { api } from './api';
+import { api, type ApiResult } from './api';
 import CandidateDetails from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import type { PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
 import FilterRail, { FilterStrip } from './FilterRail';
 import { formatCount } from './format';
 import KeywordBar from './KeywordBar';
+import JdStrip from './JdStrip';
+import { AddToPositionSelect, PositionDialog } from './PipelineView';
+import { preferLabels } from './PositionsView';
 import QuickView from './QuickView';
+import { RemarkDialog, statusNeedsRemark, useStatusRemark } from './Remarks';
 import RecordForm from './RecordForm';
 import ResultCard from './ResultCard';
 import UnderstoodCard from './UnderstoodCard';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
+import { BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
 
 /**
  * The search screen (owner 2026-11-06): keywords and filters change the list at once, straight from the database. AI is
@@ -69,10 +73,12 @@ function plainResult(record: CandidateRecord, index: number): SearchResult {
     return { rank: index + 1, record, matchPercent: null, criteria: [], reasons: [], missing: [], summary: record.remark ?? '' };
 }
 
-export default function SearchView({ orgId, dataVersion, onDataChanged, collapseStyle = 'panel' }: {
+export default function SearchView({ orgId, dataVersion, onDataChanged, collapseStyle = 'panel', loadPosition = null }: {
     orgId: string; dataVersion: number; onDataChanged: () => void;
     /** The filters' collapse button follows the host console's sidebar button (owner 2026-11-09). */
     collapseStyle?: PanelToggleVariant;
+    /** Owner 2026-11-15: a saved position to load (its filters, preferences and JD); the nonce reopens the same one. */
+    loadPosition?: { position: Position; nonce: number } | null;
 }) {
     const { notify, reportError } = useUi();
     const [filters, setFilters] = useState<SearchFilters>(EMPTY_FILTERS);
@@ -87,6 +93,13 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
     const [preferred, setPreferred] = useState<PreferredItem[]>([]);
     const [jobText, setJobText] = useState('');
     const [jobNote, setJobNote] = useState('');
+    const [conflicts, setConflicts] = useState<ConflictChoice[]>([]);
+    const [jobFileName, setJobFileName] = useState('');
+    const [positionOpen, setPositionOpen] = useState(false);
+    /** The saved position the loaded JD belongs to, if any. */
+    const [positionTitle, setPositionTitle] = useState('');
+    /** Per starred chip: how many more candidates the search returns without it (the JD strip's "+N without"). */
+    const [withoutCounts, setWithoutCounts] = useState<{ key: string; counts: Record<string, number | null> }>({ key: '', counts: {} });
     const [reading, setReading] = useState(false);
     const [statusBusy, setStatusBusy] = useState<Record<string, boolean>>({});
     const [loosen, setLoosen] = useState<{ label: string; count: number; clear: Partial<SearchFilters> } | null>(null);
@@ -204,20 +217,82 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         setRanked(null);
     };
 
-    const readJob = async (text: string): Promise<boolean> => {
+    const readJob = async (job: string | File): Promise<boolean> => {
         setReading(true);
         setJobNote('');
-        const res = await api<UnderstandResponse>('/api/candidates/understand', { json: { orgId, text } });
+        let res: ApiResult<UnderstandResponse>;
+        if (typeof job === 'string') {
+            res = await api<UnderstandResponse>('/api/candidates/understand', { json: { orgId, text: job } });
+        } else {
+            const form = new FormData();
+            form.set('orgId', orgId);
+            form.set('file', job, job.name);
+            res = await api<UnderstandResponse>('/api/candidates/understand', { form });
+        }
         setReading(false);
         if (!res.ok) { setJobNote(res.error); if (res.noAccess) reportError(res); return false; }
         if (!res.data.aiParsed) { setJobNote(res.data.notices[0] ?? 'Nothing could be read from that.'); return false; }
         update(res.data.filters);
         setPrefer(res.data.prefer);
         setPreferred(res.data.preferred);
+        setConflicts(res.data.conflicts ?? []);
         setJobText(res.data.summary);
-        setJobNote('Filled in from the job description. Check the filters and change anything you need.');
+        setJobFileName(res.data.fileName ?? '');
+        setPositionTitle('');
+        const from = res.data.fileName ? `from ${res.data.fileName}` : 'from the job description';
+        const extra = res.data.notices[0] ? ` ${res.data.notices[0]}` : '';
+        setJobNote(`Filled in ${from}. Check the filters and change anything you need.${extra}`);
         return true;
     };
+
+    /** Owner 2026-11-15: HR picks one reading of a JD that contradicts itself, or leaves that filter out. */
+    const resolveConflict = (index: number, option: ConflictChoice['options'][number] | null) => {
+        if (option) update(option.filters);
+        setConflicts(cs => cs.filter((_, i) => i !== index));
+    };
+
+    // A position opened from the Positions tab: its filters, preferences and JD replace what is in the search.
+    const loadNonce = loadPosition?.nonce ?? 0;
+    useEffect(() => {
+        if (!loadPosition) return;
+        const p = loadPosition.position;
+        update({ ...EMPTY_FILTERS, ...p.filters });
+        setPrefer(p.prefer ?? {});
+        setPreferred(preferLabels(p.prefer ?? {}));
+        setConflicts([]);
+        setJobText(p.jdText ?? '');
+        setJobFileName(p.jdFileName ?? '');
+        setPositionTitle(p.title);
+        setRanked(null);
+        setJobNote(`Loaded the position ${p.title}. Check the filters and change anything you need.`);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loadNonce]);
+
+    // "+N without": each starred chip asked for on its own, after the list has settled (one count query per chip).
+    const starred = filters.keywords.filter(k => k.required).map(k => k.text);
+    const starredKey = JSON.stringify([filterKey, total]);
+    /** "N more have one of the starred keywords": the same search with every star taken off, minus this total. */
+    const [nearly, setNearly] = useState<{ key: string; n: number | null }>({ key: '', n: null });
+    useEffect(() => {
+        if (!starred.length || total === null || loading) return;
+        const ctrl = new AbortController();
+        if (jobText) setWithoutCounts({ key: starredKey, counts: Object.fromEntries(starred.map(t => [t, null])) });
+        setNearly({ key: starredKey, n: null });
+        void api<FilterResponse>('/api/candidates/filter', { json: { orgId, filters: { ...filters, keywords: filters.keywords.map(k => ({ ...k, required: false })) }, page: 1, pageSize: 1 }, signal: ctrl.signal })
+            .then(res => { if (!ctrl.signal.aborted) setNearly({ key: starredKey, n: res.ok ? Math.max(0, res.data.total - total) : null }); });
+        if (jobText) {
+            void Promise.all(starred.slice(0, 6).map(async text => {
+                const res = await api<FilterResponse>('/api/candidates/filter', { json: { orgId, filters: { ...filters, keywords: filters.keywords.filter(k => k.text !== text) }, page: 1, pageSize: 1 }, signal: ctrl.signal });
+                return [text, res.ok ? Math.max(0, res.data.total - total) : null] as const;
+            })).then(pairs => {
+                if (ctrl.signal.aborted) return;
+                setWithoutCounts({ key: starredKey, counts: Object.fromEntries(pairs) });
+            });
+        }
+        return () => ctrl.abort();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [starredKey, jobText, loading]);
+    const nearlyN = starred.length && nearly.key === starredKey ? nearly.n : null;
 
     const rank = async () => {
         setRanking(true);
@@ -237,16 +312,18 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         setDetails(d => (d && d.record.id === record.id ? { ...d, record: merge(d.record) } : d));
     };
 
-    const changeStatus = async (record: CandidateRecord, status: RecordStatus) => {
+    const saveStatus = async (record: CandidateRecord, status: RecordStatus, remark: string | null) => {
         if (status === record.status) return;
         setStatusBusy(b => ({ ...b, [record.id]: true }));
-        const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status } });
+        const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status, ...(remark ? { actionRemark: remark } : {}) } });
         setStatusBusy(b => ({ ...b, [record.id]: false }));
         if (!res.ok) { reportError(res); return; }
         replaceRecord(res.data.record);
         notify(`${record.fullName}: status updated`, 'success');
         onDataChanged();
     };
+    // Owner 2026-11-15: "Others" asks for a remark first; every other status changes at once, as before.
+    const { change: changeStatus, dialog: statusRemarkDialog } = useStatusRemark(saveStatus);
 
     const onHandleDown = (e: React.PointerEvent<HTMLButtonElement>) => {
         e.preventDefault();
@@ -292,9 +369,13 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(pickedRecords));
         notify(`${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
     };
-    const bulkStatus = async (status: RecordStatus) => {
+    // Owner 2026-11-15: "Others" needs a remark; one remark covers every ticked record.
+    const [bulkRemark, setBulkRemark] = useState<RecordStatus | null>(null);
+    const bulkStatus = async (status: RecordStatus, remark: string | null = null) => {
         const targets = pickedRecords.filter(r => r.status !== status);
         if (!targets.length || bulkBusy) return;
+        if (statusNeedsRemark(status) && !remark) { setBulkRemark(status); return; }
+        setBulkRemark(null);
         setBulkBusy(true);
         let done = 0;
         let failed = 0;
@@ -303,7 +384,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
             while (next < targets.length) {
                 const record = targets[next];
                 next += 1;
-                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status } });
+                const res = await api<{ record: CandidateRecord }>(`/api/candidates/${encodeURIComponent(record.id)}`, { method: 'PATCH', json: { orgId, status, ...(remark ? { actionRemark: remark } : {}) } });
                 if (res.ok) { replaceRecord(res.data.record); done += 1; } else { failed += 1; if (res.noAccess) reportError(res); }
             }
         };
@@ -318,7 +399,34 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
 
     return (
         <div className="space-y-4">
+            {statusRemarkDialog}
+            <RemarkDialog
+                open={bulkRemark !== null} required busy={bulkBusy}
+                title={bulkRemark ? `${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'}: ${STATUS_LABELS[bulkRemark]}` : ''}
+                description={bulkRemark ? `"${STATUS_LABELS[bulkRemark]}" needs a remark; this one is kept on each of them.` : undefined}
+                onClose={() => setBulkRemark(null)}
+                onSubmit={remark => { if (bulkRemark) void bulkStatus(bulkRemark, remark); }}
+            />
+            <PositionDialog
+                open={positionOpen} orgId={orgId}
+                seed={{ title: jobFileName ? jobFileName.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ') : '', jdText: jobText, jdFileName: jobFileName || undefined, filters, prefer }}
+                onClose={() => setPositionOpen(false)}
+                onSaved={p => { setPositionOpen(false); setPositionTitle(p.title); onDataChanged(); }}
+            />
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
+            {jobText && (
+                <JdStrip
+                    filters={filters}
+                    update={update}
+                    title={positionTitle || jobFileName || 'the job description'}
+                    fileName={jobFileName}
+                    withoutCounts={withoutCounts.key === starredKey ? withoutCounts.counts : Object.fromEntries(starred.map(t => [t, null]))}
+                    conflicts={conflicts}
+                    onResolveConflict={resolveConflict}
+                    onSavePosition={() => setPositionOpen(true)}
+                    savedAsPosition={!!positionTitle}
+                />
+            )}
 
             <div ref={rowRef} className="flex items-start gap-x-4 gap-y-4">
                 {over && overOpen && <button type="button" aria-label="Close filters" onClick={() => setOverOpen(false)} className="fixed inset-0 z-[79] bg-slate-900/30" />}
@@ -377,8 +485,9 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                                     <ListFilter className="h-4 w-4" aria-hidden />{activeCount ? `Filters (${activeCount})` : 'Filters'}
                                 </button>
                             )}
-                            <p role="status" className="flex items-center gap-x-2 gap-y-2 font-display text-lg font-semibold text-text-primary">
+                            <p role="status" className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-display text-lg font-semibold text-text-primary">
                                 {total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}
+                                {total !== null && starred.length > 0 && <span className="font-body text-sm font-normal text-text-secondary">{starred.length === 1 ? 'have the starred keyword' : 'have every starred keyword'}{nearlyN ? ` · ${formatCount(nearlyN)} more have ${starred.length === 2 ? 'one of the two' : 'some of them'}` : ''}</span>}
                                 {loading && total !== null && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                             </p>
                         </div>
@@ -405,6 +514,8 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                             update={update}
                             preferred={preferred}
                             onRemovePreferred={removePreferred}
+                            conflicts={jobText ? [] : conflicts}
+                            onResolveConflict={resolveConflict}
                             total={ranked?.matchingCount ?? total ?? 0}
                             shown={results.length}
                             comparedCount={ranked?.comparedCount ?? null}
@@ -462,28 +573,28 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                     )}
 
                     {results.length > 0 && (
-                        <div className={`${WELL} flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5`} aria-live="polite">
-                            <label className="inline-flex cursor-pointer items-center gap-x-2 gap-y-2 text-sm font-semibold text-text-secondary">
+                        <div className={`flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl px-3 py-1.5 transition-colors ${pickedRecords.length ? 'bg-primary-dark text-white' : WELL}`} aria-live="polite">
+                            <label className={`inline-flex cursor-pointer items-center gap-x-2 gap-y-2 text-sm font-semibold ${pickedRecords.length ? 'text-white' : 'text-text-secondary'}`}>
                                 <input type="checkbox" checked={allPicked} onChange={e => pickAll(e.target.checked)} className="h-4 w-4 accent-[var(--primary-dark)]" />
-                                {pickedRecords.length ? <span className="text-text-primary"><span className="tabular-nums">{formatCount(pickedRecords.length)}</span> selected</span> : 'Select all shown'}
+                                {pickedRecords.length ? <span><span className="tabular-nums">{formatCount(pickedRecords.length)}</span> selected</span> : 'Select all shown'}
                             </label>
+                            {/* To the mockup (owner 2026-11-15): the bar goes dark while something is ticked. */}
                             {pickedRecords.length > 0 && (
                                 <>
-                                    <button type="button" onClick={() => pickAll(false)} className={`${BTN_GHOST} h-8`}><X className="h-3.5 w-3.5" />Clear</button>
-                                    <span className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-2">
-                                        {bulkBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
-                                        <select
-                                            aria-label="Set the status of the selected candidates"
-                                            value=""
-                                            disabled={bulkBusy}
-                                            onChange={e => { if (e.target.value) void bulkStatus(e.target.value as RecordStatus); }}
-                                            className="h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
-                                        >
-                                            <option value="">Set status…</option>
-                                            {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
-                                        </select>
-                                        <button type="button" onClick={exportPicked} className={`${BTN_SECONDARY} h-8 rounded-lg px-3`}><Download className="h-4 w-4" />Export to Excel</button>
-                                    </span>
+                                    {bulkBusy && <Spinner className="h-3.5 w-3.5 text-white/80" />}
+                                    <AddToPositionSelect orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} disabled={bulkBusy} onAdded={onDataChanged} dark />
+                                    <select
+                                        aria-label="Set the status of the selected candidates"
+                                        value=""
+                                        disabled={bulkBusy}
+                                        onChange={e => { if (e.target.value) void bulkStatus(e.target.value as RecordStatus); }}
+                                        className="h-8 cursor-pointer rounded-lg border border-white/40 bg-transparent px-2 text-sm font-semibold text-white outline-none focus:border-white disabled:opacity-60 [&>option]:text-text-primary"
+                                    >
+                                        <option value="">Change status</option>
+                                        {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
+                                    </select>
+                                    <button type="button" onClick={exportPicked} className="inline-flex h-8 items-center gap-x-1.5 rounded-lg border border-white/40 px-3 text-sm font-semibold text-white hover:bg-white/10"><Download className="h-4 w-4" />Export (logged)</button>
+                                    <button type="button" onClick={() => pickAll(false)} className="ml-auto inline-flex h-8 items-center gap-x-1 rounded-lg px-2 text-sm font-semibold text-white/80 hover:bg-white/10 hover:text-white"><X className="h-3.5 w-3.5" />Clear</button>
                                 </>
                             )}
                         </div>
@@ -533,7 +644,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                 <CandidateDetails
                     orgId={orgId}
                     onChanged={onDataChanged}
-                    keywords={filters.keywords.map(k => k.text)}
+                    keywords={allKeywordTerms(filters.keywords)}
                     record={details.record}
                     open={details.open}
                     onClose={() => setDetails(d => (d ? { ...d, open: false } : d))}

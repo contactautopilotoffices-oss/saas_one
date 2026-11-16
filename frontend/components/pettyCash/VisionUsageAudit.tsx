@@ -222,7 +222,7 @@ export default function VisionUsageAudit({
                         </div>
                     </div>
                     <div className="text-xl font-black text-slate-900 dark:text-white mt-2 truncate">
-                        {Object.keys(data?.summary.model_breakdown || {})[0] || 'qwen3.8-27b'}
+                        {Object.keys(data?.summary.model_breakdown || {})[0] || 'glm-5.3-flash'}
                     </div>
                     <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-1 flex items-center gap-1">
                         <ShieldCheck size={12} /> Active multimodal endpoint

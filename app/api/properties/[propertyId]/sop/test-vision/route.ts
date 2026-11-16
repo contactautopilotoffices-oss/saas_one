@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasProviderKey, withProviderKeys } from '@/backend/lib/llm/providerKeys';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import Groq from 'groq-sdk';
+import { modelFor } from '@/task-manager/ai/modelFor';
 import sharp from 'sharp';
 import crypto from 'crypto';
 import { extractActualImageTimestamp, getAllowedInspectionDates } from '@/lib/sop/imageTimestampHelper';
@@ -224,6 +226,9 @@ Return ONLY valid raw JSON:
 
         if (engyKey) {
             try {
+                // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+                // If it fails, the Groq model below still takes over, as before.
+                const engyModel = await modelFor('sop_photo', 'qwen3.8-27b');
                 const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
                     method: 'POST',
                     headers: {
@@ -231,7 +236,7 @@ Return ONLY valid raw JSON:
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        model: 'qwen3.8-27b',
+                        model: engyModel,
                         messages: [
                             { role: 'system', content: 'You are an expert cleanliness auditor. Output raw JSON only with no markdown wrapping.' },
                             {
@@ -259,7 +264,7 @@ Return ONLY valid raw JSON:
                         if (jsonMatch) rawText = jsonMatch[0];
                     }
                     if (rawText) {
-                        modelUsed = 'qwen3.8-27b (engy.ai)';
+                        modelUsed = `${engyModel} (engy.ai)`;
                     }
                 } else {
                     const errText = await engyRes.text().catch(() => '');
@@ -271,12 +276,11 @@ Return ONLY valid raw JSON:
         }
 
         if (!rawText) {
-            const groqApiKey = process.env.GROQ_API_KEY || process.env.GROQ_LAYOUT_API_KEY;
-            if (groqApiKey) {
+            // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts); no key of its own any more.
+            if (hasProviderKey('groq')) {
                 try {
-                    const groq = new Groq({ apiKey: groqApiKey });
                     const visionModel = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
-                    const comp = await groq.chat.completions.create({
+                    const comp = await withProviderKeys('groq', key => new Groq({ apiKey: key }).chat.completions.create({
                         model: visionModel,
                         messages: [
                             { role: 'system', content: 'You are an expert cleanliness auditor. Output raw JSON only.' },
@@ -292,7 +296,7 @@ Return ONLY valid raw JSON:
                         max_tokens: 2048,
                         temperature: 0.1,
                         response_format: { type: 'json_object' },
-                    });
+                    }));
                     rawText = comp.choices[0]?.message?.content ?? '';
                     modelUsed = `${visionModel} (groq)`;
                 } catch (groqErr: any) {

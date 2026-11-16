@@ -23,6 +23,7 @@ import { CALL_VARIABLES, promptVariables } from './prompts/voiceAgent';
 import { buildCallCsv } from './pipeline';
 import type { Requirement, Vendor } from './types';
 import { parseJsonLoose } from './util';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 const VERSIONS = 'satej_voice_versions';
 /** Bolna fills these itself. */
@@ -71,7 +72,8 @@ Return ONLY JSON: { "welcome": string, "prompt": string, "changes": string[] } â
 `.trim();
 
 export async function suggestRevision(input: { welcome: string; prompt: string; feedback: string; transcripts?: string[] }) {
-    const raw = await councilChat(
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain â†’ AI models). Nothing chosen = today's model, as before.
+    const raw = await runWithModel('satej_smart', satejConfig.modelSmart, model => councilChat(
         [
             { role: 'system', content: REVISE_SYSTEM },
             {
@@ -85,8 +87,8 @@ export async function suggestRevision(input: { welcome: string; prompt: string; 
             },
         ],
         'plan', // the whole prompt comes back; 'procure' (6,000 tokens) is too tight after reasoning
-        { model: satejConfig.modelSmart || null },
-    );
+        { model: model || null },
+    ));
     const out = parseJsonLoose(raw) as { welcome?: unknown; prompt?: unknown; changes?: unknown } | undefined;
     const welcome = String(out?.welcome ?? '').trim();
     const prompt = String(out?.prompt ?? '').trim();

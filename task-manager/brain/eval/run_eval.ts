@@ -3,7 +3,7 @@
  *
  *   npx tsx task-manager/brain/eval/run_eval.ts --models qwen3.8-27b,glm-5.3-flash --out <folder> [--concurrency 6] [--only group] [--limit 20]
  *     [--set base|real]   base = 15 cases (cases.ts), real = the 5 chats that went wrong (Sher, Sanil, follow-ups); --two-step = step 3's reading
- *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs WHATSAPP_BOT_GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs CLAUDE_API_KEY)
+ *     Step 5 example: --models groq:openai/gpt-oss-120b,glm-5.3-flash --reply-model qwen3.8-27b (needs GROQ_API_KEY in .env); Claude: --models anthropic:claude-haiku-5-5,glm-5.3-flash (needs CLAUDE_API_KEY)
  *
  * COST RULE (owner 2026-10-22): every run is paid. The sets were cut to 20 cases in all; still never run more than needed: use --set real or
  *   --only <group> --limit 10. Ask the owner before anything bigger. See docs/TASK_BRAIN_SPEC.md, "keep paid test runs small".
@@ -60,7 +60,7 @@ async function main() {
     let cases = source.filter(c => !only || c.group === only);
     if (limit) cases = cases.slice(0, limit);
     const engy = engyBrainLlm({ thinking });
-    // "gemini-*" models go to Google with the learning-loop key (GEMINI_AUTOTUNE_API_KEY first); everything else to Engy.
+    // "gemini-*" models go to Google with the shared Gemini keys (GEMINI_API_KEY → _2 → _3); everything else to Engy.
     // Free-tier keys allow only a few calls a minute, so Gemini calls are spaced out and a 429 waits and tries again.
     const { geminiLlm } = await import('../geminiLlm');
     const gemini = geminiLlm();

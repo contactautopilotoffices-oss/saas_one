@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { hasProviderKey, withProviderKeys } from '@/backend/lib/llm/providerKeys';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import Groq from 'groq-sdk';
+import { modelFor } from '@/task-manager/ai/modelFor';
 import sharp from 'sharp';
 import crypto from 'crypto';
 import { extractActualImageTimestamp, getAllowedInspectionDates } from '@/lib/sop/imageTimestampHelper';
@@ -466,8 +468,11 @@ Respond ONLY with raw JSON in exactly this shape:
         let modelUsed = '';
 
         if (engyKey) {
-            const engyVisionModels = [process.env.ENGY_VISION_MODEL, 'glm-5.3-flash', 'kimi-k3.1-pro'].filter(Boolean) as string[];
-            for (const modelToTry of engyVisionModels) {
+            // Configurable model from Tech Console (Brain -> AI models), defaulting to glm-5.3-flash
+            const configuredModel = await modelFor('sop_photo', 'glm-5.3-flash').catch(() => 'glm-5.3-flash');
+            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash', 'kimi-k3.1-pro'].filter(Boolean) as string[];
+            const uniqueModels = Array.from(new Set(engyVisionModels));
+            for (const modelToTry of uniqueModels) {
                 if (rawText) break;
                 try {
                     const engyRes = await fetch(`${engyBaseUrl}/chat/completions`, {
@@ -519,12 +524,11 @@ Respond ONLY with raw JSON in exactly this shape:
 
         // Groq Fallback
         if (!rawText) {
-            const groqApiKey = process.env.GROQ_API_KEY || process.env.GROQ_LAYOUT_API_KEY;
-            if (groqApiKey) {
+            // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts); no key of its own any more.
+            if (hasProviderKey('groq')) {
                 try {
-                    const groq = new Groq({ apiKey: groqApiKey });
                     const visionModel = process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b';
-                    const completion_ = await groq.chat.completions.create({
+                    const completion_ = await withProviderKeys('groq', key => new Groq({ apiKey: key }).chat.completions.create({
                         model: visionModel,
                         messages: [
                             {
@@ -539,7 +543,7 @@ Respond ONLY with raw JSON in exactly this shape:
                         max_tokens: 1500,
                         temperature: 0.1,
                         response_format: { type: 'json_object' },
-                    }, { signal: AbortSignal.timeout(10000) });
+                    }, { signal: AbortSignal.timeout(10000) }));
                     rawText = completion_.choices[0]?.message?.content ?? '';
                     modelUsed = `${visionModel} (groq)`;
                 } catch (groqErr: any) {

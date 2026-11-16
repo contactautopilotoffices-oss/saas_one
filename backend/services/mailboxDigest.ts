@@ -26,6 +26,7 @@
  */
 
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 import { ZohoMailService, ZohoMailThread, isZohoMailConfigured, mailboxAddress } from './zohoMailService';
 
 export type DigestCategory = 'awaiting_reply' | 'unactioned_request' | 'no_discovery' | 'other';
@@ -59,6 +60,9 @@ const CATEGORIES: DigestCategory[] = ['awaiting_reply', 'unactioned_request', 'n
 // again take live features down.
 const LLM_API_URL = 'https://api.openai.com/v1/chat/completions';
 const LLM_MODEL = process.env.MAILBOX_DIGEST_MODEL || 'gpt-5.6-terra';
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+/** The model the current run is calling, so the run's cost is priced on the model that actually ran. */
+let runModel = LLM_MODEL;
 const LLM_TIMEOUT_MS = 10_000;
 // A full 300-thread pass is ~180k input tokens — cents on gpt-4o-mini — so the cap exists
 // for latency inside the 300s function budget, not for cost.
@@ -472,12 +476,22 @@ function resetRunUsage() { runInputTokens = 0; runOutputTokens = 0; }
 
 /** Estimated USD spent so far this run, from the provider's own usage numbers. */
 function runCostUsd(): number {
-    const p = MODEL_PRICING[LLM_MODEL] ?? UNPRICED_MODEL;
+    const p = MODEL_PRICING[runModel] ?? UNPRICED_MODEL;
     return (runInputTokens * p.input + runOutputTokens * p.output) / 1e6;
 }
 const lastLlmStatus = () => llmStatus;
 
+// A chosen model that fails is rested and today's model is tried once; if that fails too the heuristic verdict stands,
+// exactly as for any failure of this step.
 async function classifyWithLLM(f: ThreadFacts): Promise<Classification | null> {
+    const chosen = await modelFor('mailbox_digest', LLM_MODEL);
+    const first = await classifyOn(chosen, f);
+    if (first || chosen === LLM_MODEL) return first;
+    markFailed('mailbox_digest');
+    return classifyOn(LLM_MODEL, f);
+}
+
+async function classifyOn(model: string, f: ThreadFacts): Promise<Classification | null> {
     // Reset per call. llmStatus is module state, so leaving a previous run's 429 in place
     // meant one timeout (which returns null without a status) tripped the rate-limit
     // short-circuit on the very first thread and skipped the entire run.
@@ -486,6 +500,7 @@ async function classifyWithLLM(f: ThreadFacts): Promise<Classification | null> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
 
+    runModel = model;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
@@ -493,12 +508,12 @@ async function classifyWithLLM(f: ThreadFacts): Promise<Classification | null> {
         // gpt-5.x rejects both `max_tokens` (wants `max_completion_tokens`) and any
         // `temperature` other than the default, with a 400 each time. Keep the 4o-style
         // shape available so MAILBOX_DIGEST_MODEL can still point at gpt-4o-mini.
-        const isGpt5 = /^(gpt-5|o[34])/.test(LLM_MODEL);
+        const isGpt5 = /^(gpt-5|o[34])/.test(model);
         const response = await fetch(LLM_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: LLM_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
                     { role: 'user', content: userPrompt(f) },

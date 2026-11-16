@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { CheckCircle2, Filter, Plus, X, Loader2, Activity, Search, Calendar, User, ChevronDown, Check, Building2 } from 'lucide-react';
+import { CheckCircle2, Plus, X, Loader2, Activity, Search, Calendar, User, ChevronDown, ChevronRight, Check, Building2, SlidersHorizontal } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Custom styled dropdown to replace native <select>
@@ -33,7 +33,9 @@ function FilterDropdown({
             <button
                 type="button"
                 onClick={() => setOpen(p => !p)}
-                className={`flex items-center gap-2 h-9 px-3 bg-white border rounded-full shadow-sm hover:border-slate-300 transition-all text-xs font-semibold whitespace-nowrap ${isActive ? 'border-primary/40 text-primary' : 'border-slate-200 text-slate-600'}`}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary' : 'border-slate-300 text-slate-700'}`}
             >
                 {icon && <span className={isActive ? 'text-primary' : 'text-slate-400'}>{icon}</span>}
                 <span>{selected?.label ?? placeholder}</span>
@@ -68,8 +70,68 @@ function FilterDropdown({
         </div>
     );
 }
+// Owner 2026-11-15: rows and pills for the phone Filters sheet. Each row is a real <select> laid over the row, so the
+// phone's own picker opens; the row shows the chosen value.
+function SheetSelectRow({ label, value, onChange, options, disabledText, last }: {
+    label: string;
+    value: string;
+    onChange: (v: string) => void;
+    options: { value: string; label: string }[];
+    /** When set, the row is shown greyed out with this text and cannot be changed. */
+    disabledText?: string;
+    last?: boolean;
+}) {
+    const selected = options.find(o => o.value === value)?.label ?? options[0]?.label;
+    return (
+        <div className={`relative flex h-[52px] items-center gap-[8px] pl-4 pr-3 focus-within:ring-2 focus-within:ring-inset focus-within:ring-blue-600 ${last ? '' : 'border-b border-slate-100'} ${disabledText ? 'opacity-60' : ''}`}>
+            <span className="flex-1 text-[15px] font-semibold text-gray-900">{label}</span>
+            <span className="max-w-[55%] truncate text-[15px] text-gray-600">{disabledText ?? selected}</span>
+            <ChevronRight className="h-[18px] w-[18px] shrink-0 text-gray-500" aria-hidden="true" />
+            <select
+                aria-label={label}
+                value={value}
+                disabled={Boolean(disabledText)}
+                onChange={(e) => onChange(e.target.value)}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+            >
+                {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+        </div>
+    );
+}
+
+function SheetPill({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+    return (
+        <button
+            type="button"
+            aria-pressed={active}
+            onClick={onClick}
+            className={`h-10 rounded-full border px-3.5 text-[15px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-1 ${active ? 'border-blue-700 bg-blue-700 text-white' : 'border-gray-300 bg-white text-gray-900'}`}
+        >
+            {children}
+        </button>
+    );
+}
+
+const SORT_OPTIONS = [
+    { value: 'newest', label: 'Newest first' },
+    { value: 'oldest', label: 'Oldest first' },
+    { value: 'priority_high', label: 'Priority: high to low' },
+    { value: 'priority_low', label: 'Priority: low to high' },
+];
+
+const TEAM_OPTIONS = [
+    { value: 'all', label: 'All teams' },
+    { value: 'technical', label: 'Technical' },
+    { value: 'soft_services', label: 'Soft services' },
+    { value: 'plumbing', label: 'Plumbing' },
+];
+
+const floorLabel = (f: string | number) => f === 0 ? 'Ground floor' : f === -1 ? 'Basement 1' : f === -2 ? 'Basement 2' : `Floor ${f}`;
+
 import { createClient } from '@/frontend/utils/supabase/client';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
+import { BottomSheet } from '@/frontend/components/task-manager/assign/Sheet';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -121,9 +183,16 @@ interface TicketsViewProps {
      * their behaviour is unchanged.
      */
     lockedAssigneeId?: string;
+    /**
+     * Owner 2026-11-15: false on the Requests tab (RequestsWorkspace), whose page header already shows "Requests" and,
+     * on phones, the New button. Every other screen keeps the "Support Tickets" heading.
+     */
+    showHeading?: boolean;
+    /** The List / Board switch the Requests tab shows next to the ticket count below `lg`. */
+    viewSwitcher?: React.ReactNode;
 }
 
-const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, canDelete, onNewRequest, initialStatusFilter = 'all', lockedAssigneeId }) => {
+const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, canDelete, onNewRequest, initialStatusFilter = 'all', lockedAssigneeId, showHeading = true, viewSwitcher }) => {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -435,6 +504,48 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
     const loadMoreTickets = () => fetchTickets(tickets.length);
 
+    // Owner 2026-11-15: load the next page by itself when the end of the list scrolls into view. It calls the same
+    // loadMoreTickets; the guard stops a second call while one page is still loading. The observer is rebuilt after
+    // every page, so a short page that leaves the end still in view loads the next one too.
+    const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+    const loadMoreGuardRef = useRef(false);
+    const loadMoreFnRef = useRef(loadMoreTickets);
+    useEffect(() => { loadMoreFnRef.current = loadMoreTickets; });
+    useEffect(() => { if (!isLoadingMore) loadMoreGuardRef.current = false; }, [isLoadingMore]);
+    const canAutoLoad = typeof window === 'undefined' || 'IntersectionObserver' in window;
+    useEffect(() => {
+        if (!hasMore || isLoading || isLoadingMore || !canAutoLoad) return;
+        const el = loadMoreSentinelRef.current;
+        if (!el) return;
+        const scroller = document.getElementById('main-scroll-container');
+        const observer = new IntersectionObserver((entries) => {
+            if (!entries.some(en => en.isIntersecting) || loadMoreGuardRef.current) return;
+            loadMoreGuardRef.current = true;
+            loadMoreFnRef.current();
+        }, { root: scroller && scroller.contains(el) ? scroller : null, rootMargin: '0px 0px 600px 0px' });
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [hasMore, isLoading, isLoadingMore, canAutoLoad, tickets.length]);
+    const loadMoreByButton = () => {
+        if (loadMoreGuardRef.current || isLoadingMore) return;
+        loadMoreGuardRef.current = true;
+        loadMoreTickets();
+    };
+
+    // Owner 2026-11-15: phone Filters sheet. It drives the same filter state as the desktop bar.
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const filtersButtonRef = useRef<HTMLButtonElement>(null);
+    const filtersBodyRef = useRef<HTMLDivElement>(null);
+    const closeFilters = useCallback(() => {
+        setFiltersOpen(false);
+        filtersButtonRef.current?.focus();
+    }, []);
+    useEffect(() => {
+        if (!filtersOpen) return;
+        const raf = requestAnimationFrame(() => filtersBodyRef.current?.querySelector<HTMLElement>('button, select, input')?.focus());
+        return () => cancelAnimationFrame(raf);
+    }, [filtersOpen]);
+
     // Listen for globally raised tickets to instantly display without page reload
     useEffect(() => {
         const handleCreated = (e: any) => {
@@ -591,188 +702,339 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         return result;
     }, [tickets, sortBy]);
 
+    // Same number the old "N Results" badge showed.
+    const resultCount = hasActiveFilters || categoryFilter !== 'all' || searchQuery.trim() ? filteredTickets.length : (totalCount ?? filteredTickets.length);
+    const resultText = `${resultCount.toLocaleString('en-IN')} ticket${resultCount !== 1 ? 's' : ''}`;
+
+    const statusOptions = [
+        { value: 'all', label: 'All' },
+        { value: 'open,assigned,in_progress,blocked,waitlist', label: 'Open' },
+        { value: 'resolved,closed,pending_validation', label: 'Completed' },
+        { value: 'waitlist', label: 'Waitlist' },
+        { value: 'sla_breached', label: 'SLA breached' },
+        { value: 'pending_validation', label: 'Pending validation' },
+        { value: 'materials_required', label: isHighAdmin ? 'Material requested' : 'Material assigned' },
+        { value: 'tenant_raised', label: 'Client raised' },
+        { value: 'internal', label: 'Internal' },
+    ];
+    const floorOptions = [
+        { value: 'all', label: 'All floors' },
+        ...(hasUnspecified ? [{ value: 'unspecified', label: 'Unspecified' }] : []),
+        ...allFloors.map(f => ({ value: String(f), label: floorLabel(f) })),
+    ];
+
+    // How many filters are on (the badge on the phone Filters button).
+    const activeFilterCount = [
+        statusFilter !== 'all', categoryFilter !== 'all', sortBy !== 'newest', dateFrom !== '', dateTo !== '',
+        raisedByFilter !== 'all', assignedToFilter !== 'all', floorFilter !== 'all',
+    ].filter(Boolean).length;
+
+    // The desktop "Clear filters" button: unchanged.
+    const clearFilters = () => { setDateFrom(''); setDateTo(''); setRaisedByFilter('all'); setResolvedByFilter('all'); setAssignedToFilter('all'); setFloorFilter('all'); setSortBy('newest'); };
+    // The phone sheet's "Clear all" also resets status and team, which live in the same sheet.
+    const clearAllFilters = () => { clearFilters(); setStatusFilter('all'); setCategoryFilter('all'); };
+
+    const showFlowMap = Boolean(propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || ''));
+    const flowMapButton = showFlowMap && (
+        <button
+            onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
+            className="flex h-10 shrink-0 items-center justify-center gap-[8px] rounded-[12px] border border-secondary/20 bg-secondary/10 px-3.5 text-sm font-bold text-secondary transition-colors hover:bg-secondary/20"
+            title="View Operational Flow Map"
+        >
+            <Activity className="h-4 w-4" /> <span className="whitespace-nowrap">Live Flow Map</span>
+        </button>
+    );
+    // #56737a: a darker shade of the brand teal (owner-approved) so the white text is easy to read.
+    const newRequestButton = onNewRequest && (
+        <button
+            onClick={onNewRequest}
+            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#56737a] px-4 text-sm font-bold text-white transition-colors hover:bg-[#4a646a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56737a] focus-visible:ring-offset-2"
+        >
+            <Plus className="h-4 w-4" strokeWidth={2.5} /> <span className="whitespace-nowrap">New request</span>
+        </button>
+    );
+
+    const raisedByDisabled = !propertyId;
+    const showRaisedBy = raisedByDisabled || raisedByUsers.length > 0;
+    const showAssignedTo = !lockedAssigneeId && (!propertyId || allAssignees.length > 0);
+
     return (
-        <div className="space-y-4 sm:space-y-6 px-1 sm:px-0">
-            {/* Header with Filters */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-1 sm:px-0">
-                <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-                    <h3 className="text-xl font-display font-bold text-text-primary whitespace-nowrap">Support Tickets</h3>
-                    <div className="flex items-center gap-2">
-                        <Filter className="w-4 h-4 text-text-tertiary shrink-0" />
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="h-9 w-full sm:w-auto px-3 bg-surface border border-border rounded-[var(--radius-md)] text-xs font-semibold font-body text-text-primary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
-                        >
-                            <option value="all">All</option>
-                            <option value="resolved,closed,pending_validation">Completed</option>
-                            <option value="open,assigned,in_progress,blocked,waitlist">Open</option>
-                            <option value="waitlist">Waitlist</option>
-                            <option value="sla_breached">SLA Breached</option>
-                            <option value="pending_validation">Pending Validation</option>
-                            <option value="materials_required">{isHighAdmin ? 'Material Requested' : 'Material Assigned'}</option>
-                            <option value="tenant_raised">Client Raised</option>
-                            <option value="internal">Internal</option>
-                        </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <select
-                            value={categoryFilter}
-                            onChange={(e) => setCategoryFilter(e.target.value)}
-                            className="h-9 w-full sm:w-auto px-3 bg-surface border border-border rounded-[var(--radius-md)] text-xs font-semibold font-body text-text-primary transition-smooth focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50"
-                        >
-                            <option value="all">All Categories</option>
-                            <option value="technical">Technical</option>
-                            <option value="soft_services">Soft Service</option>
-                            <option value="plumbing">Plumbing</option>
-                        </select>
-                    </div>
-                    {!isLoading && (
-                        <span className="px-2.5 py-1 bg-primary/10 text-primary text-xs font-bold rounded-full whitespace-nowrap flex items-center gap-1.5">
-                            {hasActiveFilters || categoryFilter !== 'all' || searchQuery.trim() ? filteredTickets.length : (totalCount ?? filteredTickets.length)} Result{(hasActiveFilters || categoryFilter !== 'all' || searchQuery.trim() ? filteredTickets.length : (totalCount ?? filteredTickets.length)) !== 1 ? 's' : ''}
-                        </span>
-                    )}
+        <div className="space-y-3 md:space-y-5">
+            {/* "Support Tickets" heading (every screen except the Requests tab, whose page header has the title) */}
+            {showHeading && (
+                <div className="flex flex-wrap items-center gap-[12px]">
+                    <h3 className="flex-1 whitespace-nowrap text-xl font-display font-bold text-text-primary">Support Tickets</h3>
+                    {flowMapButton}
+                    {newRequestButton}
                 </div>
-                <div className="flex items-center gap-2 sm:gap-3">
-                    {/* Search by Ticket ID */}
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-tertiary pointer-events-none" />
+            )}
+
+            {/* Phone (below md): search + Filters button, then the view switch and the count */}
+            <div className="space-y-2.5 md:hidden">
+                <div className="flex gap-[8px]">
+                    <div className="relative min-w-0 flex-1">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-gray-500" aria-hidden="true" />
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
-                            placeholder="Search by ticket ID..."
-                            className="h-9 pl-8 pr-3 w-44 sm:w-52 bg-surface border border-border rounded-[var(--radius-md)] text-xs font-semibold font-body text-text-primary placeholder-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary hover:border-primary/50 transition-smooth"
+                            placeholder="Search by ticket ID"
+                            aria-label="Search by ticket ID"
+                            className="h-11 w-full rounded-[12px] border border-gray-300 bg-white pl-10 pr-10 text-base text-gray-900 placeholder:text-gray-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                         />
                         {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary">
-                                <X className="w-3 h-3" />
+                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-[8px] text-gray-500 hover:text-gray-900">
+                                <X className="h-4 w-4" />
                             </button>
                         )}
                     </div>
-                    {propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || '') && (
-                        <button
-                            onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
-                            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-secondary/10 text-secondary text-[10px] sm:text-xs font-bold rounded-[var(--radius-md)] border border-secondary/20 hover:bg-secondary/20 transition-all active:scale-[0.98]"
-                            title="View Operational Flow Map"
-                        >
-                            <Activity className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="whitespace-nowrap">Live Flow Map</span>
-                        </button>
-                    )}
-                    {onNewRequest && (
-                        <button
-                            onClick={onNewRequest}
-                            className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-4 py-2 bg-primary text-text-inverse text-[10px] sm:text-xs font-bold rounded-[var(--radius-md)] hover:opacity-90 transition-all shadow-lg shadow-primary/20 active:scale-[0.98]"
-                        >
-                            <Plus className="w-3 h-3 sm:w-4 sm:h-4" /> <span className="whitespace-nowrap">New Request</span>
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Sort / Date / User Filter Bar */}
-            <div className="flex flex-wrap items-center gap-2">
-                {/* Sort */}
-                <FilterDropdown
-                    value={sortBy}
-                    onChange={(v) => setSortBy(v as any)}
-                    options={[
-                        { value: 'newest', label: 'Newest First' },
-                        { value: 'oldest', label: 'Oldest First' },
-                        { value: 'priority_high', label: 'Priority: High → Low' },
-                        { value: 'priority_low', label: 'Priority: Low → High' },
-                    ]}
-                    placeholder="Sort"
-                />
-
-                {/* Date From */}
-                <div className={`flex items-center gap-2 h-9 px-3 bg-white border rounded-full shadow-sm hover:border-slate-300 transition-all ${dateFrom ? 'border-primary/40' : 'border-slate-200'}`}>
-                    <Calendar className={`w-3.5 h-3.5 shrink-0 ${dateFrom ? 'text-primary' : 'text-slate-400'}`} />
-                    <input
-                        type="date"
-                        value={dateFrom}
-                        onChange={(e) => setDateFrom(e.target.value)}
-                        className="bg-transparent text-xs font-semibold text-slate-600 focus:outline-none cursor-pointer w-[112px]"
-                    />
-                </div>
-
-                {/* Date To */}
-                <div className={`flex items-center gap-2 h-9 px-3 bg-white border rounded-full shadow-sm hover:border-slate-300 transition-all ${dateTo ? 'border-primary/40' : 'border-slate-200'}`}>
-                    <Calendar className={`w-3.5 h-3.5 shrink-0 ${dateTo ? 'text-primary' : 'text-slate-400'}`} />
-                    <input
-                        type="date"
-                        value={dateTo}
-                        onChange={(e) => setDateTo(e.target.value)}
-                        className="bg-transparent text-xs font-semibold text-slate-600 focus:outline-none cursor-pointer w-[112px]"
-                    />
-                </div>
-
-                {/* Raised By User Filter */}
-                {!propertyId ? (
-                    <div className="flex items-center gap-2 h-9 px-3 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-400 font-medium select-none" title="Select a property to filter by user">
-                        <User className="w-3.5 h-3.5 shrink-0" />
-                        <span>Raised By: Select property</span>
-                    </div>
-                ) : raisedByUsers.length > 0 && (
-                    <FilterDropdown
-                        value={raisedByFilter}
-                        onChange={setRaisedByFilter}
-                        options={[
-                            { value: 'all', label: 'Raised By: All' },
-                            ...raisedByUsers.map(u => ({ value: u.id, label: u.name }))
-                        ]}
-                        icon={<User className="w-3.5 h-3.5" />}
-                    />
-                )}
-
-                {/* Assigned To Filter (hidden in the IT console's assignee-only view) */}
-                {lockedAssigneeId ? null : !propertyId ? (
-                    <div className="flex items-center gap-2 h-9 px-3 bg-slate-50 border border-slate-200 rounded-full text-xs text-slate-400 font-medium select-none" title="Select a property to filter by user">
-                        <User className="w-3.5 h-3.5 shrink-0" />
-                        <span>Assigned To: Select property</span>
-                    </div>
-                ) : allAssignees.length > 0 && (
-                    <FilterDropdown
-                        value={assignedToFilter}
-                        onChange={setAssignedToFilter}
-                        options={[
-                            { value: 'all', label: 'Assigned To: All' },
-                            ...allAssignees.map(u => ({ value: u.id, label: u.name }))
-                        ]}
-                        icon={<User className="w-3.5 h-3.5" />}
-                    />
-                )}
-
-                {/* Floor Filter */}
-                {allFloors.length > 0 && (
-                    <FilterDropdown
-                        value={floorFilter}
-                        onChange={setFloorFilter}
-                        options={[
-                            { value: 'all', label: 'All Floors' },
-                            ...(hasUnspecified ? [{ value: 'unspecified', label: 'Unspecified' }] : []),
-                            ...allFloors.map(f => ({ value: String(f), label: f === 0 ? 'Ground Floor' : f === -1 ? 'Basement 1' : f === -2 ? 'Basement 2' : `Floor ${f}` }))
-                        ]}
-                        icon={<Building2 className="w-3.5 h-3.5" />}
-                    />
-                )}
-
-                {/* Clear Filters */}
-                {hasActiveFilters && (
                     <button
-                        onClick={() => { setDateFrom(''); setDateTo(''); setRaisedByFilter('all'); setResolvedByFilter('all'); setAssignedToFilter('all'); setFloorFilter('all'); setSortBy('newest'); }}
-                        className="h-9 px-4 text-xs font-bold text-rose-500 hover:bg-rose-50 rounded-full transition-all border border-rose-200 bg-white shadow-sm"
+                        ref={filtersButtonRef}
+                        type="button"
+                        onClick={() => setFiltersOpen(true)}
+                        aria-haspopup="dialog"
+                        aria-expanded={filtersOpen}
+                        className="flex h-11 shrink-0 items-center gap-[8px] rounded-[12px] border border-gray-300 bg-white px-3.5 text-[15px] font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                     >
-                        Clear Filters
+                        <SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden="true" />
+                        Filters
+                        {activeFilterCount > 0 && (
+                            <>
+                                <span aria-hidden="true" className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-700 px-1.5 text-xs font-bold tabular-nums text-white">{activeFilterCount}</span>
+                                <span className="sr-only">({activeFilterCount} on)</span>
+                            </>
+                        )}
                     </button>
+                </div>
+                {(viewSwitcher || !isLoading) && (
+                    <div className="flex items-center justify-between gap-[8px]">
+                        {viewSwitcher}
+                        {!isLoading && <span className="ml-auto text-[13px] tabular-nums text-gray-600">{resultText}</span>}
+                    </div>
                 )}
-
             </div>
 
-            {/* Tickets List */}
-            <div className="glass-card overflow-hidden">
+            {/* md and up: search, count and New on top; the filters below, wrapping cleanly */}
+            <div className="hidden flex-col gap-[10px] md:flex">
+                <div className="flex flex-wrap items-center gap-[8px]">
+                    {viewSwitcher}
+                    <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={e => setSearchQuery(e.target.value)}
+                            placeholder="Search by ticket ID"
+                            aria-label="Search by ticket ID"
+                            className="h-10 w-56 rounded-[12px] border border-slate-300 bg-white pl-9 pr-8 text-sm text-slate-900 placeholder:text-slate-500 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                        />
+                        {searchQuery && (
+                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900">
+                                <X className="h-3.5 w-3.5" />
+                            </button>
+                        )}
+                    </div>
+                    <div className="ml-auto flex items-center gap-[8px]">
+                        {!isLoading && <span className="whitespace-nowrap text-sm tabular-nums text-slate-600">{resultText}</span>}
+                        {!showHeading && flowMapButton}
+                        {!showHeading && newRequestButton}
+                    </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-[8px]">
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        aria-label="Status"
+                        className="h-10 rounded-[12px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                        {statusOptions.map(o => <option key={o.value} value={o.value}>{o.value === 'all' ? 'Status: All' : o.label}</option>)}
+                    </select>
+
+                    <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        aria-label="Team"
+                        className="h-10 rounded-[12px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                    >
+                        {TEAM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+
+                    <FilterDropdown
+                        value={sortBy}
+                        onChange={(v) => setSortBy(v as typeof sortBy)}
+                        options={SORT_OPTIONS}
+                        placeholder="Sort"
+                    />
+
+                    {/* Date From */}
+                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateFrom ? 'border-primary/50' : 'border-slate-300'}`}>
+                        <Calendar className={`h-4 w-4 shrink-0 ${dateFrom ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            aria-label="From date"
+                            className="w-[118px] cursor-pointer bg-transparent text-sm font-semibold text-slate-700 focus:outline-none"
+                        />
+                    </div>
+
+                    {/* Date To */}
+                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateTo ? 'border-primary/50' : 'border-slate-300'}`}>
+                        <Calendar className={`h-4 w-4 shrink-0 ${dateTo ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
+                        <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            aria-label="To date"
+                            className="w-[118px] cursor-pointer bg-transparent text-sm font-semibold text-slate-700 focus:outline-none"
+                        />
+                    </div>
+
+                    {/* Raised By User Filter */}
+                    {!propertyId ? (
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                            <User className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span>Raised by: pick a property</span>
+                        </div>
+                    ) : raisedByUsers.length > 0 && (
+                        <FilterDropdown
+                            value={raisedByFilter}
+                            onChange={setRaisedByFilter}
+                            options={[
+                                { value: 'all', label: 'Raised by: All' },
+                                ...raisedByUsers.map(u => ({ value: u.id, label: u.name }))
+                            ]}
+                            icon={<User className="h-4 w-4" />}
+                        />
+                    )}
+
+                    {/* Assigned To Filter (hidden in the IT console's assignee-only view) */}
+                    {lockedAssigneeId ? null : !propertyId ? (
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                            <User className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            <span>Assigned to: pick a property</span>
+                        </div>
+                    ) : allAssignees.length > 0 && (
+                        <FilterDropdown
+                            value={assignedToFilter}
+                            onChange={setAssignedToFilter}
+                            options={[
+                                { value: 'all', label: 'Assigned to: All' },
+                                ...allAssignees.map(u => ({ value: u.id, label: u.name }))
+                            ]}
+                            icon={<User className="h-4 w-4" />}
+                        />
+                    )}
+
+                    {/* Floor Filter */}
+                    {allFloors.length > 0 && (
+                        <FilterDropdown
+                            value={floorFilter}
+                            onChange={setFloorFilter}
+                            options={floorOptions}
+                            icon={<Building2 className="h-4 w-4" />}
+                        />
+                    )}
+
+                    {/* Clear Filters */}
+                    {hasActiveFilters && (
+                        <button
+                            onClick={clearFilters}
+                            className="h-10 rounded-[12px] border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50"
+                        >
+                            Clear filters
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            {/* Phone Filters sheet: the same filter state as the bar above */}
+            <BottomSheet
+                open={filtersOpen}
+                onClose={closeFilters}
+                title="Filters"
+                headerAction={
+                    <button type="button" onClick={clearAllFilters} className="rounded-[8px] px-2 py-3 text-[15px] font-bold text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600">
+                        Clear all
+                    </button>
+                }
+                footer={
+                    <button type="button" onClick={closeFilters} className="h-[52px] w-full rounded-[14px] bg-blue-700 text-[17px] font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">
+                        {isLoading ? 'Show tickets' : `Show ${resultText}`}
+                    </button>
+                }
+            >
+                <div ref={filtersBodyRef} className="flex flex-col gap-[18px] pt-2" style={{ fontFamily: 'var(--font-body)' }}>
+                    <div role="group" aria-labelledby="tickets-filter-status">
+                        <p id="tickets-filter-status" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Status</p>
+                        <div className="flex flex-wrap gap-[8px]">
+                            {statusOptions.map(o => (
+                                <SheetPill key={o.value} active={statusFilter === o.value} onClick={() => setStatusFilter(o.value)}>{o.label}</SheetPill>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div role="group" aria-labelledby="tickets-filter-team">
+                        <p id="tickets-filter-team" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Team</p>
+                        <div className="flex flex-wrap gap-[8px]">
+                            {TEAM_OPTIONS.map(o => (
+                                <SheetPill key={o.value} active={categoryFilter === o.value} onClick={() => setCategoryFilter(o.value)}>{o.value === 'all' ? 'All' : o.label}</SheetPill>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div role="group" aria-labelledby="tickets-filter-dates">
+                        <p id="tickets-filter-dates" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Dates</p>
+                        <div className="flex gap-[8px]">
+                            {([['From', dateFrom, setDateFrom], ['To', dateTo, setDateTo]] as const).map(([label, val, set]) => (
+                                <div key={label} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 rounded-[12px] border border-gray-300 px-2.5 focus-within:ring-2 focus-within:ring-blue-600">
+                                    <span className="shrink-0 text-sm text-gray-600">{label}</span>
+                                    <input
+                                        type="date"
+                                        value={val}
+                                        onChange={(e) => set(e.target.value)}
+                                        aria-label={`${label} date`}
+                                        className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-gray-900 focus:outline-none"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex flex-col overflow-hidden rounded-[14px] border border-gray-200">
+                        <SheetSelectRow label="Sort" value={sortBy} onChange={(v) => setSortBy(v as typeof sortBy)} options={SORT_OPTIONS} last={!showRaisedBy && !showAssignedTo && allFloors.length === 0} />
+                        {showRaisedBy && (
+                            <SheetSelectRow
+                                label="Raised by"
+                                value={raisedByFilter}
+                                onChange={setRaisedByFilter}
+                                options={[{ value: 'all', label: 'Anyone' }, ...raisedByUsers.map(u => ({ value: u.id, label: u.name }))]}
+                                disabledText={raisedByDisabled ? 'Pick a property' : undefined}
+                                last={!showAssignedTo && allFloors.length === 0}
+                            />
+                        )}
+                        {showAssignedTo && (
+                            <SheetSelectRow
+                                label="Assigned to"
+                                value={assignedToFilter}
+                                onChange={setAssignedToFilter}
+                                options={[{ value: 'all', label: 'Anyone' }, ...allAssignees.map(u => ({ value: u.id, label: u.name }))]}
+                                disabledText={!propertyId ? 'Pick a property' : undefined}
+                                last={allFloors.length === 0}
+                            />
+                        )}
+                        {allFloors.length > 0 && (
+                            <SheetSelectRow label="Floor" value={floorFilter} onChange={setFloorFilter} options={floorOptions} last />
+                        )}
+                    </div>
+                </div>
+            </BottomSheet>
+
+            {/* Tickets List: one column on phones, as many 360px+ columns as fit from sm up */}
+            <div>
                 {isLoading ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6 p-1.5 sm:p-6">
+                    <div className={`${TICKET_GRID_CLASS} gap-[12px] md:gap-[16px]`}>
                         {[1, 2, 3, 4, 5, 6].map((i) => (
                             <div key={i} className="w-full h-[220px] bg-white rounded-2xl border border-gray-100 p-5 flex flex-col gap-4">
                                 <div className="flex justify-between items-start gap-4">
@@ -797,16 +1059,17 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         ))}
                     </div>
                 ) : filteredTickets.length === 0 ? (
-                    <div className="p-12 text-center text-text-tertiary font-body">
+                    <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center text-sm text-text-tertiary font-body">
                         {searchQuery ? `No tickets found matching "${searchQuery}"` : 'No tickets found'}
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6 p-1.5 sm:p-6">
+                    <div className={`${TICKET_GRID_CLASS} gap-[12px] md:gap-[16px]`}>
                         {filteredTickets.map((ticket: any) => (
                             <div key={ticket.id} id={`ticket-${ticket.id}`}>
                                 <TicketCard
                                     id={ticket.id}
                                     title={ticket.title}
+                                    description={ticket.description}
                                     priority={ticket.priority?.toUpperCase() as any || 'MEDIUM'}
                                     status={
                                         ['closed', 'resolved'].includes(ticket.status) ? 'COMPLETED' :
@@ -851,37 +1114,27 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     </div>
                 )}
 
-                {/* Load More - inline spacer so content isn't hidden behind floating bar */}
-                {hasMore && !isLoading && <div className="h-20" />}
-            </div>
-
-            {/* Floating sticky Load More bar */}
-            <AnimatePresence>
-                {hasMore && !isLoading && (
-                    <motion.div
-                        initial={{ y: 80, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        exit={{ y: 80, opacity: 0 }}
-                        transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-                        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
-                    >
-                        <button
-                            onClick={loadMoreTickets}
-                            disabled={isLoadingMore}
-                            className="flex items-center gap-2.5 px-6 py-3 bg-slate-900 text-white text-sm font-bold rounded-2xl shadow-2xl hover:bg-slate-700 disabled:opacity-60 transition-all active:scale-95 border border-slate-700 backdrop-blur-sm"
-                        >
-                            {isLoadingMore ? (
-                                <><Loader2 className="w-4 h-4 animate-spin" /> Loading...</>
-                            ) : (
-                                <>
-                                    <span>Load More Tickets</span>
-                                    <span className="px-2 py-0.5 bg-white/20 rounded-lg text-xs font-black">↓</span>
-                                </>
-                            )}
-                        </button>
-                    </motion.div>
+                {/* End of the list. Scrolling here loads the next page (see loadMoreSentinelRef); the button is only
+                    shown where the browser cannot do that. */}
+                {!isLoading && filteredTickets.length > 0 && (
+                    <div ref={loadMoreSentinelRef} className="flex flex-col items-center gap-[8px] pt-5 pb-20 text-sm text-gray-600 md:pb-6" aria-live="polite">
+                        {isLoadingMore ? (
+                            <span className="flex items-center gap-[8px]"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading more tickets…</span>
+                        ) : hasMore ? (
+                            <>
+                                <span>More tickets load as you scroll</span>
+                                {!canAutoLoad && (
+                                    <button type="button" onClick={loadMoreByButton} className="h-10 rounded-[12px] border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50">
+                                        Load more
+                                    </button>
+                                )}
+                            </>
+                        ) : (
+                            <span>That&apos;s all</span>
+                        )}
+                    </div>
                 )}
-            </AnimatePresence>
+            </div>
 
             {/* Edit Modal */}
             <AnimatePresence>

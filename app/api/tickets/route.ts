@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
-import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
 import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
@@ -361,53 +360,60 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // 1. Quick rule-based pre-pass to get DB priority BEFORE Groq runs
-        const preClassification = classifyTicketEnhanced(title || description);
+        // Tenants/clients can NEVER create internal tickets. Force internal to false for tenant role.
+        const adminClient = createAdminClient();
+        const { data: userPropMembership } = await adminClient
+            .from('property_memberships')
+            .select('role')
+            .eq('property_id', propId)
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .maybeSingle();
+
+        let isTenant = userPropMembership?.role === 'tenant' || userPropMembership?.role === 'super_tenant';
+        if (!userPropMembership) {
+            const { data: userOrgMembership } = await adminClient
+                .from('organization_memberships')
+                .select('role')
+                .eq('organization_id', orgId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (userOrgMembership?.role === 'tenant' || userOrgMembership?.role === 'super_tenant') {
+                isTenant = true;
+            }
+        }
+
+        const effectiveInternal = isTenant ? false : internalValue;
+
+        // 1. Owner 2026-11-15: the AI sorts every ticket (title AND description), choosing from this property's
+        //    categories; the keyword rules only decide when every model fails (backend/lib/ticketing/resolver.ts).
         let categoryId = null;
         let skillGroupId = null;
         let priority = 'medium';
         let slaHours = 24;
 
-        if (preClassification.issue_code) {
-            const { data: preCatData } = await supabase
-                .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
-                .eq('code', preClassification.issue_code)
-                .limit(1)
-                .maybeSingle();
-            if (preCatData) {
-                categoryId = preCatData.id;
-                skillGroupId = preCatData.skill_group_id;
-                priority = preCatData.priority || 'medium';
-                slaHours = preCatData.sla_hours || 24;
-            }
-        }
-
-        // 2. Full hybrid classification — pass DB priority so Groq uses it as anchor
-        const resolution = await resolveClassification(title || description, priority);
+        const ticketText = [title, description].map(s => String(s ?? '').trim()).filter(Boolean).filter((s, i, all) => all.indexOf(s) === i).join('\n');
+        const resolution = await resolveClassification(ticketText, { propertyId: propId, organizationId: orgId });
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
 
-        // 3. If Groq resolved a different issue_code, re-fetch IDs
-        if (issue_code && issue_code !== preClassification.issue_code) {
-            const { data: catData, error: catError } = await supabase
+        // 2. The chosen category's row (this property's own first, then the shared one): its team, usual priority, SLA.
+        if (issue_code) {
+            const { data: catRows, error: catError } = await supabase
                 .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
+                .select('id, skill_group_id, priority, sla_hours, property_id')
                 .eq('code', issue_code)
-                .limit(1)
-                .maybeSingle();
+                .limit(50);
 
             if (catError) {
                 console.error('[TICKET API] Error fetching category:', catError);
             }
 
+            const catData = (catRows ?? []).find(c => propId && c.property_id === propId) ?? (catRows ?? []).find(c => !c.property_id) ?? (catRows ?? [])[0];
             if (catData) {
                 categoryId = catData.id;
                 skillGroupId = catData.skill_group_id;
-                const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
-                if ((priorityRank[catData.priority] ?? 0) > (priorityRank[priority] ?? 0)) {
-                    priority = catData.priority;
-                }
+                priority = catData.priority || 'medium';
                 slaHours = catData.sla_hours || slaHours;
             } else {
                 console.warn('[TICKET API] \u26a0\ufe0f Issue code not found in issue_categories:', issue_code);
@@ -452,14 +458,16 @@ export async function POST(request: NextRequest) {
                 skill_group_id: skillGroupId,
                 priority: (() => {
                     if (explicitPriority) return explicitPriority;
-                    const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
+                    // The AI may only raise the category's usual priority ('critical' counts as the top, never lowered).
+                    const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
                     const groqP = resolution.priority?.toLowerCase() || '';
                     return (priorityRank[groqP] ?? -1) > (priorityRank[priority] ?? -1) ? groqP : priority;
                 })(),
                 status: assignedTo ? 'assigned' : 'open',
                 assigned_to: assignedTo || undefined,
                 raised_by: user.id,
-                internal: internalValue,
+                internal: effectiveInternal,
+                is_internal: effectiveInternal,
                 is_vague: isVague,
                 sla_hours: slaHours,
                 floor_number: extractFloorNumber(title || description) ?? undefined,
@@ -473,7 +481,8 @@ export async function POST(request: NextRequest) {
                 risk_flag: resolution.risk_flag,
                 llm_reasoning: resolution.llm_reasoning,
                 classification_source: decisionSource,
-                confidence_score: resolution.llmResult ? 90 : 100
+                // The AI's own 0–100 rating (shown as "72% (Medium)"); the keyword rules keep the old fixed 100
+                confidence_score: resolution.confidenceScore ?? 100
             })
             .select('*')
             .single();
@@ -486,7 +495,6 @@ export async function POST(request: NextRequest) {
         }
 
         // Auto-attach the default escalation hierarchy (property-specific first, then org-wide fallback)
-        const adminClient = createAdminClient();
         let { data: defaultHierarchy } = await adminClient
             .from('escalation_hierarchies')
             .select('id')

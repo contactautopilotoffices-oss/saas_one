@@ -1,7 +1,9 @@
 /** Lazily-created SDK clients, so importing this module never needs env vars. */
 import Groq from "groq-sdk";
+import { geminiKeys } from "@/backend/lib/llm/providerKeys";
 
-let groq: Groq | undefined;
+/** One client per key (owner 2026-11-15: the shared Groq keys are used in turn, backend/lib/llm/providerKeys.ts). */
+const groqByKey = new Map<string, Groq>();
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
@@ -14,8 +16,10 @@ export function requireEnv(name: string): string {
 // friendly "busy" message instead.
 const GROQ_TIMEOUT_MS = 10_000;
 
-export function getGroq(): Groq {
-  return (groq ??= new Groq({ apiKey: requireEnv("GROQ_API_KEY"), timeout: GROQ_TIMEOUT_MS, maxRetries: 0 }));
+export function getGroq(apiKey: string): Groq {
+  let client = groqByKey.get(apiKey);
+  if (!client) groqByKey.set(apiKey, (client = new Groq({ apiKey, timeout: GROQ_TIMEOUT_MS, maxRetries: 0 })));
+  return client;
 }
 
 /** Is this error Groq (or Gemini) saying "too many requests / quota"? */
@@ -25,9 +29,7 @@ export function isRateLimitError(error: unknown): boolean {
   return status === 429 || /\b429\b|rate.?limit|quota|resource_exhausted/i.test(message);
 }
 
-/** Same key fallback as the rest of the app (backend/services/aiProcessor.ts uses GOOGLE_AI_API_KEY). */
-export function getGeminiApiKey(): string {
-  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
-  if (!key) throw new Error("Missing GEMINI_API_KEY (or GOOGLE_AI_API_KEY). Add it to .env.local.");
-  return key;
+/** The shared Gemini keys are set (GEMINI_API_KEY, _2, _3, or the older GOOGLE_AI_API_KEY). Owner 2026-11-15. */
+export function requireGeminiKey(): void {
+  if (!geminiKeys().length) throw new Error("Missing GEMINI_API_KEY (or GEMINI_API_KEY_2 / _3). Add it to .env.local.");
 }

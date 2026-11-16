@@ -2,6 +2,12 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
+import {
+    isCriticalPriority,
+    isInternalTicket,
+    isTicketEscalatedToCritical,
+    isTicketRaisedByClient,
+} from '@/backend/lib/ticketing/alertClassification';
 
 export const EventProcessor = {
     async processEvent(event: any) {
@@ -24,6 +30,9 @@ export const EventProcessor = {
         } else if (event_type === 'TICKET_UPDATED') {
             if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
                 await this.handleTicketAssigned(payload);
+            }
+            if (isTicketEscalatedToCritical(payload.priority, payload.old_priority)) {
+                await this.handleCriticalTicketEscalated(payload);
             }
             if ((['resolved', 'closed', 'pending_validation'].includes(payload.status)) && payload.old_status && payload.status !== payload.old_status) {
                 await this.handleTicketCompleted(payload);
@@ -748,32 +757,90 @@ export const EventProcessor = {
 
         const orgId = ticket.property?.organization_id || payload.organization_id;
         const propId = ticket.property_id || payload.property_id;
-
-        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
-            organizationId: orgId,
-            propertyId: propId,
-            featureKey: 'ticket_created',
-            contextualEmails: [ticket.raised_by_user?.email]
-        });
-
         const assignedEmail = ticket.assigned_to_user?.email?.trim().toLowerCase();
-        const generalEmails = emails.filter(e => e.trim().toLowerCase() !== assignedEmail);
+        const sentEmails = new Set<string>();
 
-        if (enabled && generalEmails.length > 0) {
-            console.log(`[EventProcessor] Sending Ticket Created email for #${ticket.ticket_number} to ${generalEmails.join(', ')}`);
+        const dispatchEmailFeature = async (featureKey: string, excludeAssigned: boolean) => {
+            const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+                organizationId: orgId,
+                propertyId: propId,
+                featureKey,
+                contextualRecipients: {
+                    requesterEmail: ticket.raised_by_user?.email,
+                    assigneeEmail: ticket.assigned_to_user?.email
+                }
+            });
+            if (!enabled || emails.length === 0) return;
+
+            const filtered = emails
+                .map(e => e.trim().toLowerCase())
+                .filter(e => e && !sentEmails.has(e) && (!excludeAssigned || e !== assignedEmail));
+            if (filtered.length === 0) return;
+
+            filtered.forEach(e => sentEmails.add(e));
+            console.log(`[EventProcessor] Sending ${featureKey} email for #${ticket.ticket_number} to ${filtered.join(', ')}`);
             await EmailService.sendTicketCreatedEmail({
-                emailTo: generalEmails,
+                emailTo: filtered,
                 ticket,
                 property: ticket.property,
                 raisedBy: ticket.raised_by_user,
                 assignedTo: ticket.assigned_to_user
             });
+        };
+
+        await dispatchEmailFeature('ticket_created', true);
+
+        const isClientRaised = await isTicketRaisedByClient({
+            supabase: supabaseAdmin,
+            raisedBy: ticket.raised_by || payload.raised_by,
+            propertyId: propId,
+            organizationId: orgId,
+            isInternal: isInternalTicket(ticket, payload)
+        });
+        if (isClientRaised) {
+            await dispatchEmailFeature('client_ticket_created', false);
+        }
+
+        if (isCriticalPriority(ticket.priority || payload.priority)) {
+            await dispatchEmailFeature('critical_ticket_created', false);
         }
 
         // If ticket has an assigned person on creation, send dedicated assignment email to that person
         if (ticket.assigned_to_user?.email) {
             await this.handleTicketAssigned(payload);
         }
+    },
+
+    async handleCriticalTicketEscalated(payload: any) {
+        const ticketId = payload.ticket_id || payload.id;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, email, phone), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, email, phone)')
+            .eq('id', ticketId)
+            .maybeSingle();
+
+        if (!ticket) return;
+        const orgId = ticket.property?.organization_id || payload.organization_id;
+        const propId = ticket.property_id || payload.property_id;
+
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: orgId,
+            propertyId: propId,
+            featureKey: 'critical_ticket_created',
+            contextualRecipients: {
+                requesterEmail: ticket.raised_by_user?.email,
+                assigneeEmail: ticket.assigned_to_user?.email
+            }
+        });
+        if (!enabled || emails.length === 0) return;
+
+        await EmailService.sendTicketCreatedEmail({
+            emailTo: emails,
+            ticket,
+            property: ticket.property,
+            raisedBy: ticket.raised_by_user,
+            assignedTo: ticket.assigned_to_user
+        });
     },
 
     async handleTicketAssigned(payload: any) {

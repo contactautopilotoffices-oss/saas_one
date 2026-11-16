@@ -1,13 +1,53 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Ban, Plus, Search, Sparkles } from 'lucide-react';
-import type { KeywordSuggestion, SearchFilters } from '@/backend/lib/candidates/filters';
+import { Ban, CircleHelp, FileUp, Plus, Search, Sparkles } from 'lucide-react';
+import { looksBoolean, parseBooleanQuery } from '@/backend/lib/candidates/boolean';
+import { MAX_JD_LENGTH } from '@/backend/lib/candidates/config';
+import type { KeywordSuggestion, KeywordToken, SearchFilters } from '@/backend/lib/candidates/filters';
 import { api } from './api';
 import { TokenField } from './FieldPickers';
-import { BTN_PRIMARY, BTN_GHOST, CARD, INPUT, OVERLAY, Reveal, Spinner, WELL } from './ui';
+import { BTN_PRIMARY, BTN_GHOST, CARD, INPUT, OVERLAY, Reveal, Spinner, useUi, WELL } from './ui';
 
-const SAMPLE_MAX = 4000;
+/**
+ * How the keyword box reads what is typed (owner 2026-11-15), shown behind a "?" so the bar itself stays quiet.
+ * Each row: what to type, what it means.
+ */
+const HOW_TO: [string, string][] = [
+    ['MEP / HVAC / VRF', 'one chip; a candidate needs any one of them'],
+    ['★ on a chip', 'compulsory: every starred chip must match'],
+    ['facility AND bms', 'both compulsory'],
+    ['facility AND (MEP OR HVAC)', 'facility, and one of MEP or HVAC'],
+    ['NOT fresher', 'leave these people out'],
+    ['"technical executive"', 'the words together, not anywhere in the CV'],
+];
+
+function HowToSearch() {
+    const [open, setOpen] = useState(false);
+    return (
+        <span className="relative inline-flex">
+            <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} aria-label="How to combine keywords" title="How to combine keywords"
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-text-tertiary hover:bg-muted hover:text-text-primary">
+                <CircleHelp className="h-4 w-4" aria-hidden />
+            </button>
+            {open && (
+                <div role="dialog" aria-label="How to combine keywords" onMouseLeave={() => setOpen(false)} className={`${OVERLAY} absolute left-0 top-full z-40 mt-1 w-[340px] rounded-xl px-3.5 py-3`}>
+                    <dl className="space-y-1.5">
+                        {HOW_TO.map(([typed, means]) => (
+                            <div key={typed} className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 text-[13px]">
+                                <dt className="truncate font-semibold text-text-primary">{typed}</dt>
+                                <dd className="text-text-secondary">{means}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                </div>
+            )}
+        </span>
+    );
+}
+
+const SAMPLE_MAX = MAX_JD_LENGTH;
+const JD_FILE_TYPES = '.pdf,.docx,.txt,.md';
 
 const keyOf = (keywords: string[]) => [...new Set(keywords.map(k => k.trim().toLowerCase()).filter(Boolean))].sort().join('|');
 /** A word being typed is asked about once it is this long and the typing has paused this long. */
@@ -80,8 +120,8 @@ export default function KeywordBar({
     filters: SearchFilters;
     update: (patch: Partial<SearchFilters>) => void;
     reading: boolean;
-    /** Resolves true when the filters were filled in. */
-    onReadJob: (text: string) => Promise<boolean>;
+    /** Resolves true when the filters were filled in. Owner 2026-11-15: a file (PDF, Word, text) is read on the server. */
+    onReadJob: (job: string | File) => Promise<boolean>;
     jobNote: string;
 }) {
     const [excludeOpen, setExcludeOpen] = useState(false);
@@ -89,6 +129,7 @@ export default function KeywordBar({
     const [jobText, setJobText] = useState('');
     const excludeRef = useRef<HTMLInputElement | null>(null);
     const jobRef = useRef<HTMLTextAreaElement | null>(null);
+    const jobFileRef = useRef<HTMLInputElement | null>(null);
     const [keywordFocus, setKeywordFocus] = useState(false);
     const [typing, setTyping] = useState('');
     const { suggestions, loading, counting } = useAiKeywords(orgId, filters.keywords.map(k => k.text), typing, keywordFocus);
@@ -102,7 +143,23 @@ export default function KeywordBar({
     useEffect(() => { if (excludeOpen) excludeRef.current?.focus({ preventScroll: true }); }, [excludeOpen]);
     useEffect(() => { if (jobOpen) jobRef.current?.focus({ preventScroll: true }); }, [jobOpen]);
 
+    const { notify } = useUi();
     const addKeywords = (texts: string[], required: boolean) => update({ keywords: [...filters.keywords, ...texts.map(text => ({ text, required }))] });
+    /**
+     * Owner 2026-11-15: "MEP / HVAC", "a AND (b OR c) NOT d" and quoted phrases become chips and excludes. A plain
+     * word is left to the box. Something that cannot be read is refused with its reason, and nothing is added.
+     */
+    const readTyped = (typed: string): boolean => {
+        if (!looksBoolean(typed)) return false;
+        const parsed = parseBooleanQuery(typed);
+        if (!parsed.ok) { notify(parsed.reason, 'error'); return true; }
+        const have = new Set(filters.keywords.map(k => k.text.toLowerCase()));
+        const keywords: KeywordToken[] = [...filters.keywords, ...parsed.query.keywords.filter(k => !have.has(k.text.toLowerCase()))];
+        const haveEx = new Set(filters.excludes.map(e => e.toLowerCase()));
+        const excludes = [...filters.excludes, ...parsed.query.excludes.filter(e => !haveEx.has(e.toLowerCase()))];
+        update({ keywords, excludes });
+        return true;
+    };
     const taken = new Set([...filters.keywords.map(k => k.text.toLowerCase()), ...filters.excludes.map(e => e.toLowerCase())]);
     const offered = suggestions.filter(s => !taken.has(s.text.toLowerCase()));
 
@@ -135,6 +192,11 @@ export default function KeywordBar({
     const readJob = async () => {
         if (await onReadJob(jobText)) setJobOpen(false);
     };
+    const readJobFile = async (file: File | undefined) => {
+        if (!file) return;
+        if (await onReadJob(file)) setJobOpen(false);
+        if (jobFileRef.current) jobFileRef.current.value = '';
+    };
 
     return (
         <section aria-label="Keywords" className={`${CARD} space-y-2.5 px-4 py-4`}>
@@ -153,6 +215,7 @@ export default function KeywordBar({
                         icon={<Search className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />}
                         panel={aiPanel}
                         onTyping={setTyping}
+                        onTyped={readTyped}
                     />
                 </div>
             </div>
@@ -182,7 +245,7 @@ export default function KeywordBar({
                         <Plus className={`h-3 w-3 transition-transform duration-300 ${excludeOpen ? 'rotate-45' : ''}`} aria-hidden />
                         {excludeOpen ? 'Close Exclude Keywords' : filters.excludes.length ? `Exclude Keywords (${filters.excludes.length})` : 'Add Exclude Keywords'}
                     </button>
-                    <span className="text-xs text-text-tertiary">Star a keyword to make it compulsory.</span>
+                    <span className="inline-flex items-center gap-x-1 text-xs text-text-tertiary">Star a keyword to make it compulsory.<HowToSearch /></span>
                 </div>
                 <button type="button" onClick={() => setJobOpen(o => !o)} aria-expanded={jobOpen} className={`${BTN_GHOST} text-primary-dark`}>
                     <Sparkles className="h-4 w-4" aria-hidden />{jobOpen ? 'Close job description' : 'Paste a job description'}
@@ -202,9 +265,17 @@ export default function KeywordBar({
                         placeholder="Paste the job description here. AI fills in the filters, and you can change anything before using them."
                         className={`${INPUT} h-auto min-h-[96px] resize-y py-2.5 leading-relaxed`}
                     />
-                    <button type="button" onClick={() => void readJob()} disabled={reading || !jobText.trim()} className={BTN_PRIMARY}>
-                        {reading && <Spinner />}{reading ? 'Reading…' : 'Fill in the filters'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+                        <button type="button" onClick={() => void readJob()} disabled={reading || !jobText.trim()} className={BTN_PRIMARY}>
+                            {reading && <Spinner />}{reading ? 'Reading…' : 'Fill in the filters'}
+                        </button>
+                        {/* Owner 2026-11-15: a JD as a file. The server reads its text with the resume readers, then fills the filters. */}
+                        <input ref={jobFileRef} type="file" accept={JD_FILE_TYPES} className="sr-only" aria-label="Upload a job description file" onChange={e => void readJobFile(e.target.files?.[0])} />
+                        <button type="button" onClick={() => jobFileRef.current?.click()} disabled={reading} className={BTN_GHOST}>
+                            <FileUp className="h-4 w-4" aria-hidden />Upload a JD
+                        </button>
+                        <span className="text-xs text-text-tertiary">PDF, Word or text</span>
+                    </div>
                 </div>
             </Reveal>
             {jobNote && <p role="status" className="text-[13px] font-semibold text-primary-dark">{jobNote}</p>}

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { groqKeys } from '@/backend/lib/llm/providerKeys';
 
 export const TaskIntentSchema = z.object({
     action: z.enum([
@@ -134,10 +135,11 @@ function resolveLLMConfig(): { baseUrl: string; apiKey: string; model: string } 
     }
 
     // 2. Groq
-    if (process.env.GROQ_API_KEY) {
+    const groqKey = groqKeys()[0];   // owner 2026-11-15: the shared Groq keys, the first that is not resting
+    if (groqKey) {
         return {
             baseUrl: 'https://api.groq.com/openai/v1',
-            apiKey: process.env.GROQ_API_KEY,
+            apiKey: groqKey,
             model: 'llama-3.3-70b-versatile'
         };
     }

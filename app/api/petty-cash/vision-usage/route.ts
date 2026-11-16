@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
             const tokens = Number(meta.total_tokens || meta.tokens || 0);
             const prompt = Number(meta.prompt_tokens || 0);
             const completion = Number(meta.completion_tokens || 0);
-            const model = String(meta.model || 'qwen3.8-27b');
+            const model = String(meta.model || 'glm-5.3-flash');
 
             totalTokens += tokens;
             totalPromptTokens += prompt;
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
                     requestNo: (s.request as any)?.request_no || 'Unlinked',
                     actorName: (s.actor as any)?.full_name || 'System',
                     createdAt: s.created_at,
-                    model: meta.model || 'qwen3.8-27b',
+                    model: meta.model || 'glm-5.3-flash',
                     tokens: meta.total_tokens || 0,
                     fileName: meta.file_name,
                     confidence: meta.confidence,

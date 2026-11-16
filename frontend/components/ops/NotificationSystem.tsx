@@ -135,6 +135,8 @@ export default function NotificationSystem() {
 
     // Fix 4: iOS install prompt
     const { shouldShow: showIOSPrompt, dismiss: dismissIOSPrompt } = useIOSInstallPrompt();
+    // "Turn on" on the strip opens the steps (Share, then Add to Home Screen).
+    const [showIOSSteps, setShowIOSSteps] = useState(false);
 
     // Browser permission prompt (Non-iOS)
     const { shouldShowPrompt: showPermPrompt, requestPermission, dismiss: dismissPermPrompt } = useNotificationPermission();
@@ -248,46 +250,45 @@ export default function NotificationSystem() {
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 80 }}
                         transition={{ type: 'spring', damping: 20, stiffness: 260 }}
-                        className="fixed bottom-6 left-4 right-4 z-[9999] mx-auto max-w-sm"
-                        role="banner"
-                        aria-label="Install app for notifications"
+                        // Owner 2026-11-15: a one-line dark strip at the bottom instead of a card over the tickets.
+                        // "Turn on" shows the same steps as before; × dismisses for good (same localStorage key).
+                        className="fixed inset-x-2 min-[390px]:inset-x-3 bottom-[max(1rem,env(safe-area-inset-bottom))] z-[55] mx-auto max-w-md"
+                        role="region"
+                        aria-label="Ticket alerts on this phone"
+                        style={{ fontFamily: 'var(--font-body)' }}
                     >
-                        <div className="relative flex items-start gap-3 p-4 rounded-2xl bg-white border border-primary/20 shadow-2xl overflow-hidden">
-                            {/* Gradient accent */}
-                            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
-
-                            <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                                <Bell className="w-5 h-5 text-primary" />
-                            </div>
-
-                            <div className="flex-1 min-w-0">
-                                <p className="text-xs font-black uppercase tracking-widest text-text-primary mb-0.5">
-                                    Enable Notifications on iPhone
-                                </p>
-                                <p className="text-[11px] text-text-secondary leading-relaxed">
-                                    Tap{' '}
-                                    <Share className="inline w-3 h-3 text-blue-500 mx-0.5" />
-                                    {' '}Share, then{' '}
-                                    <strong className="text-text-primary">
-                                        <PlusSquare className="inline w-3 h-3 mx-0.5" />
-                                        Add to Home Screen
-                                    </strong>
-                                    {' '}to receive push alerts.
-                                </p>
-                            </div>
-
+                        {showIOSSteps && (
+                            <p id="ios-alert-steps" className="mb-2 rounded-[14px] bg-gray-900 px-3.5 py-3 text-sm leading-relaxed text-gray-100 shadow-[0_8px_24px_rgba(15,23,42,0.25)]">
+                                Tap{' '}
+                                <Share className="mx-0.5 inline h-4 w-4 text-blue-300" aria-hidden="true" />
+                                {' '}Share, then{' '}
+                                <strong className="text-white">
+                                    <PlusSquare className="mx-0.5 inline h-4 w-4" aria-hidden="true" />
+                                    Add to Home Screen
+                                </strong>
+                                {' '}to receive push alerts.
+                            </p>
+                        )}
+                        <div className="flex h-[52px] items-center gap-2 rounded-[14px] bg-gray-900 pl-3 pr-0.5 min-[390px]:gap-2.5 min-[390px]:pl-3.5 text-white shadow-[0_8px_24px_rgba(15,23,42,0.25)]">
+                            <Bell className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                            <span className="min-w-0 flex-1 truncate text-[13px] font-semibold min-[420px]:text-sm">Get ticket alerts on this phone</span>
                             <button
-                                onClick={dismissIOSPrompt}
-                                className="flex-shrink-0 p-1 hover:bg-black/5 rounded-md transition-colors"
-                                aria-label="Dismiss install prompt"
+                                type="button"
+                                onClick={() => setShowIOSSteps(s => !s)}
+                                aria-expanded={showIOSSteps}
+                                aria-controls="ios-alert-steps"
+                                className="shrink-0 rounded-[8px] px-1.5 py-3 text-sm font-bold text-blue-300 hover:text-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                             >
-                                <X className="w-4 h-4 text-text-tertiary" />
+                                Turn on
                             </button>
-                        </div>
-
-                        {/* Arrow pointing down (towards iOS share bar) */}
-                        <div className="flex justify-center mt-1">
-                            <div className="w-3 h-3 bg-white border-r border-b border-primary/20 rotate-45 -mt-2 shadow-sm" />
+                            <button
+                                type="button"
+                                onClick={dismissIOSPrompt}
+                                className="flex h-11 w-10 shrink-0 items-center justify-center rounded-[8px] text-gray-300 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                                aria-label="Close"
+                            >
+                                <X className="h-[18px] w-[18px]" strokeWidth={2.5} />
+                            </button>
                         </div>
                     </motion.div>
                 )}

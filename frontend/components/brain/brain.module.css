@@ -1,0 +1,541 @@
+/*
+ * Brain console — scoped design language, LIGHT. Every rule hangs off .theme (the console root, and the wrapper of its
+ * dialogs/toasts), so nothing here can change another screen. No global CSS was touched.
+ *
+ * DIRECTION (owner, 2026-11-14: "why is it dark, I want it light themed"). The console is part of the Tech dashboard
+ * it sits in: no housing, no canvas of its own, white cards on the white page with hairlines, like the neighbouring
+ * Control Centre and Task Manager tabs. "Futuristic" is carried by precision instead of darkness: fine hairlines,
+ * stacked low shadows, a separate numeric type scale, one accent (the brand teal) used for state and data only, and
+ * motion that means something.
+ *
+ * SOURCES. docs/design-references/ (the 74 DESIGN.md files and research/) is gitignored and is not on this machine,
+ * so it could not be opened. Values come from what survives VERBATIM in this repo, and from this app's own tokens:
+ *   [T]     app/globals.css :root — the app's LIGHT tokens (--surface, --surface-elevated, --muted, --border,
+ *           --foreground, --text-primary, --primary, --primary-dark, --secondary, status tokens)
+ *   [RCA]   docs/DASHBOARD_REDESIGN_RCA.md        — quotes vercel, linear.app, binance, apple, cal
+ *   [OPS]   docs/DESIGN_AUDIT_OPS_BOARD.md         — quotes research/glass-ambient.md, monopo, vercel, binance
+ *   [G:x]   app/globals.css block x, whose comments cite the DESIGN.md each value came from
+ *   [CC]    the neighbouring Control Centre tab (TaskManagerTestingDashboard / BotLearningPanel): white cards with a
+ *           slate-200 hairline, slate-900 action buttons, slate-300 control edges
+ *   [M]     measured: WCAG 2.x contrast computed for this palette (scratchpad contrast.mjs), figures inline
+ * Lines with no surviving source say "no reference" and give the reasoning.
+ */
+
+.theme {
+  /* Surfaces: the 4-step STRUCTURE of linear.app ([RCA] "avoid skipping levels"), VALUES from [T]. On a light page
+     depth comes from shadow, not lightness, so nested things step DOWN toward grey: card → well → muted → border. */
+  --bc-l0: #F8FAFC;   /* [T] --surface-elevated: sunken wells (traces, code), segmented and input wells           */
+  --bc-l1: #FFFFFF;   /* [T] --surface / --card: cards, dialogs                                                 */
+  --bc-l2: #F1F5F9;   /* [T] --muted / --border-subtle: hover, tags, the person's bubble                         */
+  --bc-l3: #E2E8F0;   /* [T] --border: bar and gauge tracks                                                     */
+  --bc-line: #E2E8F0; /* [T] --border: hairline dividers (1.23:1 — a divider, never the only edge of a control)     */
+  /* Control edges: [CC] uses slate-300 (#CBD5E1) on its buttons and inputs; foreground-tinted here so it sits in the
+     same ink family ([G:Command Center] aliases its shadow ink to --foreground). 1.5:1 — see the report: below the
+     3:1 non-text guideline, as is the Control Centre's own edge; labels and the well fill identify each control. */
+  --bc-edge: rgba(26, 35, 50, 0.18);
+  --bc-hair: rgba(26, 35, 50, 0.08);
+
+  /* Ink: one family, --foreground #1A2332 ([T]) at four strengths. [M] on #FFFFFF / #F1F5F9:
+     ink-1 .92 = [T] --text-primary 12.4 / 11.5 · ink-2 .74 6.7 / 6.4 · ink-3 .64 4.84 / 4.64 (the app's own
+     --text-secondary .62 drops to 4.37 on --muted, so muted words use .64) · ink-4 .42 = [T] --text-tertiary 2.5 —
+     decoration only (ticks, separators), never words. */
+  --bc-ink-1: rgba(26, 35, 50, 0.92);
+  --bc-ink-2: rgba(26, 35, 50, 0.74);
+  --bc-ink-3: rgba(26, 35, 50, 0.64);
+  --bc-ink-4: rgba(26, 35, 50, 0.42);
+  --bc-ink-solid: #1A2332;            /* [T] --foreground: the primary button, as [CC]'s slate-900 buttons; white text 15.8:1 */
+
+  /* One accent, used sparingly: the brand teal ([T] --primary #708F96) marks state (current tab, switch on, focus,
+     the chosen option's edge, unsaved markers) and the main data series. As a mark it is 3.47:1 on white [M] (≥ 3:1
+     for non-text); as WORDS it is too light, so accent words use [T] --primary-dark #5A737A, 5.04:1 [M]. */
+  --bc-accent: #708F96;
+  --bc-accent-text: #5A737A;
+  --bc-accent-soft: color-mix(in srgb, #708F96 10%, #FFFFFF);
+  --bc-teal: #708F96;                 /* the "messages" series and ranked bars */
+  --bc-money: #AA895F;                /* [T] --secondary: the spend series only (3.25:1 as a mark [M]) */
+
+  /* Status. FILLS and marks use the locked tokens ([T] --success, --error, --info). The amber mark is #D97706, not
+     the locked #F59E0B: [G:widget] --sev-warn, from glass-ambient ([OPS]): "#D97706, 3.07:1 — NOT #F59E0B at 2.07:1";
+     [M] confirms 3.07:1 on the #FAFBFC canvas. WORDS in a status colour use the 700 shade of the same hue, because
+     every locked status hex fails as small text on white ([M]: #10B981 2.54, #F59E0B 2.15, #EF4444 3.76, #3B82F6 3.68).
+     The 700 shades are no reference — chosen as the nearest step of each hue that passes 4.5:1 on all four light
+     surfaces [M]: ok 5.48–5.01, warn 5.02–4.58, bad 6.47–5.91, info 6.70–6.12 (#FFFFFF → #F1F5F9). */
+  --bc-ok: #10B981;
+  --bc-warn: #D97706;
+  --bc-bad: #EF4444;
+  --bc-info: #3B82F6;
+  --bc-ok-text: #047857;
+  --bc-warn-text: #B45309;
+  --bc-bad-text: #B91C1C;
+  --bc-info-text: #1D4ED8;
+
+  /* Elevation: vercel's STACKED ladder ([RCA] verbatim: "never a single 8-px-blur generic drop. Inset hairline rings
+     are always added"; L1 0 0 0 1px #00000014 inset … L5 0px 1px 1px #00000005, 0px 8px 16px -4px #0000000a,
+     0px 24px 32px -8px #0000000f). Alphas kept; ink is --foreground, as [G:Command Center] --cc-elev-* does. */
+  --bc-ring: inset 0 0 0 1px var(--bc-hair);
+  --bc-bevel: 0 0 #0000;              /* light surfaces need no specular line; kept so older rules stay valid */
+  --bc-e2: var(--bc-ring), 0px 1px 1px rgba(26, 35, 50, 0.02), 0px 2px 2px rgba(26, 35, 50, 0.04);
+  --bc-e3: var(--bc-ring), 0px 2px 2px rgba(26, 35, 50, 0.04), 0px 8px 8px -8px rgba(26, 35, 50, 0.04);
+  --bc-e5: var(--bc-ring), 0px 1px 1px rgba(26, 35, 50, 0.02), 0px 8px 16px -4px rgba(26, 35, 50, 0.04), 0px 24px 32px -8px rgba(26, 35, 50, 0.06);
+
+  /* Radii: binance "most surfaces sit at 6–12px" ([G:Command Center]); cards 16px = [T] --radius-lg / .cc-card. */
+  --bc-r-chip: 6px;
+  --bc-r-ctl: 8px;
+  --bc-r-card: 16px;
+
+  /* Motion: monopo's patient curve ([OPS] cubic-bezier(0.19, 1, 0.22, 1)) at the Command Center's 300ms
+     ([G:Command Center v2] --cc-dur); hovers at the app's --duration-fast 150ms ([T]). */
+  --bc-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --bc-dur: 300ms;
+  --bc-fast: 150ms;
+
+  color: var(--bc-ink-1);
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Every interactive thing gets the same visible ring: brand teal, 3.47:1 against white [M] (≥ 3:1 non-text). */
+.theme :focus-visible {
+  outline: 2px solid var(--bc-accent);
+  outline-offset: 2px;
+}
+/* Regions that receive focus from code (a dialog, the next review item) are not tab stops: no ring around them. */
+.theme [tabindex='-1']:focus-visible { outline: none; }
+
+/* ── Root ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+   No housing: the console sits straight on the dashboard's white page, like every other Tech tab. */
+.root {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+}
+
+/* ── Cards: white on white, told apart by the inset hairline + stacked low shadow (vercel L2), never a heavy border.
+   [CC] does the same with a slate-200 border + shadow-sm. ─────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  min-width: 0;
+  background: var(--bc-l1);
+  border-radius: var(--bc-r-card);
+  box-shadow: var(--bc-e2);
+}
+.cardHover { transition: box-shadow var(--bc-fast) ease, background var(--bc-fast) ease; }
+.cardHover:hover { box-shadow: var(--bc-e3); }
+
+/* A sunken well inside a card (traces, code, lists). One step down the ladder, never two. */
+.well {
+  min-width: 0;
+  background: var(--bc-l0);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--bc-line);
+}
+
+/* The status hero — the one anchor of the Overview. glass-ambient's gradient rim ([G:widget] .w-card::before mask
+   technique; [OPS] "the glass rim itself carries severity"): the rim starts in the mode's colour at the top-left
+   and settles into the ordinary hairline, so the state changes the card's silhouette with zero extra elements. A
+   pale wash of the same colour sits behind the word. The word and icon carry the state too (never colour alone). */
+.hero {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  border-radius: var(--bc-r-card);
+  background:
+    radial-gradient(110% 140% at 0% 0%, color-mix(in srgb, var(--bc-mode, #94A3B8) 9%, transparent), transparent 58%),
+    var(--bc-l1);
+  box-shadow: 0px 2px 2px rgba(26, 35, 50, 0.04), 0px 8px 16px -8px rgba(26, 35, 50, 0.08);
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--bc-mode, #94A3B8) 85%, transparent) 0%,
+    color-mix(in srgb, var(--bc-mode, #94A3B8) 30%, var(--bc-hair)) 32%,
+    var(--bc-hair) 62%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+}
+/* Off is slate-400, a neutral that still reads as a rim (no reference); the rest are the locked status tokens. */
+.modeOff { --bc-mode: #94A3B8; }
+.modeShadow { --bc-mode: #3B82F6; }
+.modeLive { --bc-mode: #10B981; }
+.modeKilled { --bc-mode: #EF4444; }
+
+/* ── Type ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Chrome labels "whisper at ~11px with wide tracking" (monopo, [OPS]); 11px caps 700 = .cc-title ([G:Command Center]). */
+.label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bc-ink-3);
+}
+/* Headings: Poppins (locked --font-display). -0.01em on ≥ 18px: linear's negative-tracking scale is named in the
+   routing table but its values could not be read; -0.01em is the repo's own precedent (satej.module.css h1/h2). */
+.h1 { font-family: var(--font-display), sans-serif; font-size: 20px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; color: var(--bc-ink-1); }
+.h2 { font-family: var(--font-display), sans-serif; font-size: 15px; line-height: 1.35; font-weight: 600; color: var(--bc-ink-1); }
+
+/* Numeric scale — binance, a SEPARATE ramp for figures ([RCA] verbatim: number-display 40/700/1.1/-0.3px,
+   number-md 16/500/1.4, number-sm 14/500/1.4; 28px lg = [G:Command Center] --cc-num-lg). One family only, so the
+   separation is weight + tracking + tabular figures ([G:Command Center] "carried by WEIGHT and TRACKING"). */
+.num, .numDisplay, .numLg, .numMd, .numSm { font-family: var(--font-display), sans-serif; font-variant-numeric: tabular-nums; letter-spacing: -0.3px; }
+.numDisplay { font-size: 40px; line-height: 1.1; font-weight: 700; }
+.numLg { font-size: 28px; line-height: 1.1; font-weight: 700; }
+.numMd { font-size: 16px; line-height: 1.4; font-weight: 500; letter-spacing: 0; }
+.numSm { font-size: 14px; line-height: 1.4; font-weight: 500; letter-spacing: 0; }
+.tab { font-variant-numeric: tabular-nums; }
+
+/* Traces and arguments (no reference; 12px mono = the repo's satej .code at 11.5px, rounded). */
+.mono {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* ── Chips: semantic colour as TEXT + a tinted hairline, transparent fill (binance, [RCA]: "applied as text colour
+   rather than badge background"). 6px radius (binance 6–12px). Text uses the -text shades (≥ 4.5:1 [M]). ──────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 22px;
+  padding: 1px 8px;
+  border-radius: var(--bc-r-chip);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--bc-ink-2);
+  box-shadow: inset 0 0 0 1px var(--bc-edge);
+}
+.chip svg { flex: none; }
+.tone-ok { color: var(--bc-ok-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-ok) 45%, transparent); }
+.tone-warn { color: var(--bc-warn-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-warn) 50%, transparent); }
+.tone-bad { color: var(--bc-bad-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-bad) 50%, transparent); }
+.tone-info { color: var(--bc-info-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-info) 45%, transparent); }
+.tone-accent { color: var(--bc-accent-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-accent) 50%, transparent); }
+.tone-neutral { color: var(--bc-ink-2); }
+
+/* The person tag. Deliberately NOT an avatar: no circle, no initials, no colour per person — a neutral hex mark and
+   the opaque code in mono, so nothing on screen looks like identity (owner privacy rule 2026-11-14). */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 6px;
+  border-radius: var(--bc-r-chip);
+  background: var(--bc-l2);
+  box-shadow: inset 0 0 0 1px var(--bc-hair);
+  color: var(--bc-ink-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tag b { font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-weight: 600; color: var(--bc-ink-1); letter-spacing: 0.04em; }
+
+/* ── Buttons: 8px radius, never pills ([G:Command Center] linear "Don't pill-round CTAs"; binance 6–12px). The one
+   filled button is ink, like [CC]'s slate-900 actions, so the teal stays free for state. ───────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--bc-r-ctl);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  color: var(--bc-ink-1);
+  background: var(--bc-l1);
+  box-shadow: inset 0 0 0 1px var(--bc-edge), 0 1px 1px rgba(26, 35, 50, 0.04);
+  transition: background var(--bc-fast) ease, box-shadow var(--bc-fast) ease, color var(--bc-fast) ease, transform var(--bc-fast) ease;
+}
+.btn:hover:not(:disabled) { background: var(--bc-l2); box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.26), 0 1px 1px rgba(26, 35, 50, 0.04); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btnSm { min-height: 30px; padding: 0 10px; font-size: 12.5px; }
+.btnPrimary { background: var(--bc-ink-solid); color: #FFFFFF; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(26, 35, 50, 0.20); }
+.btnPrimary:hover:not(:disabled) { background: color-mix(in srgb, var(--bc-ink-solid) 88%, #FFFFFF); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 2px 4px rgba(26, 35, 50, 0.22); }
+.btnOk { color: var(--bc-ok-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-ok) 50%, transparent); }
+.btnOk:hover:not(:disabled) { background: color-mix(in srgb, var(--bc-ok) 8%, #FFFFFF); box-shadow: inset 0 0 0 1px var(--bc-ok); }
+.btnBad { color: var(--bc-bad-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-bad) 50%, transparent); }
+.btnBad:hover:not(:disabled) { background: color-mix(in srgb, var(--bc-bad) 6%, #FFFFFF); box-shadow: inset 0 0 0 1px var(--bc-bad); }
+.btnQuiet { background: transparent; box-shadow: none; color: var(--bc-ink-2); }
+.btnQuiet:hover:not(:disabled) { color: var(--bc-ink-1); background: var(--bc-l2); box-shadow: none; }
+.iconBtn { min-height: 32px; width: 32px; padding: 0; }
+.kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--bc-ink-3);
+  background: var(--bc-l1);
+  box-shadow: inset 0 0 0 1px var(--bc-edge), inset 0 -1px 0 var(--bc-edge);
+}
+.btnPrimary .kbd { background: transparent; color: rgba(255, 255, 255, 0.8); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3); }
+
+/* ── Inputs: white field, foreground-tinted edge ([CC] slate-300 family), teal focus with a soft halo. ─────────── */
+.input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--bc-r-ctl);
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--bc-ink-1);
+  background: var(--bc-l1);
+  box-shadow: inset 0 0 0 1px var(--bc-edge);
+  transition: box-shadow var(--bc-fast) ease;
+  color-scheme: light;
+}
+/* Placeholders at ink-3 (4.84:1 [M]): a hint is still words. Typed text is ink-1 (12.4:1), so the two stay distinct. */
+.input::placeholder { color: var(--bc-ink-3); }
+.input:hover { box-shadow: inset 0 0 0 1px rgba(26, 35, 50, 0.30); }
+.input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--bc-accent), 0 0 0 3px color-mix(in srgb, var(--bc-accent) 22%, transparent); }
+.input[aria-invalid='true'] { box-shadow: inset 0 0 0 1px var(--bc-bad), 0 0 0 3px color-mix(in srgb, var(--bc-bad) 14%, transparent); }
+.input:disabled { opacity: 0.55; background: var(--bc-l0); }
+select.input { appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--bc-ink-3) 50%), linear-gradient(135deg, var(--bc-ink-3) 50%, transparent 50%); background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; }
+textarea.input { resize: vertical; line-height: 1.5; }
+
+/* ── Segmented control (mode, range, filters): a muted well with a white thumb that glides (framer-motion layout).
+   No reference for the thumb; it is the light reading of the same "one step up" idea as the cards. ─────────────── */
+.seg {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 10px;
+  background: var(--bc-l2);
+  box-shadow: inset 0 0 0 1px var(--bc-hair);
+}
+.segItem {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--bc-ink-3);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--bc-fast) ease;
+}
+.segItem:hover:not(:disabled) { color: var(--bc-ink-1); }
+.segItem:disabled { cursor: not-allowed; opacity: 0.4; }
+.segItem[aria-checked='true'], .segItem[aria-pressed='true'] { color: var(--bc-ink-1); }
+.segThumb { position: absolute; inset: 0; z-index: 0; border-radius: 7px; background: var(--bc-l1); box-shadow: inset 0 0 0 1px var(--bc-hair), 0 1px 2px rgba(26, 35, 50, 0.10), 0 1px 1px rgba(26, 35, 50, 0.04); }
+.segItem > span { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── Toggle switch ───────────────────────────────────────────────────────────────────────────────────────────────
+   The button is a transparent hit area and the track is its child, so the app's phone rule (globals.css: every
+   button at least 44×44) enlarges the touch target without turning the track into a circle. Off is a slate track
+   ([CC] slate-300), on is the brand teal (3.47:1 against white [M]); the knob's position says it too. */
+.switch {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+.switch:disabled { opacity: 0.45; cursor: not-allowed; }
+.switchTrack {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: #CBD5E1;
+  box-shadow: inset 0 1px 2px rgba(26, 35, 50, 0.12);
+  transition: background var(--bc-dur) var(--bc-ease);
+}
+.switch[aria-checked='true'] .switchTrack { background: var(--bc-accent); }
+.switchKnob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(26, 35, 50, 0.28), 0 0 0 0.5px rgba(26, 35, 50, 0.06);
+  transition: transform var(--bc-dur) var(--bc-ease);
+}
+.switch[aria-checked='true'] .switchKnob { transform: translateX(16px); }
+
+/* The app's phone stylesheet sets h1–h3 sizes with !important (globals.css, max-width block). The console's headings
+   keep their own scale on every width; these selectors are more specific, so they win. */
+.theme h2.h1, .theme h1.h1 { font-size: 20px !important; }
+.theme h2.h2, .theme h3.h2 { font-size: 15px !important; }
+.theme h3.label { font-size: 11px !important; }
+
+/* ── Sub-navigation: a tab strip under the dashboard header, the current screen marked by a teal bar that glides. ── */
+.nav {
+  position: relative;            /* offsetParent for the active-item scroll in BrainConsole.tsx */
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.nav::-webkit-scrollbar { display: none; }
+.navItem {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 10px;               /* eleven tabs fit one row at 1440 px; narrower screens scroll the strip sideways */
+  border: 0;
+  border-radius: var(--bc-r-ctl);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bc-ink-3);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--bc-fast) ease, background var(--bc-fast) ease;
+}
+.navItem:hover { color: var(--bc-ink-1); }
+.navItem[aria-current='page'] { color: var(--bc-ink-1); }
+.navItem[aria-current='page'] svg { color: var(--bc-accent); }
+.navBar { position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--bc-accent); }
+
+/* Floating bars over scrolling content: the one place glass earns its cost, because there IS content under it to
+   blur. apple ([RCA] verbatim): saturate(180%) blur(20px) at 80% opacity — on a light page that is 80% white.
+   Elsewhere surfaces stay opaque: cal is anti-glass ([RCA]) and over a flat page "blur is a no-op" (glass-ambient
+   A0, [OPS]). */
+.glass {
+  background: rgba(255, 255, 255, 0.8);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+          backdrop-filter: saturate(180%) blur(20px);
+}
+
+/* ── Tables: binance row geometry ([RCA]: "12px vertical row padding, transparent row background, hairline divider
+   between rows"). ─────────────────────────────────────────────────────────────────────────────────────────────── */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { padding: 0 12px 8px; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--bc-ink-3); white-space: nowrap; }
+.table td { padding: 12px; border-top: 1px solid var(--bc-line); vertical-align: top; color: var(--bc-ink-2); }
+.table th:first-child, .table td:first-child { padding-left: 0; }
+.table th:last-child, .table td:last-child { padding-right: 0; }
+.table td.r, .table th.r { text-align: right; }
+.rows > * + * { border-top: 1px solid var(--bc-line); }
+
+/* ── Transcript ───────────────────────────────────────────────────────────────────────────────────────────────────
+   No reference covers chat bubbles. The person sits on the left in the neutral muted step; the brain on the right in
+   a faint teal tint (brand accent, not a semantic colour, so binance's no-fill rule is kept). Words on both: 11.5:1 [M]. */
+.bubbleUser, .bubbleBrain, .bubbleOther {
+  max-width: min(560px, 92%);
+  padding: 10px 14px;
+  border-radius: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.bubbleUser { background: var(--bc-l2); border-top-left-radius: 4px; color: var(--bc-ink-1); }
+.bubbleBrain { background: color-mix(in srgb, var(--bc-accent) 9%, #FFFFFF); border-top-right-radius: 4px; color: var(--bc-ink-1); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-accent) 24%, transparent); }
+/* An older assistant's reply: plain white with an edge, so it never looks like the brain's teal bubble. */
+.bubbleOther { background: var(--bc-l1); border-top-right-radius: 4px; color: var(--bc-ink-1); box-shadow: inset 0 0 0 1px var(--bc-edge); }
+.bubbleMuted { font-style: italic; color: var(--bc-ink-3); }
+
+/* Guidance words: a quoted note on the well, marked by a 3px teal edge (the accent marking state: these words are
+   in force, or would be). No reference; the edge repeats the banner pattern above. */
+.quote {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--bc-l0);
+  box-shadow: inset 0 0 0 1px var(--bc-line), inset 3px 0 0 var(--bc-accent);
+  color: var(--bc-ink-1);
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ── States ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+.skeleton { border-radius: 10px; background: linear-gradient(90deg, var(--bc-l2), color-mix(in srgb, var(--bc-l3) 55%, var(--bc-l2)), var(--bc-l2)); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
+@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+/* Banners: a tone rule all round + a 4px edge + icon + words. Warning and danger get a faint wash of their hue so
+   they cannot be mistaken for a card on a white page (the words on it still pass: warn 4.72, bad 6.08 [M]). The
+   kill-switch banner is static: it is a state, not an event. */
+.banner { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--bc-l1); }
+.bannerBad { background: color-mix(in srgb, var(--bc-bad) 5%, #FFFFFF); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-bad) 45%, transparent), inset 4px 0 0 var(--bc-bad); color: var(--bc-ink-1); }
+.bannerWarn { background: color-mix(in srgb, var(--bc-warn) 6%, #FFFFFF); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bc-warn) 45%, transparent), inset 4px 0 0 var(--bc-warn); }
+.bannerInfo { background: var(--bc-l0); box-shadow: inset 0 0 0 1px var(--bc-line), inset 4px 0 0 var(--bc-accent); }
+.toast { box-shadow: var(--bc-e5), inset 4px 0 0 var(--bc-accent); background: var(--bc-l1); }
+.toastBad { box-shadow: var(--bc-e5), inset 0 0 0 1px color-mix(in srgb, var(--bc-bad) 45%, transparent), inset 4px 0 0 var(--bc-bad); background: color-mix(in srgb, var(--bc-bad) 5%, #FFFFFF); }
+
+/* ── The one loop on screen ───────────────────────────────────────────────────────────────────────────────────────
+   glass-ambient ([OPS]): "Exactly one looping element on the entire screen", health by absence, heartbeat
+   "0.55Hz with 8% rise / 26% fall / 66% dwell". It belongs to the live-mode lamp, and only while the brain is live.
+   On white the halo is drawn at a higher strength (55%) than on dark, or the beat vanishes; no reference for that.
+   Written 0% ≡ 100% so reduced motion lands on the still frame. */
+.lamp { position: relative; display: inline-block; width: 10px; height: 10px; border-radius: 999px; background: var(--bc-mode, #94A3B8); flex: none; }
+.lampLive { animation: beat 1.818s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+@keyframes beat {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bc-ok) 0%, transparent); }
+  8% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--bc-ok) 55%, transparent); }
+  34% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--bc-ok) 0%, transparent); }
+}
+
+/* ── Charts (SVG): gridlines are hairlines; the flagged share is HATCHED as well as amber, so it reads without
+   colour (task rule; [OPS] "Shape is the redundant channel… never colour alone"). ───────────────────────────── */
+.axis { fill: var(--bc-ink-3); font-size: 11px; font-family: var(--font-body), sans-serif; font-variant-numeric: tabular-nums; }
+.grid { stroke: var(--bc-line); stroke-width: 1; }
+.barTrack { height: 6px; border-radius: 3px; background: var(--bc-l2); overflow: hidden; }
+.barFill { height: 100%; border-radius: 3px; background: var(--bc-teal); }
+
+/* ── Dialog ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+.scrim { position: fixed; inset: 0; z-index: 90; background: rgba(26, 35, 50, 0.32); }
+.dialog {
+  position: fixed;
+  z-index: 91;
+  left: 50%;
+  top: 50%;
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  border-radius: var(--bc-r-card);
+  background: var(--bc-l1);
+  box-shadow: var(--bc-e5);
+}
+
+/* Reduced motion: the console's own loops and transitions collapse (framer-motion is gated in code). */
+@media (prefers-reduced-motion: reduce) {
+  .lampLive, .skeleton { animation: none; }
+  .switchKnob, .switchTrack, .btn, .segItem, .navItem, .cardHover { transition: none; }
+}

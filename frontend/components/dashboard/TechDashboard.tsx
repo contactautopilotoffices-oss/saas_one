@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
+    BrainCircuit, Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
     Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -14,7 +14,7 @@ import { useAuth } from '@/frontend/context/AuthContext';
 import PanelToggle from '@/frontend/components/ui/PanelToggle';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
 import TabLoading from './TabLoading';
-import { isRequestsView, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
+import { isRequestsView, RequestsNewButton, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
 
 /**
  * Tech console (owner 2026-10-22): the Tech team's own dashboard. It is a separate copy, not the Super Admin console:
@@ -46,10 +46,12 @@ const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/Ti
 // tickets agent strip, every ticket of the organisation) and Settings (shared Settings screen, with Change password)
 const RequestsWorkspace = dynamic(() => import('@/frontend/components/tickets/RequestsWorkspace'), { loading: TabLoading });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
+// Owner 2026-11-14: the Brain Console (Unified Brain control room), Tech only
+const BrainConsole = dynamic(() => import('@/frontend/components/brain/BrainConsole'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
-    | 'tasks' | 'control_centre' | 'meetings' | 'vms_face' | 'files' | 'candidates'
+    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile' | 'settings';
@@ -66,6 +68,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
         items: [
             { id: 'tasks', label: 'Task Manager', icon: ClipboardList },
             { id: 'control_centre', label: 'Control Centre', icon: FlaskConical },
+            { id: 'brain', label: 'Brain', icon: BrainCircuit },
             // Owner 2026-10-29: Meeting Assistant (record a meeting, review the task list, send the tasks)
             { id: 'meetings', label: 'Meeting Assistant', icon: Mic },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
@@ -327,17 +330,21 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
                         <div className="flex items-center gap-3">
-                            {propertySelector}
+                            {/* Owner 2026-11-15: on the Requests tab the property choice moves into the page below `lg`, and the
+                                header shows a New button on phones, so the "Requests" heading always has room. */}
+                            {activeTab === 'requests' ? <div className="hidden lg:block">{propertySelector}</div> : propertySelector}
+                            {activeTab === 'requests' && <RequestsNewButton className="md:hidden" onClick={() => setShowTicketCreate(true)} />}
                             {/* Requests view switcher: the Super Admin console's, shared */}
                             {activeTab === 'requests' && <RequestsViewSwitcher view={requestsView} onChange={view => setQuery({ view })} />}
                         </div>
                     )}
                 </header>
 
-                <div className="p-4 md:p-8">
-                    {errorMsg && <p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
+                {/* Requests tab: the list sets its own 12px phone padding (RequestsWorkspace), so no side padding here below `lg`. */}
+                <div className={activeTab === 'requests' ? 'pt-3 pb-4 lg:p-8' : 'p-4 md:p-8'}>
+                    {errorMsg &&<p role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{errorMsg}</p>}
 
                     {needsProperty && selectedPropertyId === 'all' ? (
                         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -359,11 +366,13 @@ export default function TechDashboard() {
                                     onPropertyChange={pickProperty}
                                     showAgentPulse={true}
                                     onNewRequest={() => setShowTicketCreate(true)}
+                                    onViewChange={view => setQuery({ view })}
                                 />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
+                            {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
                             {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}

@@ -16,6 +16,7 @@ import { extractPdfText } from '@/backend/lib/documentBank/ocr';
 import { rasterizePdf } from '@/backend/lib/ocr/rasterize';
 import { visionExtract } from '@/backend/lib/ocr/vision';
 import { councilChat } from '@/backend/lib/council/llm';
+import { runWithModel } from '@/task-manager/ai/modelFor';
 
 /** Text path model. Measured fast tier, same choice and reason as backend/lib/wiki/ask.ts. */
 export const INVOICE_TEXT_MODEL = process.env.INVOICE_EXTRACT_MODEL?.trim() || 'deepseek-v4-flash-0731';
@@ -240,17 +241,22 @@ async function extractInvoiceRaw(bytes: Buffer, mime: string): Promise<ExtractRe
 
 async function viaText(text: string): Promise<ExtractResult> {
     let raw: string;
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+    let model = INVOICE_TEXT_MODEL;
     try {
-        raw = await councilChat([
-            { role: 'system', content: SCHEMA_PROMPT },
-            { role: 'user', content: `Extract the invoice from this text:\n\n${text}` },
-        ], 'synthesis', { model: INVOICE_TEXT_MODEL, thinkingOff: true });
+        raw = await runWithModel('invoice_text', INVOICE_TEXT_MODEL, m => {
+            model = m;
+            return councilChat([
+                { role: 'system', content: SCHEMA_PROMPT },
+                { role: 'user', content: `Extract the invoice from this text:\n\n${text}` },
+            ], 'synthesis', { model: m, thinkingOff: true });
+        });
     } catch (e) {
         return fail('pdf_text', e instanceof Error ? e.message : 'text model call failed');
     }
     const parsed = parseJson(raw);
     if (!parsed) return fail('pdf_text', 'model response was not valid JSON');
-    return { ok: true, extracted: normalise(parsed), provider: 'council', model: INVOICE_TEXT_MODEL, path: 'pdf_text' };
+    return { ok: true, extracted: normalise(parsed), provider: 'council', model, path: 'pdf_text' };
 }
 
 async function viaVision(path: 'pdf_scan' | 'image', pages: { buffer: Buffer; mime: 'image/jpeg' | string }[]): Promise<ExtractResult> {

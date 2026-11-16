@@ -67,6 +67,7 @@ import LogAssetWorkModal from "@/frontend/components/assets/LogAssetWorkModal";
 import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
 import TicketAttachments from "@/frontend/components/tickets/TicketAttachments";
 import { maskStorageUrl } from "@/frontend/utils/storageUrl";
+import { confidenceLabel } from "@/backend/lib/ticketing/confidenceWord";
 
 // Types
 interface Ticket {
@@ -1893,65 +1894,53 @@ export default function TicketDetailPage() {
                 </div>
               </div>
 
-              {/* Sleek AI Classification Details in Header */}
-              <div
-                className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
-                    ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
-                    : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
-                  }`}
-              >
-                <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
-                      AI Classification:
-                    </span>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">
-                      {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
-                    </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      ({ticket.skill_group?.name || "Technical"} Skill Group)
-                    </span>
-                    {ticket.confidence_score && (
-                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                        {ticket.confidence_score}% Confidence
-                      </span>
-                    )}
+              {/* Sleek AI Classification Details in Header. Who sorted the ticket decides what is shown: the AI's own
+                  rating ("72% (Medium)") only when the AI sorted it; never an invented reason (owner 2026-11-15). */}
+              {(() => {
+                const source = ticket.classification_source;
+                const score = typeof ticket.confidence_score === "number" ? ticket.confidence_score : null;
+                const reasoning = (ticket as Ticket & { llm_reasoning?: string | null }).llm_reasoning;
+                const label = source === "llm" ? "AI classification:" : source === "rule" || source === "manual" ? "Classification:" : "AI Classification:";
+                const badge = source === "rule" ? "Sorted by keyword rules"
+                  : source === "manual" ? "Set by a person"
+                    : score !== null ? confidenceLabel(score) : null;
+                const why = reasoning ? reasoning
+                  : source === "rule" ? "Sorted by keyword rules, because the AI was not available."
+                    : source === "manual" ? "The category was set by a person."
+                      : "No reason was recorded.";
+                return (
+                  <div
+                    className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
+                        ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
+                        : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
+                      }`}
+                  >
+                    <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
+                          {label}
+                        </span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          ({ticket.skill_group?.name || "Technical"} Skill Group)
+                        </span>
+                        {badge && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold tracking-wide tabular-nums bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                            {badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
+                        <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
+                        {why}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
-                    <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
-                    {(() => {
-                      if ((ticket as any).llm_reasoning) {
-                        return (ticket as any).llm_reasoning;
-                      }
-                      const text = `${ticket.title || ""} ${ticket.description || ""}`.toLowerCase();
-                      const detectedKeywords: string[] = [];
-
-                      if (text.includes("race box") || text.includes("raceway") || text.includes("workstation") || text.includes("cable") || text.includes("wire") || text.includes("wiring") || text.includes("switch") || text.includes("plug") || text.includes("power") || text.includes("socket")) {
-                        detectedKeywords.push("workstation raceway / wiring fixtures");
-                      }
-                      if (text.includes("ac") || text.includes("cooling") || text.includes("temperature") || text.includes("hvac") || text.includes("vent") || text.includes("blower")) {
-                        detectedKeywords.push("HVAC cooling / air flow terms");
-                      }
-                      if (text.includes("leak") || text.includes("pipe") || text.includes("water") || text.includes("flush") || text.includes("drain") || text.includes("tap") || text.includes("dripping")) {
-                        detectedKeywords.push("plumbing / water flow indicators");
-                      }
-                      if (text.includes("door") || text.includes("lock") || text.includes("handle") || text.includes("glass") || text.includes("chair") || text.includes("table") || text.includes("drawer") || text.includes("falls down") || text.includes("broken")) {
-                        detectedKeywords.push("physical fixture damage / structural components");
-                      }
-                      if (text.includes("clean") || text.includes("spill") || text.includes("dust") || text.includes("trash") || text.includes("stain")) {
-                        detectedKeywords.push("housekeeping & cleaning request markers");
-                      }
-
-                      const keywordSnippet = detectedKeywords.length > 0
-                        ? `Triggered by keywords in description (${detectedKeywords.join(", ")})`
-                        : `NLP engine evaluated the title & description keywords`;
-
-                      return `${keywordSnippet} and routed to ${ticket.skill_group?.name || "technical resolver"} for physical resolution.`;
-                    })()}
-                  </p>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </div>
           <div className="text-right mt-2 sm:mt-0">

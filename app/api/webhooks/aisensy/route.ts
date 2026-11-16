@@ -18,6 +18,7 @@ import { appendTurn } from '@/task-manager/ConversationMemory';
 import { isInterpreterPilot, lookupQuotedContext, getConversationRoutingState } from '@/backend/lib/whatsapp/interpreter/context';
 import { isExplicitTaskCommand, isDirectBookingRequest } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 import { claimAiLayerWhatsApp } from '@/backend/lib/aiLayer/whatsappLive';
+import { claimBrainWhatsApp } from '@/backend/lib/aiLayer/brain/channels/whatsappLive';
 import { claimTicketReply } from '@/backend/lib/whatsapp/ticketReply';
 
 export const runtime = 'nodejs';
@@ -105,6 +106,20 @@ export async function POST(req: NextRequest) {
         }
     };
 
+    // Unified Brain (docs/WHATSAPP_UNIFIED_BRAIN_PLAN.md). OFF for every org by default: while no org has it on, this
+    // is one cached check and everything below runs exactly as before. Shadow: it never takes the message, it only
+    // watches afterwards and sends nothing. Live: it answers only the people on the org's pilot list; a short reply
+    // that is not its own, a task request, a file it does not handle, an import in progress, or any error come back
+    // handled:false and the code below answers as before.
+    const brain = await claimBrainWhatsApp(input);
+    if (brain.handled) {
+        await markRoute(input?.messageId, 'brain', input?.phone, input?.text);
+        await remember();
+        after(guarded(brain.background));
+        return NextResponse.json({ success: true, routedTo: 'BRAIN' });
+    }
+    if (brain.after) { const later = brain.after; after(async () => { await later().catch(() => undefined); }); }
+
     // Task Import: a task list sent as an Excel file / image / text. Anything that is not an import (or while the
     // switch is OFF) comes back handled:false and the code below runs exactly as before.
     const taskImport = await claimTaskImport(body);
@@ -125,7 +140,8 @@ export async function POST(req: NextRequest) {
     // conversation, and passes everything else on: messages about tasks, short replies ("yes", "2", "done 3"), anything it
     // doesn't understand or may not do, and any error come back handled:false, so Smart chat and the old bot below answer
     // exactly as before. For everyone else it returns at once (no lookups while no org has WhatsApp on).
-    const aiLayer = await claimAiLayerWhatsApp(input);
+    // A task request the brain already read and passed on goes straight to Smart chat (no second reading here).
+    const aiLayer = brain.skipAiLayer ? { handled: false as const, why: 'brain_passed_on' } : await claimAiLayerWhatsApp(input);
     // Why the AI layer passed a message on (no number, no text): makes "it never reached the AI" traceable in the logs.
     if (!aiLayer.handled && aiLayer.why !== 'off') console.info('[AiLayer] passed on', JSON.stringify({ why: aiLayer.why }));
     if (aiLayer.handled) {

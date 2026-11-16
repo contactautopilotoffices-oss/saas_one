@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 import { resolveElectricityAccess, isElectricityAccessError, readOrgId, isMissingRelation } from '@/backend/lib/electricity/access';
 import {
     loadAlertRows, loadAopActualByMonth, billedTotalsByMonth, n, type AlertRow,
@@ -141,7 +142,7 @@ export async function POST(request: NextRequest) {
             subject_key: subjectKey,
             input_hash: inputHash,
             explanation: result.explanation,
-            model: LLM_MODEL,
+            model: result.model,
             cost_usd: result.costUsd,
             updated_at: new Date().toISOString(),
         }, { onConflict: 'organization_id,subject_key' })
@@ -238,7 +239,17 @@ function buildReconciliationAggregates(
 // Model call — mirrors backend/services/mailboxDigest.ts's classifyWithLLM shape.
 // ---------------------------------------------------------------------------------------
 
-async function callModel(aggregates: Record<string, unknown>, isBill: boolean): Promise<{ explanation: string; costUsd: number } | null> {
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+// A chosen model that gives no explanation costs one attempt: today's model is then tried once.
+async function callModel(aggregates: Record<string, unknown>, isBill: boolean): Promise<{ explanation: string; costUsd: number; model: string } | null> {
+    const chosen = await modelFor('electricity_explain', LLM_MODEL);
+    const first = await callModelWith(chosen, aggregates, isBill);
+    if (first || chosen === LLM_MODEL) return first;
+    markFailed('electricity_explain');
+    return callModelWith(LLM_MODEL, aggregates, isBill);
+}
+
+async function callModelWith(model: string, aggregates: Record<string, unknown>, isBill: boolean): Promise<{ explanation: string; costUsd: number; model: string } | null> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
 
@@ -246,12 +257,12 @@ async function callModel(aggregates: Record<string, unknown>, isBill: boolean): 
     const timeoutId = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
 
     try {
-        const isGpt5 = /^(gpt-5|o[34])/.test(LLM_MODEL);
+        const isGpt5 = /^(gpt-5|o[34])/.test(model);
         const response = await fetch(LLM_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
-                model: LLM_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
                     { role: 'user', content: userPrompt(aggregates, isBill) },
@@ -272,7 +283,7 @@ async function callModel(aggregates: Record<string, unknown>, isBill: boolean): 
         const data = await response.json();
         const inputTokens = Number(data?.usage?.prompt_tokens || 0);
         const outputTokens = Number(data?.usage?.completion_tokens || 0);
-        const pricing = MODEL_PRICING[LLM_MODEL] ?? UNPRICED_MODEL;
+        const pricing = MODEL_PRICING[model] ?? UNPRICED_MODEL;
         const costUsd = (inputTokens * pricing.input + outputTokens * pricing.output) / 1e6;
 
         if (costUsd > CALL_BUDGET_USD) {
@@ -282,7 +293,7 @@ async function callModel(aggregates: Record<string, unknown>, isBill: boolean): 
         const content = data?.choices?.[0]?.message?.content;
         if (!content || !String(content).trim()) return null;
 
-        return { explanation: String(content).trim(), costUsd: Math.round(costUsd * 1e6) / 1e6 };
+        return { explanation: String(content).trim(), costUsd: Math.round(costUsd * 1e6) / 1e6, model };
     } catch (error) {
         clearTimeout(timeoutId);
         if (!(error instanceof Error && error.name === 'AbortError')) {

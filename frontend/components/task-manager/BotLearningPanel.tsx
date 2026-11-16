@@ -1,6 +1,6 @@
 "use client";
 /* eslint-disable @typescript-eslint/no-explicit-any -- this admin-only panel renders versioned JSON DTOs returned by the guarded API */
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrainCircuit, RefreshCw } from 'lucide-react';
 import BotReviewSection from './BotReviewSection';
 import PromptVersionsSection from './PromptVersionsSection';
@@ -9,8 +9,9 @@ import PromptVersionsSection from './PromptVersionsSection';
  * Bot learning — one collapsible section (same shape as "Reporting chain"): Bot health and Prompt versions side by side,
  * then the mistake review at full width. Loads only when opened. Nothing here changes the bot until an admin approves it.
  */
-export default function BotLearningPanel({ orgId }: { orgId?: string }) {
-  const [open, setOpen] = useState(false);
+export default function BotLearningPanel({ orgId, startOpen = false }: { orgId?: string; startOpen?: boolean }) {
+  // startOpen (Brain console → Review → Task assistant): open from the start and loaded on mount, no Show / Hide button.
+  const [open, setOpen] = useState(startOpen);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>({ reviews: [], prompts: [], health: null, alertAdmins: [], developerItems: [], reviewUpgrade: false });
   const [reviewsKey, setReviewsKey] = useState(0);
@@ -35,6 +36,13 @@ export default function BotLearningPanel({ orgId }: { orgId?: string }) {
     } finally { setLoading(false); }
   };
   const toggleOpen = () => { const next = !open; setOpen(next); if (next) void load(); };
+  // Deferred a tick so the first load is not a state change inside the effect itself.
+  useEffect(() => {
+    if (!startOpen) return;
+    const t = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once on mount, as the Show button does
+  }, []);
 
   /** POST one action. Returns the JSON on success, null on failure (the error is shown). */
   /** quiet: no busy lock and no error banner (background work such as preparing the next card); errors are thrown. */
@@ -71,7 +79,7 @@ export default function BotLearningPanel({ orgId }: { orgId?: string }) {
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">Bot learning</h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200">Phase 5: Learning loop</span>
+              {!startOpen && <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200">Phase 5: Learning loop</span>}
             </div>
             <p className="text-xs text-slate-500 mt-0.5">Bot health, new AI instructions waiting for approval, and mistakes to review. Nothing here changes the bot until you approve it.</p>
           </div>
@@ -83,9 +91,11 @@ export default function BotLearningPanel({ orgId }: { orgId?: string }) {
               Refresh
             </button>
           )}
-          <button type="button" onClick={toggleOpen} className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs cursor-pointer">
-            {open ? 'Hide' : 'Show bot learning'}
-          </button>
+          {!startOpen && (
+            <button type="button" onClick={toggleOpen} className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs cursor-pointer">
+              {open ? 'Hide' : 'Show bot learning'}
+            </button>
+          )}
         </div>
       </div>
 

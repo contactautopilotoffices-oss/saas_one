@@ -29,7 +29,13 @@ export class WhatsAppQueueService {
     static async enqueue(payload: WhatsAppQueuePayload): Promise<void> {
         // Map eventType to moduleName
         let moduleName: string | null = null;
-        if (payload.eventType.startsWith('TICKET_') || payload.eventType === 'SLA_BREACH' || payload.eventType === 'REMINDER_TICKET_SLA') {
+        if (
+            payload.eventType.startsWith('TICKET_') ||
+            payload.eventType === 'CLIENT_TICKET_CREATED' ||
+            payload.eventType === 'CRITICAL_TICKET_CREATED' ||
+            payload.eventType === 'SLA_BREACH' ||
+            payload.eventType === 'REMINDER_TICKET_SLA'
+        ) {
             moduleName = 'ticketing';
         } else if (payload.eventType.startsWith('MEETING_ROOM_') || payload.eventType.startsWith('ROOM_') || payload.eventType === 'REMINDER_MEETING_ROOM') {
             moduleName = 'meeting_room';

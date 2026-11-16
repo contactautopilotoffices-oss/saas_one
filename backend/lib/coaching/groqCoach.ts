@@ -8,6 +8,8 @@
 import { CoachingReportSchema, type CoachingReport } from './schema';
 import { computeOverall } from './prompts';
 import { buildCoachSystemPrompt, buildCoachUserPrompt } from './prompts';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // 70B is materially better at the nuanced sales-rubric task than 8B.
@@ -36,7 +38,17 @@ export interface CoachError {
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+// A chosen model that does not produce a report costs one attempt: today's model is then tried once.
 export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess | CoachError> {
+    const chosen = await modelFor('coaching_feedback', GROQ_MODEL);
+    const first = await scoreWith(chosen, input);
+    if (first.success || chosen === GROQ_MODEL) return first;
+    markFailed('coaching_feedback');
+    return scoreWith(GROQ_MODEL, input);
+}
+
+async function scoreWith(model: string, input: CoachInput): Promise<CoachSuccess | CoachError> {
     const startTime = Date.now();
 
     if (!input.transcriptText || input.transcriptText.trim().length < 50) {
@@ -48,11 +60,11 @@ export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess
         };
     }
 
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
+    // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts).
+    if (!hasProviderKey('groq')) {
         return {
             success: false,
-            error: 'GROQ_API_KEY not configured',
+            error: 'no Groq key is set (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)',
             latencyMs: Date.now() - startTime,
             fallbackUsed: true,
         };
@@ -62,14 +74,14 @@ export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-        const response = await fetch(GROQ_API_URL, {
+        const response = await fetchWithKeys('groq', GROQ_API_URL, key => ({
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
+                Authorization: `Bearer ${key}`,
             },
             body: JSON.stringify({
-                model: GROQ_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: buildCoachSystemPrompt() },
                     {
@@ -82,7 +94,7 @@ export async function scoreCallWithGroq(input: CoachInput): Promise<CoachSuccess
                 response_format: { type: 'json_object' },
             }),
             signal: controller.signal,
-        });
+        }));
 
         clearTimeout(timeoutId);
 

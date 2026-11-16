@@ -4,6 +4,15 @@
 
 Before designing, building, or modifying **any AI agent** in this repo, read
 [docs/AGENT_DOCTRINE.md](docs/AGENT_DOCTRINE.md).
+## AI models — every model is configurable (binding)
+
+Whenever a new AI model (LLM, vision, speech, embedding) is added anywhere in this software, or a feature starts
+calling a new model, it **must** also be registered for the Tech console's **Brain → AI models** screen in the same
+change, following the checklist in [docs/AI_MODELS.md](docs/AI_MODELS.md). The checklist covers the catalog job, the
+job-name migration, `modelFor` / `runWithModel` at the call site, the inventory row and the test. A model that truly
+cannot be changed gets an inventory row with a plain-words `why` instead. A model call added without either of these
+is not finished.
+
 ## General Development Rules
 
 - Before making changes, inspect the existing codebase and understand the current implementation. Do not rewrite or restructure working code unnecessarily.

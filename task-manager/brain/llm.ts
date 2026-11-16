@@ -107,21 +107,19 @@ export const GEMINI_PREFIX = 'gemini-';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 /**
- * The WhatsApp task bot's OWN Groq keys (owner 2026-10-21): never the shared GROQ_API_KEY, which other features use.
- * Put one or more in .env (several Groq accounts = backups):
- *   WHATSAPP_BOT_GROQ_API_KEY, WHATSAPP_BOT_GROQ_API_KEY_2, WHATSAPP_BOT_GROQ_API_KEY_3, … up to _5
- * Keys are tried in that order: a rate limit (429), a bad or disabled key (401/403), a Groq server error (5xx) or a
- * timeout moves on to the next key. Keys are never logged or printed.
+ * Groq keys (owner 2026-11-15: "i want to remove the WHATSAPP_BOT_GROQ_API_KEY and replace it with the GROQ_API_KEY(s).
+ * i dont want anything dedicated to any job"). The bot uses the application's shared Groq keys, GROQ_API_KEY →
+ * GROQ_API_KEY_2 → GROQ_API_KEY_3 (backend/lib/llm/providerKeys.ts). A rate limit or used-up key (429), a bad or
+ * disabled key (401/403), a Groq server error (5xx) or a timeout moves on to the next key; a used-up or rejected key
+ * is rested for a while. Keys are never logged or printed.
  */
-export const BOT_GROQ_KEY_NAMES = ['WHATSAPP_BOT_GROQ_API_KEY', ...[2, 3, 4, 5].map(n => `WHATSAPP_BOT_GROQ_API_KEY_${n}`)];
-export function botGroqKeys(env: Record<string, string | undefined> = process.env): string[] {
-    return BOT_GROQ_KEY_NAMES.map(n => String(env[n] ?? '').trim()).filter(Boolean);
-}
+export { groqKeys } from '@/backend/lib/llm/providerKeys';
 
-/** Step 5: one call to Groq (OpenAI-compatible) with the bot's own keys. gpt-oss models get reasoning_effort "low". */
+/** Step 5: one call to Groq (OpenAI-compatible) with the shared Groq keys. gpt-oss models get reasoning_effort "low". */
 export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Promise<LlmResponse> {
-    const keys = botGroqKeys();
-    if (!keys.length) throw new Error('no WhatsApp bot Groq key is configured');
+    const { groqKeys, isKeyProblem, restKey } = await import('@/backend/lib/llm/providerKeys');
+    const keys = groqKeys();
+    if (!keys.length) throw new Error('no Groq key is configured (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)');
     const model = req.model.slice(GROQ_PREFIX.length);
     const body = JSON.stringify({
         model,
@@ -144,7 +142,8 @@ export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Pro
             continue; // try the next account
         }
         clearTimeout(timer);
-        if (res.status === 429 || res.status === 401 || res.status === 403 || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
+        if (isKeyProblem(res.status)) restKey('groq', keys[k]);
+        if (isKeyProblem(res.status) || res.status >= 500) { problems.push(`key ${k + 1}: HTTP ${res.status}`); continue; }
         if (!res.ok) throw new Error(`Groq HTTP ${res.status}`); // a bad request: another key would not help
         const j = await res.json() as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
         const text = j?.choices?.[0]?.message?.content;
@@ -152,7 +151,7 @@ export async function groqComplete(req: LlmRequest, timeoutMs = TIMEOUT_MS): Pro
         if (typeof text !== 'string' || !text.trim()) throw new Error(`Groq returned nothing (finish_reason=${finishReason ?? 'unknown'})`);
         return { text, tokensIn: j?.usage?.prompt_tokens ?? 0, tokensOut: j?.usage?.completion_tokens ?? 0, finishReason };
     }
-    throw new Error(`every WhatsApp bot Groq key failed (${problems.join('; ')})`);
+    throw new Error(`every Groq key failed (${problems.join('; ')})`);
 }
 
 export const ANTHROPIC_PREFIX = 'anthropic:';

@@ -87,6 +87,8 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     vendor_revenue_recorded: { enabled: true, roles: ['property_admin', 'org_super_admin', 'accounts'], user_ids: [], notify_requester: true },
     vendor_revenue_reminder: { enabled: true, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: true },
     ticket_created: { enabled: true, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+    client_ticket_created: { enabled: false, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
+    critical_ticket_created: { enabled: false, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     reminder_ticket_sla: { enabled: false, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
@@ -152,6 +154,14 @@ export interface ResolvedRecipientsResult {
     config: FeatureEmailConfig;
 }
 
+const OPT_IN_CONTEXTUAL_FEATURES = new Set(['client_ticket_created', 'critical_ticket_created']);
+
+const resolveContextualFlag = (overrideVal: any, ruleVal: any, fallbackIfUnset: boolean): boolean => {
+    if (overrideVal !== undefined) return overrideVal === true;
+    if (ruleVal !== undefined) return ruleVal === true;
+    return fallbackIfUnset;
+};
+
 export const EmailRecipientResolver = {
     /**
      * Resolves target email addresses for a specific feature event dynamically based on org email settings.
@@ -204,14 +214,15 @@ export const EmailRecipientResolver = {
                     : (matrixRule.channels?.email === true)
             );
 
+            const isOptInContextual = OPT_IN_CONTEXTUAL_FEATURES.has(canonicalKey);
             featureConfig = {
                 enabled: isEmailEnabled,
                 roles: propOverride?.roles || matrixRule.roles || [],
                 user_ids: propOverride?.user_ids || matrixRule.user_ids || [],
                 custom_emails: propOverride?.custom_emails || matrixRule.custom_emails || [],
-                notify_assignee: propOverride?.notify_assignee !== undefined ? propOverride.notify_assignee !== false : matrixRule.notify_assignee !== false,
-                notify_requester: propOverride?.notify_requester !== undefined ? propOverride.notify_requester !== false : matrixRule.notify_requester !== false,
-                notify_approver: propOverride?.notify_approver !== undefined ? propOverride.notify_approver !== false : matrixRule.notify_approver !== false,
+                notify_assignee: resolveContextualFlag(propOverride?.notify_assignee, matrixRule.notify_assignee, !isOptInContextual),
+                notify_requester: resolveContextualFlag(propOverride?.notify_requester, matrixRule.notify_requester, !isOptInContextual),
+                notify_approver: resolveContextualFlag(propOverride?.notify_approver, matrixRule.notify_approver, !isOptInContextual),
                 property_overrides: matrixRule.property_overrides || {}
             };
         } else {

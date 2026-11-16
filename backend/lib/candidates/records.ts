@@ -280,6 +280,8 @@ export interface ListOptions {
   /** a sheet id, "manual" for records someone typed in, or "resume" for candidates created from an uploaded resume */
   sheetId?: string | null;
   deleted?: boolean;
+  /** Owner 2026-11-15: blacklisted people are left out ("hide", the default), shown alone ("only") or with everyone ("all"). */
+  blacklisted?: "hide" | "only" | "all";
   page?: number;
   pageSize?: number;
 }
@@ -307,24 +309,45 @@ function applyFilters<T extends Filterable<T>>(query: T, options: ListOptions): 
   return q;
 }
 
+/** When a read last showed that the filter view has no `blacklisted` yet (migration 20261115000002 not applied). */
+let listBlacklistMissingAt = 0;
+const LIST_RECHECK_MS = 5 * 60 * 1000;
+
 export async function listRecords(client: SupabaseClient, orgId: string, options: ListOptions): Promise<CandidateListResponse> {
   const whole = (value: number | undefined, fallback: number) => (Number.isFinite(value) ? Math.floor(value as number) : fallback);
   const page = Math.min(100_000, Math.max(1, whole(options.page, 1)));
   const pageSize = Math.min(100, Math.max(1, whole(options.pageSize, 50)));
-  const query = applyFilters(
-    client.from("candidate_records").select(RECORD_COLUMNS, { count: "exact" }).eq("organization_id", orgId),
-    options,
-  );
-
   const from = (page - 1) * pageSize;
-  const { data, error, count } = await query
-    .order("updated_at", { ascending: false })
-    .order("id")
-    .range(from, from + pageSize - 1);
+  const mode = options.blacklisted ?? "hide";
+
+  // Owner 2026-11-15: the blacklist lives on the filter view. Hiding (the default) or showing only the blacklisted
+  // reads that view; before the migration, or for "all", the table's own view as before.
+  const useFilterView = mode !== "all" && Date.now() - listBlacklistMissingAt >= LIST_RECHECK_MS;
+  const run = (view: string, columns: string, withBlacklist: boolean) => {
+    let q = client.from(view).select(columns, { count: "exact" }).eq("organization_id", orgId);
+    if (withBlacklist) q = q.eq("blacklisted", mode === "only");
+    return applyFilters(q, options).order("updated_at", { ascending: false }).order("id").range(from, from + pageSize - 1);
+  };
+  let { data, error, count } = useFilterView
+    ? await run("candidate_filter_records", `${RECORD_COLUMNS}, blacklisted`, true)
+    : await run("candidate_records", RECORD_COLUMNS, false);
+  if (useFilterView && error && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error.code ?? "") || /does not exist|schema cache/i.test(error.message ?? ""))) {
+    listBlacklistMissingAt = Date.now();
+    ({ data, error, count } = await run("candidate_records", RECORD_COLUMNS, false));
+  }
   if (error) fail("load candidates", error);
-  const records = ((data ?? []) as unknown as RecordRow[]).map(toRecord);
+  const records = ((data ?? []) as unknown as (RecordRow & { blacklisted?: boolean })[]).map((row) => {
+    const record = toRecord(row);
+    if (row.blacklisted !== undefined) record.blacklisted = Boolean(row.blacklisted);
+    return record;
+  });
   await markResumes(client, orgId, records);
   return { records, total: count ?? 0, page, pageSize };
+}
+
+/** Tests only. */
+export function resetListBlacklistCheck(): void {
+  listBlacklistMissingAt = 0;
 }
 
 /**

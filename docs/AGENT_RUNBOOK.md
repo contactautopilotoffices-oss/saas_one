@@ -218,3 +218,7 @@ becomes a real query over `material_requests`, flip it to `true` — not before.
 ## Before you build a new one
 
 Fill the **Agent Spec Block** (doctrine §3). Every line cited. No spec block, no merge.
+
+Register every model the agent calls for the Tech console's **Brain → AI models** screen, following
+[AI_MODELS.md](AI_MODELS.md) (owner rule, 2026-11-15). A model that cannot be changed gets an inventory row with its
+reason instead.

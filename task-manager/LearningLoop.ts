@@ -146,3 +146,35 @@ export function acceptedOutcomes(label: Pick<ReviewLabel, 'intent' | 'outcome'>)
     const proposes = label.outcome === 'ACT' || label.outcome === 'CONFIRM';
     return proposes && CHANGE_INTENTS.includes(label.intent) ? ['ACT', 'CONFIRM'] : [label.outcome];
 }
+
+/**
+ * Owner 2026-11-14 ("i dont want to see who the user is, just their messages as it will count as privacy violation")
+ * and 2026-11-15 (the review moved into the Tech console's Brain tab): a review item as a SCREEN is given it. The words
+ * stay; who sent them does not. Dropped: the phone key, the WhatsApp message id and the stored context (it holds the
+ * sender and every colleague by name and id). Kept from the context: only the sender's role, which a reviewer needs to
+ * judge whether an answer was allowed. In the texts, phone numbers and email addresses are redacted and the sender's
+ * own name is replaced. Nothing in the database changes: the summary, the label and the tests still use the full row.
+ * Known limit: another person named in a message (a colleague a task is for) is part of the message and stays.
+ */
+export function reviewItemForScreen(row: Record<string, any>): Record<string, any> {
+    const sender = row?.context_snapshot?.sender;
+    const full = typeof sender?.name === 'string' ? sender.name.trim() : '';
+    const names = [...new Set([full, ...full.split(/\s+/)])].filter(n => n.length >= 3).sort((a, b) => b.length - a.length)
+        .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const nameRe = names.length ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${names.join('|')})(?![\\p{L}\\p{N}])`, 'giu') : null;
+    const text = (v: string) => { const t = redactChat(v, 4000); return nameRe ? t.replace(nameRe, '[name]') : t; };
+    const scrub = (v: unknown): unknown => typeof v === 'string' ? text(v)
+        : Array.isArray(v) ? v.map(scrub)
+            : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, scrub(x)]))
+                : v;
+    const { phone_key: _phone, message_id: _message, context_snapshot: _context, ...rest } = row ?? {};
+    void _phone; void _message; void _context;
+    return {
+        ...rest,
+        ...('message_text' in rest ? { message_text: scrub(rest.message_text) } : {}),
+        ...('bot_reply' in rest ? { bot_reply: scrub(rest.bot_reply) } : {}),
+        ...('follow_up' in rest ? { follow_up: scrub(rest.follow_up) } : {}),
+        ...('ai_summary' in rest ? { ai_summary: scrub(rest.ai_summary) } : {}),
+        context_snapshot: { sender: { role: sender?.role ?? null } },
+    };
+}
