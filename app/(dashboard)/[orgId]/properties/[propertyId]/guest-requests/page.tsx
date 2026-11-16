@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import { Loader2, MapPin, Smartphone, Clock, Filter, X, Download, Search, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -361,7 +361,7 @@ export default function GuestRequestsPage(props: any = {}) {
                     <p className="text-gray-500 font-medium">No guest requests found matching your filters.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-6 flex-1 content-start">
+                <div className={`${TICKET_GRID_CLASS} gap-2 sm:gap-6 flex-1 content-start`}>
                     {displayRequests.map((req) => (
                         <TicketCard
                             key={req.id}

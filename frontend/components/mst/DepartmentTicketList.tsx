@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MstTicketView, TicketDepartment, MstLoad } from '@/frontend/types/ticketing';
 import { getSkillGroupColor, getSkillGroupDisplayName, type SkillGroup } from '@/backend/lib/ticketing';
 import { MstLoadDot } from './MstLoadBadge';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import { Ticket } from '@/frontend/types/ticketing';
 
 // Map legacy department to new skill_group
@@ -293,7 +293,7 @@ function TicketSection({
                     <p className="text-sm text-text-tertiary">{emptyMessage}</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className={`${TICKET_GRID_CLASS} gap-6`}>
                     {tickets.map((ticket) => (
                         <TicketCard
                             key={ticket.id}

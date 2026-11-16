@@ -20,7 +20,7 @@ import { useDataCache } from '@/frontend/context/DataCacheContext';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { HapticCard } from '@/frontend/components/ui/HapticCard';
 import SignOutModal from '@/frontend/components/ui/SignOutModal';
-import RequestsWorkspace, { RequestsViewSwitcher } from '@/frontend/components/tickets/RequestsWorkspace';
+import RequestsWorkspace, { RequestsNewButton, RequestsViewSwitcher, type RequestsView } from '@/frontend/components/tickets/RequestsWorkspace';
 import NotificationBell from './NotificationBell';
 import Image from 'next/image';
 import { assetCaps } from '@/frontend/lib/assets/roles';
@@ -225,6 +225,14 @@ const OrgAdminDashboard = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [pendingStatusFilter, setPendingStatusFilter] = useState('all');
     const [requestsView, setRequestsView] = useState<'list' | 'board' | 'flow'>('list');
+    // List / Board / Flow Map: same as the header switcher always did (state + ?view= in the address bar). Also used by
+    // the List / Board switch the Requests tab shows below `lg` (owner 2026-11-15).
+    const changeRequestsView = (view: RequestsView) => {
+        setRequestsView(view);
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', view);
+        window.history.pushState({}, '', url.toString());
+    };
     const [showFeaturesModal, setShowFeaturesModal] = useState(false);
     const [selectedPropertyForFeatures, setSelectedPropertyForFeatures] = useState<Property | null>(null);
     
@@ -1490,19 +1498,16 @@ const OrgAdminDashboard = () => {
                             {/* Property Selector for Requests/Other tabs */}
                             {renderPropertySelector()}
 
+                            {/* Owner 2026-11-15: New button beside the "Requests" heading on phones */}
+                            {activeTab === 'requests' && (
+                                <RequestsNewButton className="md:hidden" onClick={() => setShowTicketCreateModal(true)} />
+                            )}
+
                             {/* Requests View Switcher (shared with the Tech console) */}
                             {activeTab === 'requests' && (
-                                <RequestsViewSwitcher
-                                    view={requestsView}
-                                    onChange={view => {
-                                        setRequestsView(view);
-                                        const url = new URL(window.location.href);
-                                        url.searchParams.set('view', view);
-                                        window.history.pushState({}, '', url.toString());
-                                    }}
-                                />
+                                <RequestsViewSwitcher view={requestsView} onChange={changeRequestsView} />
                             )}
-                            <div className="flex flex-col items-end">
+                            <div className={`flex flex-col items-end ${activeTab === 'requests' ? 'max-md:hidden' : ''}`}>
                                 <span className="text-sm font-display font-semibold text-text-primary tracking-tight">System Status</span>
                                 <span className="text-[10px] text-primary font-bold uppercase tracking-widest">Online</span>
                             </div>
@@ -1619,7 +1624,7 @@ const OrgAdminDashboard = () => {
                                 onDelete={handleDeleteProperty}
                             />
                         )}
-                        <div className="w-full min-w-0 max-w-full overflow-x-hidden" style={{ display: activeTab === 'requests' ? 'block' : 'none' }}>
+                        <div className="w-full min-w-0 max-w-full overflow-x-hidden max-lg:pt-3" style={{ display: activeTab === 'requests' ? 'block' : 'none' }}>
                             {/* Gated on activeTab, not on the wrapper: this block stays mounted with
                                 display:none on every other tab, and an always-mounted pulse would keep
                                 polling from screens that are not showing it. */}
@@ -1634,6 +1639,8 @@ const OrgAdminDashboard = () => {
                                 initialStatusFilter={pendingStatusFilter}
                                 showAgentPulse={activeTab === 'requests'}
                                 agentConsoleTab="agent_console"
+                                onNewRequest={() => setShowTicketCreateModal(true)}
+                                onViewChange={changeRequestsView}
                             />
                         </div>
 
