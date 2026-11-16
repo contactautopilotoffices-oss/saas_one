@@ -22,6 +22,7 @@ const LATER_MIGRATIONS = [
     '20261029000001_petty_cash_enhancements.sql',
     '20261030000001_petty_cash_audit_fixes.sql',
     '20261030000002_petty_cash_cancel_after_payout.sql',
+    '20261113000005_petty_cash_chat_proof_no_bill.sql',
 ];
 const istDate = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 const TODAY = istDate();
@@ -169,6 +170,14 @@ test('RULE: an expense without a bill needs a reason of at least 10 characters',
     assert.equal(e.no_bill_reason, NO_BILL);
     const withBill = await billed(db, r, { amount: 60, no_bill_reason: 'ignored because a bill is attached' });
     assert.equal(withBill.no_bill_reason, null);
+    // When marked as no-bill chat proof, reason is preserved even with proof uploaded
+    const withChatProof = await expense(db, r, {
+        amount: 80,
+        has_no_bill: true,
+        no_bill_reason: NO_BILL,
+        documents: [{ upload_id: await upload(db, 11) }]
+    });
+    assert.equal(withChatProof.no_bill_reason, NO_BILL);
     await assert.rejects(expense(db, r, { amount: 700, no_bill_reason: NO_BILL }), /Proof \/ bill is required/); // reason never replaces a required bill
 }));
 
