@@ -79,6 +79,38 @@ function resultFrom<T>(status: number, body: unknown): ApiResult<T> {
 }
 
 /**
+ * PUT a file to a one-time storage upload link (the request supabase-js makes, by hand so a progress bar can move;
+ * owner 2026-11-16, the Calls tab). Resolves 'ok', 'cancelled', or a sentence saying why it failed. Never throws.
+ */
+export function putSignedUpload(
+    signedUrl: string, file: File, contentType: string, onProgress: (fraction: number) => void, register?: (xhr: XMLHttpRequest | null) => void,
+): Promise<'ok' | 'cancelled' | string> {
+    return new Promise(resolve => {
+        const xhr = new XMLHttpRequest();
+        register?.(xhr);
+        xhr.open('PUT', signedUrl);
+        xhr.setRequestHeader('x-upsert', 'true');
+        const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+        if (anon) { xhr.setRequestHeader('apikey', anon); xhr.setRequestHeader('Authorization', `Bearer ${anon}`); }
+        xhr.upload.onprogress = e => { if (e.lengthComputable && e.total > 0) onProgress(Math.min(1, e.loaded / e.total)); };
+        xhr.onload = () => {
+            register?.(null);
+            resolve(xhr.status >= 200 && xhr.status < 300 ? 'ok'
+                : xhr.status === 413 ? 'The file is larger than storage allows'
+                : xhr.status === 415 ? 'Storage refused this file type'
+                : `Upload failed (${xhr.status})`);
+        };
+        xhr.onerror = () => { register?.(null); resolve('The connection dropped'); };
+        xhr.onabort = () => { register?.(null); resolve('cancelled'); };
+        const body = new FormData();
+        body.append('cacheControl', '3600');
+        // The stored type comes from the extension (the server decided it); a phone may report no type for its recordings.
+        body.append('', new File([file], file.name, { type: contentType }));
+        xhr.send(body);
+    });
+}
+
+/**
  * POST a multipart form and report how much of it has been sent (0-1), for the upload progress bar. fetch() cannot
  * report upload progress, so this one uses XMLHttpRequest. `onSent` fires when the file is fully sent and the server is
  * working on it. Same result shape as api(); never throws.

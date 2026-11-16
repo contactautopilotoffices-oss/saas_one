@@ -17,6 +17,7 @@ import {
 import { TaskAccessService } from '../TaskAccessService';
 import { health as voiceHealth, identify as voiceIdentify, voiceIdConfig, VOICEPRINT_DIM } from '../voice/VoiceIdClient';
 import { applyNames, segmentsFor, voiceLabels } from './MeetingSpeakers';
+import { mergeCapture, missingFromCapture, reportedSegments, type Capture } from './capture';
 
 /**
  * Meeting Notes → Tasks (owner 2026-10-29). The Tech dashboard's "Meetings" tab.
@@ -37,7 +38,8 @@ export const MEETING_BUCKET = 'meeting-audio';
 export const AUTOPILOT = 'Autopilot';
 
 export class MeetingError extends Error {
-    constructor(public readonly status: number, message: string, public readonly code?: string) {
+    /** `details` (owner 2026-11-13): facts the screen can act on, e.g. how many pieces are missing. Never anything internal. */
+    constructor(public readonly status: number, message: string, public readonly code?: string, public readonly details?: Record<string, unknown>) {
         super(message);
         this.name = 'MeetingError';
     }
@@ -55,7 +57,13 @@ interface MeetingRow {
     notes_sent_at?: string | null; notes_sent_count?: number | null;
     /** Owner 2026-10-29: which dashboard the meeting belongs to (absent before migration 20261029100005 = 'tech') */
     workspace?: MeetingSpace;
+    /** Owner 2026-11-13: what the recording phone reported (absent before migration 20261113000001) */
+    capture?: Capture | null;
 }
+/** The phone's account of the recording (heartbeats) lives in ./capture.ts. */
+export type { Capture };
+/** How many pieces per recording may be asked for in one go (upload links are made twenty at a time). */
+export const UPLOAD_URL_BATCH = 20;
 interface MeetingTaskRow {
     id: string; meeting_id: string; position: number; title: string; note: string | null; owner_name: string | null;
     /** Owner 2026-10-29: a task can be for several people. `owner_user_id` is kept as the first of them. */
@@ -82,8 +90,12 @@ function dbFail(error: unknown, fallback: string): never {
 const pad = (n: number, w: number) => String(n).padStart(w, '0');
 const MIME_FOR_EXT: Record<string, string> = { webm: 'audio/webm', ogg: 'audio/ogg', m4a: 'audio/mp4', mp4: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac' };
 
-/** A recording left in 'recording' this long (the phone died, the tab was closed for good) is given up. */
-const ABANDONED_AFTER_MS = 6 * 60 * 60 * 1000;
+/**
+ * A recording left in 'recording' this long (the phone died, the tab was closed for good) is given up — processed if
+ * audio arrived, failed if not. Owner 2026-11-13: 12 h (was 6), so a phone that comes back online the same day can
+ * still deliver the pieces it kept before the meeting is closed to new audio.
+ */
+const ABANDONED_AFTER_MS = 12 * 60 * 60 * 1000;
 /** A failed meeting keeps its audio this long so "Try again" can work; then the audio is deleted. */
 const FAILED_AUDIO_KEPT_MS = 24 * 60 * 60 * 1000;
 /** If Sarvam has not finished by then, the Whisper backup is used. */
@@ -138,14 +150,19 @@ export class MeetingService {
         if (!isUuid(id)) throw new MeetingError(400, 'Unknown meeting.');
         const { data, error } = await supabaseAdmin.from('meeting_notes').select('*').eq('id', id).maybeSingle();
         if (error) dbFail(error, 'Could not load the meeting');
-        if (!data) throw new MeetingError(404, 'This meeting does not exist.');
+        if (!data) throw new MeetingError(404, 'This meeting does not exist.', 'NOT_FOUND');
         return data as MeetingRow;
     }
 
     private static async visible(userId: string, id: string): Promise<MeetingRow> {
         const m = await this.row(id);
-        if (!canSee(m, userId) || m.status === 'discarded') throw new MeetingError(404, 'This meeting does not exist.');
+        if (!canSee(m, userId) || m.status === 'discarded') throw new MeetingError(404, 'This meeting does not exist.', 'NOT_FOUND');
         return m;
+    }
+
+    /** Owner 2026-11-13: code FINISHED lets the phone know its leftover pieces are no longer wanted (and can be dropped). */
+    private static stillRecording(m: MeetingRow): void {
+        if (m.status !== 'recording') throw new MeetingError(409, 'This meeting has already finished recording.', 'FINISHED');
     }
 
     private static async owned(userId: string, id: string): Promise<MeetingRow> {
@@ -208,46 +225,105 @@ export class MeetingService {
             this.senderFor(userId, m.workspace ?? 'tech'),
         ]);
         if (tasksRes.error) dbFail(tasksRes.error, 'Could not load the tasks');
-        const nameOf = new Map(people.map(p => [p.id, p.name]));
         const taskRows = (tasksRes.data ?? []) as MeetingTaskRow[];
-        // Owner 2026-11-02: the "Sent" tab shows who each task went out as. Not stored on the card: it is the giver on the
-        // Task Manager task it created (none = "Autopilot", a person = "Send as: me"). A read only; null = no longer known.
-        const linkedIds = taskRows.filter(t => t.status === 'sent').map(t => t.task_ids?.[0] ?? t.task_id).filter((x): x is string => !!x);
-        const giverOf = new Map<string, string | null>();
-        if (linkedIds.length) {
-            const { data: linked, error: linkedError } = await supabaseAdmin.from('task_assignments').select('id, assigned_by').in('id', linkedIds);
-            if (linkedError) console.warn('[MeetingService] could not read who the tasks were sent as:', linkedError.message);
-            for (const r of (linked ?? []) as Array<{ id: string; assigned_by: string | null }>) giverOf.set(r.id, r.assigned_by);
-        }
-        const labelOf = new Map(people.map(p => [p.id, p.department ? `${p.name} (${p.department})` : p.name]));
-        const sentAsOf = (t: MeetingTaskRow): string | null => {
-            const linkedId = t.task_ids?.[0] ?? t.task_id;
-            if (t.status !== 'sent' || !linkedId || !giverOf.has(linkedId)) return null;
-            const giver = giverOf.get(linkedId);
-            return giver ? labelOf.get(giver) || 'Former employee' : AUTOPILOT;
-        };
+        const giverOf = await this.giversOf(taskRows);
         return {
-            meeting: {
-                id: m.id, title: m.title, meetingDate: m.meeting_date, status: m.status, error: m.error, confidential: m.confidential,
-                durationSeconds: m.duration_seconds, mine: m.created_by === userId, createdAt: m.created_at,
-                attendees: m.attendee_ids.map(a => ({ id: a, name: nameOf.get(a) || 'Former employee' })), extraNames: m.extra_names,
-                transcript: m.transcript ?? [], summary: m.summary, provider: (m.stt?.provider as string | undefined) ?? null,
-                canRetry: m.status === 'failed' && (!!m.transcript?.length || m.stt?.audioDeleted !== true),
-                notesSentAt: m.notes_sent_at ?? null, notesSentCount: m.notes_sent_count ?? null,
-                voice: voiceSummary(m.stt),
-            },
-            tasks: taskRows.map(t => ({
-                id: t.id, title: t.title, note: t.note, ownerName: t.owner_name,
-                ownerUserIds: ownersOf(t), ownerNames: ownersOf(t).map(o => nameOf.get(o) || 'Former employee'),
-                dueDate: t.due_date, dueTime: t.due_time, quote: t.quote, quoteAtSeconds: t.quote_at_seconds, quoteFound: t.quote_found,
-                source: t.source, status: t.status, sentAt: t.sent_at, sentAs: sentAsOf(t), error: t.error,
-                askedByUserId: t.asked_by_user_id ?? null,
-                askedByName: t.asked_by_user_id ? nameOf.get(t.asked_by_user_id) || 'Former employee' : null,
-            })),
+            meeting: this.shapeMeeting(m, userId, people),
+            tasks: taskRows.map(t => this.shapeTask(t, people, giverOf)),
             people,
             // For "Send as: me" — how the person pressing Send is shown to the people who get the tasks
             me: { name: me.name, department: me.department },
         };
+    }
+
+    /**
+     * Owner 2026-11-02: the "Sent" tab shows who each task went out as. Not stored on the card: it is the giver on the
+     * Task Manager task it created (none = "Autopilot", a person = "Send as: me"). A read only; absent = no longer known.
+     */
+    private static async giversOf(taskRows: MeetingTaskRow[]): Promise<Map<string, string | null>> {
+        const linkedIds = taskRows.filter(t => t.status === 'sent').map(t => t.task_ids?.[0] ?? t.task_id).filter((x): x is string => !!x);
+        const giverOf = new Map<string, string | null>();
+        for (let i = 0; i < linkedIds.length; i += 150) {
+            const { data: linked, error: linkedError } = await supabaseAdmin.from('task_assignments').select('id, assigned_by').in('id', linkedIds.slice(i, i + 150));
+            if (linkedError) console.warn('[MeetingService] could not read who the tasks were sent as:', linkedError.message);
+            for (const r of (linked ?? []) as Array<{ id: string; assigned_by: string | null }>) giverOf.set(r.id, r.assigned_by);
+        }
+        return giverOf;
+    }
+
+    /** The meeting as the screens see it (shared by `get` and `bulk`). */
+    private static shapeMeeting(m: MeetingRow, userId: string, people: MeetingPersonOption[]) {
+        const nameOf = new Map(people.map(p => [p.id, p.name]));
+        const capture = m.capture ?? null;
+        return {
+            id: m.id, title: m.title, meetingDate: m.meeting_date, status: m.status, error: m.error, confidential: m.confidential,
+            durationSeconds: m.duration_seconds, mine: m.created_by === userId, createdAt: m.created_at,
+            attendees: m.attendee_ids.map(a => ({ id: a, name: nameOf.get(a) || 'Former employee' })), extraNames: m.extra_names,
+            transcript: m.transcript ?? [], summary: m.summary, provider: (m.stt?.provider as string | undefined) ?? null,
+            canRetry: m.status === 'failed' && (!!m.transcript?.length || m.stt?.audioDeleted !== true),
+            notesSentAt: m.notes_sent_at ?? null, notesSentCount: m.notes_sent_count ?? null,
+            voice: voiceSummary(m.stt),
+            // Owner 2026-11-13: what the review screen says about the recording itself (pieces that never arrived, auto-finish)
+            recording: capture ? {
+                missingPieces: capture.finishedWith?.missing ?? 0,
+                missingSeconds: (capture.finishedWith?.missing ?? 0) * (capture.pieceSeconds ?? 30),
+                autoFinished: capture.autoFinished === true,
+                // Time on the clock so far (the recorder continues from here after "Continue recording")
+                elapsedSeconds: capture.elapsedSeconds ?? 0,
+                segments: Object.keys(capture.segments ?? {}).length,
+            } : null,
+        };
+    }
+
+    private static shapeTask(t: MeetingTaskRow, people: MeetingPersonOption[], giverOf: Map<string, string | null>) {
+        const nameOf = new Map(people.map(p => [p.id, p.name]));
+        const labelOf = new Map(people.map(p => [p.id, p.department ? `${p.name} (${p.department})` : p.name]));
+        const linkedId = t.task_ids?.[0] ?? t.task_id;
+        let sentAs: string | null = null;
+        if (t.status === 'sent' && linkedId && giverOf.has(linkedId)) {
+            const giver = giverOf.get(linkedId);
+            sentAs = giver ? labelOf.get(giver) || 'Former employee' : AUTOPILOT;
+        }
+        return {
+            id: t.id, title: t.title, note: t.note, ownerName: t.owner_name,
+            ownerUserIds: ownersOf(t), ownerNames: ownersOf(t).map(o => nameOf.get(o) || 'Former employee'),
+            dueDate: t.due_date, dueTime: t.due_time, quote: t.quote, quoteAtSeconds: t.quote_at_seconds, quoteFound: t.quote_found,
+            source: t.source, status: t.status, sentAt: t.sent_at, sentAs, error: t.error,
+            askedByUserId: t.asked_by_user_id ?? null,
+            askedByName: t.asked_by_user_id ? nameOf.get(t.asked_by_user_id) || 'Former employee' : null,
+        };
+    }
+
+    /** Owner 2026-11-13: how many meetings one bulk download may hold. */
+    static readonly BULK_MAX = 50;
+
+    /**
+     * Owner 2026-11-13: several meetings' notes in one go, for the bulk download (one combined PDF or Word file, built
+     * on the phone). Only meetings in this space the person can see, and only ready ones (the others have no notes).
+     * Unlike `get`, this never moves processing forward. Unknown or invisible ids are left out, not an error.
+     */
+    static async bulk(userId: string, space: MeetingSpace, idsInput: unknown) {
+        const ids = [...new Set((Array.isArray(idsInput) ? idsInput : []).filter(isUuid))].slice(0, this.BULK_MAX) as string[];
+        if (!ids.length) throw new MeetingError(400, 'Choose at least one meeting.');
+        const { data, error } = await supabaseAdmin.from('meeting_notes').select('*').in('id', ids).eq('workspace', space).eq('status', 'ready');
+        if (error) dbFail(error, 'Could not load the meetings');
+        const rows = ((data ?? []) as MeetingRow[]).filter(m => canSee(m, userId));
+        const byId = new Map(rows.map(m => [m.id, m]));
+        const ordered = ids.map(id => byId.get(id)).filter((m): m is MeetingRow => !!m);
+        if (!ordered.length) return { items: [] as Array<{ meeting: ReturnType<typeof MeetingService.shapeMeeting>; tasks: ReturnType<typeof MeetingService.shapeTask>[] }> };
+        const [tasksRes, people] = await Promise.all([
+            supabaseAdmin.from('meeting_note_tasks').select('*').in('meeting_id', ordered.map(m => m.id)).neq('status', 'deleted').order('position', { ascending: true }),
+            this.people(),
+        ]);
+        if (tasksRes.error) dbFail(tasksRes.error, 'Could not load the tasks');
+        const taskRows = (tasksRes.data ?? []) as MeetingTaskRow[];
+        const giverOf = await this.giversOf(taskRows);
+        const items = ordered.map(m => ({
+            meeting: this.shapeMeeting(m, userId, people),
+            tasks: taskRows.filter(t => t.meeting_id === m.id).map(t => this.shapeTask(t, people, giverOf)),
+        }));
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_notes_bulk_download', actorId: userId, details: { space, meetings: items.length } });
+        return { items };
     }
 
     /**
@@ -267,11 +343,7 @@ export class MeetingService {
     static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown }, space: MeetingSpace) {
         const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : '';
         if (title.length < 1 || title.length > 150) throw new MeetingError(400, 'Give the meeting a name (up to 150 characters).');
-        const wanted = Array.isArray(input.attendeeIds) ? input.attendeeIds.filter(isUuid) : [];
-        const known = new Set((await this.people()).map(p => p.id));
-        const attendeeIds = [...new Set(wanted.filter(id => known.has(id)))];
-        const extraNames = [...new Set((Array.isArray(input.extraNames) ? input.extraNames : [])
-            .map(n => (typeof n === 'string' ? n.replace(/\s+/g, ' ').trim() : '')).filter(n => n.length >= 1 && n.length <= 80))].slice(0, 30);
+        const { attendeeIds, extraNames } = await this.checkPeople(input);
         const { data, error } = await supabaseAdmin.from('meeting_notes').insert({
             title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
             meeting_date: todayIST(), status: 'recording', workspace: space,
@@ -289,43 +361,121 @@ export class MeetingService {
     }
 
     /** A new continuous recording (first start, or after the page was reloaded): returns its number. */
-    static async startSegment(userId: string, id: string) {
+    static async startSegment(userId: string, id: string, input: { minSegment?: unknown } = {}) {
         const m = await this.owned(userId, id);
-        if (m.status !== 'recording') throw new MeetingError(409, 'This meeting has already finished recording.');
-        const used = await this.segments(id);
-        const next = used.length ? Number(used[used.length - 1].slice(1)) + 1 : 0;
+        this.stillRecording(m);
+        // Owner 2026-11-13: a recording the phone reported (heartbeat) counts as used even if none of its pieces have
+        // arrived yet — otherwise a reload during a signal drop would reuse the number and the late pieces would mix in.
+        // `minSegment`: the phone's own floor (it still holds audio of lower-numbered recordings that the server has
+        // not heard of yet, e.g. closed before the first heartbeat). The higher of the two wins; a number is never reused.
+        const floor = Number(input.minSegment);
+        const used = [...(await this.segments(id)).map(s => Number(s.slice(1))), ...reportedSegments(m.capture)];
+        let next = used.length ? Math.max(...used) + 1 : 0;
+        if (Number.isInteger(floor) && floor > next && floor < SARVAM_MAX_FILES) next = floor;
         if (next >= SARVAM_MAX_FILES) throw new MeetingError(409, `A meeting can be restarted at most ${SARVAM_MAX_FILES} times. Please finish it.`);
         return { segment: next };
     }
 
-    /** A one-time private upload link for one piece of audio; the phone uploads straight to storage. */
-    static async uploadUrl(userId: string, id: string, input: { segment?: unknown; seq?: unknown; mimeType?: unknown }) {
-        const m = await this.owned(userId, id);
-        if (m.status !== 'recording') throw new MeetingError(409, 'This meeting has already finished recording.');
+    private static piecePath(id: string, segment: number, seq: number, ext: string) {
+        return `${id}/s${pad(segment, 2)}/c${pad(seq, 5)}.${ext}`;
+    }
+
+    private static checkPieceNumbers(input: { segment?: unknown; seq?: unknown; mimeType?: unknown }) {
         const segment = Number(input.segment), seq = Number(input.seq);
         if (!Number.isInteger(segment) || segment < 0 || segment >= SARVAM_MAX_FILES) throw new MeetingError(400, 'Bad recording number.');
         if (!Number.isInteger(seq) || seq < 0 || seq > 99_999) throw new MeetingError(400, 'Bad piece number.');
         const ext = meetingAudioExtension(typeof input.mimeType === 'string' ? input.mimeType : '');
         if (!ext) throw new MeetingError(400, 'This kind of audio file is not supported. Use MP3, M4A, WAV, OGG or WEBM.');
-        const path = `${id}/s${pad(segment, 2)}/c${pad(seq, 5)}.${ext}`;
-        const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).createSignedUploadUrl(path, { upsert: true });
-        if (error || !data) {
-            console.error('[MeetingService] upload link failed:', error?.message);
-            throw new MeetingError(/not found/i.test(error?.message || '') ? 503 : 500, /not found/i.test(error?.message || '') ? NOT_READY : 'Could not prepare the upload.');
-        }
+        return { segment, seq, ext };
+    }
+
+    private static uploadLinkFailed(error: { message?: string } | null): never {
+        console.error('[MeetingService] upload link failed:', error?.message);
+        const notFound = /not found/i.test(error?.message || '');
+        throw new MeetingError(notFound ? 503 : 500, notFound ? NOT_READY : 'Could not prepare the upload.');
+    }
+
+    /** A one-time private upload link for one piece of audio; the phone uploads straight to storage. */
+    static async uploadUrl(userId: string, id: string, input: { segment?: unknown; seq?: unknown; mimeType?: unknown }) {
+        const m = await this.owned(userId, id);
+        this.stillRecording(m);
+        const { segment, seq, ext } = this.checkPieceNumbers(input);
+        const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).createSignedUploadUrl(this.piecePath(id, segment, seq, ext), { upsert: true });
+        if (error || !data) this.uploadLinkFailed(error);
         // Keeps a long recording from looking abandoned
         await supabaseAdmin.from('meeting_notes').update({ updated_at: new Date().toISOString() }).eq('id', id);
         return { bucket: MEETING_BUCKET, path: data.path, token: data.token, contentType: baseMime(input.mimeType as string) };
     }
 
-    static async finish(userId: string, id: string) {
-        await this.owned(userId, id);
-        if (!(await this.segments(id)).length) throw new MeetingError(409, 'No audio has been received yet. Please wait for the upload, or record again.');
-        const { data, error } = await supabaseAdmin.from('meeting_notes').update({ status: 'uploaded', error: null, updated_at: new Date().toISOString() })
-            .eq('id', id).eq('status', 'recording').select('id');
+    /**
+     * Owner 2026-11-13: upload links for up to twenty pieces in a row (`from`, `from+1`, …), so the phone needs ONE
+     * round trip per piece (the PUT to storage) and no call to our server when it retries. Links are good for 2 hours.
+     */
+    static async uploadUrls(userId: string, id: string, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
+        const m = await this.owned(userId, id);
+        this.stillRecording(m);
+        const { segment, seq: from, ext } = this.checkPieceNumbers({ segment: input.segment, seq: input.from, mimeType: input.mimeType });
+        const count = Math.min(UPLOAD_URL_BATCH, Math.max(1, Number(input.count) || 1));
+        const urls: Array<{ seq: number; path: string; token: string; signedUrl: string }> = [];
+        for (let seq = from; seq < from + count && seq <= 99_999; seq++) {
+            const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).createSignedUploadUrl(this.piecePath(id, segment, seq, ext), { upsert: true });
+            if (error || !data) this.uploadLinkFailed(error);
+            urls.push({ seq, path: data.path, token: data.token, signedUrl: data.signedUrl });
+        }
+        await supabaseAdmin.from('meeting_notes').update({ updated_at: new Date().toISOString() }).eq('id', id);
+        return { bucket: MEETING_BUCKET, contentType: baseMime(input.mimeType as string), urls };
+    }
+
+    /**
+     * Owner 2026-11-13: the phone's half-minute report while recording: pieces recorded per continuous recording and
+     * the time on the clock. Kept in `capture` (merged: a count never goes down, and recordings reported by an earlier
+     * page stay). Also keeps the meeting from looking abandoned. Quiet before migration 20261113000001.
+     */
+    static async heartbeat(userId: string, id: string, input: { segments?: unknown; elapsedSeconds?: unknown; pieceSeconds?: unknown }) {
+        const m = await this.owned(userId, id);
+        this.stillRecording(m);
+        const capture = mergeCapture(m.capture, input);
+        const { error } = await supabaseAdmin.from('meeting_notes').update({ capture, updated_at: new Date().toISOString() }).eq('id', id).eq('status', 'recording');
+        if (error && !isMissingSchema(error)) console.warn('[MeetingService] heartbeat not saved:', error.message);
+        if (error && isMissingSchema(error)) await supabaseAdmin.from('meeting_notes').update({ updated_at: new Date().toISOString() }).eq('id', id);
+        return { ok: true };
+    }
+
+    /**
+     * Owner 2026-11-13: what the phone said it recorded against what storage has. `missing` counts pieces reported but
+     * not arrived; `brokenSegments` are recordings whose FIRST piece (which carries the file header) is absent, so the
+     * speech service could not read them at all.
+     */
+    private static async missingPieces(id: string, capture: Capture | null | undefined) {
+        const stored = new Map((await this.audioPieces(id)).map(p => [Number(p.seg.slice(1)), p.names]));
+        return missingFromCapture(capture, stored);
+    }
+
+    /**
+     * Recording done → processing. Owner 2026-11-13: refuses (409 PIECES_MISSING, with the counts in `details`) while
+     * pieces the phone recorded have not arrived, unless `force` is set — the screen first lets the phone finish
+     * uploading, and only offers "finish anyway" when the phone has nothing left to send.
+     */
+    static async finish(userId: string, id: string, input: { force?: unknown } = {}) {
+        const m = await this.owned(userId, id);
+        const gap = await this.missingPieces(id, m.capture);
+        if (!gap.anyStored) throw new MeetingError(409, 'No audio has been received yet. Please wait for the upload, or record again.', 'NO_AUDIO');
+        const force = input.force === true;
+        if ((gap.missing > 0 || gap.brokenSegments.length > 0) && !force) {
+            const mins = Math.max(1, Math.round(gap.missingSeconds / 60));
+            throw new MeetingError(409,
+                gap.missing > 0
+                    ? `About ${mins} minute${mins === 1 ? '' : 's'} of the recording (${gap.missing} piece${gap.missing === 1 ? '' : 's'}) has not reached the server yet. If it is still on the phone it will upload by itself — wait for it, or finish without it.`
+                    : 'The start of one recording never reached the server, so that recording cannot be used. Wait for the phone to finish uploading, or finish without it.',
+                'PIECES_MISSING', { missing: gap.missing, missingSeconds: gap.missingSeconds, brokenSegments: gap.brokenSegments });
+        }
+        const capture: Capture = { ...(m.capture ?? {}), finishedWith: { missing: gap.missing, forced: force } };
+        const patch: Record<string, unknown> = { status: 'uploaded', error: null, updated_at: new Date().toISOString() };
+        let { data, error } = await supabaseAdmin.from('meeting_notes').update({ ...patch, capture }).eq('id', id).eq('status', 'recording').select('id');
+        if (error && isMissingSchema(error)) ({ data, error } = await supabaseAdmin.from('meeting_notes').update(patch).eq('id', id).eq('status', 'recording').select('id'));
         if (error) dbFail(error, 'Could not finish the meeting');
-        if (!data?.length) throw new MeetingError(409, 'This meeting has already finished recording.');
-        await TaskDatabaseService.logAudit({ eventType: 'meeting_recorded', actorId: userId, details: { meetingId: id } });
+        if (!data?.length) throw new MeetingError(409, 'This meeting has already finished recording.', 'FINISHED');
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_recorded', actorId: userId, details: { meetingId: id, missingPieces: gap.missing, forced: force } });
         return { ok: true };
     }
 
@@ -349,7 +499,7 @@ export class MeetingService {
      */
     static async resetRecording(userId: string, id: string) {
         const m = await this.owned(userId, id);
-        if (m.status !== 'recording') throw new MeetingError(409, 'This meeting has already finished recording.');
+        this.stillRecording(m);
         try {
             await this.removeAudioFiles(id);
         } catch (err) {
@@ -361,10 +511,56 @@ export class MeetingService {
             const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/${seg}`, { limit: 1 });
             if (error || data?.length) throw new MeetingError(500, 'Could not delete the whole recording. Please try again.');
         }
-        const { error } = await supabaseAdmin.from('meeting_notes').update({ stt: null, error: null, updated_at: new Date().toISOString() })
+        // The phone's report starts again too (quietly skipped before migration 20261113000001)
+        let { error } = await supabaseAdmin.from('meeting_notes').update({ stt: null, error: null, capture: null, updated_at: new Date().toISOString() })
             .eq('id', id).eq('status', 'recording');
+        if (error && isMissingSchema(error)) ({ error } = await supabaseAdmin.from('meeting_notes').update({ stt: null, error: null, updated_at: new Date().toISOString() }).eq('id', id).eq('status', 'recording'));
         if (error) dbFail(error, 'Could not reset the recording');
         await TaskDatabaseService.logAudit({ eventType: 'meeting_recording_reset', actorId: userId, details: { meetingId: id } });
+        return { ok: true };
+    }
+
+    /** The people picked for a meeting, checked the same way at creation and when changed later. */
+    private static async checkPeople(input: { attendeeIds?: unknown; extraNames?: unknown }) {
+        const wanted = Array.isArray(input.attendeeIds) ? input.attendeeIds.filter(isUuid) : [];
+        const known = new Set((await this.people()).map(p => p.id));
+        const attendeeIds = [...new Set(wanted.filter(id => known.has(id)))];
+        const extraNames = [...new Set((Array.isArray(input.extraNames) ? input.extraNames : [])
+            .map(n => (typeof n === 'string' ? n.replace(/\s+/g, ' ').trim() : '')).filter(n => n.length >= 1 && n.length <= 80))].slice(0, 30);
+        return { attendeeIds, extraNames };
+    }
+
+    /**
+     * Owner 2026-11-13: change who is present — during the recording (someone joined late) or afterwards. Anyone who
+     * can open the meeting, like rename. While recording, the new names reach the speech service and the notes as
+     * usual; after the notes exist, "rewrite_notes" writes them again with the new people.
+     */
+    static async updateAttendees(userId: string, id: string, input: { attendeeIds?: unknown; extraNames?: unknown }) {
+        const m = await this.visible(userId, id);
+        const { attendeeIds, extraNames } = await this.checkPeople(input);
+        const { error } = await supabaseAdmin.from('meeting_notes').update({ attendee_ids: attendeeIds, extra_names: extraNames, updated_at: new Date().toISOString() }).eq('id', id);
+        if (error) dbFail(error, 'Could not change who is present');
+        const added = attendeeIds.filter(a => !m.attendee_ids.includes(a)).length + extraNames.filter(n => !m.extra_names.includes(n)).length;
+        const removed = m.attendee_ids.filter(a => !attendeeIds.includes(a)).length + m.extra_names.filter(n => !extraNames.includes(n)).length;
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_attendees_changed', actorId: userId, details: { meetingId: id, added, removed, people: attendeeIds.length + extraNames.length } });
+        const nameOf = new Map((await this.people()).map(p => [p.id, p.name]));
+        return { attendees: attendeeIds.map(a => ({ id: a, name: nameOf.get(a) || 'Former employee' })), extraNames, canRewrite: m.status === 'ready' && !!m.transcript?.length };
+    }
+
+    /**
+     * Owner 2026-11-13: a ready meeting whose people changed — write the summary and the draft tasks again from the
+     * kept transcript (one AI call, no audio needed). The extract step replaces AI drafts that were never sent; sent
+     * tasks and tasks added by hand stay.
+     */
+    static async rewriteNotes(userId: string, id: string) {
+        const m = await this.visible(userId, id);
+        if (m.status !== 'ready' || !m.transcript?.length) throw new MeetingError(409, 'The notes can only be rewritten once they are ready.');
+        const { data, error } = await supabaseAdmin.from('meeting_notes')
+            .update({ status: 'extracting', error: null, lease_until: null, attempts: 0, updated_at: new Date().toISOString() })
+            .eq('id', id).eq('status', 'ready').select('id');
+        if (error) dbFail(error, 'Could not rewrite the notes');
+        if (!data?.length) throw new MeetingError(409, 'This meeting is already being processed.');
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_notes_rewrite', actorId: userId, details: { meetingId: id } });
         return { ok: true };
     }
 
@@ -494,13 +690,25 @@ export class MeetingService {
         }
     }
 
-    /** Gives up abandoned recordings and removes old audio of failed meetings. Runs when the list is opened. */
+    /**
+     * Gives up abandoned recordings and removes old audio of failed meetings. Runs when the list is opened and from the
+     * cron (tick). Owner 2026-11-13: a recording nobody finished but whose audio DID arrive is processed anyway
+     * (`capture.autoFinished`), so the audio is not wasted; only one with no audio at all is marked failed.
+     */
     private static async sweep(): Promise<void> {
         const now = Date.now();
-        const { data: stale } = await supabaseAdmin.from('meeting_notes').select('id').eq('status', 'recording')
+        const { data: stale } = await supabaseAdmin.from('meeting_notes').select('*').eq('status', 'recording')
             .lt('updated_at', new Date(now - ABANDONED_AFTER_MS).toISOString()).limit(10);
-        for (const r of stale ?? []) {
-            await supabaseAdmin.from('meeting_notes').update({ status: 'failed', error: 'The recording was never finished.' }).eq('id', r.id).eq('status', 'recording');
+        for (const r of (stale ?? []) as Array<{ id: string; capture?: Capture | null }>) {
+            const hasAudio = (await this.segments(r.id).catch(() => [])).length > 0;
+            if (!hasAudio) {
+                await supabaseAdmin.from('meeting_notes').update({ status: 'failed', error: 'The recording was never finished.' }).eq('id', r.id).eq('status', 'recording');
+                continue;
+            }
+            const capture: Capture = { ...(r.capture ?? {}), autoFinished: true };
+            const { error } = await supabaseAdmin.from('meeting_notes').update({ status: 'uploaded', error: null, capture, updated_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'recording');
+            if (error && isMissingSchema(error)) await supabaseAdmin.from('meeting_notes').update({ status: 'uploaded', error: null, updated_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'recording');
+            await TaskDatabaseService.logAudit({ eventType: 'meeting_auto_finished', details: { meetingId: r.id } }).catch(() => undefined);
         }
         // Audio not yet marked deleted: failed/discarded after the grace period, and any finished meeting (in case the
         // delete right after transcription did not work)
@@ -514,6 +722,26 @@ export class MeetingService {
     }
 
     // ── processing (one step per call) ───────────────────────────────────────
+
+    /**
+     * Owner 2026-11-13: one run of the background job (`/api/cron/meeting-assistant`, every minute). Before this, a
+     * meeting only moved forward while someone kept its page open; now the notes are written even if the tab was
+     * closed. Takes the few meetings that are processing and not currently leased (oldest first), one step each, then
+     * the usual sweep. The review screen's polling still works alongside: the lease stops both running the same step.
+     */
+    static async tick(limit = 3): Promise<{ advanced: string[]; swept: boolean }> {
+        const swept = await this.sweep().then(() => true).catch(err => { console.warn('[MeetingService] sweep failed:', err instanceof Error ? err.message : err); return false; });
+        const { data, error } = await supabaseAdmin.from('meeting_notes').select('id')
+            .in('status', PROCESSING as MeetingStatus[]).or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
+            .order('updated_at', { ascending: true }).limit(limit);
+        if (error) { if (!isMissingSchema(error)) console.warn('[MeetingService] tick could not list meetings:', error.message); return { advanced: [], swept }; }
+        const advanced: string[] = [];
+        for (const r of (data ?? []) as Array<{ id: string }>) {
+            await this.advance(r.id);
+            advanced.push(r.id);
+        }
+        return { advanced, swept };
+    }
 
     /** Moves a processing meeting forward by one step. Safe to call from several polls at once. Never throws. */
     static async advance(id: string): Promise<void> {

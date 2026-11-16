@@ -211,6 +211,50 @@ Submit these exact template specifications to **Meta WhatsApp Business Manager /
 
 ---
 
+## 1b. Recruitment: candidate updates (owner 2026-11-16)
+
+Sent from the Recruitment module (the pipeline's Shortlisted / Rejected prompt, or the candidate panel's "Send update") through `backend/lib/candidates/outreach.ts`. A person clicks Send every time. The AiSensy campaign name is the template name unless `AISENSY_CANDIDATE_SHORTLISTED_CAMPAIGN` / `AISENSY_CANDIDATE_NOT_SHORTLISTED_CAMPAIGN` say otherwise. The body in the code's preview must say the same as the approved template.
+
+### Template 10: Candidate shortlisted
+* **Template Name**: `candidate_shortlisted_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Thank you for speaking with us about the {{2}} role at Autopilot Offices. We're happy to let you know that you have been shortlisted for the next round.
+
+  Our recruiter will call you shortly with the next steps.
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name (e.g. *Prakash*)
+  * `{{2}}`: Role (e.g. *Assistant Manager – Operations*)
+
+### Template 11: Candidate not shortlisted
+* **Template Name**: `candidate_not_shortlisted_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Thank you for your time and interest in the {{2}} role at Autopilot Offices. After careful review, we will not be moving forward with your application for this position.
+
+  We will keep your profile with us and reach out when a suitable role opens up. We wish you the very best.
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name
+  * `{{2}}`: Role
+
+---
+
 ## 2. HTML Email Templates
 
 Below are clean, responsive HTML email templates for all notification triggers.

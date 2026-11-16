@@ -7,6 +7,7 @@ import type { CandidateRecord, RecordStatus, SearchResult } from '@/backend/lib/
 import { telHref, whatsappHref } from './export-csv';
 import { formatDate, formatInr, formatMonths, formatNotice } from './format';
 import { MatchDetails, OriginTag, WorkedOut } from './ResultCard';
+import { BlacklistedTag } from './Remarks';
 import { Avatar, BTN_PRIMARY, CARD, CopyButton, Dropdown, LABEL, Marked, NUM_LG, Spinner, STATUS_OPTIONS, Tag, WELL } from './ui';
 
 const ACTION = 'inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-xl bg-surface px-2 text-sm font-bold text-text-primary shadow-[var(--w-shadow)] transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)]';
@@ -100,6 +101,7 @@ export default function QuickView({ result, onOpen, onStatus, statusBusy, onClos
                     <Dropdown variant="pill" value={r.status} options={STATUS_OPTIONS} onChange={s => onStatus(r, s)} label={`Status of ${r.fullName}`} />
                     {statusBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                     {r.hasResume === true && <Tag tone="success" icon={FileText}>Resume</Tag>}
+                    {r.blacklisted && <BlacklistedTag entry={r.blacklist} />}
                     {r.hasResume === false && <Tag>No resume</Tag>}
                     <OriginTag record={r} />
                 </div>

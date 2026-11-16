@@ -31,7 +31,9 @@ export type AiJob =
     | 'bill_ocr' | 'meter_ocr' | 'electricity_explain' | 'sop_photo' | 'sop_layout'
     | 'ticket_classify' | 'admin_chatbot' | 'coaching_feedback'
     | 'mailbox_digest' | 'satej_fast' | 'satej_smart'
-    | 'council_default';
+    | 'council_default'
+    // Owner 2026-11-16: the Recruitment Calls tab (a recorded screening call: speech to text, then the reading)
+    | 'call_transcribe' | 'call_analyse';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai' | 'sarvam';
@@ -119,6 +121,13 @@ const CANDIDATE_EXTRACT_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:clau
  * re-chosen here from the eval (doctrine L2, L10). It needs tool calling, so only providers with a tool adapter.
  */
 const BRAIN_TURN_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-haiku-5-5', 'glm-5.3-flash'] as const;
+/**
+ * Owner 2026-11-16: a call's reading sits next to a decision about a person, so a wrong "not interested" costs a lot
+ * (doctrine L10): the larger tier first, Sonnet as the backup. The transcription chain is the voice notes' (large-v3
+ * first: better on Hindi / Hinglish).
+ */
+const CALL_ANALYSE_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5'] as const;
+const CALL_TRANSCRIBE_DEFAULT = ['whisper-large-v3', 'whisper-large-v3-turbo'] as const;
 
 
 export const AI_JOBS: readonly JobInfo[] = [
@@ -138,6 +147,8 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
     { key: 'brain_turn', label: 'The brain turn', hint: 'Reads the message, looks things up with its skills, and answers or proposes an action (tickets, rooms, readings, wiki, memory). The first model that answers is used; the rest are backups', group: 'Unified brain', needs: 'chat', providers: ['anthropic', 'engy', 'groq'], defaults: BRAIN_TURN_DEFAULT },
     { key: 'candidate_extract', label: 'Reading resumes', hint: 'Reads education, industry, skills and employers out of each uploaded resume into the candidate\'s empty fields; one call per resume. A scanned PDF is typed out first by the Claude model in this list', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_EXTRACT_DEFAULT },
+    { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
+    { key: 'call_analyse', label: 'Calls: reading the call', hint: 'Reads a screening call\'s transcript for sentiment, interest, the concerns raised and the facts heard (pay, notice, location), each with a quote. Advisory only: a person applies each fact. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CALL_ANALYSE_DEFAULT },
 
     // ── Owner 2026-11-15: the rest of the application (Brain → AI models) ──
     // `providers` is the provider each job's own code calls; `defaults` is the model it had on 2026-11-15.

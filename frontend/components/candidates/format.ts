@@ -99,4 +99,5 @@ export const STATUS_DOT: Record<RecordStatus, string> = {
     not_responding: 'bg-text-tertiary',
     rejected: 'bg-error',
     joined: 'bg-success',
+    others: 'bg-secondary-dark',
 };

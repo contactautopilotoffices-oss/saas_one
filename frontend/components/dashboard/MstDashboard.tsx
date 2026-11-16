@@ -975,7 +975,7 @@ const MstDashboard = () => {
                                     propertyName={property.name}
                                     isStaff={true}
                                     userRole={userRole}
-                                    showInternalToggle={true}
+                                    showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
                                 />
                             )}
                             {activeTab === 'flow-map' && (

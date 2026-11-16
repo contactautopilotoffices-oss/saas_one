@@ -72,11 +72,14 @@ function menuKey(e: React.KeyboardEvent, rows: MenuRow[], active: number, setAct
     return false;
 }
 
-export interface Token { text: string; required?: boolean }
+export interface Token { text: string; required?: boolean; alts?: string[] }
+
+/** How a chip reads: "MEP / HVAC / VRF" when it holds alternatives (owner 2026-11-15), else its text. */
+const chipLabel = (t: Token) => [t.text, ...(t.alts ?? [])].join(' / ');
 
 /** A box that turns what is typed into chips, with the dropdown under it. Enter, a comma or leaving the box adds a chip. */
 export function TokenField({
-    id, orgId, field, tokens, onAdd, onRemove, onToggle, placeholder, icon, panel, focusRef, compact, onTyping,
+    id, orgId, field, tokens, onAdd, onRemove, onToggle, placeholder, icon, panel, focusRef, compact, onTyping, onTyped,
 }: {
     id: string;
     orgId: string;
@@ -94,6 +97,11 @@ export function TokenField({
     compact?: boolean;
     /** Told what is in the box as it is typed ('' once it becomes a chip), so the keyword bar can get suggestions ready early. */
     onTyping?: (typed: string) => void;
+    /**
+     * Owner 2026-11-15: a chance to read what was typed before it becomes a chip (the keyword bar turns
+     * "MEP / HVAC" and "a AND (b OR c) NOT d" into chips and excludes). Return true when it was taken.
+     */
+    onTyped?: (typed: string) => boolean;
 }) {
     const [input, setInputState] = useState('');
     const setInput = (value: string) => { setInputState(value); onTyping?.(value.trim()); };
@@ -113,6 +121,13 @@ export function TokenField({
         if (fresh.length) onAdd(fresh, required);
         setActive(-1);
     };
+    /** What was typed, as chips: the bar's own reading first (groups, AND / OR / NOT), else one chip as typed. */
+    const addTyped = (text: string) => {
+        const value = text.trim();
+        if (!value) return;
+        if (onTyped?.(value)) { setActive(-1); return; }
+        add([value]);
+    };
     const pick = (text: string, required = false) => { add([text], required); setInput(''); };
 
     return (
@@ -120,15 +135,19 @@ export function TokenField({
             <div className={`flex flex-wrap items-center gap-1.5 rounded-xl border border-border bg-surface transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${compact ? 'min-h-10 px-2 py-1' : 'min-h-11 px-2.5 py-1.5'}`}>
                 {icon}
                 {tokens.map(t => (
-                    <span key={t.text} className={`inline-flex max-w-full items-center gap-0.5 rounded-full py-0.5 text-[13px] font-semibold text-text-primary ring-1 ring-inset ${onToggle ? 'pl-1 pr-1' : 'pl-2.5 pr-1'} ${t.required ? 'bg-primary/15 ring-primary/40' : 'bg-muted ring-border'}`}>
+                    <span key={t.text} title={t.alts?.length ? `Any one of: ${chipLabel(t)}` : undefined} className={`inline-flex max-w-full items-center gap-0.5 rounded-full py-0.5 text-[13px] font-semibold text-text-primary ring-1 ring-inset ${onToggle ? 'pl-1 pr-1' : 'pl-2.5 pr-1'} ${t.required ? 'bg-primary/15 ring-primary/40' : 'bg-muted ring-border'}`}>
                         {onToggle && (
-                            <button type="button" onClick={() => onToggle(t.text)} aria-pressed={!!t.required} aria-label={t.required ? `Make ${t.text} optional` : `Make ${t.text} compulsory`} title={t.required ? 'Compulsory. Click to make it optional.' : 'Click to make it compulsory.'}
+                            <button type="button" onClick={() => onToggle(t.text)} aria-pressed={!!t.required} aria-label={t.required ? `Make ${chipLabel(t)} optional` : `Make ${chipLabel(t)} compulsory`} title={t.required ? 'Compulsory. Click to make it optional.' : 'Click to make it compulsory.'}
                                 className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${t.required ? 'text-primary-dark' : 'text-text-tertiary hover:text-text-primary'}`}>
                                 <Star className={`h-3.5 w-3.5 ${t.required ? 'fill-current' : ''}`} aria-hidden />
                             </button>
                         )}
-                        <span className="min-w-0 truncate">{t.text}</span>
-                        <button type="button" onClick={() => onRemove(t.text)} aria-label={`Remove ${t.text}`} className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-text-tertiary hover:text-text-primary">
+                        <span className="min-w-0 truncate">
+                            {t.alts?.length
+                                ? [t.text, ...t.alts].map((part, i) => <React.Fragment key={`${part}-${i}`}>{i > 0 && <span className="px-1 font-normal text-text-tertiary" aria-hidden>/</span>}{part}</React.Fragment>)
+                                : t.text}
+                        </span>
+                        <button type="button" onClick={() => onRemove(t.text)} aria-label={`Remove ${chipLabel(t)}`} className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-text-tertiary hover:text-text-primary">
                             <X className="h-3 w-3" aria-hidden />
                         </button>
                     </span>
@@ -141,20 +160,26 @@ export function TokenField({
                     value={input}
                     placeholder={placeholder}
                     onFocus={() => setFocused(true)}
-                    onBlur={() => { setFocused(false); add([input]); setInput(''); }}
+                    onBlur={() => { setFocused(false); addTyped(input); setInput(''); }}
                     onChange={e => {
                         setClosed(false);
                         setActive(-1);
                         const value = e.target.value;
-                        if (!value.includes(',')) { setInput(value); return; }
+                        // Inside quotes or brackets a comma is part of what is being typed (owner 2026-11-15).
+                        const openQuote = (value.match(/"/g) ?? []).length % 2 === 1;
+                        const openBracket = (value.match(/\(/g) ?? []).length > (value.match(/\)/g) ?? []).length;
+                        if (!value.includes(',') || openQuote || openBracket) { setInput(value); return; }
                         const parts = value.split(',');
                         const rest = parts.pop() ?? '';
-                        add(parts);
+                        for (const part of parts) addTyped(part);
                         setInput(rest.trimStart());
                     }}
                     onKeyDown={e => {
-                        if (menuKey(e, rows, active, setActive, pick, () => setClosed(true))) return;
-                        if (e.key === 'Enter') { e.preventDefault(); pick(input); }
+                        // A typed group or boolean line is read as typed; the dropdown's pick only takes a plain word.
+                        const literal = onTyped && /[/()"]|(^|\s)(AND|OR|NOT)(\s|$)/.test(input);
+                        if (!literal && menuKey(e, rows, active, setActive, pick, () => setClosed(true))) return;
+                        if (e.key === 'Escape') { setClosed(true); return; }
+                        if (e.key === 'Enter') { e.preventDefault(); addTyped(input); setInput(''); }
                         else if (e.key === 'Backspace' && !input && tokens.length) onRemove(tokens[tokens.length - 1].text);
                     }}
                     className="h-7 min-w-[120px] flex-1 border-0 bg-transparent text-base text-text-primary outline-none placeholder:text-text-tertiary sm:text-sm"

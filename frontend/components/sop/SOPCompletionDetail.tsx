@@ -10,6 +10,7 @@ import VideoPreviewModal from '@/frontend/components/shared/VideoPreviewModal';
 import CameraCaptureModal from '@/frontend/components/shared/CameraCaptureModal';
 import VideoCaptureModal from '@/frontend/components/shared/VideoCaptureModal';
 import SOPCADOverlayView from '@/frontend/components/sop/SOPCADOverlayView';
+import SOPAIParameterReview from '@/frontend/components/sop/SOPAIParameterReview';
 import { compressImage } from '@/frontend/utils/image-compression';
 import { compressVideo } from '@/frontend/utils/video-compression';
 import { Toast } from '@/frontend/components/ui/Toast';
@@ -108,6 +109,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
     const [approvingItemId, setApprovingItemId] = useState<string | null>(null);
     const [isAIEnabled, setIsAIEnabled] = useState<boolean>(false);
     const [isAutoEvaluating, setIsAutoEvaluating] = useState<boolean>(false);
+    // Assigned checker or property/org admin: may sign off steps and correct the AI
+    const [canReview, setCanReview] = useState<boolean>(false);
     const autoEvaluatedRef = React.useRef<Set<string>>(new Set());
     const supabase = React.useMemo(() => createClient(), []);
 
@@ -133,6 +136,9 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                 ai_cleanliness_reason: data.reason, 
                                 ai_parameter_scores: data.parameters || data.parameterScores || it.ai_parameter_scores, 
                                 ai_reference_used: data.referenceUsed, 
+                                ai_photo_matches: data.matches || it.ai_photo_matches,
+                                ai_needs_review: typeof data.needs_review === 'boolean' ? data.needs_review : it.ai_needs_review,
+                                ai_pass: typeof data.pass === 'boolean' ? data.pass : it.ai_pass,
                                 ai_analyzed_at: new Date().toISOString() 
                             }
                             : it
@@ -169,6 +175,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                     step_approval_notes: data.step_approval_notes,
                     step_approved_at: data.step_approved_at,
                     step_approved_by: data.step_approved_by,
+                    ai_needs_review: typeof data.ai_needs_review === 'boolean' ? data.ai_needs_review : it.ai_needs_review,
                 } : it),
             }) : prev);
             setToast({ message: `Step ${status === 'approved' ? 'Approved' : 'Rejected'} successfully`, type: 'success' });
@@ -185,6 +192,23 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
             setCurrentUserId(data.user?.id ?? null);
         });
     }, [supabase]);
+
+    // Can this user review steps and correct the AI? (admins or the assigned checker)
+    useEffect(() => {
+        fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/ai-feedback`)
+            .then(res => res.ok ? res.json() : null)
+            .then(data => setCanReview(Boolean(data?.can_review)))
+            .catch(() => setCanReview(false));
+    }, [propertyId, completionId]);
+
+    const handleParameterReviewUpdated = useCallback((itemId: string, parameters: any[], needsReview: boolean) => {
+        setCompletion((prev: any) => prev ? ({
+            ...prev,
+            items: prev.items.map((it: any) => it.id === itemId
+                ? { ...it, ai_parameter_scores: parameters, ai_needs_review: needsReview }
+                : it),
+        }) : prev);
+    }, []);
 
     useEffect(() => {
         const fetchDetail = async () => {
@@ -234,18 +258,14 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
             .catch(err => console.warn('[AI Check] Property settings fetch error:', err));
     }, [propertyId, completion?.property_id]);
 
-    // When AI enabled is ON, directly evaluate any completed item with photo that hasn't been scored yet (one-time only)
+    // When AI enabled is ON, directly evaluate any item with photo that hasn't been scored yet (one-time only)
     useEffect(() => {
         if (!isAIEnabled || !completion?.items) return;
-
-        // Skip automatic background evaluation if completion is already completed.
-        // Completed checklists were already scored during submission so reviewers in the Done section see stored results immediately.
-        if (completion.status === 'completed') return;
 
         // One-time evaluation guard: only evaluate if photo exists and it has NOT been evaluated before
         const unscoredItems = completion.items.filter(
             (it: any) =>
-                it.photo_url &&
+                (it.photo_url || (Array.isArray(it.photos) && it.photos.length > 0)) &&
                 (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined) &&
                 !it.ai_analyzed_at &&
                 !autoEvaluatedRef.current.has(it.id)
@@ -936,6 +956,10 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                                 <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white flex items-center gap-1 shadow-2xs">
                                                                                     <AlertCircle size={10} /> Missing Photo
                                                                                 </span>
+                                                                            ) : pair.status === 'angle_mismatch' ? (
+                                                                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-500 text-white flex items-center gap-1 shadow-2xs">
+                                                                                    <AlertCircle size={10} /> Angle Mismatch{typeof pair.score === 'number' ? ` (${pair.score}/100)` : ''}
+                                                                                </span>
                                                                             ) : typeof pair.score === 'number' ? (
                                                                                 <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider text-white flex items-center gap-1 shadow-2xs ${
                                                                                     isClean ? 'bg-emerald-500' : isNeedsAttention ? 'bg-amber-500' : 'bg-rose-500'
@@ -1154,7 +1178,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                         </div>
                                     </div>
                                     {/* ── AI Cleanliness Score & Parameter Evaluation ── */}
-                                    {item.photo_url && (isAIEnabled || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined)) && (
+                                    {(item.photo_url || (Array.isArray(item.photos) && item.photos.length > 0)) && (isAIEnabled || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined)) && (
                                         <div className="mt-2 md:mt-3">
                                             {aiScoring[item.id] || (item.ai_cleanliness_score !== null && item.ai_cleanliness_score !== undefined) ? (() => {
                                                 const isScoring = aiScoring[item.id];
@@ -1218,62 +1242,17 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
 
 
 
-                                    {/* Parameter by Parameter Cleanliness Breakdown */}
-                                    {(() => {
-                                        const paramScores: any[] = Array.isArray(item.ai_parameter_scores)
-                                            ? item.ai_parameter_scores
-                                            : typeof item.ai_parameter_scores === 'string'
-                                                ? (() => { try { return JSON.parse(item.ai_parameter_scores); } catch { return []; } })()
-                                                : [];
-
-                                        if (paramScores.length === 0) return null;
-
-                                        return (
-                                            <div className="mt-2.5 bg-white/90 rounded-xl border border-slate-200/90 p-3 shadow-2xs">
-                                                <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center justify-between">
-                                                    <span>Parameter Inspection Breakdown ({paramScores.length})</span>
-                                                    <span className="text-slate-400 font-semibold lowercase">qwen-vision verified</span>
-                                                </p>
-                                                <div className="space-y-1.5">
-                                                    {paramScores.map((param: any, pIdx: number) => {
-                                                        const isPass = param.status === 'pass';
-                                                        const isFail = param.status === 'fail';
-                                                        const isNA = !param.is_assessable || param.status === 'unassessable';
-
-                                                    return (
-                                                        <div key={pIdx} className="p-2 rounded-lg bg-slate-50 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                                                            <div className="flex items-center gap-2 min-w-0">
-                                                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                                                    isPass ? 'bg-emerald-500' : isFail ? 'bg-rose-500' : 'bg-slate-300'
-                                                                }`} />
-                                                                <span className="text-xs font-bold text-slate-800">{param.name}</span>
-                                                                <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                                                    isPass
-                                                                        ? 'bg-emerald-100 text-emerald-800'
-                                                                        : isFail
-                                                                        ? 'bg-rose-100 text-rose-800'
-                                                                        : 'bg-slate-200 text-slate-600'
-                                                                }`}>
-                                                                    {isPass ? 'Pass' : isFail ? 'Needs Attention' : 'N/A · Not in frame'}
-                                                                </span>
-                                                                {!isNA && param.score !== null && param.score !== undefined && (
-                                                                    <span className="text-[10px] font-black text-slate-600">
-                                                                        {param.score}/100
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {param.reason && (
-                                                                <p className="text-[10px] text-slate-500 font-medium sm:text-right sm:max-w-[50%] leading-tight">
-                                                                    {formatDirectCause(param.reason)}
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
+                                    {/* Parameter by Parameter Cleanliness Breakdown + checker corrections */}
+                                    <SOPAIParameterReview
+                                        item={item}
+                                        propertyId={propertyId}
+                                        completionId={completionId}
+                                        canReview={canReview && isCompleted}
+                                        formatReason={formatDirectCause}
+                                        onPreviewImage={setPreviewImageUrl}
+                                        onUpdated={handleParameterReviewUpdated}
+                                        onToast={(message, type) => setToast({ message, type })}
+                                    />
 
                                     {/* ── Satisfaction Rating ── */}
                                     {isCompleted && (
@@ -1343,8 +1322,8 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                 </div>
                                             )}
 
-                                            {/* Admin/Approver Action Controls */}
-                                            {isAdmin && (
+                                            {/* Admin/Approver Action Controls (admins or the assigned checker) */}
+                                            {(isAdmin || canReview) && (
                                                 <div className="space-y-2 mt-2">
                                                     <div className="flex items-center gap-1.5">
                                                         <input

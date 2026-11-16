@@ -263,14 +263,14 @@ export async function prepareResumeUploads(
   const now = new Date().toISOString();
   let slots: { index: number; id: string; path: string; contentType: string }[] = [];
   for (let round = 1; ; round += 1) {
-    const { data: existingRows, error } = await client
-      .from(TABLE)
-      .select("id, sha256, status")
-      .eq("organization_id", orgId)
-      .in("sha256", wanted.map((f) => f.sha256));
+    // Owner 2026-11-15: keep_as_resume (migration 20261115000002) lets a file removed as not a resume come back; before
+    // the migration the column is missing and the rows are read without it.
+    const existingQuery = (columns: string) => client.from(TABLE).select(columns).eq("organization_id", orgId).in("sha256", wanted.map((f) => f.sha256));
+    let { data: existingRows, error } = await existingQuery("id, sha256, status, keep_as_resume");
+    if (error && /keep_as_resume/.test(error.message ?? "")) ({ data: existingRows, error } = await existingQuery("id, sha256, status"));
     if (error) fail("prepare the upload", error);
     const existing = new Map(
-      ((existingRows ?? []) as unknown as { id: string; sha256: string; status: string }[]).map((r) => [r.sha256, r]),
+      ((existingRows ?? []) as unknown as { id: string; sha256: string; status: string; keep_as_resume?: boolean | null }[]).map((r) => [r.sha256, r]),
     );
 
     const inserts: Record<string, unknown>[] = [];
@@ -280,8 +280,10 @@ export async function prepareResumeUploads(
       const ext = fileExtension(f.name);
       const contentType = RESUME_TYPES[ext];
       const row = existing.get(f.sha256);
-      // Stored already (as a resume or another document), or read earlier and removed: either way the file is not sent again.
-      if (row?.status === "ready" || row?.status === "rejected" || row?.status === "other") {
+      // Stored already (as a resume or another document), or read earlier and removed: either way the file is not sent
+      // again, unless HR allowed the removed file back ("Allow re-upload"): then its row is reused and read afresh.
+      const comingBack = row?.status === "rejected" && row.keep_as_resume === true;
+      if ((row?.status === "ready" || row?.status === "rejected" || row?.status === "other") && !comingBack) {
         duplicates.push({ index: f.index, outcome: "duplicate", id: row.id });
         continue;
       }
@@ -301,7 +303,9 @@ export async function prepareResumeUploads(
         updated_at: now,
       };
       if (row) {
-        const { error: upErr } = await client.from(TABLE).update(values).eq("id", id).eq("organization_id", orgId);
+        // A removed file coming back is read again from the start (its old verdict and text are gone).
+        const reset = comingBack ? { text_status: "pending", text_error: null, text_attempts: 0, resume_text: null, extract_status: "pending", extract_error: null, candidate_id: null, match_reason: null, matched_at: null } : {};
+        const { error: upErr } = await client.from(TABLE).update({ ...values, ...reset }).eq("id", id).eq("organization_id", orgId);
         if (upErr) fail("prepare the upload", upErr);
       } else {
         inserts.push({ id, organization_id: orgId, sha256: f.sha256, created_at: now, ...values });

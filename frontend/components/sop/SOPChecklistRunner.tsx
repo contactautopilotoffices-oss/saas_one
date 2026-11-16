@@ -1085,12 +1085,13 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
                 return hasPhoto && (notScoredYet || isActivelyScoring);
             });
 
-            // Fire in background non-blocking — user NEVER waits for AI
+            // Fire in background non-blocking with keepalive so browser doesn't drop requests on unmount
             itemsNeedingScore.forEach((c: any) => {
                 fetch(`/api/properties/${resolvedPropId}/sop/completions/${completion.id}/score-photo`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ completionItemId: c.id, force: true }),
+                    keepalive: true,
                 }).catch(e => console.warn('[Background AI Score] Error:', e));
             });
 

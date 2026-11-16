@@ -1,12 +1,13 @@
 import { after, NextResponse } from "next/server";
 
+import { changeRecordWithHistory } from "@/backend/lib/candidates/actions";
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { indexPending } from "@/backend/lib/candidates/indexing";
 import { getFullRecord } from "@/backend/lib/candidates/filter-search";
-import { deleteRecord, updateRecord } from "@/backend/lib/candidates/records";
+import { deleteRecord } from "@/backend/lib/candidates/records";
 import { linkUnmatched } from "@/backend/lib/candidates/resume-text";
 
-import { errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
+import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -28,7 +29,10 @@ export async function GET(request: Request, { params }: Params) {
   }
 }
 
-/** Edit a record. Person fields apply to every record of the same person. */
+/**
+ * Edit a record. Person fields apply to every record of the same person. Owner 2026-11-15: `actionRemark` is the
+ * reason for the change, kept in the candidate's history (required for the "Others" status).
+ */
 export async function PATCH(request: Request, { params }: Params) {
   const body = await readJson(request);
   if (body instanceof NextResponse) return body;
@@ -42,7 +46,7 @@ export async function PATCH(request: Request, { params }: Params) {
   const fields = { ...body };
   delete fields.orgId;
   try {
-    await updateRecord(auth.admin, auth.orgId, auth.user.id, id, fields);
+    await changeRecordWithHistory(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), id, fields);
     // The saved record as the panel shows it (resume fields included), so an edit does not blank them on screen.
     const record = await getFullRecord(auth.admin, auth.orgId, id);
     after(() => indexPending(auth.admin, auth.orgId));

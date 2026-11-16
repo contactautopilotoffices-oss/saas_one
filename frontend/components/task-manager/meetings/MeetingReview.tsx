@@ -2,13 +2,16 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Trash2, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, X,
 } from 'lucide-react';
 import {
     PROCESSING, STATUS_LABEL, call, clock, meetingUrl, niceDate, type MeetingDetail, type MeetingPerson, type MeetingTask, type MeetingSpace, type SendAs,
 } from './api';
 import { exportPdf, exportWord } from './exportNotes';
 import { SKIP_REASON_TEXT } from '../voice/voiceApi';
+import PendingUploads from './PendingUploads';
+import AttendeesEditor from './AttendeesEditor';
+import { forgetMeeting } from './pieceStore';
 
 /**
  * Owner 2026-10-29: one meeting. While it is processing, this screen polls (each poll moves the work forward one step).
@@ -21,9 +24,11 @@ const IN_MEETING = 'In this meeting';
 const POLL_MS = 4_000;
 const input = 'w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
-export default function MeetingReview({ space, meetingId, onBack, onContinueRecording }: {
+export default function MeetingReview({ space, meetingId, people: peopleWithVoice = [], onBack, onContinueRecording }: {
     space: MeetingSpace;
     meetingId: string;
+    /** Everyone in the Task Manager with their "voice ready" mark (from the list); the meeting's own list is the fallback */
+    people?: MeetingPerson[];
     onBack: () => void;
     onContinueRecording: (id: string, title: string) => void;
 }) {
@@ -41,6 +46,13 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
     const [titleDraft, setTitleDraft] = useState<string | null>(null);
     /** Owner 2026-11-02: "To send" / "Sent" tabs over the tasks (null = not chosen yet: Sent when nothing is left to send) */
     const [taskTab, setTaskTab] = useState<'todo' | 'sent' | null>(null);
+    /** Owner 2026-11-13: audio pieces of this meeting still on this phone (Finish waits for them) */
+    const [localPending, setLocalPending] = useState(0);
+    /** Owner 2026-11-13: the server is missing pieces that are not on this phone either */
+    const [missing, setMissing] = useState<{ missing: number; missingSeconds: number } | null>(null);
+    const [editPeople, setEditPeople] = useState(false);
+    /** After the people changed on a ready meeting: offer to write the notes again */
+    const [rewriteOffer, setRewriteOffer] = useState(false);
     const saving = useRef(new Set<Promise<unknown>>());
     const alive = useRef(true);
 
@@ -76,11 +88,19 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
         setBusy(label);
         const r = await call(meetingUrl(meetingId, space), body);
         setBusy(null);
-        if (!r.ok) { setFlash(r.error); return false; }
+        if (!r.ok) {
+            // Owner 2026-11-13: Finish while pieces the phone recorded are still missing → ask, do not fail
+            if (r.code === 'PIECES_MISSING') { setMissing({ missing: Number(r.details?.missing ?? 0), missingSeconds: Number(r.details?.missingSeconds ?? 0) }); return false; }
+            setFlash(r.error);
+            return false;
+        }
         after?.(r);
         await load();
         return true;
     };
+
+    /** Recording done (from this screen, after a reload): the phone's leftover copy is gone once the server has it all. */
+    const finish = (force = false) => void act('finish', { action: 'finish', ...(force ? { force: true } : {}) }, () => { setMissing(null); void forgetMeeting(meetingId); void pollAgain(); });
 
     const send = async (taskIds: string[]) => {
         if (!taskIds.length) return;
@@ -167,11 +187,37 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                         </button>
                     )}
                 </div>
-                {(m.attendees.length > 0 || m.extraNames.length > 0) && (
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                        {m.attendees.map(a => <span key={a.id} className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{a.name}</span>)}
-                        {m.extraNames.map(n => <span key={n} className="rounded-full border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-500 dark:border-zinc-700">{n}</span>)}
+                {/* Owner 2026-11-13: who was present can be changed here too (someone was forgotten, or joined late) */}
+                <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                    {m.attendees.map(a => <span key={a.id} className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-bold text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">{a.name}</span>)}
+                    {m.extraNames.map(n => <span key={n} className="rounded-full border border-dashed border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-500 dark:border-zinc-700">{n}</span>)}
+                    {m.attendees.length + m.extraNames.length === 0 && <span className="text-xs font-semibold text-zinc-500">Nobody marked as present.</span>}
+                    {m.status !== 'discarded' && !PROCESSING.includes(m.status) && (
+                        <button type="button" onClick={() => setEditPeople(true)} aria-label="Change who was present"
+                            className="flex items-center gap-1 rounded-full border border-zinc-300 px-2.5 py-1 text-[11px] font-bold text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800">
+                            <UserPlus className="h-3 w-3" /> {m.attendees.length + m.extraNames.length ? 'Change' : 'Add people'}
+                        </button>
+                    )}
+                </div>
+                {rewriteOffer && m.status === 'ready' && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-indigo-50 px-3 py-2.5 dark:bg-indigo-950/40">
+                        <p className="min-w-0 flex-1 text-xs font-semibold text-indigo-900 dark:text-indigo-200">The people changed. Write the notes and draft tasks again with them? Tasks already sent, and tasks you added, stay.</p>
+                        <button type="button" disabled={!!busy} onClick={() => void act('rewrite', { action: 'rewrite_notes' }, () => { setRewriteOffer(false); void pollAgain(); })}
+                            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-black text-white hover:bg-indigo-700 disabled:opacity-40">
+                            {busy === 'rewrite' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} Rewrite notes
+                        </button>
+                        <button type="button" onClick={() => setRewriteOffer(false)} className="rounded-xl px-2 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 dark:text-indigo-300">Keep as is</button>
                     </div>
+                )}
+                {/* Owner 2026-11-13: what the notes are made from, when the recording was not whole */}
+                {m.recording && (m.recording.missingPieces > 0 || m.recording.autoFinished) && m.status !== 'recording' && (
+                    <p className="mt-3 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                            {m.recording.missingPieces > 0 ? `About ${clock(m.recording.missingSeconds)} of the recording never reached the server; the notes are made from the rest.` : ''}
+                            {m.recording.autoFinished ? ' Nobody pressed Finish, so the audio that arrived was processed by itself.' : ''}
+                        </span>
+                    </p>
                 )}
                 {/* Owner 2026-10-29: download the notes (summary, decisions, notes, tasks, optionally the transcript) */}
                 {m.status === 'ready' && (
@@ -237,24 +283,45 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
 
             {/* Still recording (e.g. the page was reloaded) */}
             {m.status === 'recording' && (
-                <Panel>
-                    <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">This meeting is still open for recording.</p>
-                    {m.mine ? (
-                        <div className="mt-4 flex flex-wrap gap-2">
-                            <button type="button" onClick={() => onContinueRecording(m.id, m.title)} className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700"><Mic className="h-4 w-4" /> Continue recording</button>
-                            <button type="button" disabled={!!busy} onClick={() => void act('finish', { action: 'finish' }, () => { void pollAgain(); })} className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2.5 text-sm font-bold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
-                                {busy === 'finish' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Finish and make notes
-                            </button>
-                        </div>
-                    ) : <p className="mt-1 text-xs text-zinc-500">Only the person who started it can continue or finish it.</p>}
-                </Panel>
+                <>
+                    {/* Owner 2026-11-13: audio of this meeting still on this phone goes up first; Finish waits for it */}
+                    <PendingUploads space={space} onlyMeetingId={meetingId} onPendingChange={setLocalPending} />
+                    <Panel>
+                        <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">This meeting is still open for recording.</p>
+                        {m.mine ? (
+                            <>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                    <button type="button" onClick={() => onContinueRecording(m.id, m.title)} className="flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-black text-white hover:bg-red-700"><Mic className="h-4 w-4" /> Continue recording</button>
+                                    <button type="button" disabled={!!busy || localPending > 0} onClick={() => finish(false)}
+                                        title={localPending > 0 ? 'Waiting for the audio on this phone to upload' : undefined}
+                                        className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2.5 text-sm font-bold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800">
+                                        {busy === 'finish' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Finish and make notes
+                                    </button>
+                                </div>
+                                {localPending > 0 && <p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-400">{localPending} piece{localPending === 1 ? '' : 's'} of audio {localPending === 1 ? 'is' : 'are'} still uploading from this phone. Finish becomes available when they are up.</p>}
+                                {missing && (
+                                    <div className="mt-3 space-y-2 rounded-xl bg-amber-50 px-3 py-2.5 dark:bg-amber-950/40">
+                                        <p className="flex items-start gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                            About {clock(missing.missingSeconds)} of the recording ({missing.missing} piece{missing.missing === 1 ? '' : 's'}) never reached the server, and it is not on this phone. If it was recorded on another phone, open the Meeting Assistant there first. Otherwise the notes can be made from the rest.
+                                        </p>
+                                        <div className="flex flex-wrap gap-2">
+                                            <button type="button" disabled={!!busy} onClick={() => finish(true)} className="rounded-xl bg-zinc-900 px-3 py-1.5 text-xs font-black text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900">Finish anyway</button>
+                                            <button type="button" disabled={!!busy} onClick={() => finish(false)} className="rounded-xl border border-zinc-300 px-3 py-1.5 text-xs font-bold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200">Check again</button>
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        ) : <p className="mt-1 text-xs text-zinc-500">Only the person who started it can continue or finish it.</p>}
+                    </Panel>
+                </>
             )}
 
             {/* Processing */}
             {PROCESSING.includes(m.status) && (
                 <Panel>
                     <Steps status={m.status} withVoice={m.status === 'identifying' || m.voice?.state === 'done' || m.voice?.state === 'pending'} />
-                    <p className="mt-4 text-xs font-semibold text-zinc-500">This usually takes a few minutes for an hour-long meeting. Keep this page open until it is done.</p>
+                    <p className="mt-4 text-xs font-semibold text-zinc-500">This usually takes a few minutes for an hour-long meeting. You can close this page — the work carries on by itself, and the notes will be here when you come back.</p>
                 </Panel>
             )}
 
@@ -359,6 +426,13 @@ export default function MeetingReview({ space, meetingId, onBack, onContinueReco
                         </>)}
                     </section>
                 </>
+            )}
+
+            {editPeople && (
+                <AttendeesEditor space={space} meetingId={meetingId} people={peopleWithVoice.length ? peopleWithVoice : data.people}
+                    current={{ attendees: m.attendees, extraNames: m.extraNames }}
+                    onClose={() => setEditPeople(false)}
+                    onSaved={next => { setEditPeople(false); setRewriteOffer(next.canRewrite); void load(); }} />
             )}
 
             {/* Transcript */}
