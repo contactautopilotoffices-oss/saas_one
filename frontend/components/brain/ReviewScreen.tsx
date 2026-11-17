@@ -19,6 +19,7 @@ import AnswerPicker, { type Answer } from '@/frontend/components/ai-layer/Answer
 import BotLearningPanel from '@/frontend/components/task-manager/BotLearningPanel';
 // Review → Tickets: how new tickets were sorted (owner 2026-11-15). Loaded only when its tab is chosen.
 import TicketReview from './TicketReview';
+import SOPAiLearningLoop from '@/frontend/components/sop/SOPAiLearningLoop';
 
 export default function ReviewScreen() {
     const { acceptReview, status } = useBrain();
@@ -51,9 +52,11 @@ export default function ReviewScreen() {
                             { value: 'task_assistant', label: OTHER_BOT_LABEL.task_assistant },
                             { value: 'ai_assistant', label: <>{OTHER_BOT_LABEL.ai_assistant}<span className={cx(s.tab, 'text-(--bc-ink-3)')}>{int(v.data.others.filter(o => o.state === 'waiting').length)}</span></> },
                             { value: 'tickets', label: <>Tickets{ticketsWaiting !== null && <span className={cx(s.tab, 'text-(--bc-ink-3)')}>{int(ticketsWaiting)}</span>}</> },
+                            { value: 'checklists', label: <>Checklists</> },
                         ]} />
                     </div>
                     {source === 'tickets' ? <TicketReview onCount={setTicketsWaiting} />
+                        : source === 'checklists' ? <SOPAiLearningLoop />
                         : source === 'task_assistant' ? <TaskAssistant />
                         : source === 'ai_assistant' ? <AiAssistant d={v.data} onReplace={replace} />
                             : <>
@@ -75,7 +78,7 @@ export default function ReviewScreen() {
     );
 }
 
-type Source = 'brain' | OtherBotItem['bot'] | 'tickets';
+type Source = 'brain' | OtherBotItem['bot'] | 'tickets' | 'checklists';
 
 /** The task assistant's own review panel, open from the start (it used to be a card in the Control Centre). */
 function TaskAssistant() {
