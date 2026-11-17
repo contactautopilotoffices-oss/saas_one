@@ -6,7 +6,7 @@ import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-    BrainCircuit, Building2, ChevronDown, ClipboardList, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
+    BrainCircuit, Building2, ChevronDown, ClipboardList, DoorOpen, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
     Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -25,6 +25,8 @@ import { isRequestsView, RequestsNewButton, RequestsViewSwitcher, type RequestsV
 const TaskManagerSuperuserDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerSuperuserDashboard'), { loading: TabLoading });
 const TaskManagerTestingDashboard = dynamic(() => import('@/frontend/components/task-manager/TaskManagerTestingDashboard'), { loading: TabLoading });
 const MeetingsTab = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingsTab'), { loading: TabLoading });
+// Owner 2026-11-17: Meeting Room = the booking screen HR, CRM, IT and Design use (property, then room and slot; no credits)
+const BookMeetingRoom = dynamic(() => import('@/app/(dashboard)/[orgId]/book-room/page'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const WaterAnalyticsDashboard = dynamic(() => import('@/frontend/components/water/WaterAnalyticsDashboard'), { loading: TabLoading });
 const DieselStaffDashboard = dynamic(() => import('../diesel/DieselStaffDashboard'), { loading: TabLoading });
@@ -51,7 +53,7 @@ const BrainConsole = dynamic(() => import('@/frontend/components/brain/BrainCons
 
 type TechTab =
     | 'requests'
-    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'vms_face' | 'files' | 'candidates'
+    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'meeting_room' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile' | 'settings';
@@ -71,6 +73,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
             { id: 'brain', label: 'Brain', icon: BrainCircuit },
             // Owner 2026-10-29: Meeting Assistant (record a meeting, review the task list, send the tasks)
             { id: 'meetings', label: 'Meeting Assistant', icon: Mic },
+            { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
             { id: 'files', label: 'Files', icon: FolderOpen },
             { id: 'candidates', label: 'Candidate Search', icon: UserSearch },
@@ -330,7 +333,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'meeting_room' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
                         <div className="flex items-center gap-3">
                             {/* Owner 2026-11-15: on the Requests tab the property choice moves into the page below `lg`, and the
                                 header shows a New button on phones, so the "Requests" heading always has room. */}
@@ -374,6 +377,7 @@ export default function TechDashboard() {
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
+                            {activeTab === 'meeting_room' && <BookMeetingRoom />}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
                             {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}
                             {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
