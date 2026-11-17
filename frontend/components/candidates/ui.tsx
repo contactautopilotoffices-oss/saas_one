@@ -237,7 +237,7 @@ export function Dialog({
                             role="dialog" aria-modal="true" aria-labelledby={labelId}
                             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
                             transition={{ duration: 0.22, ease: EASE_PATIENT }}
-                            className={`${OVERLAY} flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl ${width}`}
+                            className={`${OVERLAY} flex max-h-[calc(92dvh/var(--app-zoom,1))] w-full flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl ${width}`}
                         >
                             <div className="flex items-start gap-x-3 gap-y-3 px-4 pb-2 pt-4 sm:px-6 sm:pt-6">
                                 <div className="min-w-0 flex-1">
@@ -336,7 +336,9 @@ export function Drawer({
                             initial={{ x: 48, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: 48, opacity: 0 }}
                             transition={{ duration: 0.36, ease: EASE_PATIENT }}
                             style={panelStyle}
-                            className={`${OVERLAY} relative flex h-[100dvh] w-full flex-col sm:rounded-l-2xl ${widthClass} ${panelClassName}`}
+                            // Owner 2026-11-16: the dashboard is zoomed on <html> (AppZoom), which scales viewport units too;
+                            // dividing by --app-zoom (1 when unzoomed) makes the panel the full height of the screen.
+                            className={`${OVERLAY} relative flex h-[calc(100dvh/var(--app-zoom,1))] w-full flex-col sm:rounded-l-2xl ${widthClass} ${panelClassName}`}
                         >
                             {resize && (
                                 <button

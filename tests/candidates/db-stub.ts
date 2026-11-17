@@ -62,6 +62,10 @@ export const CALLS_MIGRATION = readFileSync(path.join("supabase", "migrations", 
   .replace(/insert into storage\.buckets[\s\S]*?on conflict \(id\) do nothing;/i, "");
 /** Outreach on WhatsApp (owner 2026-11-16): candidate_outreach and the 'outreach_sent' history action. */
 export const OUTREACH_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000003_candidate_outreach.sql"), "utf8");
+/** "Already in the database" (owner 2026-11-16): where an upload came from, and the 'duplicate_flagged' history action. */
+export const SOURCING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000004_sourcing_duplicates.sql"), "utf8");
+/** A position as a job record (owner 2026-11-16): designation, employment type, openings, hiring manager, priority, education, budget, summary. */
+export const POSITION_DETAILS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000005_position_details.sql"), "utf8");
 
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
@@ -81,6 +85,8 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(RECRUITMENT_MIGRATION);
   if (options.resumeFields !== false) await db.exec(CALLS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(OUTREACH_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(SOURCING_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(POSITION_DETAILS_MIGRATION);
   return db;
 }
 

@@ -34,6 +34,23 @@ export const STAGE_LABELS: Record<Stage, string> = {
 /** Stages a person must explain with a remark when they move someone there. */
 export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
 
+export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "internship"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: "Full-time",
+  part_time: "Part-time",
+  contract: "Contract",
+  internship: "Internship",
+};
+export const POSITION_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type PositionPriority = (typeof POSITION_PRIORITIES)[number];
+export const PRIORITY_LABELS: Record<PositionPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
 export interface Position {
   id: string;
   title: string;
@@ -46,6 +63,19 @@ export interface Position {
   prefer: Preferences;
   status: "open" | "closed";
   targetDays: number;
+  // Owner 2026-11-16: the job as a record (migration 20261116000005). Defaults before it is applied.
+  designation: string | null;
+  employmentType: EmploymentType | null;
+  openings: number;
+  hiringManager: string | null;
+  priority: PositionPriority;
+  /** "MBA preferred", "B.E. Electrical": free text. */
+  education: string | null;
+  /** Rupees per month in hand. */
+  budgetMinInhand: number | null;
+  budgetMaxInhand: number | null;
+  /** The role in 2–3 sentences, from the JD and edited by HR. */
+  summary: string | null;
   /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
   recruiterName: string | null;
   createdAt: string;
@@ -54,6 +84,46 @@ export interface Position {
   /** Days since it was opened (until it was closed). */
   daysOpen: number;
   counts: Record<Stage, number>;
+}
+
+/**
+ * What the Create / Edit position form holds (owner 2026-11-16): the job's details and its requirements as HR sees
+ * them. The AI fills it from a JD (POST /api/candidates/positions/read); position-draft.ts turns it into the search
+ * filters the position runs with. Years, days and rupees per month, as typed.
+ */
+export interface PositionDraft {
+  title: string;
+  department: string | null;
+  designation: string | null;
+  location: string | null;
+  employmentType: EmploymentType | null;
+  openings: number | null;
+  hiringManager: string | null;
+  priority: PositionPriority;
+  targetDays: number | null;
+  education: string | null;
+  budgetMinInhand: number | null;
+  budgetMaxInhand: number | null;
+  summary: string | null;
+  expMinYears: number | null;
+  expMaxYears: number | null;
+  noticeMaxDays: number | null;
+  /** Each must-have with the spellings CVs use for it; a record needs any one of them. */
+  mustHaves: { text: string; alts: string[] }[];
+  niceToHaves: string[];
+  /** Software and tools named by the JD (CRM, Excel, AutoCAD); nice-to-haves in the search. */
+  tools: string[];
+  prefer: Preferences;
+  jdText: string;
+  jdFileName: string | null;
+}
+
+/** POST /api/candidates/positions/read: the draft the AI filled from a JD, for HR to check. */
+export interface PositionReadResponse {
+  draft: PositionDraft;
+  aiParsed: boolean;
+  /** Plain-language notes ("only the first N characters were read", "the JD gives two values for experience"). */
+  notices: string[];
 }
 
 export interface PositionMember {
@@ -287,6 +357,9 @@ export interface CandidateSheet {
   /** Records from this sheet still being prepared for meaning search (HR sees it as a progress bar). */
   pendingIndexCount: number;
   uploadedByEmail: string | null;
+  /** Where the sheet came from (owner 2026-11-16); null when the upload did not say. */
+  sourceKind: SourceKind | null;
+  sourceName: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -316,6 +389,8 @@ export interface ImportSummary {
   matchedCandidates: number;
   /** Candidates with a record in this sheet who have a stored resume (phase 2); null before migration 20261110000001. */
   candidatesWithResume: number | null;
+  /** Rows whose person was already in the database before this upload (owner 2026-11-16): kept, and noted on the row. */
+  alreadyKnownRows: number;
 }
 
 /** 409 from POST /api/candidates/sheets when a live sheet with the same file name exists and no mode was sent. */
@@ -552,6 +627,13 @@ export interface ResumeFile {
   candidateId: string | null;
   candidateName: string | null;
   matchReason: ResumeMatchReason | null;
+  /** Where the upload said it came from (owner 2026-11-16); null when it did not say. */
+  sourceKind: SourceKind | null;
+  sourceName: string | null;
+  /** 'pending': a second CV for this person, waiting for HR (Update the CV or delete it); 'updated': HR made it the CV. */
+  duplicateState: "pending" | "updated" | null;
+  /** Filled for a pending duplicate. */
+  alreadyKnown: AlreadyKnown | null;
 }
 
 export interface ResumeFilesResponse {
@@ -595,6 +677,8 @@ export interface PreparedUpload {
   /** The stored file type, from the extension; the browser sends the bytes with it. */
   contentType?: string;
   reason?: string;
+  /** duplicate: the copy already stored, so the upload summary can say whose it is (owner 2026-11-16). */
+  existing?: { fileName: string; candidateName: string | null; uploadedAt: string | null; uploadedBy: string | null };
 }
 
 export interface ResumeConfirmResponse {
@@ -779,6 +863,55 @@ export interface OutreachPreview {
   blockedBy: string | null;
   /** The earlier successful send of this kind for this position, if any. */
   sentBefore: { at: string; byName: string | null } | null;
+}
+
+// Where an upload came from, and "already in the database" (owner 2026-11-16; migration 20261116000004) ------------------
+
+export const SOURCE_KINDS = ["own", "naukri", "portal", "vendor"] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
+  own: "Our own search",
+  naukri: "Naukri",
+  portal: "Job portal",
+  vendor: "Vendor",
+};
+
+/**
+ * The same CV file uploaded again by someone else (owner 2026-11-16): not stored twice, but listed in "Already in the
+ * database" with who uploaded it first and who again, until dismissed.
+ */
+export interface ResumeRepeat {
+  id: string;
+  fileId: string;
+  fileName: string;
+  candidateId: string | null;
+  candidateName: string | null;
+  /** Who uploaded the same file again, and when. */
+  againBy: string | null;
+  againAt: string;
+  /** Who uploaded it first, and when. */
+  firstBy: string | null;
+  firstAt: string | null;
+}
+/** Optional on every upload: who sent these resumes or this sheet. */
+export interface UploadSource {
+  kind: SourceKind | null;
+  /** The vendor's or portal's name. */
+  name: string | null;
+}
+
+/**
+ * A second CV for a person who already had one (owner 2026-11-16): how the person was first sourced, and the CV that
+ * was on file before this one. A CV that only meets its own sheet row is not flagged.
+ */
+export interface AlreadyKnown {
+  /** YYYY-MM-DD */
+  sourcedAt: string | null;
+  /** The sheet it came from, "a resume", or "added by hand". */
+  sourcedFrom: string | null;
+  sourcedBy: string | null;
+  /** The CV on file before this one (the latest earlier upload). */
+  previous: { id: string; fileName: string; uploadedAt: string | null; uploadedBy: string | null } | null;
 }
 
 /** One attempt (GET /api/candidates/outreach, newest first). */

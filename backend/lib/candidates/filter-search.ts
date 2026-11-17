@@ -451,6 +451,32 @@ export function isOptionField(value: unknown): value is OptionField {
   return value === "keyword" || (typeof value === "string" && Object.hasOwn(OPTION_COLUMNS, value));
 }
 
+/** Rows read for a dropdown with nothing typed: every record of an organisation of today's size, bounded. */
+const TOP_SCAN = 6000;
+
+/**
+ * The most common values of one column, with how many records have each, for a dropdown that opens with nothing
+ * typed (owner 2026-11-16: "Search for a role" lists the roles people were sourced for).
+ */
+export async function topOptions(client: SupabaseClient, orgId: string, field: Exclude<OptionField, "keyword">, limit = 40): Promise<OptionItem[]> {
+  const { column, kind, view } = OPTION_COLUMNS[field];
+  const run = () => visible(client, orgId, column, undefined, view).not(column, "is", null).limit(TOP_SCAN);
+  let { data, error } = await run();
+  if (noteBlacklistMissing(error)) ({ data, error } = await run());
+  if (view && isMissingResumeView(error)) return [];
+  if (error) failed(error);
+  const tally = new Map<string, OptionItem>();
+  for (const row of (data ?? []) as unknown as Record<string, string | null>[]) {
+    const value = row[column]?.trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    const seen = tally.get(key);
+    if (seen) seen.count += 1;
+    else tally.set(key, { text: value, kind, count: 1 });
+  }
+  return [...tally.values()].sort((a, b) => b.count - a.count || a.text.localeCompare(b.text)).slice(0, Math.max(1, Math.min(200, limit)));
+}
+
 export async function filterOptions(client: SupabaseClient, orgId: string, field: OptionField, text: string, today = new Date().toISOString().slice(0, 10)): Promise<OptionItem[]> {
   const typed = text.trim().slice(0, 60);
   if (!typed) return [];

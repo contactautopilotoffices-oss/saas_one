@@ -144,6 +144,8 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
                     <div className="flex items-center gap-2">
                         <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400"><UserSearch className="h-5 w-5" /></div>
                         <h1 className="font-display text-lg font-black tracking-tight text-text-primary sm:text-xl">Recruitment</h1>
+                        {/* Owner 2026-11-16: the module is in beta while HR starts using it. */}
+                        <span className="inline-flex h-[22px] items-center rounded-full bg-amber-100 px-2.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/60" title="New module: in use by the HR team, still being refined">Beta</span>
                     </div>
                     {/* Segmented control: L1 recessed track, active segment lifted to L2 (Linear: adjacent steps only). */}
                     <div role="tablist" aria-label="Recruitment views" className="grid w-full grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle sm:inline-grid sm:w-auto sm:grid-cols-6">

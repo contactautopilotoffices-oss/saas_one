@@ -7,10 +7,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listActions, resetHistoryCheck } from "../../backend/lib/candidates/actions";
 import { EMPTY_FILTERS } from "../../backend/lib/candidates/filters";
-import { addMembers, createPosition, getPosition, listMembers, listPositions, moveMember, removeMember, updatePosition } from "../../backend/lib/candidates/positions";
+import { addMembers, createPosition, deletePosition, getPosition, listMembers, listMemberships, listPositions, moveMember, removeMember, updatePosition } from "../../backend/lib/candidates/positions";
 import { createRecord } from "../../backend/lib/candidates/records";
 
-import { freshDb } from "./db-stub";
+import { freshDb, POSITION_DETAILS_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
 
 const ORG = "00000000-0000-0000-0000-00000000000a";
@@ -107,5 +107,48 @@ describe("positions and pipelines", () => {
     await assert.rejects(updatePosition(client, ORG, position.id, { status: "paused" }), /open or closed/);
     const reopened = await updatePosition(client, ORG, position.id, { status: "open", targetDays: 30, title: "Sr Technical Executive (SS Plaza)" });
     assert.deepEqual([reopened.status, reopened.closedAt, reopened.targetDays, reopened.title], ["open", null, 30, "Sr Technical Executive (SS Plaza)"]);
+  });
+
+  it("keeps the job's details (owner 2026-11-16) and refuses values outside the lists", async () => {
+    await db.exec(POSITION_DETAILS_MIGRATION); // safe to re-run
+    const saved = await createPosition(client, ORG, ME, {
+      title: "Assistant Manager – Business Development", department: "Business Development", location: "Noida",
+      designation: "Manager M2", employmentType: "full_time", openings: 2, hiringManager: "Lohitaksha", priority: "high",
+      education: "MBA preferred", budgetMinInhand: 60000, budgetMaxInhand: 75000, summary: "Drives enterprise client acquisition for managed offices across Delhi NCR.",
+    });
+    assert.deepEqual(
+      [saved.designation, saved.employmentType, saved.openings, saved.hiringManager, saved.priority, saved.education, saved.budgetMinInhand, saved.budgetMaxInhand],
+      ["Manager M2", "full_time", 2, "Lohitaksha", "high", "MBA preferred", 60000, 75000],
+    );
+    assert.match(saved.summary ?? "", /enterprise client/);
+    // The list and the single read carry them; a bare position has the defaults.
+    const listed = (await listPositions(client, ORG, "open")).find((p) => p.id === saved.id)!;
+    assert.deepEqual([listed.openings, listed.priority, listed.employmentType], [2, "high", "full_time"]);
+    const bare = await createPosition(client, ORG, ME, { title: "Bare" });
+    assert.deepEqual([bare.openings, bare.priority, bare.employmentType, bare.budgetMaxInhand, bare.summary], [1, "normal", null, null, null]);
+    // An edit changes only what it names.
+    const edited = await updatePosition(client, ORG, saved.id, { openings: 3, hiringManager: null });
+    assert.deepEqual([edited.openings, edited.hiringManager, edited.priority, edited.budgetMaxInhand], [3, null, "high", 75000]);
+    await assert.rejects(createPosition(client, ORG, ME, { title: "x", employmentType: "gig" }), /Employment type/);
+    await assert.rejects(createPosition(client, ORG, ME, { title: "x", priority: "asap" }), /Priority/);
+    await assert.rejects(createPosition(client, ORG, ME, { title: "x", budgetMinInhand: 90000, budgetMaxInhand: 60000 }), /minimum is above/);
+    await assert.rejects(createPosition(client, ORG, ME, { title: "x", openings: 0 }), /At least one/);
+  });
+
+  it("deletes a position: gone from the lists and from the person, its people taken out with a history entry, nothing erased", async () => {
+    const doomed = await createPosition(client, ORG, ME, { title: "Doomed role" });
+    assert.deepEqual(await addMembers(client, ORG, ME, doomed.id, [bilal.id]), { added: 1, skipped: 0 });
+    assert.ok((await listMemberships(client, ORG, bilal.candidateId)).some((m) => m.position.id === doomed.id));
+
+    assert.deepEqual(await deletePosition(client, ORG, ME, doomed.id), { removed: 1 });
+    assert.ok(!(await listPositions(client, ORG, "all")).some((p) => p.id === doomed.id));
+    await assert.rejects(getPosition(client, ORG, doomed.id), /no longer exists/);
+    await assert.rejects(deletePosition(client, ORG, ME, doomed.id), /no longer exists/);
+    assert.ok(!(await listMemberships(client, ORG, bilal.candidateId)).some((m) => m.position.id === doomed.id));
+
+    const [entry] = await listActions(client, ORG, bilal.candidateId);
+    assert.deepEqual([entry.action, entry.fromValue, entry.remark, entry.positionId], ["removed_from_position", "Sourced", 'Position "Doomed role" was deleted.', doomed.id]);
+    const [row] = (await db.query<{ deleted_at: unknown }>("select deleted_at from public.candidate_positions where id = $1", [doomed.id])).rows;
+    assert.ok(row.deleted_at, "the row is kept, marked deleted");
   });
 });
