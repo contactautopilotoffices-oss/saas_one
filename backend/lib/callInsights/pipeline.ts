@@ -18,7 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { CALL_ANALYSE_MAX_CHARS, CALL_STALE_MINUTES } from "@/backend/lib/candidates/config";
 import { getPosition } from "@/backend/lib/candidates/positions";
-import type { CallSegment } from "@/backend/lib/candidates/types";
+import type { CallRound, CallSegment } from "@/backend/lib/candidates/types";
 
 import { analyseCandidateCall, type Analysed } from "./analyse";
 import type { ScreeningContext } from "./contexts/candidateScreening";
@@ -57,6 +57,8 @@ interface WorkRow {
   transcript_text: string | null;
   segments: CallSegment[] | null;
   updated_at: string | Date;
+  /** Absent before migration 20261117000001 (the call is then read as a screening call). */
+  call_round?: CallRound | null;
 }
 
 const WORK_COLUMNS = "id, candidate_id, application_id, position_id, input_kind, file_name, file_type, storage_path, status, transcript_text, segments, updated_at";
@@ -74,7 +76,10 @@ export function isStale(status: string, updatedAt: string | Date, now = new Date
 /** Runs the pipeline on one call. Never throws: the outcome says what happened, and the row says it too. */
 export async function runCallAnalysis(client: SupabaseClient, storage: CallAudioStorage, orgId: string, callId: string, deps: PipelineDeps = {}): Promise<PipelineOutcome> {
   const now = deps.now ?? (() => new Date());
-  const { data, error } = await client.from(CALLS_TABLE).select(WORK_COLUMNS).eq("organization_id", orgId).eq("id", callId).is("deleted_at", null).maybeSingle();
+  const read = (columns: string) => client.from(CALLS_TABLE).select(columns).eq("organization_id", orgId).eq("id", callId).is("deleted_at", null).maybeSingle();
+  // Owner 2026-11-17: the round decides which prompt reads the call; before its migration every call is a screening call.
+  let { data, error } = await read(`${WORK_COLUMNS}, call_round`);
+  if (error && /call_round/.test(error.message ?? "")) ({ data, error } = await read(WORK_COLUMNS));
   if (error) return { status: "skipped", why: `could not read the call: ${error.message}` };
   const row = data as unknown as WorkRow | null;
   if (!row) return { status: "skipped", why: "no such call" };
@@ -192,10 +197,11 @@ async function screeningContext(client: SupabaseClient, orgId: string, row: Work
   if (row.position_id) {
     try {
       const p = await getPosition(client, orgId, row.position_id);
-      position = { title: p.title, location: p.location, jdText: p.jdText ?? null };
+      const mustHaves = (p.filters.keywords ?? []).filter((k) => k.required).map((k) => [k.text, ...(k.alts ?? [])].join(" / "));
+      position = { title: p.title, location: p.location, jdText: p.jdText ?? null, mustHaves };
     } catch {
       position = null;
     }
   }
-  return { candidate, position, transcript };
+  return { candidate, position, round: row.call_round ?? null, transcript };
 }

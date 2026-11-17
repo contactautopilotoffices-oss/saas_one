@@ -9,11 +9,13 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { looksLikeScreening, parseCandidateScreening } from "../../backend/lib/callInsights/contexts/candidateScreening";
+import { analyseCandidateCall } from "../../backend/lib/callInsights/analyse";
+import { CANDIDATE_INTERVIEW_SCHEMA, CANDIDATE_INTERVIEW_SYSTEM } from "../../backend/lib/callInsights/contexts/candidateInterview";
+import { CANDIDATE_SCREENING_SCHEMA, CANDIDATE_SCREENING_SYSTEM, looksLikeScreening, parseCandidateScreening } from "../../backend/lib/callInsights/contexts/candidateScreening";
 import { runCallAnalysis, type PipelineDeps } from "../../backend/lib/callInsights/pipeline";
 import { stampedTranscript } from "../../backend/lib/callInsights/transcribe";
 import { listActions, resetHistoryCheck } from "../../backend/lib/candidates/actions";
-import { applyCallFacts, confirmCall, deleteCall, getCall, listCalls, prepareCall, retryCall, type CallStorage } from "../../backend/lib/candidates/calls";
+import { applyCallFacts, confirmCall, deleteCall, getCall, listCalls, prepareCall, retryCall, setCallRound, type CallStorage } from "../../backend/lib/candidates/calls";
 import { createPosition } from "../../backend/lib/candidates/positions";
 import { createRecord, getRecord } from "../../backend/lib/candidates/records";
 import type { CallInsights } from "../../backend/lib/candidates/types";
@@ -248,6 +250,10 @@ describe("calls: upload, pipeline, facts, history", () => {
       ["field_edit", ["currentInhand", "noticePeriodDays"], "call"],
     ]);
     assert.equal(history[1].meta.callId, audioId);
+    // Owner 2026-11-17: the value each fact replaced stays in the history (null when the field was empty).
+    const changes = (history[1].meta.changes as { field: string; from: unknown; to: unknown }[]).map((c) => [c.field, c.from, c.to]);
+    assert.deepEqual(changes, [["currentInhand", 72000, 75000], ["noticePeriodDays", 30, 30]]);
+    assert.equal(history[1].meta.calledOn, "2026-11-16");
   });
 
   it("reads a sloppy model answer without inventing anything", () => {
@@ -277,6 +283,68 @@ describe("calls: upload, pipeline, facts, history", () => {
     assert.equal(stampedTranscript([{ start: 0, end: 4, text: "Hi" }, { start: 65, end: 70, text: "Bye" }], null, 1000), "[0:00] Hi\n[1:05] Bye");
     assert.equal(stampedTranscript(null, "line one\r\n\r\nline two", 1000), "line one\nline two");
     assert.match(stampedTranscript(null, "x".repeat(50), 10), /^x{10}\n\[cut/);
+  });
+
+  it("keeps which round a call was for, lets it be changed, and says it in the history (owner 2026-11-17)", async () => {
+    await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id, transcript: "Hello Asha, round two now.\nTell me about SQL.\nI use joins daily.", round: "round_9" }), /record \(applicationId\)/);
+    const prepared = await prepareCall(client, storage, ORG, ME, { applicationId: asha.id, positionId, transcript: "Hello Asha, round one now.\nTell me about SQL.\nI use joins daily.", round: "round_1" });
+    assert.equal(prepared.call.round, "round_1");
+    const logged = (await listActions(client, ORG, asha.candidateId)).find((a) => a.action === "call_logged" && a.meta.callId === prepared.call.id)!;
+    assert.equal(logged.meta.round, "Interview round 1");
+
+    const changed = await setCallRound(client, ORG, prepared.call.id, "round_2");
+    assert.equal(changed.round, "round_2");
+    assert.equal((await listCalls(client, ORG, asha.candidateId)).find((c) => c.id === prepared.call.id)?.round, "round_2");
+    await assert.rejects(setCallRound(client, ORG, prepared.call.id, "final"), /Pick the round/);
+    await assert.rejects(q("update public.call_analyses set call_round = 'round_4' where id = $1", [prepared.call.id]), /call_round_check/);
+    await deleteCall(client, storage, ORG, prepared.call.id);
+  });
+
+  it("reads an interview round with its own prompt, the round and the position's must-haves", async () => {
+    const seen: { system: string; user: string; schema: Record<string, unknown> }[] = [];
+    const caller = async (req: { system: string; user: string; schema?: Record<string, unknown> }) => {
+      seen.push({ system: req.system, user: req.user, schema: req.schema ?? {} });
+      return { text: JSON.stringify({ overall_sentiment: "neutral", facts: {}, answers: [{ topic: "SQL joins", verdict: "weak", note: "No join named.", quote: "I usually look it up", at_seconds: 400 }], not_covered: ["Python"], next_round_questions: ["Write a left join."] }), model: "test" };
+    };
+    const ctx = { candidate: { name: "Asha", designation: null, organization: null, location: null, currentInhand: null, expectedInhand: null, noticePeriodDays: null }, position: { title: "Data Analyst", location: null, jdText: null, mustHaves: ["SQL", "Python"] }, transcript: "[6:40] I usually look it up" };
+    const interview = await analyseCandidateCall({ ...ctx, round: "round_1" }, { caller: caller as never });
+    assert.equal(seen[0].system, CANDIDATE_INTERVIEW_SYSTEM);
+    assert.match(seen[0].user, /THE ROUND: Interview round 1/);
+    assert.match(seen[0].user, /Must-haves: SQL; Python/);
+    assert.deepEqual(interview.result.answers, [{ topic: "SQL joins", verdict: "weak", note: "No join named.", quote: "I usually look it up", at: 400 }]);
+    assert.deepEqual([interview.result.notCovered, interview.result.nextRoundQuestions], [["Python"], ["Write a left join."]]);
+
+    const screening = await analyseCandidateCall({ ...ctx, round: "screening" }, { caller: caller as never });
+    assert.notEqual(seen[1].system, CANDIDATE_INTERVIEW_SYSTEM);
+    assert.equal(screening.result.answers, undefined, "a screening call is not read for answers");
+    // The interview prompt never asks the model to judge delivery.
+    assert.match(CANDIDATE_INTERVIEW_SYSTEM, /Never judge or mention accent, fluency, grammar, nervousness, confidence/);
+  });
+
+  it("keeps both answer shapes under Claude's 16 nullable keys", () => {
+    const countNullable = (node: unknown): number => {
+      if (!node || typeof node !== "object") return 0;
+      const n = node as Record<string, unknown>;
+      const self = Array.isArray(n.type) && (n.type as unknown[]).includes("null") ? 1 : 0;
+      return self + Object.values(n).reduce<number>((sum, v) => sum + (Array.isArray(v) ? v.reduce<number>((s2, x) => s2 + countNullable(x), 0) : countNullable(v)), 0);
+    };
+    assert.equal(countNullable(CANDIDATE_SCREENING_SCHEMA), 14);
+    assert.equal(countNullable(CANDIDATE_INTERVIEW_SCHEMA), 15);
+  });
+
+  it("says when pay was said as CTC, never as take-home (the CTC fix)", () => {
+    const parsed = parseCandidateScreening(JSON.stringify({
+      overall_sentiment: "positive",
+      facts: {
+        current_inhand: { value: 20000, pay_basis: "ctc", quote: "Currently it's around 2.4 LPA.", at_seconds: 115 },
+        expected_inhand: { value: 29167, quote: "at least 3.5", at_seconds: 131 },
+      },
+    }));
+    assert.deepEqual(parsed.facts.currentInhand, { value: 20000, quote: "Currently it's around 2.4 LPA.", at: 115, basis: "ctc" });
+    // No basis given: unclear, never assumed to be in-hand.
+    assert.equal(parsed.facts.expectedInhand.basis, "unclear");
+    assert.match(CANDIDATE_SCREENING_SYSTEM, /"2\.4 LPA" = 20000, pay_basis "ctc"/);
+    assert.match(CANDIDATE_SCREENING_SYSTEM, /Never turn a CTC figure into take-home yourself/);
   });
 
   it("deletes a call: the row is gone from the list and the bytes from the bucket", async () => {

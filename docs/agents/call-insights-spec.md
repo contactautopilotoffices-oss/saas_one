@@ -57,3 +57,55 @@ this as a tool. Deviations from the plan document, stated: the routes live under
 `/api/call-insights`) so they reuse Candidate Search's access check; the table keeps `subject_type` with a
 `candidate_id` foreign key (cascade on delete) rather than a bare `subject_id`, so a purged candidate takes their calls
 with them.
+
+## Agent Spec change — rounds, interview reading and the CTC fix (2026-11-17)
+
+Owner: "there will also be further rounds with the candidate ... we need some kind of action where we know which call
+recording or transcript is for what stage in the pipeline", then "yes go ahead, also fix the CTC bug". Migration
+`20261117000001_call_rounds.sql` (applied by a person): `call_analyses.call_round` = screening | round_1 | round_2 |
+round_3 | hr_offer, chosen when the call is added (suggested from the candidate's stage in the position) and changeable.
+
+**1. Workflow or agent?** unchanged: one fixed read per call `[BAA p.104]`. The round only picks which prompt runs.
+
+**2. Context** `[BAA p.112]`: adds the round ("THE ROUND: Interview round 1") and the position's must-haves (its starred
+keywords) to what the model reads. Nothing else is added; it still knows nothing about other candidates.
+
+**3. Cost of a false positive** `[BAA p.112]`: unchanged (high; same job `call_analyse`, same chain). Interview reads add
+a new false positive: a "weak" verdict on an answer that was fine. Mitigations: each verdict carries the candidate's
+exact quote and time, so HR listens before acting; verdicts judge only what was said (relevance, specifics,
+correctness), never delivery, which the prompt forbids in so many words (accent, fluency, grammar, nervousness,
+confidence, tone, personality); nothing changes a stage by itself.
+
+**4. Tools**: none, as before.
+
+**5. Prompt** `[BAA pp.105, 114]`: two prompts now, one per context (doctrine L11 `[BAA p.116]`):
+- `contexts/candidateScreening.ts` (screening, HR / offer discussion, calls with no round): step 7 is the shared
+  `FACTS_STEP`. **The CTC fix**: the old step told the model that "9 LPA" was take-home (divide by 12), so "2.4 LPA"
+  showed as ₹20K in-hand and could be applied to the in-hand field. Each pay fact now carries `pay_basis`
+  (in_hand | ctc | unclear); a CTC figure is still the yearly figure / 12 but is never called take-home, and the model
+  is told never to convert CTC to take-home itself. The worked example shows `pay_basis`.
+- `contexts/candidateInterview.ts` (rounds 1–3): its own 10 numbered steps with the no-skip clause, the content-only
+  rule, the shared facts step, and a short worked example for the three new lists: `answers` (topic, verdict
+  clear | partial | weak, note, quote, time), `not_covered` (must-haves that never came up), `next_round_questions` (3–5).
+- Schema: `pay_basis` is a plain enum (not nullable). Nullable keys: screening 14, interview 15, under Claude's 16
+  (asserted in `calls.test.ts`).
+
+**6. Memory**: none, as before.
+
+**7. Multi-agent?** `[BAA p.116]`: still a single call; the second prompt is a second context, not a second agent.
+
+**8. Evaluation** `[BAA pp.118–119]`: unit tests on both parsers, the prompt choice by round, the round in the user
+message, the CTC basis ("2.4 LPA" → ctc; a missing basis reads as unclear, never in-hand) and the nullable-key counts.
+Quality is **still not measured**: the interview verdicts need a labelled set of real rounds before any accuracy is
+claimed. Efficiency: an interview read returns three more short lists, so its output is a little longer.
+
+**9. Trace** `[BAA pp.119–120]`: unchanged (`withAgentRun`, agent key `call_insights`); the label says "call analyse
+(interview)" on interview reads.
+
+**On screen and in the record**: a CTC or unclear pay figure shows "CTC (2.4 LPA) · not in-hand" or "in-hand or CTC?";
+Apply asks first ("Apply anyway" / Keep), Apply all leaves such figures out, and the history notes "said as CTC, not
+in-hand" when one is applied. The round shows on each call, in its title and in the history ("Interview round 1 ·
+Recording · …"); changing it keeps the old reading until HR clicks "Read it again".
+
+**10. Laws knowingly violated, and why:** L5 / L6 quality axis for the interview verdicts: no labelled rounds and no
+grader yet `[BAA pp.96–98]`; do not call the interview reading evaluated until both exist.

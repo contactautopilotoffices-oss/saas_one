@@ -8,7 +8,7 @@ import {
     type Blacklist, type BlacklistReason, type CallFactKey, type CandidateRecord, type RecordStatus,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
-import { formatDate } from './format';
+import { formatDate, formatInr } from './format';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
 /*
@@ -157,8 +157,25 @@ function describe(a: CandidateAction): React.ReactNode {
         case 'field_edit': {
             // Owner 2026-11-16: a fact applied from a call names its field and says where it came from.
             const fields = Array.isArray(a.meta.fields) ? (a.meta.fields as string[]) : [];
-            const named = fields.map(f => (f in CALL_FACT_LABELS ? CALL_FACT_LABELS[f as CallFactKey] : f));
-            return <>{named.join(', ')}{a.meta.source === 'call' ? <span className="text-text-secondary"> · from the call</span> : null}</>;
+            const label = (f: string) => (f in CALL_FACT_LABELS ? CALL_FACT_LABELS[f as CallFactKey] : f);
+            const fromCall = a.meta.source === 'call'
+                ? <span className="text-text-secondary"> · from the call{typeof a.meta.calledOn === 'string' ? ` on ${formatDate(a.meta.calledOn)}` : ''}</span>
+                : null;
+            // Owner 2026-11-17: an applied call fact shows the value it replaced, so an overwritten sheet value can be found.
+            const changes = Array.isArray(a.meta.changes) ? (a.meta.changes as { field: string; from: unknown; to: unknown; basis?: string }[]) : [];
+            if (changes.length) {
+                return (
+                    <>
+                        {changes.map((c, i) => (
+                            <span key={c.field} className="block">
+                                {label(c.field)}: {c.from === null || c.from === undefined || c.from === '' ? <span className="text-text-secondary">empty</span> : factValue(c.field, c.from)} → <strong>{factValue(c.field, c.to)}</strong>{c.basis === 'ctc' ? <span className="text-text-secondary"> (said as CTC, not in-hand)</span> : c.basis === 'unclear' ? <span className="text-text-secondary"> (in-hand or CTC not said)</span> : null}
+                                {i === changes.length - 1 ? fromCall : null}
+                            </span>
+                        ))}
+                    </>
+                );
+            }
+            return <>{fields.map(label).join(', ')}{fromCall}</>;
         }
         case 'duplicate_flagged': {
             // Owner 2026-11-16: a second CV, or a row in another sheet: which copy, and how the person was first sourced.
@@ -181,7 +198,9 @@ function describe(a: CandidateAction): React.ReactNode {
         case 'call_logged': {
             const position = typeof a.meta.position === 'string' ? a.meta.position : null;
             const calledOn = typeof a.meta.calledOn === 'string' ? a.meta.calledOn : null;
-            return <>{a.toValue ?? 'Call'}{position ? ` · ${position}` : ''}{calledOn ? ` · ${formatDate(calledOn)}` : ''}</>;
+            // Owner 2026-11-17: which round the call was for.
+            const round = typeof a.meta.round === 'string' ? a.meta.round : null;
+            return <>{round ? `${round} · ` : ''}{a.toValue ?? 'Call'}{position ? ` · ${position}` : ''}{calledOn ? ` · ${formatDate(calledOn)}` : ''}</>;
         }
         case 'remark': {
             // Owner 2026-11-17: an interview scheduled, or a round's feedback, from the pipeline.
@@ -200,7 +219,14 @@ function describe(a: CandidateAction): React.ReactNode {
     }
 }
 
-const MODE_LABEL: Record<string, string> = { in_person: 'In person', video: 'Video call', phone: 'Phone' };
+/** A fact's value as people read it: rupees per month, days, or the text. */
+function factValue(field: string, value: unknown): string {
+    if (typeof value === 'number' && (field === 'currentInhand' || field === 'expectedInhand')) return `${formatInr(value)} / month`;
+    if (typeof value === 'number' && field === 'noticePeriodDays') return `${value} ${value === 1 ? 'day' : 'days'}`;
+    return String(value);
+}
+
+const MODE_LABEL: Record<string, string> ={ in_person: 'In person', video: 'Video call', phone: 'Phone' };
 const RECOMMENDATION_LABEL: Record<string, string> = { move_ahead: 'Move ahead', hold: 'Hold', reject: 'Reject' };
 const NOTE_LABEL: Record<string, string> = { interview: 'Interview scheduled', feedback: 'Interview feedback' };
 /** The entry's heading: an interview or feedback note reads as such, not as "Remark". */
