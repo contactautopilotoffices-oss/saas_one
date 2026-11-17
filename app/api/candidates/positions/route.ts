@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
+import { linkPositionJd } from "@/backend/lib/candidates/jd-library";
 import { createPosition, listPositions } from "@/backend/lib/candidates/positions";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess } from "../_lib/auth";
@@ -20,7 +21,11 @@ export async function GET(request: Request) {
   }
 }
 
-/** Save a job description as a position: { orgId, title, location?, department?, jdText?, jdFileName?, filters?, prefer?, targetDays? }. */
+/**
+ * Save a job description as a position: { orgId, title, location?, department?, jdText?, jdFileName?, filters?, prefer?,
+ * targetDays?, jdLibrary? }. jdLibrary (owner 2026-11-17): { jdId?, version?, save? }, the library JD it came from, or
+ * save its text to the library. `notice` says when the library could not be updated (the position is saved anyway).
+ */
 export async function POST(request: Request) {
   const body = await readJson(request);
   if (body instanceof NextResponse) return body;
@@ -30,8 +35,16 @@ export async function POST(request: Request) {
   if (limited) return limited;
   const fields = { ...body };
   delete fields.orgId;
+  const jdLibrary = fields.jdLibrary;
+  delete fields.jdLibrary;
   try {
-    return NextResponse.json({ position: await createPosition(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), fields) });
+    const by = await actorFor(auth.admin, auth.user);
+    const position = await createPosition(auth.admin, auth.orgId, by, fields);
+    const link = await linkPositionJd(auth.admin, auth.orgId, by, {
+      id: position.id, title: position.title, department: position.department,
+      jdText: typeof fields.jdText === "string" ? fields.jdText : null, jdFileName: position.jdFileName,
+    }, jdLibrary);
+    return NextResponse.json({ position: { ...position, jd: link.jd }, notice: link.notice });
   } catch (error) {
     return errorResponse(error, "Couldn't save the position");
   }

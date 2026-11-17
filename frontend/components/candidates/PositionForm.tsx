@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
-import { FileUp, Plus, Sparkles, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { BookOpen, FileUp, Plus, Search, Sparkles, X } from 'lucide-react';
 import type { SearchFilters } from '@/backend/lib/candidates/filters';
 import { draftFromPosition, emptyDraft, filtersFromDraft, preferFromDraft } from '@/backend/lib/candidates/position-draft';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import {
     EMPLOYMENT_TYPE_LABELS, EMPLOYMENT_TYPES, POSITION_PRIORITIES, PRIORITY_LABELS,
-    type EmploymentType, type Position, type PositionDraft, type PositionPriority, type PositionReadResponse,
+    type EmploymentType, type JdDetail, type JdSummary, type Position, type PositionDraft, type PositionPriority, type PositionReadResponse,
 } from '@/backend/lib/candidates/types';
-import { api } from './api';
+import { api, qs } from './api';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
 /*
@@ -30,6 +30,12 @@ export interface PositionSeed {
 }
 
 const JD_FILE_TYPES = '.pdf,.docx,.txt,.md';
+
+/**
+ * The library JD a position is opened from (owner 2026-11-17): which JD, which version, and its text then, so the
+ * form can tell when the text was changed (and offer to save the change as the JD's next version).
+ */
+export interface PositionJdLink { jdId: string; version: number; title: string; content: string }
 const SPLIT = /\s*\/\s*/;
 
 /** The draft as the form edits it: lists as text, numbers as strings, so typing never fights the state. */
@@ -100,7 +106,7 @@ const field = (label: string, id: string, input: React.ReactNode, hint?: string)
     </div>
 );
 
-export default function PositionForm({ open, orgId, seed, position, draft, onClose, onSaved }: {
+export default function PositionForm({ open, orgId, seed, position, draft, jdLink = null, onClose, onSaved }: {
     open: boolean; orgId: string;
     /** New position, from Search ("Save as a position"): the search as it stands. */
     seed?: PositionSeed;
@@ -108,6 +114,8 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
     position?: Position | null;
     /** New position from a JD already read by PositionsView: every field the readers filled. Wins over `seed`. */
     draft?: PositionDraft | null;
+    /** New position opened from the JD library (owner 2026-11-17). */
+    jdLink?: PositionJdLink | null;
     onClose: () => void; onSaved: (position: Position) => void;
 }) {
     const { notify, reportError } = useUi();
@@ -118,12 +126,23 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
     const [jdOpen, setJdOpen] = useState(false);
     const [notice, setNotice] = useState('');
     const fileRef = useRef<HTMLInputElement | null>(null);
+    // Owner 2026-11-17: the JD library. The JD this form's text came from (if any), and whether to save the text there.
+    const initialLink = (): PositionJdLink | null =>
+        jdLink ?? (position?.jd ? { jdId: position.jd.id, version: position.jd.version, title: position.jd.title, content: position.jdText ?? '' } : null);
+    const [link, setLink] = useState<PositionJdLink | null>(initialLink);
+    const [saveToLibrary, setSaveToLibrary] = useState(false);
+    const [picking, setPicking] = useState(false);
     // A fresh form each time it opens (the render-time reset the other dialogs in this folder use).
     const [seenOpen, setSeenOpen] = useState(open);
     if (open !== seenOpen) {
         setSeenOpen(open);
-        if (open) { setF(initial()); setNotice(draft ? 'Filled in from the JD. Check every field before saving.' : ''); setJdOpen(!position && !draft && !seed?.jdText); }
+        if (open) {
+            setF(initial()); setNotice(draft ? 'Filled in from the JD. Check every field before saving.' : ''); setJdOpen(!position && !draft && !seed?.jdText);
+            setLink(initialLink()); setSaveToLibrary(false); setPicking(false);
+        }
     }
+    const textChanged = !!link && f.jdText.trim() !== link.content.trim();
+    const linkChanged = (link?.jdId ?? null) !== (position?.jd?.id ?? null) || (link?.version ?? null) !== (position?.jd?.version ?? null);
     const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setF(s => ({ ...s, [key]: value }));
     const editing = !!position;
 
@@ -164,12 +183,19 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
             education: d.education, budgetMinInhand: d.budgetMinInhand, budgetMaxInhand: d.budgetMaxInhand, summary: d.summary,
             jdText: d.jdText || undefined, jdFileName: d.jdFileName, filters: filtersFromDraft(d), prefer: preferFromDraft(d),
         };
+        // Owner 2026-11-17: the library link. Sent when there is something to record: a new link, or a text to save.
+        const jdLibrary = link
+            ? (linkChanged || (textChanged && saveToLibrary) ? { jdId: link.jdId, version: link.version, save: textChanged && saveToLibrary } : undefined)
+            : saveToLibrary && f.jdText.trim() ? { save: true } : editing && position?.jd ? { jdId: null } : undefined;
+        const withLink = jdLibrary ? { ...body, jdLibrary } : body;
         const res = editing
-            ? await api<{ position: Position }>(`/api/candidates/positions/${encodeURIComponent(position.id)}`, { method: 'PATCH', json: body })
-            : await api<{ position: Position }>('/api/candidates/positions', { json: body });
+            ? await api<{ position: Position; notice?: string | null }>(`/api/candidates/positions/${encodeURIComponent(position.id)}`, { method: 'PATCH', json: withLink })
+            : await api<{ position: Position; notice?: string | null }>('/api/candidates/positions', { json: withLink });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         notify(editing ? `Position updated: ${res.data.position.title}` : `Position saved: ${res.data.position.title}`, 'success');
+        if (res.data.notice) notify(res.data.notice, 'info');
+        else if (res.data.position.jd && (saveToLibrary || textChanged)) notify(`JD saved in the library: ${res.data.position.jd.title} v${res.data.position.jd.version}`, 'success');
         onSaved(res.data.position);
     };
 
@@ -193,7 +219,8 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
                             <p className="text-xs text-text-secondary">{f.jdText ? `${f.jdFileName ?? 'Pasted text'} · ${f.jdText.length.toLocaleString('en-IN')} characters` : 'None yet. Paste or upload it and the AI fills the form.'}</p>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                            <input ref={fileRef} type="file" accept={JD_FILE_TYPES} className="sr-only" aria-label="Upload a job description" onChange={e => { const file = e.target.files?.[0]; if (file) void fillFrom(file); }} />
+                            <input ref={fileRef} type="file" accept={JD_FILE_TYPES} className="sr-only" aria-label="Upload a job description" onChange={e => { const file = e.target.files?.[0]; if (file) { setLink(null); void fillFrom(file); } }} />
+                            <button type="button" onClick={() => setPicking(p => !p)} aria-expanded={picking} disabled={reading || busy} className={BTN_SECONDARY}><BookOpen className="h-4 w-4" />From the library</button>
                             <button type="button" onClick={() => fileRef.current?.click()} disabled={reading || busy} className={BTN_SECONDARY}>{reading ? <Spinner /> : <FileUp className="h-4 w-4" />}Upload a JD</button>
                             <button type="button" onClick={() => setJdOpen(o => !o)} disabled={reading || busy} className={BTN_GHOST}>{jdOpen ? 'Hide the text' : f.jdText ? 'Show the text' : 'Paste a JD'}</button>
                         </div>
@@ -204,6 +231,32 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
                             <button type="button" onClick={() => void fillFrom(f.jdText)} disabled={reading || busy || !f.jdText.trim()} className={BTN_PRIMARY}>{reading ? <Spinner /> : <Sparkles className="h-4 w-4" />}{reading ? 'Reading…' : 'Fill in from the JD'}</button>
                         </div>
                     )}
+                    {picking && (
+                        <LibraryPicker orgId={orgId} onCancel={() => setPicking(false)} onPick={pick => {
+                            setPicking(false);
+                            setLink(pick);
+                            setF(s => ({ ...s, jdText: pick.content }));
+                            void fillFrom(pick.content);
+                        }} />
+                    )}
+                    {/* Owner 2026-11-17: where this JD sits in the library. */}
+                    {link ? (
+                        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
+                            <span><BookOpen className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden />From the library: <span className="font-semibold text-text-primary">{link.title} v{link.version}</span></span>
+                            {textChanged && (
+                                <label className="flex items-center gap-x-1.5 text-text-primary">
+                                    <input type="checkbox" checked={saveToLibrary} onChange={e => setSaveToLibrary(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                                    You changed the text: save it as a new version of {link.title}
+                                </label>
+                            )}
+                            <button type="button" onClick={() => { setLink(null); setSaveToLibrary(false); }} className="font-semibold text-primary-dark hover:underline">Unlink</button>
+                        </div>
+                    ) : f.jdText.trim() ? (
+                        <label className="mt-2 flex items-center gap-x-1.5 text-xs text-text-primary">
+                            <input type="checkbox" checked={saveToLibrary} onChange={e => setSaveToLibrary(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                            Save this JD to the library{f.title.trim() ? ` as "${f.title.trim()}"` : ''}, so it can be picked for the next opening
+                        </label>
+                    ) : null}
                     {notice && <p role="status" className="mt-2 text-xs text-text-secondary">{notice}</p>}
                 </section>
 
@@ -274,5 +327,62 @@ export default function PositionForm({ open, orgId, seed, position, draft, onClo
                 </section>
             </div>
         </Dialog>
+    );
+}
+
+/** The JD library, inline in the form: pick one and its current version fills the form (owner 2026-11-17). */
+function LibraryPicker({ orgId, onPick, onCancel }: { orgId: string; onPick: (link: PositionJdLink) => void; onCancel: () => void }) {
+    const { notify, reportError } = useUi();
+    const [jds, setJds] = useState<JdSummary[] | null>(null);
+    const [q, setQ] = useState('');
+    const [busy, setBusy] = useState<string | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ jds: JdSummary[] }>(`/api/candidates/jds${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); setJds([]); return; }
+            setJds(res.data.jds);
+        });
+        return () => ctrl.abort();
+    }, [orgId, notify, reportError]);
+    const pick = async (j: JdSummary) => {
+        setBusy(j.id);
+        const res = await api<{ jd: JdDetail }>(`/api/candidates/jds/${encodeURIComponent(j.id)}${qs({ orgId })}`);
+        setBusy(null);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        const v = res.data.jd.versions.find(x => x.version === res.data.jd.currentVersion) ?? res.data.jd.versions[0];
+        if (!v) { notify('That JD has no text yet.', 'error'); return; }
+        onPick({ jdId: j.id, version: v.version, title: res.data.jd.title, content: v.content });
+    };
+    const needle = q.trim().toLowerCase();
+    const shown = (jds ?? []).filter(j => !needle || `${j.title} ${j.department ?? ''}`.toLowerCase().includes(needle)).slice(0, 30);
+    return (
+        <div className="mt-3 space-y-2 rounded-lg bg-surface px-3 py-3 ring-1 ring-inset ring-border-subtle">
+            <div className="flex items-center gap-x-2">
+                <label className="relative flex flex-1 items-center">
+                    <span className="sr-only">Find a JD in the library</span>
+                    <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-tertiary" aria-hidden />
+                    <input value={q} onChange={e => setQ(e.target.value)} autoFocus placeholder="Find a JD by role or department" className={`${INPUT} h-9 pl-9 text-sm`} />
+                </label>
+                <button type="button" onClick={onCancel} className={BTN_GHOST}>Cancel</button>
+            </div>
+            {jds === null ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading the library</p>
+                : shown.length === 0 ? <p className="text-sm text-text-tertiary">{jds.length ? 'No JD matches that.' : 'The library is empty. Save a JD to it from here or from the JD library tab.'}</p>
+                : (
+                    <ul className="max-h-60 divide-y divide-border-subtle overflow-y-auto">
+                        {shown.map(j => (
+                            <li key={j.id}>
+                                <button type="button" onClick={() => void pick(j)} disabled={busy !== null} className="flex w-full items-center gap-x-3 px-1 py-2 text-left hover:bg-surface-elevated disabled:opacity-60">
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm font-semibold text-text-primary">{j.title} <span className="font-normal text-text-secondary">· v{j.currentVersion}{j.department ? ` · ${j.department}` : ''}</span></span>
+                                        <span className="block truncate text-xs text-text-tertiary">{j.preview}</span>
+                                    </span>
+                                    {busy === j.id && <Spinner className="h-3.5 w-3.5" />}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+        </div>
     );
 }

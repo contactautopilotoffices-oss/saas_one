@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
+import { linkPositionJd } from "@/backend/lib/candidates/jd-library";
 import { deletePosition, getPosition, updatePosition } from "@/backend/lib/candidates/positions";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../_lib/auth";
@@ -36,8 +37,17 @@ export async function PATCH(request: Request, { params }: Params) {
   if (limited) return limited;
   const fields = { ...body };
   delete fields.orgId;
+  // Owner 2026-11-17: { jdId?, version?, save? } links or saves the position's JD in the library.
+  const jdLibrary = fields.jdLibrary;
+  delete fields.jdLibrary;
   try {
-    return NextResponse.json({ position: await updatePosition(auth.admin, auth.orgId, id, fields) });
+    const position = await updatePosition(auth.admin, auth.orgId, id, fields);
+    if (jdLibrary === undefined) return NextResponse.json({ position });
+    const link = await linkPositionJd(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), {
+      id: position.id, title: position.title, department: position.department,
+      jdText: typeof fields.jdText === "string" ? fields.jdText : null, jdFileName: position.jdFileName,
+    }, jdLibrary);
+    return NextResponse.json({ position: { ...position, jd: link.jd ?? position.jd ?? null }, notice: link.notice });
   } catch (error) {
     return errorResponse(error, "Couldn't save the position");
   }

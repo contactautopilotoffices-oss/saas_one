@@ -68,6 +68,8 @@ export const SOURCING_MIGRATION = readFileSync(path.join("supabase", "migrations
 export const POSITION_DETAILS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000005_position_details.sql"), "utf8");
 /** Which round a call was for (owner 2026-11-17): call_analyses.call_round. */
 export const CALL_ROUNDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000001_call_rounds.sql"), "utf8");
+/** The JD library (owner 2026-11-17): JDs, their versions, and the version each position was opened from. */
+export const JD_LIBRARY_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000002_jd_library.sql"), "utf8");
 
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
@@ -90,6 +92,7 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(SOURCING_MIGRATION);
   if (options.resumeFields !== false) await db.exec(POSITION_DETAILS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(CALL_ROUNDS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(JD_LIBRARY_MIGRATION);
   return db;
 }
 

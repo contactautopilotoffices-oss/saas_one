@@ -84,6 +84,8 @@ export interface Position {
   /** Days since it was opened (until it was closed). */
   daysOpen: number;
   counts: Record<Stage, number>;
+  /** The library JD it was opened from (owner 2026-11-17); null when none, absent before migration 20261117000002. */
+  jd?: PositionJd | null;
 }
 
 /**
@@ -116,6 +118,45 @@ export interface PositionDraft {
   prefer: Preferences;
   jdText: string;
   jdFileName: string | null;
+}
+
+/**
+ * The JD library (owner 2026-11-17; migration 20261117000002): one job description per role, every saved text kept as
+ * a numbered version, and the version each position was opened from.
+ */
+export interface JdSummary {
+  id: string;
+  title: string;
+  department: string | null;
+  currentVersion: number;
+  /** The first lines of the current text, for the list. */
+  preview: string;
+  updatedAt: string;
+  updatedByName: string | null;
+  lastUsedAt: string | null;
+  /** Positions opened from this JD (any version). */
+  positions: number;
+}
+export interface JdVersion {
+  version: number;
+  content: string;
+  fileName: string | null;
+  note: string | null;
+  byName: string | null;
+  at: string;
+}
+export interface JdDetail extends JdSummary {
+  /** Newest first. */
+  versions: JdVersion[];
+  /** The positions opened from it, with the version each used. */
+  usedBy: { positionId: string; title: string; version: number; status: "open" | "closed" }[];
+}
+/** What a position records about the library JD it came from. */
+export interface PositionJd {
+  id: string;
+  title: string;
+  version: number;
+  currentVersion: number;
 }
 
 /** POST /api/candidates/positions/read: the draft the AI filled from a JD, for HR to check. */
