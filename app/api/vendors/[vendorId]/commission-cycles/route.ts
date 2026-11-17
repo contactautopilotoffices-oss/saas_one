@@ -1,12 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { resolveCaller, isCallerError, canUseProperty, propertyOrgId, forbidden } from '@/backend/lib/auth/callerAccess';
+import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 
 // GET: Fetch commission cycles for a vendor
+/** The vendor's owner may read its cycles; internal staff of the vendor's property may read and change them. */
+async function vendorAccess(request: NextRequest, vendorId: string, write: boolean): Promise<NextResponse | null> {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    const { data: vendor } = await supabaseAdmin.from('vendors').select('id, user_id, property_id').eq('id', vendorId).maybeSingle();
+    if (!vendor) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 });
+    if (!write && vendor.user_id && vendor.user_id === caller.userId) return null;
+    const orgId = vendor.property_id ? await propertyOrgId(vendor.property_id) : null;
+    return vendor.property_id && canUseProperty(caller, vendor.property_id, orgId) ? null : forbidden('Forbidden: no access to this vendor');
+}
+
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ vendorId: string }> }
 ) {
     const { vendorId } = await params;
+    const denied = await vendorAccess(request, vendorId, false);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -57,6 +72,8 @@ export async function POST(
     { params }: { params: Promise<{ vendorId: string }> }
 ) {
     const { vendorId } = await params;
+    const denied = await vendorAccess(request, vendorId, true);
+    if (denied) return denied;
     const supabase = await createClient();
 
     // Get vendor info
@@ -113,6 +130,8 @@ export async function PATCH(
     { params }: { params: Promise<{ vendorId: string }> }
 ) {
     const { vendorId } = await params;
+    const denied = await vendorAccess(request, vendorId, true);
+    if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
 

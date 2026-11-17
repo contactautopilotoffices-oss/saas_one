@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withOcrActivity } from '@/backend/lib/ocr/activity';
 import crypto from 'crypto';
 import { resolvePettyCashAccess, isPettyCashAccessError, readOrgId } from '@/backend/lib/pettyCash/access';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
@@ -47,7 +48,7 @@ CRITICAL RULES:
 6. confidence is a score from 0 to 100 based on clarity and legibility.
 7. Return ONLY the JSON object.`;
 
-export async function POST(request: NextRequest) {
+async function handlePost(request: NextRequest) {
     try {
         const access = await resolvePettyCashAccess(request, readOrgId(request));
         if (isPettyCashAccessError(access)) return access;
@@ -153,6 +154,8 @@ export async function POST(request: NextRequest) {
         if (dupResult.isDuplicate) {
             ocrData.is_duplicate_ref = true;
             ocrData.duplicate_warning = dupResult.reason;
+        } else if (dupResult.warning) {
+            ocrData.duplicate_warning = dupResult.warning; // shown to the user, does not block saving
         }
 
         // Track Vision model usage per request in petty_cash_activity
@@ -219,4 +222,13 @@ export async function POST(request: NextRequest) {
             error: e instanceof Error ? e.message : 'Internal OCR processing error',
         }, { status: 500 });
     }
+}
+
+/** The route, inside an OCR activity record. A response with an error status counts as a failed read. */
+export async function POST(request: NextRequest) {
+    return withOcrActivity(
+        { source: 'petty_cash' },
+        () => handlePost(request),
+        (res) => ({ ok: res.status < 400, error: res.status >= 400 ? `HTTP ${res.status}` : null }),
+    );
 }

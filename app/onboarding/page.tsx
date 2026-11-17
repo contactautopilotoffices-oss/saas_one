@@ -31,7 +31,12 @@ const AVAILABLE_ROLES = [
     { id: 'accounts', label: 'Accounts / Finance', desc: 'Payments, UTRs & petty-cash approvals', icon: '💰' },
     { id: 'bd_rep', label: 'BD Representative', desc: 'Sales rep — manage assigned leads & follow-ups', icon: '📈' },
     { id: 'bd_admin', label: 'BD Admin', desc: 'Manage all leads, team & CRM settings', icon: '🎯' },
+    { id: 'it', label: 'IT', desc: 'IT support, hardware & asset management', icon: '💻' },
+    { id: 'design', label: 'Design', desc: 'Design team workspace & shared files', icon: '🎨' },
 ];
+
+// Roles that join the organization directly, without a property step.
+const ORG_ONLY_ROLES = ['accounts', 'it', 'design'];
 
 const SKILL_OPTIONS: Record<string, { code: string; label: string; icon: any }[]> = {
     mst: [
@@ -233,14 +238,15 @@ export default function OnboardingPage() {
 
     const handleComplete = useCallback(async () => {
         if (!user || !selectedRole || !AUTOPILOT_ORG_ID) return;
-        if (selectedRole !== 'accounts' && !selectedProperty) return;
+        const isOrgOnlyRole = ORG_ONLY_ROLES.includes(selectedRole);
+        if (!isOrgOnlyRole && !selectedProperty) return;
 
         setSubmitting(true);
         setError('');
 
         try {
             // Resolve Property ID
-            let finalPropId = selectedRole === 'accounts' ? null : selectedProperty!.id;
+            let finalPropId = isOrgOnlyRole ? null : selectedProperty!.id;
             if (finalPropId === 'default') {
                 const { data: realProp } = await supabase.from('properties').select('id').eq('organization_id', AUTOPILOT_ORG_ID).limit(1).maybeSingle();
                 if (realProp) finalPropId = realProp.id;
@@ -283,8 +289,8 @@ export default function OnboardingPage() {
     };
 
     const nextStep = () => {
-        if (step === 2 && selectedRole === 'accounts') {
-            // Accounts joins the organization directly, without a property step.
+        if (step === 2 && selectedRole && ORG_ONLY_ROLES.includes(selectedRole)) {
+            // Accounts, IT and Design join the organization directly, without a property step.
             handleComplete();
         } else if (step === 3 && (selectedRole === 'mst' || selectedRole === 'staff')) {
             // Need to go to skills step
@@ -322,7 +328,7 @@ export default function OnboardingPage() {
 
     // Calculate total steps including skill step if relevant
     const showSkillsStep = selectedRole && (selectedRole === 'mst' || selectedRole === 'staff');
-    const totalSteps = selectedRole === 'accounts' ? 3 : showSkillsStep ? 5 : 4;
+    const totalSteps = selectedRole && ORG_ONLY_ROLES.includes(selectedRole) ? 3 : showSkillsStep ? 5 : 4;
 
 
     if ((loading || authLoading) && step === 0) {

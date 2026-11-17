@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { AlertTriangle, Clock, MapPin, ChevronDown, User, X, Trash2 } from 'lucide-react';
+import { AlertTriangle, Clock, MapPin, ChevronDown, User, X, Trash2, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
@@ -19,6 +19,7 @@ interface Ticket {
     sla_breached: boolean;
     confidence_score: number;
     is_vague: boolean;
+    internal?: boolean;
     category?: { id: string; name: string };
     assignee?: { full_name: string };
     creator?: { full_name: string };
@@ -684,6 +685,12 @@ export default function AdminSPOCDashboard({
                                             <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${ticket.status === 'resolved' ? 'bg-emerald-100 text-emerald-600' : ticket.status === 'in_progress' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-600'}`}>
                                                 {ticket.status?.replace(/_/g, ' ')}
                                             </span>
+                                            {ticket.internal && (
+                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase bg-slate-800 text-white">
+                                                    <Lock className="w-2.5 h-2.5" />
+                                                    Internal
+                                                </span>
+                                            )}
                                             <div className="ml-auto flex items-center gap-2">
                                                 {sla && (
                                                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${sla.color}`}>

@@ -27,8 +27,8 @@ const fmt = (iso?: string | null, withDay = true) => {
   const d = new Date(iso);
   return withDay ? d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 };
-const who = (x: any) => x?.context_snapshot?.sender?.name || 'Unknown person';
-const role = (x: any) => [x?.context_snapshot?.sender?.department, x?.context_snapshot?.sender?.role].filter(Boolean).join(' · ');
+// Owner privacy rule 2026-11-15: no sender name is shown (the API no longer sends one); only the role, when there is one.
+const role =(x: any) => [x?.context_snapshot?.sender?.department, x?.context_snapshot?.sender?.role].filter(Boolean).join(' · ');
 const titleOf = (x: any) => { const w = String(x?.ai_summary?.wanted || x?.message_text || '').replace(/^To\s+/i, '').replace(/\.$/, ''); return w.charAt(0).toUpperCase() + w.slice(1); };
 
 export default function BotReviewSection({ reviews: allReviews, developerItems, upgraded, busy, post, hasMore, loadOlder }: {
@@ -36,6 +36,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
 }) {
   const [tab, setTab] = useState<'review' | 'dev'>('review');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
   const reviews = allReviews.filter(r => !deletedIds.has(r.id));
   const [currentId, setCurrentId] = useState<string | null>(reviews[0]?.id ?? null);
@@ -127,7 +128,18 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
       <div role="tablist" className="flex gap-1 border-b border-slate-200 overflow-x-auto">
         {tabBtn('review', 'To review', waitingCount)}
         {upgraded && tabBtn('dev', 'Needs a developer', openDev)}
+        {/* Owner 2026-10-29: clear the whole To review list (approved tests and the developer list are kept). */}
+        {tab === 'review' && reviews.length > 0 && (
+          <button type="button" disabled={busy} onClick={() => setConfirmClearAll(true)} className="ml-auto self-center px-3 py-1.5 rounded-xl text-xs font-bold text-rose-700 hover:bg-rose-50 whitespace-nowrap disabled:opacity-50">🗑 Clear all</button>
+        )}
       </div>
+      {confirmClearAll && (
+        <div className="flex flex-wrap gap-2 items-center bg-rose-50 text-rose-900 rounded-xl p-3 text-sm">
+          <span>Delete every message waiting for review, including older ones not loaded yet? This cannot be undone. Approved tests and the developer list are kept.</span>
+          <button type="button" disabled={busy} onClick={async () => { const j = await post({ action: 'delete_all_reviews' }, { reload: 'all' }); setConfirmClearAll(false); if (j) { setDeletedIds(new Set(reviews.filter(r => !local[r.id]?.done).map(r => r.id))); setCurrentId(null); } }} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold">Yes, delete all</button>
+          <button type="button" onClick={() => setConfirmClearAll(false)} className="px-3 py-1.5 rounded-lg text-xs font-bold">Cancel</button>
+        </div>
+      )}
 
       {tab === 'review' && (!reviews.length ? <p className="text-sm text-slate-500 py-6 text-center">Nothing to review right now.</p> : (
         <div className="grid lg:grid-cols-[300px_minmax(0,1fr)] gap-4 items-start">
@@ -152,7 +164,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                   <button type="button" onClick={() => select(x.id)} aria-current={x.id === current?.id}
                     className="w-full text-left grid gap-1 px-3.5 py-3 pr-9 cursor-pointer">
                     <span className="text-sm font-semibold text-slate-900 truncate">{x.message_text}</span>
-                    <span className="text-[11px] text-slate-500">{who(x)} · {fmt(x.created_at)}</span>
+                    <span className="text-[11px] text-slate-500">{[role(x), fmt(x.created_at)].filter(Boolean).join(' · ')}</span>
                     <span className="flex">
                       {l?.done === 'ok' ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 rounded bg-emerald-100 text-emerald-800">Saved as test</span>
                         : l?.done === 'dev' ? <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 rounded bg-teal-100 text-teal-800">Sent to developer</span>
@@ -177,7 +189,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
             return (
               <div className="border border-slate-200 rounded-xl min-w-0" aria-live="polite">
                 <div className="flex flex-wrap gap-2 justify-between items-center px-4 py-3 border-b border-slate-200">
-                  <div><div className="font-black text-slate-900">{who(current)}</div><div className="text-xs text-slate-500">{[role(current), fmt(current.created_at)].filter(Boolean).join(' · ')}</div></div>
+                  <div>{role(current) && <div className="font-black text-slate-900">{role(current)}</div>}<div className="text-xs text-slate-500">{fmt(current.created_at)}</div></div>
                   <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700">Caught because: {triggerText(current.triggers)}</span>
                 </div>
 
@@ -242,7 +254,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                         <div className="space-y-2">
                           <label htmlFor="bot-review-fix" className="text-[11px] font-black uppercase tracking-wider text-slate-500">What should the bot have done?</label>
                           <textarea id="bot-review-fix" rows={3} value={fixText} onChange={e => setFixText(e.target.value)} className="w-full border border-slate-300 rounded-xl p-2.5 text-sm"
-                            placeholder="e.g. the user wanted his teammates' carry-forward tasks, the bot should have shown those instead of today's" />
+                          />
                           <p className="text-xs text-slate-500">Write it the way you&apos;d say it. The AI will rewrite the summary above for you to check again.</p>
                           <div className="flex flex-wrap gap-2">
                             <button type="button" disabled={busy || !fixText.trim()} onClick={rewrite} className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold disabled:opacity-50">{busy ? 'Rewriting…' : 'Rewrite summary'}</button>
@@ -290,7 +302,7 @@ export default function BotReviewSection({ reviews: allReviews, developerItems, 
                   <div className="bg-slate-50 rounded-lg p-2.5"><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">What to build or change</div>{s.fix || '—'}</div>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 items-center text-xs text-slate-500">
-                  <span>From {who(d)} · approved {fmt(d.reviewed_at || d.updated_at)}{d.reviewed_by ? ` by ${d.reviewed_by}` : ''}</span>
+                  <span>Approved {fmt(d.reviewed_at || d.updated_at)}{d.reviewed_by ? ` by ${d.reviewed_by}` : ''}</span>
                   <label className="flex items-center gap-1.5">Status
                     <select value={state} disabled={busy} onChange={e => void setDevState(d, e.target.value)} className="border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 bg-white">
                       {DEV_STATES.map(([k, v]) => <option key={k} value={k}>{v}</option>)}

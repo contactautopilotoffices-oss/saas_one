@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import AccountsDashboard from '@/frontend/components/accounts/AccountsDashboard';
-import FinanceOverview from '@/frontend/components/accounts/FinanceOverview';
 
 export const metadata: Metadata = {
     title: 'Payment Tracker | Autopilot',
@@ -10,8 +9,8 @@ export const metadata: Metadata = {
 export default function AccountsPage() {
     return (
         <div className="p-4 sm:p-6 lg:p-8">
-            <FinanceOverview />
-            {/* Anchor for the overview's click-throughs; the tracker owns its own tab state. */}
+            {/* The tracker leads the page. The overview tiles (FinanceOverview) were removed from
+                here on request; Procurement's Payment Tracker tab still renders them. */}
             <div id="payment-tracker" className="scroll-mt-24">
                 <AccountsDashboard />
             </div>

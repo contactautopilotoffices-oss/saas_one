@@ -197,6 +197,9 @@ const dependencies = {
     },
 };
 
+/** Unified Brain (backend/lib/aiLayer/brain/server.ts, 2026-11-14): the same room reads and the same booking function. */
+export const assistantRoomServices = { rooms, availableRooms, bookRange: dependencies.bookRange };
+
 export async function enqueueAssistantMessage(payload: Record<string, unknown>) {
     return rpc('whatsapp_assistant_enqueue', { p_payload: payload });
 }
@@ -209,7 +212,22 @@ export async function drainWhatsAppPhone(phone: string) {
         return advanceConversation(input, current, { ...deps, bookRange: dependencies.bookRange,
             settings: organizationSettings, interpret: async (turn: {workflow:string;text:string;pending?:string[]}) => {
                 const started = Date.now();
-                const result = await interpretTurn(turn);
+                // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the
+                // interpreter's own model, as before. A chosen model that fails costs one attempt: its own model is then tried once.
+                let chosen = '';
+                let rest: (() => void) | null = null;
+                try {
+                    const choice = await import('@/task-manager/ai/modelFor');
+                    chosen = await choice.modelFor('assistant_interpret', '');
+                    rest = () => choice.markFailed('assistant_interpret');
+                } catch { chosen = ''; }
+                // A choice equal to the interpreter's own model is not a choice: nothing is tried twice.
+                if (chosen === (process.env.GROQ_TASK_CHAT_MODEL || 'llama-3.3-70b-versatile')) chosen = '';
+                let result = await interpretTurn(turn, chosen ? { model: chosen } : {});
+                if (chosen && !result.ok && 'reason' in result && !['not_configured', 'invalid_input'].includes(String(result.reason))) {
+                    rest?.();
+                    result = await interpretTurn(turn);
+                }
                 console.info('[WhatsAppInterpreter]', {workflow:turn.workflow,accepted:result.ok,reason:'reason' in result ? result.reason : 'intent' in result ? result.intent : 'unknown',durationMs:Date.now()-started});
                 return result;
             }, quote: lookupQuotedContext,

@@ -28,8 +28,14 @@ const TONE: Record<CheckState, { Icon: typeof Check; cls: string; ring: string }
 
 export default function AgentPreflight({ orgId, agentKey }: { orgId: string; agentKey: string }) {
     const [data, setData] = useState<Payload | null>(null);
+    const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
 
+    /**
+     * An error body ({error}) used to be stored as if it were a checklist, and
+     * the first `data.checks.filter` threw — taking the whole Configure tab down.
+     * A non-JSON 500 left the panel silently blank. Both now say what happened.
+     */
     const load = async () => {
         setLoading(true);
         try {
@@ -37,7 +43,17 @@ export default function AgentPreflight({ orgId, agentKey }: { orgId: string; age
                 `/api/agents/preflight?orgId=${encodeURIComponent(orgId)}&agentKey=${encodeURIComponent(agentKey)}`,
                 { cache: 'no-store' },
             );
-            setData((await res.json()) as Payload);
+            const json = (await res.json().catch(() => null)) as (Payload & { error?: string }) | null;
+            if (!res.ok || !json || !Array.isArray(json.checks)) {
+                setData(null);
+                setError(json?.error ?? `The readiness check failed (HTTP ${res.status}).`);
+            } else {
+                setData(json);
+                setError(null);
+            }
+        } catch (e) {
+            setData(null);
+            setError((e as Error).message);
         } finally { setLoading(false); }
     };
     useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [orgId, agentKey]);
@@ -49,7 +65,16 @@ export default function AgentPreflight({ orgId, agentKey }: { orgId: string; age
             </div>
         );
     }
-    if (!data) return null;
+    if (!data) {
+        return (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-[12.5px] text-rose-800">
+                <span>Could not check whether this agent is ready: {error ?? 'no answer from the server.'}</span>
+                <button type="button" onClick={() => void load()} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-card px-2.5 py-1.5 text-[12px]">
+                    <RefreshCw className="h-3.5 w-3.5" /> Re-check
+                </button>
+            </div>
+        );
+    }
 
     const blocking = data.checks.filter((c) => c.state === 'blocking').length;
 
@@ -58,7 +83,7 @@ export default function AgentPreflight({ orgId, agentKey }: { orgId: string; age
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                     <h4 className="text-[13px] font-semibold text-foreground">
-                        {blocking ? 'Not ready yet' : data.canSend ? 'Ready — it will run and send' : 'Ready to run'}
+                        {blocking || !data.canRun ? 'Not ready yet' : data.canSend ? 'Ready — it will run and send' : 'Ready to run'}
                     </h4>
                     <p className="mt-0.5 text-[12.5px] text-text-secondary">{data.summary}</p>
                 </div>

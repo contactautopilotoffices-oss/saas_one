@@ -58,6 +58,16 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         if (slots.length === 0) fetchSlots();
     }, [fetchSlots, slots.length]);
 
+    useEffect(() => {
+        if (!propertyId || !canViewAll) return;
+        fetch(`/api/companies?propertyId=${propertyId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) setCompanies(data);
+            })
+            .catch(err => console.error('Error fetching companies for booking:', err));
+    }, [propertyId, canViewAll]);
+
     const wheelRef = useRef<HTMLDivElement>(null);
     const [pendingBooking, setPendingBooking] = useState<{ room: any; slot: any } | null>(null);
     const [isBooking, setIsBooking] = useState(false);
@@ -68,6 +78,10 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     const [showHistory, setShowHistory] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     const [deletingId, setDeletingId] = useState<string | null>(null);
+
+    // Company selection for admins/staff
+    const [companies, setCompanies] = useState<{ id: string; name: string }[]>([]);
+    const [bookingCompanyId, setBookingCompanyId] = useState<string>('');
 
     // Credit state
     const [credit, setCredit] = useState<{ remaining_hours: number; monthly_hours: number } | null>(() => getCachedData(creditCacheKey) || null);
@@ -254,6 +268,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         setBookingSuccess(false);
         setBookingComment('');
         setAttendeeEmail('');
+        setBookingCompanyId('');
     };
 
     const handleConfirmBook = async () => {
@@ -273,7 +288,8 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                     startTime: slot.start,
                     endTime: slot.end,
                     comment: bookingComment,
-                    attendeeEmail: attendeeEmail.trim() || undefined
+                    attendeeEmail: attendeeEmail.trim() || undefined,
+                    companyId: (canViewAll && bookingCompanyId) ? bookingCompanyId : undefined
                 })
             });
             const data = await res.json();
@@ -285,7 +301,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                 fetchRooms();
                 fetchCredit();
                 fetchMyBookings();
-                setTimeout(() => { setPendingBooking(null); setBookingSuccess(false); setAttendeeEmail(''); }, 1800);
+                setTimeout(() => { setPendingBooking(null); setBookingSuccess(false); setAttendeeEmail(''); setBookingCompanyId(''); }, 1800);
             } else {
                 setBookingError(data.error || 'Failed to create booking');
             }
@@ -424,7 +440,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                 className="flex items-center gap-2 px-3.5 py-2 bg-primary text-text-inverse rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm"
                             >
                                 <Calendar className="w-4 h-4" />
-                                <span>+ Book New Room</span>
+                                <span>Book New Room</span>
                             </button>
                         )}
                     </div>
@@ -658,6 +674,31 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
                                         <p className="text-[11px] text-muted-foreground">ends {pendingBooking.slot.endLabel || pendingBooking.slot.end}</p>
                                     </div>
                                 </div>
+
+                                {/* Company Selector (for Property Admins / Staff booking for a client) */}
+                                {/* Company Selector (strictly for Property Admins booking on behalf of a client) */}
+                                {canViewAll && companies.length > 0 && (
+                                    <div className="px-5 py-3 border-b border-border">
+                                        <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 block">
+                                            Attach Company / Client (Optional)
+                                        </label>
+                                        <select
+                                            value={bookingCompanyId}
+                                            onChange={(e) => setBookingCompanyId(e.target.value)}
+                                            className="w-full px-3 py-2 text-sm bg-muted/50 border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 text-foreground font-medium"
+                                        >
+                                            <option value="">-- Internal / Staff Booking (No Company) --</option>
+                                            {companies.map(c => (
+                                                <option key={c.id} value={c.id}>{c.name}</option>
+                                            ))}
+                                        </select>
+                                        {bookingCompanyId && (
+                                            <p className="text-[10px] text-primary font-bold mt-1">
+                                                Credits will be deducted from this company's account.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Attendee / Guest Email */}
                                 <div className="px-5 py-3 border-b border-border">

@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Upload, CheckCircle2, Loader2, FileText, X } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface Props {
     vendorId: string;
@@ -156,7 +157,7 @@ export default function VendorKYCForm({ vendorId, vendor, onSaved }: Props) {
                                 <div className="flex items-center justify-between mb-2">
                                     <span className="text-sm font-medium text-gray-700">{label}</span>
                                     {uploaded && (
-                                        <a href={vendorData[urlField]} target="_blank" rel="noopener noreferrer"
+                                        <a href={maskStorageUrl(vendorData[urlField]) || vendorData[urlField]} target="_blank" rel="noopener noreferrer"
                                             className="flex items-center gap-1 text-xs text-blue-600 hover:underline">
                                             <FileText className="w-3 h-3" /> View
                                         </a>

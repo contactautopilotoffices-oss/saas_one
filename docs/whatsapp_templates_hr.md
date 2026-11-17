@@ -211,6 +211,90 @@ Submit these exact template specifications to **Meta WhatsApp Business Manager /
 
 ---
 
+## 1b. Recruitment: candidate updates (owner 2026-11-16)
+
+Sent from the Recruitment module (the pipeline's Shortlisted / Rejected prompt, or the candidate panel's "Send update") through `backend/lib/candidates/outreach.ts`. A person clicks Send every time. The AiSensy campaign name is the template name unless `AISENSY_CANDIDATE_SHORTLISTED_CAMPAIGN` / `AISENSY_CANDIDATE_NOT_SHORTLISTED_CAMPAIGN` say otherwise. The body in the code's preview must say the same as the approved template.
+
+### Template 10: Candidate shortlisted
+* **Template Name**: `candidate_shortlisted_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Thank you for speaking with us about the {{2}} role at Autopilot Offices. We're happy to let you know that you have been shortlisted for the next round.
+
+  Our recruiter will call you shortly with the next steps.
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name (e.g. *Prakash*)
+  * `{{2}}`: Role (e.g. *Assistant Manager – Operations*)
+
+### Template 11: Candidate not shortlisted
+* **Template Name**: `candidate_not_shortlisted_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Thank you for your time and interest in the {{2}} role at Autopilot Offices. After careful review, we will not be moving forward with your application for this position.
+
+  We will keep your profile with us and reach out when a suitable role opens up. We wish you the very best.
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name
+  * `{{2}}`: Role
+
+---
+
+### 1c. Hiring requests (manpower requisitions) — owner 2026-11-17
+
+Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only (the approver, the manager who raised the request, the escalation recipients). The AiSensy campaign names come from `AISENSY_REQUISITION_AWAITING_CAMPAIGN`, `AISENSY_REQUISITION_REMINDER_CAMPAIGN`, `AISENSY_REQUISITION_ESCALATED_CAMPAIGN` and `AISENSY_REQUISITION_DECIDED_CAMPAIGN`; unset, that event goes by email only. Email never waits for these.
+
+#### Template: Hiring request awaiting approval
+* **Template Name**: `requisition_awaiting_v1`
+* **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+  Hiring request *{{2}}* for *{{3}}*, raised by {{4}}, awaits your approval.
+  Review and decide here: {{5}}
+  The link works once, for 7 days. You can also decide from the app under Hiring requests.
+  ```
+* `{{1}}` approver's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` raised by · `{{5}}` the one-time decision link (or the app link)
+
+#### Template: Hiring request reminder
+* **Template Name**: `requisition_reminder_v1` · same parameters as above; body starts "Reminder: hiring request *{{2}}* for *{{3}}* has waited for your decision."
+
+#### Template: Hiring request escalated
+* **Template Name**: `requisition_escalated_v1`
+* **Body Text**:
+  ```text
+  Hiring request *{{1}}* for *{{2}}* has waited over 72 hours for {{3}}'s decision. Raised by {{4}}. Open the app under Hiring requests.
+  ```
+* `{{1}}` request number · `{{2}}` role title · `{{3}}` the approver it waits on · `{{4}}` raised by
+
+#### Template: Hiring request decided
+* **Template Name**: `requisition_decided_v1`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+  Your hiring request *{{2}}* for *{{3}}* was {{4}}.
+  {{5}}
+  Open the app under Hiring requests for the details.
+  ```
+* `{{1}}` manager's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` approved / rejected / sent back for changes / put on hold / taken off hold / approved in plan by the HR Head · `{{5}}` the reason, or "-"
+
+---
+
 ## 2. HTML Email Templates
 
 Below are clean, responsive HTML email templates for all notification triggers.

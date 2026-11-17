@@ -48,6 +48,7 @@ import {
   Search,
   QrCode,
   Wrench,
+  Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { compressImage } from "@/frontend/utils/image-compression";
@@ -64,6 +65,9 @@ import { Toast } from "@/frontend/components/ui/Toast";
 import ProcurementComparativeFlow from "@/frontend/components/dashboard/ProcurementComparativeFlow";
 import LogAssetWorkModal from "@/frontend/components/assets/LogAssetWorkModal";
 import { SLABreachDetailsCard } from "@/frontend/components/tickets/SLABreachDetailsCard";
+import TicketAttachments from "@/frontend/components/tickets/TicketAttachments";
+import { maskStorageUrl } from "@/frontend/utils/storageUrl";
+import { confidenceLabel } from "@/backend/lib/ticketing/confidenceWord";
 
 // Types
 interface Ticket {
@@ -113,6 +117,8 @@ interface Ticket {
   current_escalation_level?: number;
   hierarchy_id?: string | null;
   escalation_paused?: boolean;
+  internal?: boolean;
+  is_internal?: boolean;
 }
 
 interface Activity {
@@ -418,14 +424,24 @@ export default function TicketDetailPage() {
       if (isUuid) {
         ticketQuery = ticketQuery.eq("id", targetId);
       } else {
-        ticketQuery = ticketQuery.or(`ticket_number.eq.${targetId},ticket_number.eq.${cleanNum},ticket_number.eq.TKT-${cleanNum}`);
+        ticketQuery = ticketQuery.or(`ticket_number.ilike.${targetId},ticket_number.eq.${targetId},ticket_number.eq.${cleanNum},ticket_number.eq.TKT-${cleanNum}`);
       }
 
       const { data: t, error } = await ticketQuery.maybeSingle();
 
       if (error) throw error;
       if (!t) throw { message: "Ticket not found", code: "NOT_FOUND" };
+      if (t.photo_before_url) t.photo_before_url = maskStorageUrl(t.photo_before_url);
+      if (t.photo_after_url) t.photo_after_url = maskStorageUrl(t.photo_after_url);
+      if (t.video_before_url) t.video_before_url = maskStorageUrl(t.video_before_url);
+      if (t.video_after_url) t.video_after_url = maskStorageUrl(t.video_after_url);
       setTicket(t);
+
+      // Obfuscate raw UUID in browser address bar by replacing with clean ticket number
+      if (isUuid && t.ticket_number && typeof window !== 'undefined') {
+        const cleanUrl = `/tickets/${t.ticket_number}${window.location.search}`;
+        window.history.replaceState(null, '', cleanUrl);
+      }
 
       // Fire all secondary lookups concurrently in parallel to eliminate sequential network latency
       const secondaryTasks: Promise<any>[] = [
@@ -563,7 +579,7 @@ export default function TicketDetailPage() {
       }
 
       if (!skipRoleCheck && currentUserId && t.property_id) {
-        secondaryTasks.push(determineUserRole(currentUserId, t.property_id));
+        secondaryTasks.push(determineUserRole(currentUserId, t.property_id, t.assigned_to));
       }
 
       await Promise.all(secondaryTasks);
@@ -736,7 +752,7 @@ export default function TicketDetailPage() {
     }
   };
 
-  const determineUserRole = async (uid: string, propertyId: string) => {
+  const determineUserRole = async (uid: string, propertyId: string, assignedTo?: string | null) => {
     try {
       // 1. Check if master_admin in users table
       const { data: userProfile } = await supabase
@@ -773,6 +789,13 @@ export default function TicketDetailPage() {
         if (orgMembers && orgMembers.length > 0) {
           setTicketOrgId(orgMembers[0].organization_id);
         }
+        return;
+      }
+
+      // Owner 2026-11-02: the org-level IT team works a ticket assigned to them the way an MST does
+      // (only that ticket; any other ticket falls through to the checks below).
+      if (assignedTo === uid && orgMembers?.some((m) => m.role === "it")) {
+        setUserRole("mst");
         return;
       }
 
@@ -1364,20 +1387,18 @@ export default function TicketDetailPage() {
 
       if (uploadError) throw uploadError;
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("ticket_photos").getPublicUrl(fileName);
+      const proxyUrl = `/api/storage/ticket_photos/${fileName}`;
 
       const { error: dbError } = await supabase
         .from("tickets")
-        .update({ [updateField]: publicUrl })
+        .update({ [updateField]: proxyUrl })
         .eq("id", ticketId);
 
       if (dbError) throw dbError;
 
-      // Update state immediately with public URL and clear spinner
+      // Update state immediately with masked URL and clear spinner
       setTicket((prev) =>
-        prev ? { ...prev, [updateField]: publicUrl } : null,
+        prev ? { ...prev, [updateField]: proxyUrl } : null,
       );
       setUploading(false);
       showToast(
@@ -1387,7 +1408,7 @@ export default function TicketDetailPage() {
 
       // Log activity in background without blocking UI
       const takenAt = new Date(file.lastModified).toISOString();
-      logActivity(`photo_${type}_uploaded`, takenAt, publicUrl).catch(console.error);
+      logActivity(`photo_${type}_uploaded`, takenAt, proxyUrl).catch(console.error);
     } catch (err: any) {
       // Revert to old value on error
       setTicket((prev) => (prev ? { ...prev, [updateField]: oldVal } : null));
@@ -1419,23 +1440,21 @@ export default function TicketDetailPage() {
 
       if (uploadError) throw uploadError;
 
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("ticket_videos").getPublicUrl(fileName);
+      const proxyUrl = `/api/storage/ticket_videos/${fileName}`;
 
       const { error: dbError } = await supabase
         .from("tickets")
-        .update({ [updateField]: publicUrl })
+        .update({ [updateField]: proxyUrl })
         .eq("id", ticketId);
 
       if (dbError) throw dbError;
 
       const takenAt = new Date(file.lastModified).toISOString();
-      await logActivity(`video_${type}_uploaded`, takenAt, publicUrl);
+      await logActivity(`video_${type}_uploaded`, takenAt, proxyUrl);
 
-      // Final update with actual public URL
+      // Final update with masked proxy URL
       setTicket((prev) =>
-        prev ? { ...prev, [updateField]: publicUrl } : null,
+        prev ? { ...prev, [updateField]: proxyUrl } : null,
       );
       showToast(
         `${type.charAt(0).toUpperCase() + type.slice(1)} video uploaded`,
@@ -1584,8 +1603,8 @@ export default function TicketDetailPage() {
         // Only use `from` if it's an absolute path (starts with /), not a tab name like "requests"
         const destination =
           (from?.startsWith("/") ? from : null) ||
-          (isOrgAdminUser && effectiveOrgId
-            ? `/org/${effectiveOrgId}/dashboard`
+          (isOrgAdminUser
+            ? '/dashboard'
             : `/property/${ticket?.property_id}/${userRole === "admin" ? "dashboard" : userRole === "mst" ? "mst" : userRole === "staff" ? "staff" : "tenant"}?tab=requests`);
         router.push(destination);
       }, 1000);
@@ -1613,8 +1632,8 @@ export default function TicketDetailPage() {
 
     // Direct link fallback
     const effectiveOrgId = ticketOrgId || (ticket?.property as any)?.organization_id;
-    if (isOrgAdminUser && effectiveOrgId) {
-      router.push(`/org/${effectiveOrgId}/dashboard`);
+    if (isOrgAdminUser) {
+      router.push('/dashboard');
       return;
     }
 
@@ -1784,6 +1803,19 @@ export default function TicketDetailPage() {
                 {ticket.priority} Priority
               </span>
 
+              {(ticket.internal || ticket.is_internal) && (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-0 rounded border text-[10px] font-bold uppercase tracking-widest leading-none h-6 ${
+                    isDark
+                      ? "bg-slate-700 border-slate-600 text-slate-100"
+                      : "bg-slate-800 border-slate-800 text-white"
+                  }`}
+                >
+                  <Lock className="w-3 h-3" />
+                  Internal
+                </span>
+              )}
+
               {(ticket as any).classification_source === "llm" && (
                 <span
                   className={`inline-flex items-center gap-1.5 px-3 py-0 ${isDark ? "bg-primary/20 border-primary/30 text-primary-light" : "bg-primary/10 border-primary/20 text-primary"} border rounded text-[10px] font-bold uppercase tracking-widest leading-none h-6 animate-pulse`}
@@ -1862,65 +1894,53 @@ export default function TicketDetailPage() {
                 </div>
               </div>
 
-              {/* Sleek AI Classification Details in Header */}
-              <div
-                className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
-                    ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
-                    : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
-                  }`}
-              >
-                <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
-                      AI Classification:
-                    </span>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">
-                      {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
-                    </span>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      ({ticket.skill_group?.name || "Technical"} Skill Group)
-                    </span>
-                    {ticket.confidence_score && (
-                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
-                        {ticket.confidence_score}% Confidence
-                      </span>
-                    )}
+              {/* Sleek AI Classification Details in Header. Who sorted the ticket decides what is shown: the AI's own
+                  rating ("72% (Medium)") only when the AI sorted it; never an invented reason (owner 2026-11-15). */}
+              {(() => {
+                const source = ticket.classification_source;
+                const score = typeof ticket.confidence_score === "number" ? ticket.confidence_score : null;
+                const reasoning = (ticket as Ticket & { llm_reasoning?: string | null }).llm_reasoning;
+                const label = source === "llm" ? "AI classification:" : source === "rule" || source === "manual" ? "Classification:" : "AI Classification:";
+                const badge = source === "rule" ? "Sorted by keyword rules"
+                  : source === "manual" ? "Set by a person"
+                    : score !== null ? confidenceLabel(score) : null;
+                const why = reasoning ? reasoning
+                  : source === "rule" ? "Sorted by keyword rules, because the AI was not available."
+                    : source === "manual" ? "The category was set by a person."
+                      : "No reason was recorded.";
+                return (
+                  <div
+                    className={`flex items-start gap-2.5 px-4 py-2.5 rounded-2xl border text-xs leading-relaxed ${isDark
+                        ? "bg-indigo-950/30 border-indigo-900/40 text-indigo-200"
+                        : "bg-indigo-50/70 border-indigo-100/80 text-indigo-900 shadow-sm"
+                      }`}
+                  >
+                    <Brain className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="font-black text-indigo-500 text-[10px] uppercase tracking-wider">
+                          {label}
+                        </span>
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          ({ticket.skill_group?.name || "Technical"} Skill Group)
+                        </span>
+                        {badge && (
+                          <span className="px-1.5 py-0.2 rounded text-[10px] font-bold tracking-wide tabular-nums bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
+                            {badge}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
+                        <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
+                        {why}
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5">
-                    <span className="font-bold text-slate-700 dark:text-slate-200">Why this category: </span>
-                    {(() => {
-                      if ((ticket as any).llm_reasoning) {
-                        return (ticket as any).llm_reasoning;
-                      }
-                      const text = `${ticket.title || ""} ${ticket.description || ""}`.toLowerCase();
-                      const detectedKeywords: string[] = [];
-
-                      if (text.includes("race box") || text.includes("raceway") || text.includes("workstation") || text.includes("cable") || text.includes("wire") || text.includes("wiring") || text.includes("switch") || text.includes("plug") || text.includes("power") || text.includes("socket")) {
-                        detectedKeywords.push("workstation raceway / wiring fixtures");
-                      }
-                      if (text.includes("ac") || text.includes("cooling") || text.includes("temperature") || text.includes("hvac") || text.includes("vent") || text.includes("blower")) {
-                        detectedKeywords.push("HVAC cooling / air flow terms");
-                      }
-                      if (text.includes("leak") || text.includes("pipe") || text.includes("water") || text.includes("flush") || text.includes("drain") || text.includes("tap") || text.includes("dripping")) {
-                        detectedKeywords.push("plumbing / water flow indicators");
-                      }
-                      if (text.includes("door") || text.includes("lock") || text.includes("handle") || text.includes("glass") || text.includes("chair") || text.includes("table") || text.includes("drawer") || text.includes("falls down") || text.includes("broken")) {
-                        detectedKeywords.push("physical fixture damage / structural components");
-                      }
-                      if (text.includes("clean") || text.includes("spill") || text.includes("dust") || text.includes("trash") || text.includes("stain")) {
-                        detectedKeywords.push("housekeeping & cleaning request markers");
-                      }
-
-                      const keywordSnippet = detectedKeywords.length > 0
-                        ? `Triggered by keywords in description (${detectedKeywords.join(", ")})`
-                        : `NLP engine evaluated the title & description keywords`;
-
-                      return `${keywordSnippet} and routed to ${ticket.skill_group?.name || "technical resolver"} for physical resolution.`;
-                    })()}
-                  </p>
-                </div>
-              </div>
+                );
+              })()}
             </div>
           </div>
           <div className="text-right mt-2 sm:mt-0">
@@ -2887,6 +2907,9 @@ export default function TicketDetailPage() {
               </div>
             </div>
 
+            {/* Attachments — documents / images on the request (anyone who can open it may view and add) */}
+            <TicketAttachments ticketId={String(ticketId)} isDark={isDark} />
+
             {/* Escalation Timeline */}
             {escalationLogs.length > 0 && (
               <div
@@ -3391,11 +3414,14 @@ export default function TicketDetailPage() {
                             <Eye className="w-3.5 h-3.5" /> Received Item Photos ({req.delivery_photos.length})
                           </p>
                           <div className="flex flex-wrap gap-2">
-                            {req.delivery_photos.map((url: string, idx: number) => (
-                              <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
-                                <img src={url} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
-                              </a>
-                            ))}
+                            {req.delivery_photos.map((url: string, idx: number) => {
+                              const safeUrl = maskStorageUrl(url) || url;
+                              return (
+                                <a key={idx} href={safeUrl} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-lg border border-slate-200 dark:border-[#30363d]">
+                                  <img src={safeUrl} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                                </a>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -4013,7 +4039,7 @@ export default function TicketDetailPage() {
                                   <span className={`ml-1 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
                                     {act.new_value.startsWith("http") ? (
                                       <a
-                                        href={act.new_value}
+                                        href={maskStorageUrl(act.new_value) || act.new_value}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 text-blue-500 rounded-md hover:bg-blue-500/20 transition-colors font-bold"

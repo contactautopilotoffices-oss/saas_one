@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, X } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle, X, Download } from 'lucide-react';
+import { downloadTemplateFromUrl } from '@/frontend/utils/downloadTemplate';
 
 interface SnagUploaderProps {
     propertyId: string;
@@ -196,18 +197,40 @@ export default function SnagUploader({
                 </div>
             )}
 
-            {/* Template hint */}
+            {/* Template hint & download */}
             <div
-                className="mt-4 p-3 rounded-lg flex items-start gap-2"
+                className="mt-4 p-3 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                 style={{ background: 'var(--info)/10' }}
             >
-                <AlertCircle className="w-4 h-4 mt-0.5 text-[var(--info)]" />
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                    <p className="font-medium">CSV Template Format:</p>
-                    <code className="text-xs block mt-1 p-2 rounded" style={{ background: 'var(--surface-elevated)' }}>
-                        issue_description,issue_date<br />
-                        "AC not cooling properly",15-01-2026
-                    </code>
+                <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5 text-[var(--info)] shrink-0" />
+                    <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                        <p className="font-medium">Accepted Template Format (DD-MM-YYYY):</p>
+                        <code className="text-xs block mt-1 p-2 rounded" style={{ background: 'var(--surface-elevated)' }}>
+                            issue_description,issue_date<br />
+                            &quot;AC not cooling properly&quot;,15-01-2026
+                        </code>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    <button
+                        type="button"
+                        onClick={() => downloadTemplateFromUrl('/api/tickets/bulk-import/template?format=xlsx', 'snag_import_template.xlsx').catch(err => onError(err.message))}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors hover:opacity-80 cursor-pointer"
+                        style={{ borderColor: 'var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+                    >
+                        <Download className="w-3.5 h-3.5" />
+                        Template (.xlsx)
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => downloadTemplateFromUrl('/api/tickets/bulk-import/template?format=csv', 'snag_import_template.csv').catch(err => onError(err.message))}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors hover:opacity-80 cursor-pointer"
+                        style={{ borderColor: 'var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+                    >
+                        <Download className="w-3.5 h-3.5" />
+                        CSV
+                    </button>
                 </div>
             </div>
         </div>

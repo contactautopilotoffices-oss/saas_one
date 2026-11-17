@@ -85,7 +85,8 @@ export async function defaultWatchdogIO(): Promise<WatchdogIO> {
     return {
         async listOverdue(olderThan, newerThan) {
             const { data, error } = await table().select('id, message_id, phone, phone_key, received_at')
-                .not('route', 'is', null).is('replied_at', null).is('apology_sent_at', null)
+                // 'brain' (2026-11-14): a message the Unified Brain took and could not answer gets the same apology
+                .in('route', ['task_import', 'smart_chat', 'task_router', 'brain']).is('replied_at', null).is('apology_sent_at', null)
                 .lt('received_at', olderThan).gte('received_at', newerThan)
                 .order('received_at', { ascending: true }).limit(200);
             if (error) throw error;

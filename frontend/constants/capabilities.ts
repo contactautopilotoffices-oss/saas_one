@@ -16,6 +16,36 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
         petty_cash: ['view', 'create', 'update', 'approve', 'delete'],
         accounts: ['view', 'create', 'update', 'approve', 'delete']
     },
+    org_super_admin: {
+        users: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        properties: ['view', 'create', 'update', 'delete'],
+        tickets: ['view', 'create', 'update', 'approve', 'assign', 'delete'],
+        assets: ['view', 'create', 'update', 'delete'],
+        procurement: ['view', 'create', 'update', 'approve', 'delete'],
+        visitors: ['view', 'create', 'update', 'delete'],
+        security: ['view', 'create', 'update', 'delete'],
+        dashboards: ['view'],
+        reports: ['view'],
+        vendors: ['view', 'create', 'update', 'delete'],
+        crm: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        petty_cash: ['view', 'create', 'update', 'approve', 'delete'],
+        accounts: ['view', 'create', 'update', 'approve', 'delete']
+    },
+    director: {
+        users: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        properties: ['view', 'create', 'update', 'delete'],
+        tickets: ['view', 'create', 'update', 'approve', 'assign', 'delete'],
+        assets: ['view', 'create', 'update', 'delete'],
+        procurement: ['view', 'create', 'update', 'approve', 'delete'],
+        visitors: ['view', 'create', 'update', 'delete'],
+        security: ['view', 'create', 'update', 'delete'],
+        dashboards: ['view'],
+        reports: ['view'],
+        vendors: ['view', 'create', 'update', 'delete'],
+        crm: ['view', 'create', 'update', 'approve', 'assign', 'delete', 'suspend'],
+        petty_cash: ['view', 'create', 'update', 'approve', 'delete'],
+        accounts: ['view', 'create', 'update', 'approve', 'delete']
+    },
     org_admin: {
         users: ['view', 'create', 'update', 'assign', 'suspend'],
         properties: ['view', 'update'],
@@ -130,7 +160,9 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
     },
     soft_service_supervisor: {
         stock: ['view', 'create', 'update', 'delete'],
-        tickets: ['view', 'approve'],
+        // Owner 2026-11-16: a supervisor raises requests from the Service Hub's Requests tab, so `create` sits
+        // alongside the view/approve rights they already held.
+        tickets: ['view', 'create', 'approve'],
         dashboards: ['view'],
         reports: ['view'],
         petty_cash: ['view', 'create']

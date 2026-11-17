@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { hasProviderKey, withProviderKeys } from "@/backend/lib/llm/providerKeys";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || "");
+// Owner 2026-11-15: the shared Gemini keys GEMINI_API_KEY → _2 → _3 (then the older GOOGLE_AI_API_KEY), used in turn.
 
 export interface InvoiceData {
     vendor_name: string;
@@ -19,11 +20,11 @@ export interface InvoiceData {
 
 export class AIProcessor {
     static async parseInvoice(fileBuffer: Buffer, mimeType: string): Promise<InvoiceData> {
-        if (!process.env.GOOGLE_AI_API_KEY) {
-            throw new Error("GOOGLE_AI_API_KEY is not configured in .env");
+        if (!hasProviderKey("gemini")) {
+            throw new Error("No Gemini key is configured (GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3)");
         }
 
-        const model = genAI.getGenerativeModel({ 
+        const modelFor = (key: string) => new GoogleGenerativeAI(key).getGenerativeModel({ 
             model: "gemini-2.5-flash",
             generationConfig: { responseMimeType: "application/json" }
         }, { apiVersion: 'v1beta' });
@@ -59,7 +60,7 @@ export class AIProcessor {
             If any field is missing, use null or an empty array. Do not include markdown formatting or extra text.
         `;
 
-        const result = await model.generateContent([
+        const result = await withProviderKeys("gemini", key => modelFor(key).generateContent([
             prompt,
             {
                 inlineData: {
@@ -67,7 +68,7 @@ export class AIProcessor {
                     mimeType: mimeType,
                 },
             },
-        ]);
+        ]));
 
         const response = await result.response;
         const text = response.text();

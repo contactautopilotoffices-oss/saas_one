@@ -34,7 +34,9 @@ export async function POST(request: NextRequest) {
         .or(`organization_id.eq.${access.organizationId},organization_id.is.null`)
         .eq('is_active', true);
     const catByName = new Map<string, { id: string; code: string }>();
-    for (const c of (categories || []).sort((a, b) => (a.organization_id ? 1 : 0) - (b.organization_id ? 1 : 0))) {
+    // IT team: rows may only use IT & Network; any other category is reported as unknown (null = every category)
+    const allowed = access.allowedCategoryIds;
+    for (const c of (categories || []).filter((c) => allowed === null || allowed.includes(c.id)).sort((a, b) => (a.organization_id ? 1 : 0) - (b.organization_id ? 1 : 0))) {
         catByName.set(c.name.toLowerCase(), { id: c.id, code: c.code });
         catByName.set(c.code.toLowerCase(), { id: c.id, code: c.code });
     }

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/frontend/utils/supabase/admin'
 import { isOrganizationUserManager, isOrganizationWideUserRole } from '@/backend/lib/users/managementRoles'
 import { WhatsAppService } from '@/backend/services/WhatsAppService'
 import { buildWelcomeMessage } from '@/backend/lib/whatsapp/welcomeMessage'
+import { ensureEmployeeProfile } from '@/backend/lib/users/employeeProfile';
 
 interface CreateUserRequest {
     email: string
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
         const ALLOWED_ROLES = [
             'master_admin', 'org_super_admin', 'ops_super_admin', 'property_admin',
             'staff', 'mst', 'tenant', 'procurement', 'accounts', 'vendor', 'super_tenant',
-            'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager'
+            'hr', 'hr_head', 'security', 'soft_service_staff', 'soft_service_supervisor', 'soft_service_manager', 'tech', 'it', 'design'
         ] as const;
         if (!ALLOWED_ROLES.includes(role as any)) {
             return NextResponse.json(
@@ -274,7 +275,10 @@ export async function POST(request: NextRequest) {
         // If only 'specialization' is provided (old way), wrap it in skills.
         const effectiveSkills = skills.length > 0 ? skills : (specialization ? [specialization] : []);
 
-        if ((role === 'staff' || role === 'mst') && effectiveSkills.length > 0) {
+        // Owner 2026-11-16: `soft_service_supervisor` is included so the soft service skills the invite form already
+        // offers that role are stored, and a resolver row is seeded — without it the chosen skills were dropped and
+        // no soft-service ticket could ever be assigned to a supervisor.
+        if ((role === 'staff' || role === 'mst' || role === 'soft_service_supervisor') && effectiveSkills.length > 0) {
             // 1. Insert into mst_skills (simple mapping)
             for (const skillCode of effectiveSkills) {
                 const { error: skillError } = await adminClient
@@ -296,10 +300,16 @@ export async function POST(request: NextRequest) {
                 // Staff -> soft_services
                 const VALID_MST_SKILLS = ['technical', 'plumbing', 'vendor'];
                 const VALID_STAFF_SKILLS = ['soft_services', 'technical'];
+                // A supervisor resolves soft-service work only (no `technical`, unlike staff).
+                const VALID_SUPERVISOR_SKILLS = ['soft_services'];
 
                 const skillsForResolver = role === 'mst'
                     ? effectiveSkills.filter((s: string) => VALID_MST_SKILLS.includes(s))
-                    : (role === 'staff' ? effectiveSkills.filter((s: string) => VALID_STAFF_SKILLS.includes(s)) : []);
+                    : role === 'staff'
+                        ? effectiveSkills.filter((s: string) => VALID_STAFF_SKILLS.includes(s))
+                        : (role === 'soft_service_supervisor'
+                            ? effectiveSkills.filter((s: string) => VALID_SUPERVISOR_SKILLS.includes(s))
+                            : []);
 
                 if (skillsForResolver.length > 0) {
                     const { data: skillGroups } = await adminClient
@@ -348,35 +358,14 @@ export async function POST(request: NextRequest) {
             .eq('id', userData.user.id);
 
         // For internal employee/HR roles, ensure employee_profiles record exists
-        if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin'].includes(role)) {
-            const nameParts = full_name.split(' ');
-            const firstName = nameParts[0] || 'Employee';
-            const lastName = nameParts.slice(1).join(' ') || '';
-            const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
-
-            try {
-                await adminClient
-                    .from('employee_profiles')
-                    .upsert({
-                        organization_id: organization_id || null,
-                        property_id: property_id || null,
-                        user_id: userData.user.id,
-                        employee_code: ecode,
-                        first_name: firstName,
-                        last_name: lastName,
-                        full_name,
-                        email,
-                        contact_number: phone || null,
-                        department: role.includes('hr') ? 'Human Resources' : 'Operations',
-                        designation: role === 'hr_head' ? 'HR Head' : (role === 'hr' ? 'HR Executive' : 'Executive'),
-                        is_hr_authority: role === 'hr' || role === 'hr_head',
-                        reconciliation_status: 'linked',
-                        is_active: true
-                    }, { onConflict: 'organization_id,employee_code' });
-            } catch {
-                /* ignore duplicate */
-            }
-        }
+        const employeeProfile = await ensureEmployeeProfile(adminClient, {
+            organizationId: organization_id || null,
+            userId: userData.user.id,
+            email,
+            fullName: full_name,
+            phone: phone || null,
+            appRole: role
+        });
 
         // Send welcome WhatsApp message to new user (best-effort, non-blocking)
         const welcomePhone = phone || null;
@@ -402,6 +391,9 @@ export async function POST(request: NextRequest) {
             // Security: Never return passwords in API responses
             // If no password was provided, user should reset via email
             requiresPasswordReset: !password,
+            // Surfaced rather than swallowed: creation still succeeds, but a failure here
+            // leaves the user without an employee code and must be visible to the caller.
+            employeeProfile,
         })
     } catch (error) {
         console.error('Create user API error:', error)

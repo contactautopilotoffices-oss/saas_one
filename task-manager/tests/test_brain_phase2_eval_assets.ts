@@ -14,7 +14,8 @@ async function run() {
 
     console.log('\n1. The case file is well-formed');
     const ids = EVAL_CASES.map(c => c.id);
-    check(`at least 130 cases (${EVAL_CASES.length})`, EVAL_CASES.length >= 130);
+    // Owner 2026-10-22: cut to 20 cases in all (15 here + 5 real chats in cases_real.ts) so every paid run stays small.
+    check(`exactly 15 cases (${EVAL_CASES.length})`, EVAL_CASES.length === 15);
     check('every id is unique', new Set(ids).size === ids.length, ids.filter((x, i) => ids.indexOf(x) !== i));
     const validIntents = new Set<string>([...TASK_INTENTS, ...FACILITY_INTENTS]);
     check('every expected intent is a real intent', EVAL_CASES.every(c => c.expect.intent.length > 0 && c.expect.intent.every(i => validIntents.has(i))));
@@ -29,7 +30,7 @@ async function run() {
     check('"answer" cases always have something pending (except the deliberate "nothing pending" ones)', EVAL_CASES.filter(c => c.group === 'answer' && !c.pending).every(c => /yes|no thanks|show my tasks/.test(c.message)));
     check('"unclear" cases are all marked mustClarify and expect CLARIFY, never a proposal', EVAL_CASES.filter(c => c.mustClarify).every(c => !c.expect.outcome.includes('ACT') || c.group === 'safety'));
     check('there are real typos in the set (the brain must cope)', EVAL_CASES.some(c => /completd|todya|vidhya|wht/.test(c.message)));
-    check('the exact message from the requirement is in the set', EVAL_CASES.some(c => c.message.startsWith('I need to assign a task to Lohit. It needs to be about RFID')));
+    check('two Hinglish cases are in the set', EVAL_CASES.filter(c => c.group.startsWith('hi-')).length === 2);
     check('the worlds build: default / two Lohits / superuser / single / empty', (['default', 'twoLohits', 'superuser', 'single', 'empty'] as const).every(w => world(w).people.length > 0 || w === 'empty') && world('twoLohits').people.filter(p => p.name.startsWith('Lohit')).length === 2 && world('superuser').sender.role === 'superuser' && world('empty').tasks.length === 0 && world('single').tasks.filter(t => t.status !== 'completed').length === 1);
     check('the pending states are what the cases assume', PING.kind === 'ping_reply' && CONFIRM.kind === 'confirm' && PICK.kind === 'pick');
 

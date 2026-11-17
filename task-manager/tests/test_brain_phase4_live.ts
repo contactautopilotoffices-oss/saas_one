@@ -98,7 +98,10 @@ async function run() {
     console.log('\n1. When the brain must stay out of the way (the old bot answers as before)');
     const stays = async (label: string, over: any, text = 'show my tasks') => {
         const w = mk(over); const c = await L.claimSmartChat(body(text, 'x1'), w.io);
-        check(label, !c.handled && w.calls.understand === 0 && w.sent.length === 0 && w.audits.length === 0 && w.state === (over.state ?? null), { c, calls: w.calls });
+        // 2026-11-02: an eligible person's message that goes to the old bot leaves ONE 'not_handled' audit row (the reason, never
+        // the text) — nothing else.
+        const onlyTrace = w.audits.every((a: any) => a.status === 'not_handled' && typeof a.why === 'string');
+        check(label, !c.handled && w.calls.understand === 0 && w.sent.length === 0 && onlyTrace && w.state === (over.state ?? null), { c, calls: w.calls, audits: w.audits });
     };
     await stays('no department has Smart chat ON (the default) → untouched, no AI call', { depts: new Set() });
     await stays('Smart chat ON only for ANOTHER department → untouched', { depts: new Set(['d9']) });
@@ -121,6 +124,33 @@ async function run() {
     w = mk({ state: { type: L.LIVE_STATE_TYPE, data: { recent: [], pending: null, action: null, originalSummary: null, pickOptions: [] } } });
     c = await L.claimSmartChat(body('show my tasks', 'x4'), w.io);
     check('the brain\'s OWN earlier state does not block it', c.handled === true);
+
+    console.log('\n1b. "One switch" (2026-11-04): the AI Action Layer turned on for a person on WhatsApp turns Smart chat on for them');
+    const withAi = (over: any, aiUser: (e: any) => string | null, personalOf: boolean | null = null) => {
+        const w2 = mk(over);
+        w2.io.aiLayerOnFor = async () => aiUser(w2.employee);
+        if (personalOf !== null) w2.io.personalSmartChat = async () => ({ anyOn: personalOf, of: () => personalOf });
+        return w2;
+    };
+    w = withAi({ depts: new Set() }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai1'), w.io);
+    check('no department ON, but the AI layer is ON for this person → the brain takes it', c.handled === true);
+    w = withAi({ depts: new Set() }, () => 'someone-else');
+    c = await L.claimSmartChat(body('show my tasks', 'ai2'), w.io);
+    check('the AI layer is ON for a DIFFERENT person at that number → untouched', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(['d1']) }, e => e.id, false);
+    c = await L.claimSmartChat(body('show my tasks', 'ai3'), w.io);
+    check('an explicit personal OFF in the Task Access panel still wins over the AI layer switch', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(), cfg: { enabled: true, employees: [{ name: 'x', phone: '9000000000' }] } }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai4'), w.io);
+    check('the AI layer switch does not bypass the sandbox', !c.handled && w.calls.understand === 0);
+    w = withAi({ depts: new Set(), access: { allowed: false } }, e => e.id);
+    c = await L.claimSmartChat(body('show my tasks', 'ai5'), w.io);
+    check('the AI layer switch does not bypass Task Manager access', !c.handled && w.calls.understand === 0);
+    w = mk({ depts: new Set() });
+    w.io.aiLayerOnFor = async () => { throw new Error('db down'); };
+    c = await L.claimSmartChat(body('show my tasks', 'ai6'), w.io);
+    check('the AI layer check failing → exactly the old behaviour', !c.handled && w.calls.understand === 0);
 
     console.log('\n2. Looking at tasks');
     w = mk();
@@ -278,7 +308,7 @@ async function run() {
     check('replies go through the safety gate (kill switches + Pretend Mode)', /TaskMessagingService\.sendFreeformReply/.test(live));
     check('only the brain\'s own state is ever cleared or overwritten', /context_type === LIVE_STATE_TYPE\) await TaskDatabaseService\.clearConversationContext/.test(live));
     const panel = read('frontend/components/task-manager/TaskAccessPanel.tsx');
-    check('the Control Center has a per-department "Smart chat" button with its SQL-file banner', /Smart chat: \{d\.smartChatEnabled/.test(panel) && /action: 'set_smart_chat', departmentId/.test(panel) && /20261007000005_task_manager_smart_chat\.sql/.test(panel));
+    check('the Control Center has a per-department "Smart chat" button with its SQL-file banner', /label: 'Smart chat'[^}]*on: d\.smartChatEnabled/.test(panel) && /action: 'set_smart_chat', departmentId/.test(panel) && /20261007000005_task_manager_smart_chat\.sql/.test(panel));
     check('nothing in this whole test touched the network', net.length === 0, net);
 
     console.log(failures === 0 ? '\n🎉 PHASE 4 SMART CHAT TESTS PASSED\n' : `\n❌ ${failures} FAILED\n`);

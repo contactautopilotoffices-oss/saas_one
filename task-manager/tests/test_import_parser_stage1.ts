@@ -113,6 +113,29 @@ async function run() {
     });
     const ok = '{"tasks":[{"title":"A"}]}';
     check('default models are qwen3.8-27b then glm-5.3-flash', P.IMPORT_MODELS.join() === 'qwen3.8-27b,glm-5.3-flash' && P.IMPORT_PRIMARY_MODEL === 'qwen3.8-27b');
+    // Owner 2026-10-27: both steps (reading the image, turning text into tasks) go to Claude Sonnet 5.5 first, then Qwen, then GLM
+    check('image models: Claude Sonnet 5.5 → qwen3.8-27b → glm-5.3-flash', P.IMPORT_IMAGE_MODELS.join() === 'anthropic:claude-sonnet-5-5,qwen3.8-27b,glm-5.3-flash');
+    calls.length = 0;
+    const live = P.createEngyImportLlm(undefined, {
+        async vision(model) { calls.push(`vision:${model}`); if (model.startsWith('anthropic:')) throw new Error('Claude HTTP 529'); return 'table'; },
+        async chat(model) { calls.push(`chat:${model}`); if (model.startsWith('anthropic:')) return 'not json'; return ok; },
+    });
+    const tv = await live.imageToText(Buffer.from('x'), 'image/png');
+    await live.structureText('x');
+    check('Claude fails → Qwen reads the image; Claude gives unusable JSON → Qwen structures it', tv === 'table' && calls.join() === 'vision:anthropic:claude-sonnet-5-5,vision:qwen3.8-27b,chat:anthropic:claude-sonnet-5-5,chat:qwen3.8-27b', calls);
+    calls.length = 0;
+    const claudeOk = P.createEngyImportLlm(undefined, { async vision(model) { calls.push(`vision:${model}`); return 'table'; }, async chat(model) { calls.push(`chat:${model}`); return ok; } });
+    await claudeOk.imageToText(Buffer.from('x'), 'image/png'); await claudeOk.structureText('x');
+    check('Claude answers both steps → Qwen and GLM are never called', calls.join() === 'vision:anthropic:claude-sonnet-5-5,chat:anthropic:claude-sonnet-5-5', calls);
+    const savedKey = process.env.CLAUDE_API_KEY;
+    delete process.env.CLAUDE_API_KEY;
+    const B = await import('../brain/llm');
+    const noKey = await B.anthropicVision({ model: 'anthropic:claude-sonnet-5-5', image: Buffer.from('x'), mimeType: 'image/png', instruction: 'x', maxTokens: 10, timeoutMs: 1000 }).then(() => 'no error', e => String(e.message));
+    process.env.CLAUDE_API_KEY = 'fake-key-offline-test';
+    const badType = await B.anthropicVision({ model: 'anthropic:claude-sonnet-5-5', image: Buffer.from('x'), mimeType: 'image/heic', instruction: 'x', maxTokens: 10, timeoutMs: 1000 }).then(() => 'no error', e => String(e.message));
+    const tooBig = await B.anthropicVision({ model: 'anthropic:claude-sonnet-5-5', image: Buffer.alloc(4_000_000), mimeType: 'image/jpeg', instruction: 'x', maxTokens: 10, timeoutMs: 1000 }).then(() => 'no error', e => String(e.message));
+    if (savedKey === undefined) delete process.env.CLAUDE_API_KEY; else process.env.CLAUDE_API_KEY = savedKey;
+    check('no Claude key, an unsupported type or a too-big image → an error (so the backup reads it), before any network call', /not set/.test(noKey) && /cannot read image\/heic/.test(badType) && /too large/.test(tooBig), { noKey, badType, tooBig });
     calls.length = 0;
     let t = await mk({ PRIMARY: { vision: 'table' } }).imageToText(Buffer.from('x'), 'image/png');
     check('primary works → secondary is never called', t === 'table' && calls.join() === 'vision:PRIMARY', calls);

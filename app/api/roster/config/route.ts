@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(request: NextRequest) {
     try {
@@ -9,6 +10,8 @@ export async function GET(request: NextRequest) {
         if (!propertyId) {
             return NextResponse.json({ error: 'propertyId is required' }, { status: 400 });
         }
+        const denied = await guardProperty(request, propertyId);
+        if (denied) return denied;
 
         const supabase = await createClient();
         const { data, error } = await supabase
@@ -44,6 +47,8 @@ export async function POST(request: NextRequest) {
         if (!propertyId || !Array.isArray(configs)) {
             return NextResponse.json({ error: 'Invalid payload' }, { status: 400 });
         }
+        const denied = await guardProperty(request, propertyId);
+        if (denied) return denied;
 
         // Upsert configs
         const upsertData = configs.map((c: any) => {

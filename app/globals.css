@@ -3905,3 +3905,10 @@ a.cc-kpi:focus-visible {
   scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
 
+
+/* Owner 2026-10-26: the dashboard is scaled with `zoom` on <html> (AppZoom), and viewport units are scaled with it.
+   Divide the full-screen utilities back so full-height layouts still fill the screen. */
+html[data-app-zoom] .h-screen { height: calc(100vh / var(--app-zoom)); }
+html[data-app-zoom] .min-h-screen { min-height: calc(100vh / var(--app-zoom)); }
+html[data-app-zoom] .h-dvh { height: calc(100dvh / var(--app-zoom)); }
+html[data-app-zoom] .w-screen { width: calc(100vw / var(--app-zoom)); }

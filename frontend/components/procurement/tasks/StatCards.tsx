@@ -67,17 +67,17 @@ export default function StatCards({ counts }: { counts: StatCounts }) {
 
     return (
         <motion.div
-            className="grid grid-cols-2 lg:grid-cols-5 gap-3"
+            className="grid grid-cols-2 gap-3 @2xl:grid-cols-4 @5xl:grid-cols-5"
             initial={reduce ? false : 'hidden'}
             animate="show"
             variants={{ show: { transition: { staggerChildren: 0.07, delayChildren: 0.05 } } }}
         >
-            <motion.div variants={item} className={`${card} col-span-2 lg:col-span-1 flex items-center gap-3`}>
-                <div className="relative">
+            <motion.div variants={item} className={`${card} col-span-2 @2xl:col-span-4 @5xl:col-span-1 flex min-w-0 items-center gap-3`}>
+                <div className="relative shrink-0">
                     <Ring pct={pct} reduce={reduce} />
                     <span className="absolute inset-0 flex items-center justify-center text-[13px] font-black tabular-nums text-zinc-900 dark:text-zinc-100">{pctShown}%</span>
                 </div>
-                <div>
+                <div className="min-w-0">
                     <p className={label}>Progress</p>
                     <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">{counts.done} of {total} done</p>
                 </div>

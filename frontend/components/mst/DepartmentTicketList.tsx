@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { MstTicketView, TicketDepartment, MstLoad } from '@/frontend/types/ticketing';
 import { getSkillGroupColor, getSkillGroupDisplayName, type SkillGroup } from '@/backend/lib/ticketing';
 import { MstLoadDot } from './MstLoadBadge';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import { Ticket } from '@/frontend/types/ticketing';
 
 // Map legacy department to new skill_group
@@ -293,7 +293,7 @@ function TicketSection({
                     <p className="text-sm text-text-tertiary">{emptyMessage}</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className={`${TICKET_GRID_CLASS} gap-6`}>
                     {tickets.map((ticket) => (
                         <TicketCard
                             key={ticket.id}
@@ -315,6 +315,7 @@ function TicketSection({
                             photoUrl={ticket.photo_before_url}
                             escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                             raisedByTenant={!ticket.internal}
+                            isInternal={Boolean(ticket.internal)}
                             onClick={() => onTicketClick(ticket.id)}
                         />
                     ))}

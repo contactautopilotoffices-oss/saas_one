@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { getISTDateBounds } from '@/backend/utils/timezone';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/vms/org/[orgId]
@@ -19,6 +20,9 @@ export async function GET(
     const customDate = searchParams.get('customDate') || '';
     const search = searchParams.get('search') || '';
     const propertyId = searchParams.get('propertyId') || '';
+
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     let query = supabaseAdmin
         .from('visitor_logs')

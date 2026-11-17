@@ -77,13 +77,34 @@ async function run() {
     check('preview = the approved template filled in, and the note is not in it',
         pv === 'Hi Saniel,\n\nSahil (Procurement) tagged you regarding the following pending task in Autopilot Task Manager:\n\n1. call vendor\n\nReply to update the task status.', pv);
 
-    // ── event alerts: task_assigned_v1 / task_update_v2 ──
+    // ── event alerts: task_assigned_v2 (owner 2026-11-02, with a Note line) / task_update_v2 ──
     const A = await import('../taskAlerts');
     check('date shown as "11 Oct 2026"', A.formatDate('2026-10-11') === '11 Oct 2026', A.formatDate('2026-10-11'));
     check('one task → just its title', A.taskList(['Carpet Installation PO']) === 'Carpet Installation PO');
     check('several tasks → "1. A | 2. B", one line', A.taskList(['check\nAC', 'call vendor']) === '1. check AC | 2. call vendor', A.taskList(['check\nAC', 'call vendor']));
     const ap = A.assignedParams(['Carpet Installation PO'], A.personLabel('Priyanka', 'Procurement'), '2026-10-11');
-    check('task_assigned_v1 blanks: task, "Priyanka (Procurement)", date', JSON.stringify(ap) === JSON.stringify(['Carpet Installation PO', 'Priyanka (Procurement)', '11 Oct 2026']), ap);
+    check('task_assigned_v2 blanks: task, note ("—" when none), "Priyanka (Procurement)", date', JSON.stringify(ap) === JSON.stringify(['Carpet Installation PO', '—', 'Priyanka (Procurement)', '11 Oct 2026']), ap);
+    const apNote = A.assignedParams(['V&V testing'], 'Autopilot', '2026-11-02', ['check login\nand payments']);
+    check('task_assigned_v2: the note is its own blank, on one line', apNote[1] === 'check login and payments' && apNote[0] === 'V&V testing', apNote);
+    const apMany = A.assignedParams(['A', 'B', 'C'], 'Autopilot', '2026-11-02', ['note a', null, 'note c']);
+    check('task_assigned_v2: several tasks → notes numbered like the Task line, tasks without a note left out', apMany[1] === '1. note a | 3. note c', apMany);
+    check('task_assigned_v2: several tasks, no notes → "—"', A.assignedParams(['A', 'B'], 'x', '2026-11-02')[1] === '—');
+    const apV1 = A.assignedParams(['V&V testing'], 'Autopilot', '2026-11-02', ['check login'], 'task_assigned_v1');
+    check('task_assigned_v1 (env still names it): 3 blanks, note on the Task line as before', JSON.stringify(apV1) === JSON.stringify(['V&V testing (Note: check login)', 'Autopilot', '2 Nov 2026']), apV1);
+    // Owner 2026-11-02: the due date, if any, in brackets on the Task line
+    const apDue = A.assignedParams(['V&V testing'], 'Autopilot', '2026-11-02', [null], 'task_assigned_v2', [{ date: '2026-11-05', time: '17:00' }]);
+    check('due date with a time → "Title (Due: 5 Nov 2026, 5:00 PM)"', apDue[0] === 'V&V testing (Due: 5 Nov 2026, 5:00 PM)' && apDue[1] === '—', apDue);
+    const apDay = A.assignedParams(['V&V testing'], 'Autopilot', '2026-11-02', [], 'task_assigned_v2', [{ date: '2026-11-05', time: null }]);
+    check('due date without a time → "(Due: 5 Nov 2026)"; a database time "09:30:00" → "9:30 AM"',
+        apDay[0] === 'V&V testing (Due: 5 Nov 2026)' && A.dueSuffix({ date: '2026-11-05', time: '09:30:00' }) === ' (Due: 5 Nov 2026, 9:30 AM)', apDay);
+    const apDues = A.assignedParams(['Check AC', 'Call vendor'], 'x', '2026-11-02', [], 'task_assigned_v2', [{ date: '2026-11-05', time: null }, null]);
+    check('several tasks → each its own due date, none → no brackets', apDues[0] === '1. Check AC (Due: 5 Nov 2026) | 2. Call vendor', apDues);
+    const apLong = A.assignedParams(['x'.repeat(200)], 'x', '2026-11-02', [], 'task_assigned_v2', [{ date: '2026-11-05', time: '17:00' }]);
+    check('a long title is cut first, so the due date is never lost', apLong[0].endsWith('(Due: 5 Nov 2026, 5:00 PM)') && apLong[0].length <= 160, apLong[0].length);
+    const apV1Due = A.assignedParams(['V&V testing'], 'Autopilot', '2026-11-02', ['check login'], 'task_assigned_v1', [{ date: '2026-11-05', time: null }]);
+    check('v1 too: due date and note on the Task line', apV1Due[0] === 'V&V testing (Due: 5 Nov 2026) (Note: check login)', apV1Due);
+    check('no due date → the Task line is just the title', A.assignedParams(['V&V testing'], 'x', '2026-11-02')[0] === 'V&V testing');
+    check('preview has a Note line for v2 and none for v1', /\nNote: check login and payments\n/.test(A.assignedPreview(apNote)) && !/Note:/.test(A.assignedPreview(['x', 'y', 'z'])));
     const up = A.updateParams(['submit report'], 'Saniel (Management)', 'Working on it\n— vendor late');
     check('task_update_v2 blanks: task, assignee, update — all one line', up[1] === 'Saniel (Management)' && up[2] === 'Working on it — vendor late' && !up.some(x => /\n/.test(x)), up);
 
@@ -93,7 +114,7 @@ async function run() {
     m.postTemplate = async (p: any) => { sentOpts.push(p); calls.push('template'); return true; };
     await A.sendTaskAssigned('+919000000000', { titles: ['Carpet Installation PO'], fromLabel: 'Priyanka (Procurement)', date: '2026-10-11' });
     await A.sendTaskUpdate('+919000000000', { titles: ['submit report'], assigneeLabel: 'Saniel (Management)', update: 'Finished ✅' });
-    check('both alerts go ONLY as their approved templates (no free text)', calls.join() === 'template,template' && sentOpts[0].campaignName === 'task_assigned_v1' && sentOpts[1].campaignName === 'task_update_v2', sentOpts);
+    check('both alerts go ONLY as their approved templates (no free text)', calls.join() === 'template,template' && sentOpts[0].campaignName === 'task_assigned_v2' && sentOpts[0].templateParams.length === 4 && sentOpts[1].campaignName === 'task_update_v2', sentOpts);
     check('no phone → nothing sent, no error', (await A.sendTaskAssigned('', { titles: ['x'], fromLabel: 'y', date: '2026-10-11' })) === false);
 
     // ── several tasks for one person → ONE alert ──

@@ -43,10 +43,12 @@ export const MODULES: ModuleDef[] = [
 
 // userCol null = count only. HR grievances can be anonymous or confidential, so the
 // report never ties an HR ticket to a person.
-export const ORG_MODULES: { key: string; label: string; table: string; userCol: string | null }[] = [
+// scopeByEmployee: the table has no organization_id, so a row is kept when the person in
+// userCol has an employee profile in the organisation.
+export const ORG_MODULES: { key: string; label: string; table: string; userCol: string | null; scopeByEmployee?: boolean }[] = [
     { key: 'hr', label: 'HR Grievances', table: 'hr_tickets', userCol: null },
     { key: 'crm', label: 'CRM Leads', table: 'crm_leads', userCol: 'created_by' },
-    { key: 'tasks', label: 'Tasks Assigned', table: 'tm_tasks', userCol: 'assigned_by' },
+    { key: 'tasks', label: 'Tasks Assigned', table: 'task_assignments', userCol: 'assigned_by', scopeByEmployee: true },
 ];
 
 /** Keys a SPOC can be assigned to: every property-level module. */

@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { LeadStatusConfig, LeadSource } from '@/frontend/types/crm';
 import { MetaIntegrationGuide, LinkedInIntegrationGuide } from '@/frontend/components/crm';
 import LeadDistributionManager from '@/frontend/components/crm/LeadDistributionManager';
+import LeadOutreachConfigManager from '@/frontend/components/crm/LeadOutreachConfigManager';
 import WallpaperSettings from '@/frontend/components/dashboard/WallpaperSettings';
 import SettingsView from '@/frontend/components/dashboard/SettingsView';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -95,7 +96,7 @@ const LEAD_QUALIFICATION_INFO: Record<string, { label: string; color: string; cr
     },
 };
 
-type SettingsTab = 'profile' | 'statuses' | 'sources' | 'properties' | 'territories' | 'distribution' | 'integrations' | 'appearance';
+type SettingsTab = 'profile' | 'statuses' | 'sources' | 'properties' | 'territories' | 'distribution' | 'outreach' | 'integrations' | 'appearance';
 
 export default function CRMSettingsPage() {
     const params = useParams();
@@ -366,6 +367,7 @@ export default function CRMSettingsPage() {
         { id: 'properties' as SettingsTab, label: 'Property Mapping', icon: Building2 },
         { id: 'territories' as SettingsTab, label: 'Territories', icon: MapPin },
         { id: 'distribution' as SettingsTab, label: 'Lead Distribution', icon: Shuffle },
+        { id: 'outreach' as SettingsTab, label: 'Lead Outreach (1-Tap & SLA)', icon: PhoneCall },
         { id: 'integrations' as SettingsTab, label: 'Integrations', icon: Bell },
         { id: 'appearance' as SettingsTab, label: 'Appearance', icon: ImageIcon },
     ];
@@ -933,6 +935,10 @@ export default function CRMSettingsPage() {
 
                         {activeTab === 'distribution' && (
                             <LeadDistributionManager orgId={orgId} />
+                        )}
+
+                        {activeTab === 'outreach' && (
+                            <LeadOutreachConfigManager orgId={orgId} />
                         )}
 
                         {activeTab === 'integrations' && (

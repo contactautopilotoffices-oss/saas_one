@@ -18,7 +18,8 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  */
 
 const TENANT_LIKE_ROLES = ['tenant', 'tenant_user', 'super_tenant', 'vendor'];
-const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner'];
+// The IT team (org-level role, no property memberships) sees and manages every asset in the org (owner 2026-10-28).
+const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner', 'it'];
 const MANAGER_ROLES = [
     ...ORG_ADMIN_ROLES,
     'property_admin', 'manager_executive', 'soft_service_manager', 'soft_service_supervisor', 'accounts',
@@ -35,7 +36,16 @@ export interface AssetAccess {
     /** properties the user belongs to in this org (scope for non-admins) */
     propertyIds: string[];
     roles: string[];
+    /**
+     * Categories the caller is limited to; null = every category (everyone except the IT team).
+     * Owner 2026-11-02: an IT-only login sees and manages only "IT & Network" assets (category code 'IT':
+     * the global row and any organisation override of it). An empty list means it sees no assets.
+     */
+    allowedCategoryIds: string[] | null;
 }
+
+/** Category code the IT team is limited to (seeded as 'IT & Network' in 20260915000001_asset_management.sql). */
+const IT_CATEGORY_CODE = 'IT';
 
 type Membership = { organization_id: string | null; property_id?: string | null; role: string | null };
 
@@ -126,7 +136,20 @@ export async function resolveAssetAccessForUser(
     const isAdmin = isMasterAdmin || roles.some((r) => ORG_ADMIN_ROLES.includes(r));
     const canManage = isAdmin || roles.some((r) => MANAGER_ROLES.includes(r));
 
-    return { user, isMasterAdmin, organizationId, isAdmin, canManage, propertyIds, roles };
+    // IT-only login: 'it' is its only admin/manager role here (an IT person who is also, say, a property admin keeps
+    // that role's full view). Limited to the IT & Network category rows visible to this org.
+    const isItOnly = !isMasterAdmin && roles.includes('it') && !roles.some((r) => r !== 'it' && MANAGER_ROLES.includes(r));
+    let allowedCategoryIds: string[] | null = null;
+    if (isItOnly) {
+        const { data: cats } = await supabaseAdmin
+            .from('asset_categories')
+            .select('id')
+            .ilike('code', IT_CATEGORY_CODE)
+            .or(`organization_id.eq.${organizationId},organization_id.is.null`);
+        allowedCategoryIds = (cats || []).map((c: { id: string }) => c.id);
+    }
+
+    return { user, isMasterAdmin, organizationId, isAdmin, canManage, propertyIds, roles, allowedCategoryIds };
 }
 
 export function isAssetAccessError(x: AssetAccess | NextResponse): x is NextResponse {
@@ -137,6 +160,22 @@ export function isAssetAccessError(x: AssetAccess | NextResponse): x is NextResp
 export function canAccessProperty(access: AssetAccess, propertyId: string | null | undefined): boolean {
     if (!propertyId) return access.isAdmin;
     return access.isAdmin || access.propertyIds.includes(propertyId);
+}
+
+/** True if the caller may see / act on an asset in this category (always true unless category-limited). */
+export function canAccessCategory(access: AssetAccess, categoryId: string | null | undefined): boolean {
+    if (access.allowedCategoryIds === null) return true;
+    return !!categoryId && access.allowedCategoryIds.includes(categoryId);
+}
+
+/**
+ * Categories to filter by for the caller: null means "no filter". A requested category outside the caller's
+ * limit gives [] (no results).
+ */
+export function scopedCategoryIds(access: AssetAccess, requested?: string | null): string[] | null {
+    if (access.allowedCategoryIds === null) return requested ? [requested] : null;
+    if (requested) return access.allowedCategoryIds.includes(requested) ? [requested] : [];
+    return access.allowedCategoryIds;
 }
 
 /** Properties to filter by for the caller: null means "no filter" (org-wide). */

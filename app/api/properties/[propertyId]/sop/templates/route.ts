@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -41,7 +44,12 @@ export async function GET(
             );
         }
 
-
+        // Sort items by order_index for each template
+        filteredTemplates.forEach(t => {
+            if (Array.isArray(t.items)) {
+                t.items.sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            }
+        });
 
         return NextResponse.json({
             success: true,
@@ -61,6 +69,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -113,6 +123,21 @@ export async function POST(
 
         // Insert checklist items if provided
         if (items.length > 0) {
+            const sanitizeParams = (raw: any): any[] => {
+                if (!raw) return [];
+                let arr = raw;
+                if (typeof raw === 'string') {
+                    try { arr = JSON.parse(raw); } catch { arr = []; }
+                }
+                if (!Array.isArray(arr)) return [];
+                return arr.map((p: any, idx: number) => ({
+                    id: p.id || `param_${idx}_${Date.now()}`,
+                    name: typeof p === 'string' ? p : (p.name || p.title || `Param ${idx + 1}`),
+                    type: p.type || 'yes_no',
+                    is_required: p.is_required !== false,
+                }));
+            };
+
             const itemsToInsert = items.map((item: any, index: number) => ({
                 template_id: template.id,
                 title: item.title,
@@ -125,6 +150,11 @@ export async function POST(
                 is_mandatory: item.is_mandatory !== false,
                 start_time: item.start_time || null,
                 end_time: item.end_time || null,
+                parameters: sanitizeParams(item.parameters),
+                reference_photo_url: item.reference_photo_url || null,
+                reference_photos: Array.isArray(item.reference_photos) ? item.reference_photos : [],
+                reference_photo_source: item.reference_photo_source || null,
+                cad_area_id: item.cad_area_id || null,
             }));
 
             const { error: itemsError } = await supabaseAdmin

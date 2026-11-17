@@ -24,11 +24,15 @@ function handler(env, enqueue = async () => 'event-1', overrides = {}) {
         '@/backend/lib/whatsapp/greeting': { isGreetingMessage: () => false },
         '@/backend/services/AiSensyService': { AiSensyService: { sendGreeting: async () => {} } },
         '@/whatsapp-test/freeformTest': { handleFreeformTest: async () => false },
+        '@/backend/lib/whatsapp/ticketReply': { claimTicketReply: async () => ({ handled: false }) },
         '@/task-manager/TaskImportInbound':{claimTaskImport:async()=>({handled:false})},'@/task-manager/brain/shadow':{scheduleShadow:()=>undefined},'@/task-manager/brain/live':{claimSmartChat:async()=>({handled:false})},'@/task-manager/voice/VoiceIntake':{claimVoiceNote:async()=>({kind:'pass'})},'@/task-manager/TaskMessageRouter': {TaskMessageRouter:{routeInboundMessage:async()=>({handledByTaskManager:false})}},
         '@/task-manager/TaskIdempotencyService': {TaskIdempotencyService:{isDuplicateWebhook:async()=>false,recordProcessedWebhook:()=>{}}},
-        '@/task-manager/InboundLedger': {recordInbound:async()=>{},markRoute:async()=>{}},'@/task-manager/NeverSilentWatchdog': {apologiseAfterCrash:async()=>{}},'@/task-manager/ConversationMemory': {appendTurn:async()=>{}},
+        '@/backend/services/LeadOutreachService': { LeadOutreachService: { isLeadPhone: async () => false, handleInboundLeadReply: async () => ({ handled: false }) } },
+        '@/task-manager/InboundLedger': { recordInbound: async () => {}, markRoute: async () => {}, markReplied: async () => {} }, '@/task-manager/NeverSilentWatchdog': { apologiseAfterCrash: async () => {} }, '@/task-manager/ConversationMemory': { appendTurn: async () => {} },
         '@/backend/lib/whatsapp/interpreter/context': {isInterpreterPilot:async()=>false,lookupQuotedContext:async()=>null,getConversationRoutingState:async()=>({taskActive:false,facilityActive:false})},
         '@/backend/lib/whatsapp/interpreter/coordinator.mjs': {isExplicitTaskCommand,isDirectBookingRequest},
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => ({ handled: false, why: 'off' }) },
+        '@/backend/lib/aiLayer/brain/channels/whatsappLive': { claimBrainWhatsApp: async () => ({ handled: false, why: 'off' }) },
         ...overrides,
     };
     imports['@/backend/lib/whatsapp/interpreter/context']={getConversationRoutingState:async()=>({taskActive:false,facilityActive:false}),...imports['@/backend/lib/whatsapp/interpreter/context']};
@@ -277,4 +281,114 @@ test('voice intake passing (switch OFF / not a voice note) leaves the original m
     assert.deepEqual(await response.json(), { success: true, queued: true, duplicate: false });
     assert.equal(stored.text, 'Hi');
     assert.equal(stored.messageId, 'wamid-1');
+});
+
+test('AI layer: a message it takes is answered in the background and nothing older sees it', async () => {
+    let given = null;
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => assert.fail('the old queue must not see it'), {
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async (input) => { given = { input }; return { handled: true, background: async () => {} }; } },
+        '@/task-manager/TaskMessageRouter': { TaskMessageRouter: { routeInboundMessage: () => assert.fail('the old task router must not see it') } },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'AI_LAYER');
+    assert.equal(given.input.text, 'Hi');
+    assert.equal(route.callbacks.length, 1, 'the reply is sent after the webhook answers');
+});
+
+test('AI layer reads the message BEFORE Smart chat (owner 2026-11-04): a message it takes never reaches the task brain', async () => {
+    const order = [];
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => { order.push('ai'); return { handled: true, background: async () => {} }; } },
+        '@/task-manager/brain/live': { claimSmartChat: async () => assert.fail('the AI layer took it first') },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'AI_LAYER');
+    assert.deepEqual(order, ['ai']);
+});
+
+test('a message the AI layer passes on (e.g. about tasks) goes to Smart chat exactly as before', async () => {
+    const order = [];
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => { order.push('ai'); return { handled: false, why: 'unsupported' }; } },
+        '@/task-manager/brain/live': { claimSmartChat: async () => { order.push('brain'); return { handled: true, background: async () => {} }; } },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'SMART_CHAT');
+    assert.deepEqual(order, ['ai', 'brain']);
+});
+
+test('Unified Brain: a message it takes is answered in the background and nothing after it sees the message', async () => {
+    let given = null;
+    const never = name => async () => assert.fail(`${name} must not see a message the brain took`);
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, never('the old queue'), {
+        '@/backend/lib/aiLayer/brain/channels/whatsappLive': { claimBrainWhatsApp: async (input) => { given = input; return { handled: true, background: async () => {} }; } },
+        '@/task-manager/TaskImportInbound': { claimTaskImport: never('the task importer') },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: never('the AI layer') },
+        '@/task-manager/brain/live': { claimSmartChat: never('Smart chat') },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'BRAIN');
+    assert.equal(given.text, 'Hi');
+    assert.equal(route.callbacks.length, 1, 'the reply is sent after the webhook answers');
+});
+
+test('Unified Brain: a task request it passes on skips the AI layer and reaches Smart chat', async () => {
+    const order = [];
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
+        '@/backend/lib/aiLayer/brain/channels/whatsappLive': { claimBrainWhatsApp: async () => { order.push('brain'); return { handled: false, why: 'tasks', skipAiLayer: true, after: async () => { order.push('trace'); } }; } },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => assert.fail('the brain already read it') },
+        '@/task-manager/brain/live': { claimSmartChat: async () => { order.push('smart'); return { handled: true, background: async () => {} }; } },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'SMART_CHAT');
+    assert.deepEqual(order, ['brain', 'smart']);
+    await route.callbacks[0]();
+    assert.ok(order.includes('trace'), 'the trace is written after the webhook answers');
+});
+
+test('Unified Brain: in shadow, or when it does not take the message, every bot below runs exactly as before', async () => {
+    const order = [];
+    const route = handler({ AISENSY_ASSISTANT_ENABLED: 'true' }, async () => 'event', {
+        '@/backend/lib/aiLayer/brain/channels/whatsappLive': { claimBrainWhatsApp: async () => { order.push('brain'); return { handled: false, why: 'shadow', after: async () => { throw new Error('a failing shadow run must not matter'); } }; } },
+        '@/task-manager/TaskImportInbound': { claimTaskImport: async () => { order.push('import'); return { handled: false }; } },
+        '@/backend/lib/aiLayer/whatsappLive': { claimAiLayerWhatsApp: async () => { order.push('ai'); return { handled: true, background: async () => {} }; } },
+    });
+    const response = await route.POST(request());
+    assert.equal((await response.json()).routedTo, 'AI_LAYER');
+    assert.deepEqual(order, ['brain', 'import', 'ai']);
+    await assert.doesNotReject(route.callbacks[0]());
+});
+
+test('a swipe-reply to a ticket notification is taken before voice, task import, smart chat and the facility bot',async()=>{
+    const stop=name=>async()=>assert.fail(`${name} must never see a ticket reply`);
+    const seen=[];
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},stop('the facility bot'),{
+        '@/backend/lib/whatsapp/ticketReply':{claimTicketReply:async body=>{seen.push(body);return {handled:true};}},
+        '@/task-manager/voice/VoiceIntake':{claimVoiceNote:stop('voice intake')},
+        '@/task-manager/TaskImportInbound':{claimTaskImport:stop('task import')},
+        '@/task-manager/brain/live':{claimSmartChat:stop('smart chat')},
+        '@/task-manager/brain/shadow':{scheduleShadow:stop('the shadow brain')},
+        '@/task-manager/TaskMessageRouter':{TaskMessageRouter:{routeInboundMessage:stop('the task router')}},
+    });
+    const response=await route.POST(request({topic:'message.sender.user',data:{message:{phone_number:'919876543210',messageId:'swipe-1',message_content:{text:'Attached the approval'},context:{id:'ticket-note'}}}}));
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).routedTo,'TICKET_REPLY');
+    assert.equal(seen.length,1);
+    assert.equal(route.callbacks.length,0);
+});
+
+test('a re-delivered swipe-reply is dropped before the ticket reply check runs',async()=>{
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async()=>assert.fail('duplicate'),{
+        '@/task-manager/InboundLedger':{recordInbound:async()=>'duplicate',markRoute:async()=>{},markReplied:async()=>{}},
+        '@/backend/lib/whatsapp/ticketReply':{claimTicketReply:async()=>assert.fail('a duplicate must not add a second comment')},
+    });
+    assert.equal((await route.POST(request())).status,200);
+});
+
+test('anything the ticket reply check does not take carries on to the bots as before',async()=>{
+    let stored=false;
+    const route=handler({AISENSY_ASSISTANT_ENABLED:'true'},async()=>{stored=true;return 'event';});
+    const response=await route.POST(request());
+    assert.equal(response.status,200);
+    assert.equal(stored,true);
 });

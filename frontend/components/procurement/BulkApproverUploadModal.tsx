@@ -52,10 +52,12 @@ export default function BulkApproverUploadModal({
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    // Filter submitted / ready requisitions (exclude already approved or ordered ones by default, but allow user to pick)
+    // Sites not yet sent for approval (or rejected). Sites already pending are corrected with
+    // "Replace Comparison File", so a new upload never silently overwrites the approver's file.
     const eligibleRequisitions = useMemo(() => {
-        return requisitions.filter(r => r.status !== 'approved' && r.status !== 'ordered');
+        return requisitions.filter(r => !['approved', 'ordered', 'pending_approval'].includes(r.status));
     }, [requisitions]);
+    const alreadySentCount = useMemo(() => requisitions.filter(r => r.status === 'pending_approval').length, [requisitions]);
 
     // Initialize all eligible selected when opening
     React.useEffect(() => {
@@ -193,6 +195,11 @@ export default function BulkApproverUploadModal({
                                     <p className="text-xs text-slate-500 dark:text-slate-400">
                                         Choose all property sheets that share this vendor quotation.
                                     </p>
+                                    {alreadySentCount > 0 && (
+                                        <p className="mt-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                                            {alreadySentCount} site{alreadySentCount === 1 ? ' is' : 's are'} already sent for approval and not listed here. To fix their file, use Replace Comparison File.
+                                        </p>
+                                    )}
                                 </div>
                                 <button
                                     type="button"

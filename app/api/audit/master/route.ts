@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/audit/master?organization_id=...
@@ -10,6 +11,8 @@ export async function GET(request: NextRequest) {
     const orgId = searchParams.get('organization_id');
 
     if (!orgId) return NextResponse.json({ error: 'Org ID required' }, { status: 400 });
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
 
     const { data, error } = await supabaseAdmin
         .from('audit_master_items')
@@ -31,6 +34,19 @@ export async function POST(request: NextRequest) {
         const { items } = body; // Array of master items
 
         if (!Array.isArray(items)) return NextResponse.json({ error: 'Items array required' }, { status: 400 });
+
+        // Every item belongs to one organisation the caller works in, and an existing id cannot be
+        // taken over from another organisation.
+        const orgIds = Array.from(new Set(items.map((i: { organization_id?: string }) => i?.organization_id)));
+        if (orgIds.length !== 1 || !orgIds[0]) return NextResponse.json({ error: 'All items need the same organization_id' }, { status: 400 });
+        const orgId = String(orgIds[0]);
+        const denied = await guardOrg(request, orgId);
+        if (denied) return denied;
+        const ids = items.map((i: { id?: string }) => i?.id).filter(Boolean);
+        if (ids.length) {
+            const { data: existing } = await supabaseAdmin.from('audit_master_items').select('id, organization_id').in('id', ids);
+            if ((existing || []).some(r => r.organization_id !== orgId)) return NextResponse.json({ error: 'Forbidden: an item belongs to another organization' }, { status: 403 });
+        }
 
         const { data, error } = await supabaseAdmin
             .from('audit_master_items')

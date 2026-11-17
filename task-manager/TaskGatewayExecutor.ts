@@ -131,7 +131,7 @@ export class TaskGatewayExecutor {
     private static async assign(phone: string, employee: { id: string; name: string; department_name?: string | null }, targetName: string, title: string, shouldSend: boolean): Promise<CommandExecutionResult> {
         const isSelf = targetName === 'me';
         const everyone = await TaskDatabaseService.getAllEmployees();
-        const allowed = await PermissionService.visibleAndAssignable(employee as never, everyone);
+        const allowed = await PermissionService.assignableTo(employee as never, everyone);
 
         const matches = isSelf ? allowed.filter(e => e.id === employee.id) : matchByName(targetName, allowed);
 

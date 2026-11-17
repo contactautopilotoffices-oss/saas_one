@@ -1,12 +1,180 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import Image from 'next/image';
-import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box } from 'lucide-react';
+import React, { useState, useEffect, useRef, useId, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box, Lock, MoreHorizontal, ChevronRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ShareModal from './ShareModal';
 import { parseDate } from '@/frontend/utils/date';
 import { SLABadge } from '@/frontend/components/tickets/SLABreachDetailsCard';
+import { useIsDesktop } from '@/frontend/components/task-manager/assign/Sheet';
+
+/**
+ * Owner 2026-11-15: the grid every ticket list uses, so a card is never squeezed. One column on phones; from `sm` up
+ * as many columns as fit at 360px or wider (two on a 1280px laptop with the sidebar open).
+ */
+export const TICKET_GRID_CLASS = 'grid grid-cols-1 sm:grid-cols-[repeat(auto-fill,minmax(min(360px,100%),1fr))]';
+
+interface TicketAction {
+    key: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    danger?: boolean;
+    run: (e: React.MouseEvent) => void;
+}
+
+/**
+ * Owner 2026-11-15: the card's one "⋯" button. Below `sm` it opens a sheet from the bottom of the screen; from `sm` up a
+ * small menu under the button. Each entry calls the same handler the old Share / Edit / Delete icons did. Clicks never
+ * reach the card (which would open the ticket). Esc closes and puts focus back on the button.
+ */
+function TicketActionsMenu({ actions, open, setOpen, ticketNumber, title }: {
+    actions: TicketAction[];
+    open: boolean;
+    setOpen: (open: boolean) => void;
+    ticketNumber: string;
+    title: string;
+}) {
+    const desktop = useIsDesktop();
+    const buttonRef = useRef<HTMLButtonElement>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+    const menuId = useId();
+
+    const close = useCallback((returnFocus = true) => {
+        setOpen(false);
+        if (returnFocus) buttonRef.current?.focus();
+    }, [setOpen]);
+
+    // Focus the first entry when the menu opens.
+    useEffect(() => {
+        if (!open) return;
+        const raf = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus());
+        return () => cancelAnimationFrame(raf);
+    }, [open, desktop]);
+
+    // Esc closes; a click outside closes the desktop menu; the phone sheet stops the page scrolling behind it.
+    useEffect(() => {
+        if (!open) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+        const onDown = (e: MouseEvent) => {
+            if (!desktop) return;
+            const target = e.target as Node;
+            if (menuRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+            setOpen(false);
+        };
+        document.addEventListener('keydown', onKey);
+        document.addEventListener('mousedown', onDown);
+        const overflow = document.body.style.overflow;
+        if (!desktop) document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            document.removeEventListener('mousedown', onDown);
+            if (!desktop) document.body.style.overflow = overflow;
+        };
+    }, [open, desktop, close, setOpen]);
+
+    const onMenuKey = (e: React.KeyboardEvent) => {
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+        const i = items.indexOf(document.activeElement as HTMLElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+        else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
+        else if (e.key === 'End') { e.preventDefault(); items[items.length - 1]?.focus(); }
+        else if (e.key === 'Tab' && desktop) close(false);
+    };
+
+    const pick = (action: TicketAction) => (e: React.MouseEvent) => {
+        e.stopPropagation();
+        close();
+        action.run(e);
+    };
+
+    return (
+        <>
+            <button
+                ref={buttonRef}
+                type="button"
+                aria-label="More actions for this ticket"
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-controls={open ? menuId : undefined}
+                onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+                className={`-mr-2.5 -mt-2.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-[12px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${open ? 'bg-indigo-100 text-indigo-800' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}`}
+            >
+                <MoreHorizontal className="h-[22px] w-[22px]" aria-hidden="true" />
+            </button>
+
+            {/* Desktop: small menu under the button (positioned against the card, which is `relative`). */}
+            {open && desktop && (
+                <div
+                    ref={menuRef}
+                    id={menuId}
+                    role="menu"
+                    aria-label="Ticket actions"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={onMenuKey}
+                    className="absolute right-3 top-[52px] z-50 flex w-[200px] flex-col rounded-[12px] border border-gray-200 bg-white p-1.5 shadow-[0_12px_32px_rgba(15,23,42,0.18)]"
+                >
+                    {actions.map(action => {
+                        const Icon = action.icon;
+                        return (
+                            <button
+                                key={action.key}
+                                type="button"
+                                role="menuitem"
+                                onClick={pick(action)}
+                                className={`flex h-10 items-center gap-2.5 rounded-[8px] px-2.5 text-left text-[15px] font-semibold outline-none hover:bg-slate-100 focus-visible:bg-slate-100 ${action.danger ? 'text-red-700' : 'text-gray-900'}`}
+                            >
+                                <Icon className={`h-[18px] w-[18px] shrink-0 ${action.danger ? 'text-red-700' : 'text-gray-700'}`} />
+                                {action.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Phone: a sheet from the bottom of the screen, rendered into <body>. */}
+            {open && !desktop && typeof document !== 'undefined' && createPortal(
+                <div className="fixed inset-0 z-[70]" onClick={(e) => e.stopPropagation()}>
+                    <button type="button" tabIndex={-1} aria-label="Close" onClick={() => close()} className="absolute inset-0 h-full w-full cursor-default bg-slate-900/45" />
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Ticket actions"
+                        className="absolute inset-x-0 bottom-0 flex flex-col gap-[4px] rounded-t-[22px] bg-white px-4 pt-2 pb-[max(1.75rem,env(safe-area-inset-bottom))] text-gray-900 shadow-[0_-10px_30px_rgba(15,23,42,0.2)]"
+                        style={{ fontFamily: 'var(--font-body)' }}
+                    >
+                        <span aria-hidden="true" className="mb-2 h-[5px] w-10 self-center rounded-full bg-gray-300" />
+                        <p className="mx-1 mb-2 line-clamp-2 text-[13px] text-gray-600">
+                            <span className="font-mono text-gray-700">{ticketNumber}</span> · {title}
+                        </p>
+                        <div ref={menuRef} id={menuId} role="menu" aria-label="Ticket actions" onKeyDown={onMenuKey} className="flex flex-col gap-[4px]">
+                            {actions.map(action => {
+                                const Icon = action.icon;
+                                return (
+                                    <button
+                                        key={action.key}
+                                        type="button"
+                                        role="menuitem"
+                                        onClick={pick(action)}
+                                        className={`flex h-14 items-center gap-3.5 rounded-[14px] px-3 text-left text-[17px] font-semibold outline-none active:bg-slate-100 focus-visible:bg-slate-100 ${action.danger ? 'text-red-700' : 'text-gray-900'}`}
+                                    >
+                                        <Icon className={`h-[22px] w-[22px] shrink-0 ${action.danger ? 'text-red-700' : 'text-gray-700'}`} />
+                                        {action.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <button type="button" onClick={() => close()} className="mt-1.5 h-[52px] rounded-[14px] bg-slate-100 text-base font-bold text-gray-900 active:bg-slate-200">
+                            Cancel
+                        </button>
+                    </div>
+                </div>,
+                document.body,
+            )}
+        </>
+    );
+}
 
 /**
  * THE Standard Ticket Card Component
@@ -45,6 +213,7 @@ export interface TicketCardProps {
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
     hasMaterialRequest?: boolean; // indicator for procurement needs
+    isInternal?: boolean; // badge when ticket is internal (not visible to tenants)
 
     // Actions
     onClick: () => void;
@@ -91,6 +260,7 @@ export default function TicketCard({
     slaDeadline,
     slaBreached,
     raisedByTenant,
+    isInternal,
     onClick,
     onEdit,
     onDelete,
@@ -113,6 +283,14 @@ export default function TicketCard({
 
 
     const [shareOpen, setShareOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+
+    // The same three actions the card always had; Edit and Delete only when the screen passes their handlers.
+    const actions: TicketAction[] = [
+        { key: 'share', label: 'Share ticket', icon: Share2, run: () => setShareOpen(true) },
+        ...(onEdit ? [{ key: 'edit', label: 'Edit request', icon: Pencil, run: (e: React.MouseEvent) => onEdit(e) }] : []),
+        ...(onDelete ? [{ key: 'delete', label: 'Delete request', icon: Trash2, danger: true, run: (e: React.MouseEvent) => onDelete(e) }] : []),
+    ];
 
     // Normalize status - replace spaces with underscores for consistent comparison
     const normalizedStatus = (status || '').toUpperCase().replace(/\s+/g, '_');
@@ -181,12 +359,20 @@ export default function TicketCard({
     };
 
     // Color based on age of active ticket
+    // Same colour steps as before; text one shade darker so the 12px timer stays readable.
     const timerColor = isResolvedByUs || isFullyClosed
-        ? 'text-violet-600 bg-violet-50'  // Violet for pending validation / closed
-        : elapsedSec < 3600         ? 'text-emerald-600 bg-emerald-50'   // < 1h: green
-        : elapsedSec < 86400        ? 'text-amber-600 bg-amber-50'       // < 1d: yellow
-        : elapsedSec < 86400 * 3   ? 'text-orange-600 bg-orange-50'     // < 3d: orange
-        : 'text-rose-600 bg-rose-50 animate-pulse';                       // > 3d: red pulse
+        ? 'text-violet-700 bg-violet-50'  // Violet for pending validation / closed
+        : elapsedSec < 3600         ? 'text-emerald-700 bg-emerald-50'   // < 1h: green
+        : elapsedSec < 86400        ? 'text-amber-800 bg-amber-50'       // < 1d: yellow
+        : elapsedSec < 86400 * 3   ? 'text-orange-700 bg-orange-50'     // < 3d: orange
+        : 'text-rose-700 bg-rose-50 animate-pulse';                       // > 3d: red pulse
+
+    const initialsOf = (name: string) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const showServing = Boolean(assignedTo && status !== 'OPEN');
+    // Card contract: never repeat the title as the description.
+    const showDescription = Boolean(description && description.trim() && description.trim().toLowerCase() !== (title || '').trim().toLowerCase());
+    const chip = 'inline-flex h-6 items-center gap-[4px] rounded-full border px-2.5 text-xs font-bold';
+    const capsChip = `${chip} uppercase tracking-[0.02em]`;
 
     return (
         <motion.div
@@ -207,7 +393,7 @@ export default function TicketCard({
                 repeat: Infinity,
                 ease: "easeInOut"
             } : {}}
-            className={`@container relative w-full h-full bg-white rounded-2xl p-3 cursor-pointer transition-all hover:shadow-md flex flex-col gap-2 ${isCritical ? 'border-2' : ''}`}
+            className={`@container relative w-full h-full min-w-0 bg-white rounded-2xl px-3.5 pt-3.5 pb-1 @sm:px-4 @sm:pt-4 @sm:pb-1.5 cursor-pointer transition-shadow hover:shadow-md flex flex-col gap-2.5 ${isCritical ? 'border-2' : ''} ${menuOpen ? 'z-30' : ''}`}
             style={{
                 scrollMarginTop: '100px',
                 ...(isCritical
@@ -217,144 +403,98 @@ export default function TicketCard({
                         : { border: '1px solid #e5e7eb' })
             }}
         >
-            {/* Photo Thumbnail in absolute top-left corner */}
-            {photoUrl && (
-                <div className="absolute top-3 left-3 w-12 h-12 z-40 group cursor-pointer">
-                    <img
-                        src={photoUrl}
-                        alt="Site photo"
-                        className="w-12 h-12 object-cover rounded-md shadow-sm border border-gray-200 transition-all duration-300 origin-top-left relative group-hover:scale-[4] group-hover:shadow-2xl"
-                    />
-                </div>
-            )}
-
-            {/* Header: Title + Actions */}
-            <div className={`flex items-start justify-between gap-2 relative z-20 ${photoUrl ? 'pl-14 sm:pl-16 min-h-[48px]' : ''}`}>
-                <div className="flex-1 min-w-0">
-                    {/* Title */}
-                    <h3 className="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 break-words pr-2" title={title}>
+            {/* Header: photo (in flow, left) + title/description + the one "⋯" actions button */}
+            <div className="flex items-start gap-[12px]">
+                {photoUrl && (
+                    // Desktop keeps the hover zoom; it grows to the right/down and stays under the actions menu (z-50).
+                    <div className="relative z-10 h-10 w-10 shrink-0 @sm:h-11 @sm:w-11">
+                        <img
+                            src={photoUrl}
+                            alt="Site photo"
+                            className="h-full w-full origin-top-left rounded-[8px] border border-gray-200 object-cover transition-transform duration-300 sm:hover:scale-[4] sm:hover:shadow-2xl"
+                        />
+                    </div>
+                )}
+                <div className="min-w-0 flex-1">
+                    {/* A <p role="heading">, not an <h3>: globals.css forces every h3 to weight 500 (and 18px on phones). */}
+                    <p role="heading" aria-level={3} className="line-clamp-3 break-words text-base font-bold leading-[1.3] text-gray-900" title={title}>
                         {title}
-                    </h3>
-                    {description && (
-                        <p className="text-xs text-gray-500 mt-1 leading-snug line-clamp-2 break-words pr-2" title={description}>
+                    </p>
+                    {showDescription && (
+                        <p className="mt-1 line-clamp-2 break-words text-sm leading-[1.4] text-gray-600" title={description}>
                             {description}
                         </p>
                     )}
                 </div>
-
-                {/* Actions Container: Grouped and Top-Right - Compact on mobile */}
-                <div className="flex items-center gap-0.5 sm:gap-1 shrink-0 bg-gray-50/80 p-0.5 sm:p-1 rounded-lg sm:rounded-xl border border-gray-100">
-                    <button
-                        onClick={(e) => { e.stopPropagation(); setShareOpen(true); }}
-                        className="p-1 sm:p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-all"
-                        title="Share Ticket"
-                    >
-                        <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    </button>
-                    {onEdit && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onEdit(e);
-                            }}
-                            className="p-1 sm:p-1.5 text-gray-400 hover:text-blue-600 hover:bg-white rounded-md sm:rounded-lg transition-all"
-                            title="Edit Request"
-                        >
-                            <Pencil className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        </button>
-                    )}
-                    {onDelete && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onDelete(e);
-                            }}
-                            className="p-1 sm:p-1.5 text-gray-400 hover:text-red-600 hover:bg-white rounded-md sm:rounded-lg transition-all"
-                            title="Delete Request"
-                        >
-                            <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        </button>
-                    )}
-                </div>
+                <TicketActionsMenu actions={actions} open={menuOpen} setOpen={setMenuOpen} ticketNumber={ticketNumber} title={title} />
             </div>
 
-            {/* Badges Flow */}
+            {/* Badges */}
             <div className="flex flex-wrap items-center gap-1.5">
-                <span
-                    className={`
-                        px-2 py-0.5 rounded-full 
-                        text-[10px] font-bold uppercase border
-                        ${PRIORITY_STYLES[priority]}
-                    `}
-                >
+                <span className={`${capsChip} ${PRIORITY_STYLES[priority]}`}>
                     {priority}
                 </span>
 
-                <span
-                    className={`
-                        px-2 py-0.5 rounded-full
-                        text-[10px] font-medium uppercase
-                        ${STATUS_STYLES[normalizedStatus as keyof typeof STATUS_STYLES] || 'bg-gray-100 text-gray-700'}
-                    `}
-                >
+                <span className={`${capsChip} border-transparent ${STATUS_STYLES[normalizedStatus as keyof typeof STATUS_STYLES] || 'bg-gray-100 text-gray-700'}`}>
                     {status?.replace(/_/g, ' ')}
                 </span>
 
-                <SLABadge slaDeadline={slaDeadline ?? null} isBreached={computedIsBreached} />
+                {isInternal && (
+                    <span className={`${capsChip} bg-slate-800 text-white border-slate-800`}>
+                        <Lock className="h-3 w-3" aria-hidden="true" />
+                        Internal
+                    </span>
+                )}
 
+                <SLABadge slaDeadline={slaDeadline ?? null} isBreached={computedIsBreached} readable />
 
                 {propertyName && (
-                    <span className="inline-flex items-center gap-1 px-[clamp(0.4rem,1.5cqw,0.6rem)] py-[clamp(0.15rem,0.5cqw,0.25rem)] bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full text-[clamp(0.6rem,2.2cqw,0.7rem)] font-semibold">
-                        <svg className="w-[clamp(0.6rem,2cqw,0.75rem)] h-[clamp(0.6rem,2cqw,0.75rem)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <span className={`${chip} max-w-full bg-indigo-50 text-indigo-700 border-indigo-200`}>
+                        <svg className="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                         </svg>
-                        {propertyName}
+                        <span className="truncate">{propertyName}</span>
                     </span>
                 )}
 
                 {hasMaterialRequest && (
-                    <span className="inline-flex items-center gap-1 px-[clamp(0.4rem,1.5cqw,0.6rem)] py-[clamp(0.15rem,0.5cqw,0.25rem)] bg-fuchsia-100 text-fuchsia-700 border border-fuchsia-200 rounded-full text-[clamp(0.6rem,2.2cqw,0.7rem)] font-bold shadow-sm">
-                        <Box className="w-[clamp(0.6rem,2cqw,0.75rem)] h-[clamp(0.6rem,2cqw,0.75rem)]" />
+                    <span className={`${chip} bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200`}>
+                        <Box className="h-3 w-3" aria-hidden="true" />
                         Materials
                     </span>
                 )}
             </div>
 
-            {/* Raised By Information */}
-            {raisedBy && (
-                <div className="flex items-center gap-1.5">
-                    <span className="text-[clamp(0.75rem,3cqw,0.875rem)] text-gray-600">Raised By:</span>
-                    <div className="flex items-center gap-1.5 text-indigo-700">
-                        <div className="w-5 h-5 rounded-full flex-shrink-0 border border-indigo-200 overflow-hidden bg-indigo-50">
-                            {raisedByPhotoUrl ? (
-                                <img src={raisedByPhotoUrl} alt={raisedBy} className="w-full h-full object-cover" />
-                            ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold">
-                                    {raisedBy.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                                </div>
-                            )}
+            {/* Raised by / Serving: two labelled rows in a narrow card, one line in a wide one */}
+            {(raisedBy || showServing) && (
+                <div className="flex flex-col gap-1.5 text-sm @sm:flex-row @sm:flex-wrap @sm:items-center @sm:gap-x-2 @sm:gap-y-1">
+                    {raisedBy && (
+                        <div className="flex min-w-0 max-w-full items-center gap-[8px]">
+                            <span className="w-[72px] shrink-0 text-gray-600 @sm:w-auto">Raised by</span>
+                            <span className="h-[22px] w-[22px] shrink-0 overflow-hidden rounded-full border border-indigo-200 bg-indigo-50 text-indigo-800" aria-hidden="true">
+                                {raisedByPhotoUrl ? (
+                                    <img src={raisedByPhotoUrl} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                    <span className="flex h-full w-full items-center justify-center text-[10px] font-bold">{initialsOf(raisedBy)}</span>
+                                )}
+                            </span>
+                            <span className="min-w-0 truncate font-semibold text-indigo-800" title={raisedBy}>{raisedBy}</span>
                         </div>
-                        <span className="text-[clamp(0.75rem,3cqw,0.875rem)] font-semibold">{raisedBy}</span>
-                    </div>
-                </div>
-            )}
-
-            {/* Assignee Information */}
-            {assignedTo && status !== 'OPEN' && (
-                <div className="flex items-center gap-1.5">
-                    <span className="text-[clamp(0.75rem,3cqw,0.875rem)] text-gray-600">Serving Request:</span>
-                    <div className="flex items-center gap-1.5">
-                        <div className="w-5 h-5 rounded-full flex-shrink-0 border border-gray-200 overflow-hidden">
-                            {assigneePhotoUrl ? (
-                                <img src={assigneePhotoUrl} alt={assignedTo} className="w-full h-full object-cover" />
-                            ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[8px] font-bold bg-blue-100 text-blue-700">
-                                    {assignedTo.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                                </div>
-                            )}
+                    )}
+                    {raisedBy && showServing && <span aria-hidden="true" className="hidden text-gray-300 @sm:inline">|</span>}
+                    {showServing && assignedTo && (
+                        <div className="flex min-w-0 max-w-full items-center gap-[8px]">
+                            <span className="w-[72px] shrink-0 text-gray-600 @sm:w-auto">Serving</span>
+                            <span className="h-[22px] w-[22px] shrink-0 overflow-hidden rounded-full border border-blue-200 bg-blue-100 text-blue-800" aria-hidden="true">
+                                {assigneePhotoUrl ? (
+                                    <img src={assigneePhotoUrl} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                    <span className="flex h-full w-full items-center justify-center text-[10px] font-bold">{initialsOf(assignedTo)}</span>
+                                )}
+                            </span>
+                            <span className="min-w-0 truncate font-semibold text-gray-900" title={assignedTo}>{assignedTo}</span>
                         </div>
-                        <span className="text-[clamp(0.75rem,3cqw,0.875rem)] font-semibold text-gray-900">{assignedTo}</span>
-                    </div>
+                    )}
                 </div>
             )}
 
@@ -392,17 +532,15 @@ export default function TicketCard({
                 </div>
             )}
 
-            {/* Footer Metadata + CTA */}
-            <div className="mt-auto flex flex-col @sm:flex-row @sm:items-center justify-between gap-3 pt-3 border-t border-gray-100 min-w-0">
-                <div className="flex flex-col gap-1 min-w-0">
-                    <div className="flex items-center gap-2 text-[10px] text-text-tertiary">
-                        <span className="font-mono bg-gray-50 px-1 py-0.5 rounded text-gray-600">{ticketNumber}</span>
-                        <span className="text-gray-200">•</span>
-                        <span className="font-medium">{formattedDate}</span>
-                    </div>
+            {/* Footer: ticket number · date and the timer on the left; a slim "View" on the right (same action as the card) */}
+            <div className="mt-auto flex min-w-0 items-center justify-between gap-[8px] border-t border-slate-100 pt-1">
+                <div className="flex min-w-0 flex-col gap-[3px] py-1.5 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:gap-x-2">
+                    <span className="text-xs text-gray-600 @sm:text-[13px]">
+                        <span className="font-mono text-gray-700">{ticketNumber}</span> · <span className="tabular-nums">{formattedDate}</span>
+                    </span>
                     {/* Live elapsed timer */}
-                    <div className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-lg text-[9px] font-black w-fit ${timerColor}`}>
-                        <Timer className="w-2.5 h-2.5 shrink-0" />
+                    <span className={`inline-flex h-[22px] w-fit items-center gap-[4px] rounded-[8px] px-2 text-xs font-bold tabular-nums ${timerColor}`}>
+                        <Timer className="h-3 w-3 shrink-0" aria-hidden="true" />
                         {(isResolvedByUs || isFullyClosed) ? (
                             <span>
                                 Closed at {(() => {
@@ -419,28 +557,26 @@ export default function TicketCard({
                         ) : (
                             formatElapsed(elapsedSec)
                         )}
-                    </div>
+                    </span>
                 </div>
 
                 <button
-                    className="
-                        w-full @sm:w-auto px-4 py-1.5
-                        bg-blue-600 text-white rounded-xl
-                        text-xs font-bold hover:bg-blue-700
-                        transition-all active:scale-[0.98] shadow-sm shadow-blue-200
-                    "
+                    type="button"
+                    aria-label={`View ticket ${ticketNumber}`}
+                    className="-mr-1 flex h-11 shrink-0 items-center gap-0.5 rounded-[8px] pl-3 pr-1 text-[15px] font-bold text-blue-700 transition-colors hover:bg-blue-50 hover:text-blue-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                     onClick={(e) => {
                         e.stopPropagation();
                         onClick();
                     }}
                 >
-                    View Ticket
+                    View
+                    <ChevronRight className="h-[18px] w-[18px]" strokeWidth={2.5} aria-hidden="true" />
                 </button>
             </div>
 
             {/* Validation Actions — shown only when pending client approval */}
             {normalizedStatus === 'PENDING_VALIDATION' && (onValidate || onReject) && (
-                <div className="flex gap-2 pt-[clamp(0.5rem,2cqw,0.75rem)] border-t border-violet-100">
+                <div className="flex gap-2 pt-[clamp(0.5rem,2cqw,0.75rem)] mb-2.5 border-t border-violet-100">
                     {onValidate && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onValidate(e); }}

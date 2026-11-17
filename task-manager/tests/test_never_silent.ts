@@ -126,7 +126,7 @@ async function run() {
     const wd = read('task-manager/NeverSilentWatchdog.ts');
     check('housekeeping checks each switch before doing anything', /if \(await neverSilentEnabled\(\)\)/.test(wd) && /if \(await memoryEnabled\(\)\)/.test(wd));
     const access = read('app/api/task-manager/access/route.ts');
-    check('admins flip the switches from the Task Access panel (admin-guarded API), and the cache is reset', /action === 'set_bot_feature'/.test(access) && /resetBotSwitchCache\(\)/.test(access) && /requireTaskManagerAdmin/.test(access));
+    check('admins flip the switches from the Task Access panel (admin-guarded API), and the cache is reset', /action === 'set_bot_feature'/.test(access) && /resetBotSwitchCache\(\)/.test(access) && /requireControlCentre/.test(access));
     check('switching memory OFF deletes all stored memories (privacy)', /body\.feature === 'conversationMemory' && !body\.enabled \? await clearAllMemory\(\)/.test(access));
     const sql = read('supabase/migrations/20261011000001_whatsapp_inbound_ledger.sql').split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
     check('the migration is ADDITIVE, stores no message text, and is service-role only',

@@ -2,11 +2,12 @@ import { matchByName } from '../TaskGateway';
 import type { DomainHandler, ExecutionResult, IntentSpec, ReplyFacts } from './domain';
 import {
     Action, BrainContext, BrainPerson, BrainTask, CHANGE_CONFIDENCE_MIN, ClarifyReason, ConfirmPolicy, Decision, Intent,
-    Interpretation, MAX_TASKS_PER_MESSAGE, MAX_TITLE_LENGTH, ProgressState, READ_CONFIDENCE_MIN, Slots, TASK_INTENTS, ViewScope, Which,
+    Interpretation, MAX_NOTE_LENGTH, MAX_TASKS_PER_MESSAGE, MAX_TITLE_LENGTH, NoteTarget, ProgressState, READ_CONFIDENCE_MIN, SOFT_CHANGE_CONFIDENCE_MIN, Slots, TASK_INTENTS, ViewScope, Which,
 } from './types';
 import { addDays, clip, contentWords, dayLabel, headedList, isGrounded, isIsoDate, norm, sectionedList, similarity } from './text';
 import { TaskQuery, findQuerySchema, periodRange, validateQuery, wordsGrounded } from './findTasks';
 import { UNDO_HINT } from './frontDoor';
+import { isSimilarTitle } from '../taskSimilarity';
 
 /**
  * The language brain — the TASKS domain.
@@ -23,19 +24,29 @@ const INTENT_SPECS: IntentSpec[] = [
     { name: 'view_tasks', description: 'wants to SEE tasks or progress: their own ("what do I have today", "anything pending?", "what are my carry forward tasks?") or another person\'s / a department\'s / the whole company\'s — for TODAY only. Any other day or range ("tomorrow", "yesterday", "this week", "last month") is "find_tasks".',
         slots: '{"scope":"self"|"person"|"department"|"org"|"pending_overview","person":string|null,"department":string|null,"carried_forward_only":boolean}  — carried_forward_only = true only when they ask for their OWN tasks carried over / left from earlier days.' },
     { name: 'complete_tasks', description: 'says they FINISHED one or more of THEIR OWN tasks ("done 2", "finished the carpet one", "all done"). If the message is about another person\'s tasks it is NOT this intent: use "unknown" and say why in ambiguities. To delete / remove a task use "delete_tasks"; to rename one use "rename_task".',
-        slots: `{"which":{"all":boolean,"numbers":[int],"hints":[string],"group":"carried"|"today"|"YYYY-MM-DD"|null}}  — numbers refer to the numbered task list you were given; put a task number there whenever the person names a task you can match to the list. ${GROUP_HELP}` },
+        slots: `{"which":{"all":boolean,"numbers":[int],"hints":[string],"group":"carried"|"today"|"YYYY-MM-DD"|null},"note":string|null}  — numbers refer to the numbered task list you were given; put a task number there whenever the person names a task you can match to the list. ${GROUP_HELP} "note" is a remark they give WITH it about what was done or what is still pending ("done 1: shared the CVs on the HR group" → "shared the CVs on the HR group"), in their own words; otherwise null.` },
     { name: 'progress_update', description: 'reports PROGRESS short of finishing, or a status on tasks they were sent: "working on it", "half done", "stuck waiting for the vendor", or "done"/"done all" in reply to someone\'s request.',
         slots: '{"state":"working"|"partly_done"|"blocked"|"done_all"|"done_some"|"other","which":{"all":boolean,"numbers":[int],"hints":[string]},"note":string|null}' },
     { name: 'create_tasks', description: 'wants to ADD one or more tasks, for themself ("remind me to…") or for someone else ("assign Lohit a task about…"). Split distinct jobs into separate tasks.',
-        slots: '{"assignee":"me"|<person name>,"tasks":[{"title":string,"details":string|null}],"date":"YYYY-MM-DD"|null,"group":{"whose":"team"|"department"|"everyone","department":string|null,"except":[<person name>]}|null}  — titles are short (max 12 words) and use the person\'s own words; never invent work; date only if the message gives one. When the work is for a GROUP ("everyone", "my team", "all of Tech", "sabko", "everyone except Harsh"), fill "group" and set "assignee" to "group"; NEVER list the names yourself.' },
-    { name: 'hand_over_task', description: 'wants to GIVE one of their own existing tasks to a teammate ("give task 2 to Vidya", "pass the carpet one to Harsh").',
-        slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"to":<person name>|null}' },
+        slots: '{"assignee":"me"|<person name>|"?","assignees":[<person name>],"tasks":[{"title":string,"details":string|null,"assignees":[<person name>]}],"date":"YYYY-MM-DD"|null,"group":{"whose":"team"|"department"|"everyone","department":string|null,"except":[<person name>]}|null}  — titles are short (max 12 words) and use the person\'s own words; never invent work; date only if the message gives one. When the work is for a GROUP ("everyone", "my team", "all of Tech", "sabko", "everyone except Harsh"), fill "group" and set "assignee" to "group"; NEVER list the names yourself. SEVERAL NAMED PEOPLE for the same work ("assign Parab and Neeti to conduct induction", "Sanil aur Neeti dono ko"): put every name in "assignees" (each gets the task); this is clear, never an ambiguity. A LIST where each line names its own person ("1. meeting with vendors - neeti" then "2. review quotation - sanil"): one task per line, with that line\'s person in the task\'s own "assignees". A message that asks to add a task or only NAMES a piece of work, without naming anyone, and is not a question ("add task follow up regarding checklist", "event feedback for navratri event"): intent create_tasks with "assignee":"me" (it goes on their own list). Use "assignee":"?" ONLY when they say to assign it to someone but do not say who ("assign a task about the audit"). A WORD THAT IS NOT IN THE PEOPLE LIST (owner 2026-10-21, Sanil: "Add Sailee rest FNF", where Sailee is not a teammate) is part of the TITLE, never a person and never an ambiguity: title "Sailee rest FNF", "assignee":"me". "details" ONLY when the message marks a note with the word "note" or "remark", with or without ":" ("vendor meeting, note: call before 3pm" or "onboarding note Satish" → details "call before 3pm" / "Satish"), OR in a NUMBERED list a detail is written on its own line under a task ("2. Diwali poll" then "Pending · from Team" → title "Diwali poll", details "from Team"; leave out status words like "Pending"); otherwise details is null and every word stays in the task title(s). A LIST of tasks (several lines, or items separated by commas) is ONE TASK PER LINE OR ITEM: "Add tasks / New lineups Ops, / Bangalore Drive. / Technical exe, Ops manager, AFM" → five tasks "New lineups Ops", "Bangalore Drive", "Technical exe", "Ops manager", "AFM". One sentence with a comma inside it ("call the vendor, ask for the quote") stays one task. "wants_note": true when they ask to add a note ("add note", "with a note") but give no note text ("assign Sanil the vendor follow-up, add note"). "follow_up": when the new task FOLLOWS UP an existing task ("follow up on task 2: collect the signed letter", "follow-up for the onboarding task: send the welcome kit"), {"numbers":[int],"hints":[string]} pointing at that existing task (a number only from their own numbered list, otherwise words of its name); the new task\'s title is only the new work. Otherwise "follow_up" is null.' },
+    { name: 'hand_over_task', description: 'wants to GIVE one of their own existing tasks to a teammate ("give task 2 to Vidya", "pass the carpet one to Harsh", "give task 2 to Vidya, note: call the vendor first").',
+        slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"to":<person name>|null,"note":string|null,"wants_note":boolean}  — "note" is a note to send with it, in their words, without the person\'s name; "wants_note" is true when they ask to add a note ("add note", "with a note") but give no note text.' },
     { name: 'answer_pending', description: 'is ANSWERING a question the bot just asked (only possible when a question is pending): "yes", "no", "the second one", "make it tomorrow instead".',
         slots: '{"answer":"yes"|"no"|"pick"|"edit"|"unsure","pick":int|null,"instruction":string|null}' },
     { name: 'delete_tasks', description: 'wants to DELETE / REMOVE one or more of THEIR OWN tasks from their list ("delete task 2", "remove the carpet one", "task 3 hata do", "delete all overdue tasks", "delete yesterday\'s tasks"). Not for marking done.',
         slots: `{"which":{"all":boolean,"numbers":[int],"hints":[string],"group":"carried"|"today"|"YYYY-MM-DD"|null}}  — "all": true only when they say ALL their tasks. ${GROUP_HELP}` },
     { name: 'rename_task', description: 'wants to RENAME / change the name of ONE of their own tasks ("rename task 2 to Vendor follow-up", "change the carpet task name to Carpet PO").',
         slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"new_title":string|null}  — new_title is the new name in their own words (max 12 words); null if they did not give one.' },
+    { name: 'add_note', description: 'wants to ADD A NOTE / remark to a task that ALREADY EXISTS: their own, or one they gave someone ("add note to onboarding: documents pending", "onboarding wale task mein note daal do ki documents pending hain", "add a note to Srushti\'s onboarding task: call Satish first"). A person named here only says WHOSE task it is: put that name in "person". It is NEVER a new task and NEVER a hand-over. Adding a NEW task with a note is "create_tasks" with "details".',
+        slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"person":<person name>|null,"note":string}  — numbers only for a number from their own numbered list; otherwise put words of the task name in "hints". "note" is the note in their own words (max 40 words), without the task name and without the person\'s name.' },
+    { name: 'remind_tasks', description: 'wants to REMIND someone about tasks they ALREADY GAVE them that are still pending ("remind srushti about onboarding", "srushti ko onboarding ka reminder bhejo", "remind sanil about all his pending tasks", "remind everyone about overdue tasks"). Never for new work: "remind me to call the vendor" or "remind Srushti to call the vendor" when it is a new job is "create_tasks".',
+        slots: '{"which":{"all":boolean,"numbers":[],"hints":[string]},"person":<person name>|null,"overdue_only":boolean}  — hints are words of the task name (empty when they mean all of that person\'s pending tasks); person is whose tasks; overdue_only = true only when they say overdue / late / pending from earlier days.' },
+    { name: 'lock_task', description: 'wants one of THEIR OWN tasks to REPEAT every working day ("lock task 2", "make onboarding a daily task", "isko roz ka task bana do"), to STOP repeating ("unlock task 3", "stop repeating diwali poll"), or asks WHICH of their tasks repeat ("which tasks are locked?", "my daily fixed tasks").',
+        slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"action":"lock"|"unlock"|"list"}  — "list" when they only ask which tasks repeat (leave which empty).' },
+    { name: 'change_task', description: 'wants to MOVE an existing task to ANOTHER DAY and/or give it to ANOTHER PERSON instead, usually a task they gave someone ("move task 3 to Friday", "change the date of Sanil\'s vendor task to tomorrow", "give Srushti\'s onboarding task to Neeti instead", "shift the audit task to Monday and give it to Harsh"). Renaming only is "rename_task"; giving away one of their OWN tasks without changing anything else is "hand_over_task".',
+        slots: '{"which":{"all":false,"numbers":[int],"hints":[string]},"person":<person name>|null,"date":"YYYY-MM-DD"|null,"to":<person name>|null}  — numbers only for a number from their own numbered list, otherwise words of the task name in "hints"; "person" only says WHOSE task it is now; "date" the new day; "to" the new person.' },
+    { name: 'answer_request', description: 'ANSWERS a support request someone from another department sent them (only possible when "support_requests_waiting_for_answer" is in the context): accepting it ("ok I\'ll do it", "accept", "haan kar dunga", "sure, will share by Friday") or saying they can\'t ("can\'t, payroll is with the vendor", "no, not my team\'s work", "nahi ho payega"). It is NEVER a new task.',
+        slots: '{"which":{"all":false,"numbers":[],"hints":[string]},"decision":"accept"|"decline","reason":string|null}  — hints are words of the request\'s name, or the sender\'s name, only when several requests are waiting; "reason" is why they can\'t, in their own words (null when accepting).' },
     { name: 'find_tasks', description: 'asks any OTHER question about tasks (read-only), using filters: past or future days ("yesterday", "last week", "this month"), finished tasks ("what did I finish yesterday?"), who gave them ("what did Saniel give me?", "what have I assigned to Lohit?"), words in them ("anything about AMC?"), overdue / open for N days, fixed daily tasks, counts ("how many did Vidya finish this week?") or grouped ("by person", "by department"). For the person\'s own list for today, their team today, a department or the company today, use "view_tasks". NEVER for a change.',
         slots: `${findQuerySchema(false)}  — fill only what the person said; leave the rest at the defaults (whose "me", period "any", status "any"). "finished/completed yesterday" → status "done", date_field "finished", period "yesterday". "words" are words from their message only.` },
     { name: 'help', description: 'asks what the bot can do or how to use it.', slots: '{}' },
@@ -43,10 +54,12 @@ const INTENT_SPECS: IntentSpec[] = [
     { name: 'unknown', description: 'anything else, or you cannot tell what is wanted.', slots: '{}' },
 ];
 
-const CHANGE_INTENTS: ReadonlySet<Intent> = new Set(['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task']);
+const CHANGE_INTENTS: ReadonlySet<Intent> = new Set(['complete_tasks', 'progress_update', 'create_tasks', 'hand_over_task', 'delete_tasks', 'rename_task', 'add_note', 'remind_tasks', 'lock_task', 'change_task', 'answer_request']);
 const SCOPES: readonly ViewScope[] = ['self', 'person', 'department', 'org', 'pending_overview'];
 const STATES: readonly ProgressState[] = ['working', 'partly_done', 'blocked', 'done_all', 'done_some', 'other'];
 const SELF_WORDS = new Set(['me', 'myself', 'self', 'i', 'my self', 'my own']);
+/** Owner 2026-10-21: words that mean "give this to someone else" (then a missing name is asked for, never guessed as "me"). */
+const ASKS_TO_ASSIGN = /\b(?:assign|assigned|delegate|for someone|someone else|ko de|ko do|de do|dedo)\b/i;
 const EVERYONE_WORDS = new Set(['everyone', 'everybody', 'all', 'all of them', 'the team', 'team', 'someone', 'somebody', 'anyone', 'anybody', 'whoever']);
 
 // ── strict shape checks ─────────────────────────────────────────────────────────────────────────
@@ -55,6 +68,14 @@ const str = (v: unknown, max: number): string | null => {
     if (typeof v !== 'string') return null;
     const s = clip(v, max);
     return s || null;
+};
+
+/** Owner 2026-10-19: a list of people's names ("Parab", "Neeti"), or one name given as a string. At most 10, no repeats. */
+const nameList = (v: unknown): string[] => {
+    const raw = Array.isArray(v) ? v : typeof v === 'string' ? [v] : [];
+    const out: string[] = [];
+    for (const x of raw) { const n = str(x, 60); if (n && !out.some(o => norm(o) === norm(n))) out.push(n); }
+    return out.slice(0, 10);
 };
 
 function parseWhich(raw: unknown): Which {
@@ -87,7 +108,7 @@ function validateSlots(intent: Intent, raw: Record<string, unknown>, ctx: BrainC
             return { intent, scope, person: str(raw.person, 60), department: str(raw.department, 60), ...(scope === 'self' && raw.carried_forward_only === true ? { carriedOnly: true } : {}) };
         }
         case 'complete_tasks':
-            return { intent, which: parseWhich(raw.which) };
+            return { intent, which: parseWhich(raw.which), ...(str(raw.note, MAX_NOTE_LENGTH) ? { note: str(raw.note, MAX_NOTE_LENGTH) } : {}) };
         case 'progress_update': {
             const state = raw.state as ProgressState;
             if (!STATES.includes(state)) return null;
@@ -95,21 +116,30 @@ function validateSlots(intent: Intent, raw: Record<string, unknown>, ctx: BrainC
         }
         case 'create_tasks': {
             const tasks = (Array.isArray(raw.tasks) ? raw.tasks : [])
-                .map(t => (t && typeof t === 'object' ? { title: str((t as any).title, MAX_TITLE_LENGTH), details: str((t as any).details, 400) } : null))
-                .filter((t): t is { title: string; details: string | null } => !!t && !!t.title)
+                .map(t => {
+                    if (!t || typeof t !== 'object') return null;
+                    const names = nameList((t as Record<string, unknown>).assignees);
+                    const o = t as Record<string, unknown>;
+                    return { title: str(o.title, MAX_TITLE_LENGTH), details: str(o.details, 400), ...(names.length ? { assignees: names } : {}) };
+                })
+                .filter((t): t is { title: string; details: string | null; assignees?: string[] } => !!t && !!t.title)
                 .slice(0, MAX_TASKS_PER_MESSAGE + 1);
+            // Owner 2026-10-19: several people for the whole message, as "assignees" or as a list in "assignee".
+            const many = nameList(Array.isArray(raw.assignee) ? raw.assignee : raw.assignees);
             const date = isIsoDate(raw.date) && raw.date >= addDays(ctx.today, -366) && raw.date <= addDays(ctx.today, 366) ? raw.date : null;
             // The sender's own name is "me" (so "remind me to…" never fails the "named in the message" check).
-            const a = str(raw.assignee, 60) || 'me';
+            const a = (Array.isArray(raw.assignee) ? (many.length === 1 ? many[0] : '') : str(raw.assignee, 60)) || (many.length ? '' : 'me');
             const self = norm(a) === norm(ctx.sender.name) || norm(a) === norm(ctx.sender.name).split(' ')[0];
             const g = raw.group && typeof raw.group === 'object' && !Array.isArray(raw.group) ? raw.group as Record<string, unknown> : null;
             const group = g && ['team', 'department', 'everyone'].includes(String(g.whose))
                 ? { whose: g.whose as 'team' | 'department' | 'everyone', department: str(g.department, 60), except: (Array.isArray(g.except) ? g.except : []).map(x => str(x, 60)).filter((x): x is string => !!x).slice(0, 10) }
                 : null;
-            return { intent, assignee: self ? 'me' : a, tasks, date, ...(group ? { group } : {}) };
+            const followUp = raw.follow_up && typeof raw.follow_up === 'object' && !Array.isArray(raw.follow_up) ? { ...parseWhich(raw.follow_up), all: false } : null;
+            const hasFollowUp = !!followUp && (followUp.numbers.length > 0 || followUp.hints.length > 0);
+            return { intent, assignee: self ? 'me' : a, tasks, date, ...(many.length > 1 ? { assignees: many } : {}), ...(group ? { group } : {}), ...(raw.wants_note === true ? { wantsNote: true } : {}), ...(hasFollowUp ? { followUp } : {}) };
         }
         case 'hand_over_task':
-            return { intent, which: parseWhich(raw.which), to: str(raw.to, 60) };
+            return { intent, which: parseWhich(raw.which), to: str(raw.to, 60), note: str(raw.note, MAX_NOTE_LENGTH), ...(raw.wants_note === true ? { wantsNote: true } : {}) };
         case 'answer_pending': {
             const answer = raw.answer as string;
             if (!['yes', 'no', 'pick', 'edit', 'unsure'].includes(answer)) return null;
@@ -120,6 +150,22 @@ function validateSlots(intent: Intent, raw: Record<string, unknown>, ctx: BrainC
             return { intent, which: parseWhich(raw.which) };   // a whole group / "all" is allowed (always previewed, then YES)
         case 'rename_task':
             return { intent, which: { ...parseWhich(raw.which), all: false }, newTitle: str(raw.new_title, MAX_TITLE_LENGTH) };
+        case 'add_note':
+            return { intent, which: { ...parseWhich(raw.which), all: false }, person: str(raw.person, 60), note: str(raw.note, MAX_NOTE_LENGTH) };
+        case 'remind_tasks':
+            return { intent, which: { ...parseWhich(raw.which), numbers: [] }, person: str(raw.person, 60), overdueOnly: raw.overdue_only === true };
+        case 'lock_task': {
+            const action = raw.action === 'lock' || raw.action === 'unlock' || raw.action === 'list' ? raw.action : null;
+            return action ? { intent, which: { ...parseWhich(raw.which), all: false }, action } : null;
+        }
+        case 'answer_request': {
+            const decision = raw.decision === 'accept' || raw.decision === 'decline' ? raw.decision : null;
+            return decision ? { intent, which: { ...parseWhich(raw.which), all: false, numbers: [] }, decision, reason: str(raw.reason, MAX_NOTE_LENGTH) } : null;
+        }
+        case 'change_task': {
+            const date = isIsoDate(raw.date) && raw.date >= addDays(ctx.today, -31) && raw.date <= addDays(ctx.today, 366) ? raw.date : null;
+            return { intent, which: { ...parseWhich(raw.which), all: false }, person: str(raw.person, 60), date, to: str(raw.to, 60) };
+        }
         case 'find_tasks': {
             const query = validateQuery(raw);
             // "my team" only while the "Team reports" switch is ON (tasksDomainWithTeam allows it).
@@ -141,11 +187,22 @@ function checkGrounding(slots: Slots, message: string): boolean {
     if (slots.intent === 'create_tasks') {
         // The person who gets the work must be NAMED by the sender (here or in their own recent messages): the AI may not
         // turn "everyone" / "the team" into a list of names itself (2026-10-13, found by the real-AI test).
-        const who = norm(slots.assignee);
-        const named = !!slots.group || SELF_WORDS.has(who) || EVERYONE_WORDS.has(who) || who === 'group' || isGrounded(who.split(' ')[0], message);
+        const nameOk = (n: string) => { const w = norm(n); return SELF_WORDS.has(w) || EVERYONE_WORDS.has(w) || w === 'group' || w === '?' || w === '' || isGrounded(w.split(' ')[0], message); };
+        // Owner 2026-10-19: several people / a person per line — each one must be named in the message too.
+        const named = !!slots.group || (nameOk(slots.assignee) && (slots.assignees ?? []).every(nameOk) && slots.tasks.every(t => (t.assignees ?? []).every(nameOk)));
         return named && slots.tasks.every(t => isGrounded(t.title, message) && (!t.details || isGrounded(t.details, message)));
     }
     if (slots.intent === 'find_tasks') return wordsGrounded(slots.query, message);
+    // Owner 2026-10-20: a note is saved on a task, so it must be the person's own words; a named person must be named by them.
+    if (slots.intent === 'add_note') return (!slots.note || isGrounded(slots.note, message)) && (!slots.person || SELF_WORDS.has(norm(slots.person)) || isGrounded(norm(slots.person).split(' ')[0], message));
+    if (slots.intent === 'hand_over_task' && slots.note && !isGrounded(slots.note, message)) return false;   // a note must be their words
+    if (slots.intent === 'remind_tasks') return !slots.person || EVERYONE_WORDS.has(norm(slots.person)) || isGrounded(norm(slots.person).split(' ')[0], message);
+    // Owner 2026-10-26: a reason for not taking a request goes back to the sender, so it must be their own words.
+    if (slots.intent === 'answer_request' && slots.reason) return isGrounded(slots.reason, message);
+    // Owner 2026-10-26: a remark with "done" is saved on the task, so it must be their own words.
+    if (slots.intent === 'complete_tasks' && slots.note) return isGrounded(slots.note, message);
+    // Owner 2026-10-26: a person named in a change (whose task / the new person) must be named by them.
+    if (slots.intent === 'change_task') return [slots.person, slots.to].every(n => !n || SELF_WORDS.has(norm(n)) || isGrounded(norm(n).split(' ')[0], message));
     if (slots.intent === 'rename_task' && slots.newTitle) return isGrounded(slots.newTitle, message);   // the new name is theirs, never invented   // a search word must be in the message
     return true;
 }
@@ -185,10 +242,10 @@ type TaskResolution =
 
 const clarify = (reason: ClarifyReason, options: string[] = [], detail: string | null = null): Decision => ({ outcome: 'CLARIFY', reason, options, detail });
 
-function hintCandidates(hint: string, tasks: BrainTask[]): BrainTask[] {
+function hintCandidates<T extends { title: string }>(hint: string, tasks: T[]): T[] {
     const words = contentWords(hint);
     if (!words.length) return [];
-    const score = (t: BrainTask) => {
+    const score = (t: T) => {
         const tw = contentWords(t.title);
         return words.filter(w => tw.some(x => x === w || (w.length > 3 && x.length > 3 && similarity(w, x) >= 0.8))).length;
     };
@@ -279,7 +336,7 @@ function decide(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy
             : clarify('unknown_intent') })),
     ];
     const isChange = (d: Decision): d is Extract<Decision, { outcome: 'CONFIRM' | 'ACT' }> =>
-        (d.outcome === 'CONFIRM' || d.outcome === 'ACT') && d.action.type !== 'chat' && d.action.type !== 'view_tasks' && d.action.type !== 'answer_pending' && d.action.type !== 'find_tasks';
+        (d.outcome === 'CONFIRM' || d.outcome === 'ACT') && d.action.type !== 'chat' && d.action.type !== 'view_tasks' && d.action.type !== 'answer_pending' && d.action.type !== 'find_tasks' && d.action.type !== 'locked_list';
     const clear = parts.filter(p => isChange(p.d));
     if (!clear.length) return main;
     const unclear = [...(interp.unclear ?? []), ...parts.filter(p => !isChange(p.d)).map(p => p.label)];
@@ -290,8 +347,34 @@ function decide(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy
         if (same && a.type === 'create_tasks') same.tasks = [...same.tasks, ...a.tasks].slice(0, MAX_TASKS_PER_MESSAGE);
         else actions.push(a.type === 'create_tasks' ? { ...a, tasks: [...a.tasks] } : a);
     }
-    if (actions.length === 1 && !unclear.length) return { outcome: 'CONFIRM', action: actions[0] };
-    return { outcome: 'CONFIRM', action: { type: 'batch', actions, unclear } };
+    // 2026-11-02: when EVERY part would go straight through on its own (the policy allows it, e.g. "done 1" + "add a task" with
+    // undo ON) and nothing was unclear, the combined change goes straight through too, with one undo for all of it. Before,
+    // any message with two requests always waited for a yes. A part that would be previewed on its own keeps the preview.
+    const outcome = !unclear.length && clear.every(p => p.d.outcome === 'ACT') ? 'ACT' : 'CONFIRM';
+    if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
+    return { outcome, action: { type: 'batch', actions, unclear } };
+}
+
+/**
+ * 2026-11-02 (the 31 Oct "database setup in design login" and 27 Oct "add three tasks: …" turns): the AI understood the
+ * request correctly but also wrote a doubt, or gave a middling confidence, and the bot answered with a vague question.
+ * Now the request is decided normally, and then:
+ *   • code's own question (a name or task that really is unclear) or a refusal → used as is (it is specific);
+ *   • tasks added to the person's OWN list, allowed straight away by the policy → saved (undo for 10 minutes), the doubt
+ *     goes in one short line of the reply;
+ *   • anything else WITH a doubt the AI wrote down ("both Vidya and Dipti, or one?") → ONE question that offers the AI's
+ *     reading (it touches other people, or tells a giver a task is done, so a wrong guess costs more);
+ *   • anything else with only a middling confidence → a preview (one yes).
+ * Cost of a wrong guess on the person's own list is low (undo); anything touching other people still asks. [BAA p.112]
+ */
+function softenDoubt(d: Decision, ctx: BrainContext, interp: Interpretation): Decision {
+    if (d.outcome !== 'ACT' && d.outcome !== 'CONFIRM') return d;
+    const doubt = interp.ambiguities.join('; ') || null;
+    const ownCreate = (a: Action): boolean => a.type === 'create_tasks' && a.assigneeId === ctx.sender.id;
+    const ownOnly = ownCreate(d.action) || (d.action.type === 'batch' && !d.action.unclear.length && d.action.actions.every(ownCreate));
+    if (d.outcome === 'ACT' && ownOnly) return { ...d, aside: doubt };
+    if (doubt) return { outcome: 'CLARIFY', reason: 'ai_flagged_ambiguity', options: [], detail: doubt, understood: interp.summary || null, question: interp.clarifyQuestion };
+    return { outcome: 'CONFIRM', action: d.action };
 }
 
 function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy): Decision {
@@ -299,7 +382,7 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
     // So a plain "complete" is routed through the request's own numbering.
     if (ctx.pending?.kind === 'ping_reply' && interp.slots.intent === 'complete_tasks') {
         const which = interp.slots.which;
-        return decideOne({ ...interp, intent: 'progress_update', slots: { intent: 'progress_update', state: which.all ? 'done_all' : 'done_some', which, note: null } }, ctx, policy);
+        return decideOne({ ...interp, intent: 'progress_update', slots: { intent: 'progress_update', state: which.all ? 'done_all' : 'done_some', which, note: interp.slots.note ?? null } }, ctx, policy);
     }
     const { slots } = interp;
     const intent = interp.intent;
@@ -307,9 +390,17 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
 
     if (intent === 'unknown') return clarify('unknown_intent');
     if (!interp.grounded) return clarify('not_grounded');
-    if (isChange && interp.ambiguities.length) return clarify('ai_flagged_ambiguity', [], interp.ambiguities.join('; '));
-    if (isChange && interp.confidence < CHANGE_CONFIDENCE_MIN) return clarify('low_confidence');
-    if (!isChange && intent !== 'help' && intent !== 'smalltalk' && interp.confidence < READ_CONFIDENCE_MIN) return clarify('low_confidence');
+    // 2026-11-02: a doubt or a middling confidence on a change no longer stops it with a vague question (softenDoubt above).
+    // Only a really low confidence still asks, and then the question proposes what the AI understood.
+    const ownGuess = (reason: ClarifyReason, detail: string | null = null): Decision =>
+        ({ outcome: 'CLARIFY', reason, options: [], detail, understood: interp.summary || null, question: interp.clarifyQuestion });
+    const doubted = isChange && (interp.ambiguities.length > 0 || interp.confidence < CHANGE_CONFIDENCE_MIN);
+    if (isChange && interp.confidence < SOFT_CHANGE_CONFIDENCE_MIN) return ownGuess(interp.ambiguities.length ? 'ai_flagged_ambiguity' : 'low_confidence', interp.ambiguities.join('; ') || null);
+    if (doubted) {
+        const d = decideOne({ ...interp, ambiguities: [], confidence: 1 }, ctx, policy);
+        return softenDoubt(d, ctx, interp);
+    }
+    if (!isChange && intent !== 'help' && intent !== 'smalltalk' && interp.confidence < READ_CONFIDENCE_MIN) return ownGuess('low_confidence');
 
     switch (slots.intent) {
         case 'help': return { outcome: 'ACT', action: { type: 'chat', kind: 'help' } };
@@ -342,7 +433,7 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             const r = resolveTasks(slots.which, ctx, { allowAll: true, exactlyOne: false });
             if (!r.ok) return r.decision;
             // With undo available (policy), the person's own tasks are marked done straight away; otherwise asked first.
-            return { outcome: policy.confirmCompletions === false ? 'ACT' : 'CONFIRM', action: { type: 'complete_tasks', taskIds: r.tasks.map(t => t.id) } };
+            return { outcome: policy.confirmCompletions === false ? 'ACT' : 'CONFIRM', action: { type: 'complete_tasks', taskIds: r.tasks.map(t => t.id), ...(slots.note ? { note: slots.note } : {}) } };
         }
 
         case 'progress_update': {
@@ -387,6 +478,11 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
 
         case 'create_tasks': {
             if (!slots.tasks.length) return clarify('no_task_content');
+            // Owner 2026-10-21: "assign Sanil X, add note" (no text) → ask what the note should say.
+            if (slots.wantsNote && slots.tasks.every(t => !t.details)) {
+                const who = slots.assignees?.length === 1 ? slots.assignees[0] : !SELF_WORDS.has(norm(slots.assignee)) && slots.assignee !== '?' && slots.assignee !== 'group' ? slots.assignee : null;
+                return clarify('note_missing', [], who || null);
+            }
             if (slots.tasks.length > MAX_TASKS_PER_MESSAGE) return clarify('too_many_tasks', [], String(MAX_TASKS_PER_MESSAGE));
             if (slots.group) {
                 // The AI said WHICH group; code decides WHO is in it — only people this person may give work to.
@@ -394,19 +490,10 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
                 if (!g.ok) return g.decision;
                 const date = slots.date || ctx.today;
                 const actions: Action[] = g.people.map(p => ({ type: 'create_tasks', assigneeId: p.id, tasks: slots.tasks, date }));
-                return actions.length === 1 ? { outcome: 'CONFIRM', action: actions[0] } : { outcome: 'CONFIRM', action: { type: 'batch', actions, unclear: [] } };
+                const outcome = policy.confirmCreates === false ? 'ACT' : 'CONFIRM';    // owner 2026-10-21: direct, with undo
+                return actions.length === 1 ? { outcome, action: actions[0] } : { outcome, action: { type: 'batch', actions, unclear: [] } };
             }
-            const target = norm(slots.assignee);
-            let assignee: BrainPerson;
-            if (SELF_WORDS.has(target)) {
-                assignee = ctx.sender;
-            } else {
-                const r = resolveRecipient(slots.assignee, ctx);
-                if (!r.ok) return r.decision;
-                assignee = r.person;
-            }
-            if (!mayGiveWorkTo(ctx, assignee)) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: assignee.name };
-            return { outcome: 'CONFIRM', action: { type: 'create_tasks', assigneeId: assignee.id, tasks: slots.tasks, date: slots.date || ctx.today } };
+            return decideCreate(slots, ctx, policy);
         }
 
         case 'hand_over_task': {
@@ -416,7 +503,9 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             if (!r.ok) return r.decision;
             if (r.person.id === ctx.sender.id) return { outcome: 'REFUSE', reason: 'cannot_hand_over_to_self', detail: null };
             if (!mayGiveWorkTo(ctx, r.person)) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: r.person.name };
-            return { outcome: 'CONFIRM', action: { type: 'hand_over_task', taskId: t.tasks[0].id, toId: r.person.id } };
+            // Owner 2026-10-21: "give task 2 to Neeti, add note" (no text) → ask what the note should say.
+            if (slots.wantsNote && !slots.note) return clarify('note_missing', [], r.person.name);
+            return { outcome: 'CONFIRM', action: { type: 'hand_over_task', taskId: t.tasks[0].id, toId: r.person.id, ...(slots.note ? { note: slots.note } : {}) } };
         }
 
         case 'find_tasks': return resolveFind(slots.query, ctx);
@@ -436,9 +525,17 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             return { outcome: 'CONFIRM', action: { type: 'rename_task', taskId: r.tasks[0].id, title: slots.newTitle } };
         }
 
+        case 'add_note': return decideNote(slots, ctx);
+        case 'change_task': return decideChange(slots, ctx);
+        case 'answer_request': return decideAnswer(slots, ctx);
+        case 'remind_tasks': return decideRemind(slots, ctx);
+        case 'lock_task': return decideLock(slots, ctx);
+
         case 'answer_pending': {
             const p = ctx.pending;
             if (!p || p.kind === 'ping_reply') return clarify(p ? 'unsure_answer' : 'nothing_pending');
+            // Owner 2026-10-19: an unfinished request can only be dropped this way ("leave it"); anything else keeps it open.
+            if (p.kind === 'draft') return slots.answer === 'no' ? { outcome: 'ACT', action: { type: 'answer_pending', answer: 'no', pick: null, instruction: null } } : clarify('unsure_answer', [], p.question);
             if (slots.answer === 'unsure') return clarify('unsure_answer', [], p.kind === 'confirm' ? p.summary : null);
             if (slots.answer === 'pick') {
                 if (p.kind !== 'pick' || !slots.pick || slots.pick > p.options.length) return clarify('bad_pick', p.kind === 'pick' ? p.options.map((o, i) => `${i + 1}. ${o}`) : []);
@@ -452,6 +549,260 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
         default:
             return clarify('unknown_intent');
     }
+}
+
+/**
+ * Owner 2026-10-19: adding tasks, for one person, several people ("Parab and Neeti"), or a different person per line.
+ * Every name is checked like any name; a person the sender may not give work to is left out and said so in the preview
+ * (never silently). Same person + same day → one "add these tasks" (one list, one alert).
+ */
+function decideCreate(slots: Extract<Slots, { intent: 'create_tasks' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
+    const date = slots.date || ctx.today;
+    let top = slots.assignees?.length ? slots.assignees : [slots.assignee];
+    // Owner 2026-10-21 (Sher: "add task follow up regarding Checklist" got two questions): nobody named → their OWN list.
+    // Only when they say to assign it to someone without saying who ("assign a task about the audit") → ask who.
+    const unknownWho = (names: string[]) => !names.length || names.every(n => { const w = norm(n); return w === '?' || w === '' || w === 'unknown'; });
+    if (slots.tasks.some(t => !(t.assignees?.length) && unknownWho(top))) {
+        if (ASKS_TO_ASSIGN.test(ctx.message ?? '')) return clarify('no_recipient');
+        if (unknownWho(top)) top = ['me'];
+    }
+
+    const people = new Map<string, BrainPerson>();      // resolved once per name
+    const refused: string[] = [];
+    const actions: Array<Extract<Action, { type: 'create_tasks' }>> = [];
+    for (const task of slots.tasks) {
+        const names = task.assignees?.length ? task.assignees : top;
+        for (const name of names) {
+            const key = norm(name);
+            let person = people.get(key);
+            if (!person) {
+                if (SELF_WORDS.has(key)) person = ctx.sender;
+                else {
+                    const r = resolveRecipient(name, ctx);
+                    if (!r.ok) return r.decision;                    // not found / two people fit → ask, keep nothing
+                    person = r.person;
+                }
+                people.set(key, person);
+            }
+            if (!mayGiveWorkTo(ctx, person)) { if (!refused.includes(person.name)) refused.push(person.name); continue; }
+            const same = actions.find(x => x.assigneeId === person!.id);
+            const item = { title: task.title, details: task.details };
+            if (same) { if (!same.tasks.some(t => norm(t.title) === norm(item.title))) same.tasks.push(item); }
+            else actions.push({ type: 'create_tasks', assigneeId: person.id, tasks: [item], date });
+        }
+    }
+    if (!actions.length) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: refused.join(', ') };
+    const unclear = refused.map(n => `you can't assign tasks to ${n}`);
+
+    // Owner 2026-10-26: "follow up on task 2: …" → the new task(s) point at that existing task (own, or one they gave).
+    if (slots.followUp) {
+        const parent = findOwnOrGiven(slots.followUp, ctx);
+        if (!parent.ok) return parent.decision;
+        for (const a of actions) a.followUpOf = { id: parent.task.id, title: parent.task.title };
+    }
+
+    // Owner 2026-10-26, "Duplicate task alert": an open task this person already has that says the same thing (their own
+    // list, or a task the sender gave them) → shown in the preview, and it always asks first.
+    let similarFound = false;
+    for (const a of actions) {
+        const open = a.assigneeId === ctx.sender.id
+            ? ctx.tasks.filter(t => t.status !== 'completed').map(t => t.title)
+            : (ctx.noteTargets ?? []).filter(t => t.ownerId === a.assigneeId).map(t => t.title);
+        const similar = [...new Set(a.tasks.flatMap(t => open.filter(o => isSimilarTitle(t.title, o))))];
+        if (similar.length) { a.similar = similar.slice(0, 3); similarFound = true; }
+    }
+
+    // Owner 2026-10-21: a clear request is saved straight away with undo (only while "One front door" is ON). When someone
+    // named could not be given the work, the preview still asks first, so nobody is silently left out.
+    const outcome = policy.confirmCreates === false && !unclear.length && !similarFound ? 'ACT' : 'CONFIRM';
+    if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
+    return { outcome, action: { type: 'batch', actions, unclear } };
+}
+
+/**
+ * Owner 2026-10-26: ONE existing task the sender may refer to: a number from their own list, or words of the name among their
+ * own tasks and the open tasks they gave other people. Never guesses between several.
+ */
+function findOwnOrGiven(which: Which, ctx: BrainContext): { ok: true; task: { id: string; title: string; ownerName: string | null } } | { ok: false; decision: Decision } {
+    if (which.numbers.length) {
+        const r = resolveOwnAny(which, ctx, true);
+        return r.ok ? { ok: true, task: { id: r.tasks[0].id, title: r.tasks[0].title, ownerName: null } } : { ok: false, decision: r.decision };
+    }
+    const pool = [
+        ...ctx.tasks.map(t => ({ id: t.id, title: t.title, ownerName: null as string | null })),
+        ...(ctx.noteTargets ?? []).filter(t => t.ownerId !== ctx.sender.id).map(t => ({ id: t.id, title: t.title, ownerName: t.ownerName as string | null })),
+    ];
+    const label = (c: { title: string; ownerName: string | null }) => (c.ownerName ? `${c.title} (${c.ownerName})` : `${c.title} (yours)`);
+    const hint = which.hints.join(' ');
+    if (!hint) return { ok: false, decision: clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(label)) };
+    const cands = hintCandidates(hint, pool);
+    if (cands.length === 1) return { ok: true, task: cands[0] };
+    if (!cands.length) return { ok: false, decision: clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(label), hint) };
+    return { ok: false, decision: clarify('several_tasks_match', cands.slice(0, MAX_NOTE_OPTIONS).map(label), hint) };
+}
+
+/**
+ * Owner 2026-10-26: move a task to another day and/or another person — a task the sender gave (ctx.noteTargets), or one on
+ * their own list. A name in "person" only narrows whose task it is. Always previewed, then YES. The server allows it only for
+ * the person who gave the task or a superuser (WorkspaceService.editTask), and checks the new person like a new task.
+ */
+function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: BrainContext): Decision {
+    if (!slots.date && !slots.to) return clarify('no_task_content', [], 'new date or person');
+    let to: BrainPerson | null = null;
+    if (slots.to) {
+        if (SELF_WORDS.has(norm(slots.to))) to = ctx.sender;
+        else {
+            const r = resolveRecipient(slots.to, ctx);
+            if (!r.ok) return r.decision;
+            to = r.person;
+        }
+        if (!mayGiveWorkTo(ctx, to)) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: to.name };
+    }
+    const which = slots.which;
+    let found: ReturnType<typeof findOwnOrGiven>;
+    if (slots.person && !SELF_WORDS.has(norm(slots.person)) && !which.numbers.length) {
+        // "Sanil's vendor task" → only tasks given to Sanil
+        const owners = (ctx.noteTargets ?? []).filter(t => t.ownerId !== ctx.sender.id);
+        const people = [...new Map(owners.map(t => [t.ownerId, { id: t.ownerId, name: t.ownerName, department: null, role: 'employee' as const }])).values()];
+        const match = resolvePerson(slots.person, people);
+        if (match.length > 1) return clarify('several_people_match', match.map(labelOf), slots.person);
+        if (!match.length) return clarify('person_not_found', [], slots.person);
+        found = findOwnOrGiven(which, { ...ctx, tasks: [], noteTargets: owners.filter(t => t.ownerId === match[0].id) });
+    } else {
+        found = findOwnOrGiven(which, ctx);
+    }
+    if (!found.ok) return found.decision;
+    const t = found.task;
+    return { outcome: 'CONFIRM', action: { type: 'change_task', taskId: t.id, title: t.title, ownerName: t.ownerName, date: slots.date, toId: to?.id ?? null } };
+}
+
+/**
+ * Owner 2026-10-26: accept or decline a support request from another department. Only requests waiting for THIS person
+ * (ctx.supportRequests) can be picked; never guesses between several. Owner 2026-10-27: a reason for declining is optional
+ * (kept when they give one, never asked for); one YES still confirms either answer.
+ * Always previewed, then YES; the server checks everything again (CollaborationService.respond).
+ */
+function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: BrainContext): Decision {
+    const waiting = ctx.supportRequests ?? [];
+    const label = (r: { title: string; fromName: string }) => `${r.title} (from ${r.fromName})`;
+    if (!waiting.length) return clarify('no_task_referenced', [], 'no support request is waiting for you');
+    let pick = waiting;
+    const hint = slots.which.hints.join(' ');
+    if (hint) {
+        const byName = waiting.filter(r => resolvePerson(hint, [{ id: r.id, name: r.fromName, department: null, role: 'employee' }]).length > 0);
+        pick = byName.length ? byName : hintCandidates(hint, waiting);
+        if (!pick.length) return clarify('no_task_referenced', waiting.map(label), hint);
+    }
+    if (pick.length > 1) return clarify('several_tasks_match', pick.map(label), hint || null);
+    const r = pick[0];
+    return { outcome: 'CONFIRM', action: { type: 'answer_request', requestId: r.id, title: r.title, fromName: r.fromName, accept: slots.decision === 'accept', reason: slots.decision === 'decline' ? slots.reason : null } };
+}
+
+/**
+ * Owner 2026-10-20: a note on a task that already exists. Only the sender's OWN tasks and open tasks they GAVE someone
+ * (ctx.noteTargets) can be picked. A person's name only narrows WHOSE task it is: "add note to Srushti's onboarding" looks
+ * at Onboarding tasks given to Srushti; without a name, all of them. Never guesses between several (asks, showing whose).
+ * The server checks the permission again when the note is saved (WorkspaceService.addNote).
+ */
+interface NoteCandidate { id: string; title: string; ownerId: string; ownerName: string | null; date: string | null; open: boolean }
+const MAX_NOTE_OPTIONS = 10;
+const noteLabel = (c: NoteCandidate) => (c.ownerName ? `${c.title} (${c.ownerName}${c.date ? `, ${fromLabel(c.date)}` : ''})` : `${c.title} (yours)`);
+
+function decideNote(slots: Extract<Slots, { intent: 'add_note' }>, ctx: BrainContext): Decision {
+    if (!slots.note) return clarify('no_task_content', [], 'note');
+    const toAction = (c: NoteCandidate): Decision => ({ outcome: 'CONFIRM', action: { type: 'add_note', taskId: c.id, note: slots.note!, title: c.title, ownerName: c.ownerName } });
+    const own: NoteCandidate[] = ctx.tasks.map(t => ({ id: t.id, title: t.title, ownerId: ctx.sender.id, ownerName: null, date: t.from ?? null, open: t.status !== 'completed' }));
+    const given: NoteCandidate[] = (ctx.noteTargets ?? []).filter((t: NoteTarget) => t.ownerId !== ctx.sender.id)
+        .map(t => ({ id: t.id, title: t.title, ownerId: t.ownerId, ownerName: t.ownerName, date: t.date, open: true }));
+
+    // A number always means their own numbered list ("add note to task 2: …").
+    if (slots.which.numbers.length) {
+        const r = resolveOwnAny(slots.which, ctx, true);
+        if (!r.ok) return r.decision;
+        return toAction(own.find(c => c.id === r.tasks[0].id)!);
+    }
+
+    let pool = [...own, ...given];
+    if (slots.person) {
+        const key = norm(slots.person);
+        if (SELF_WORDS.has(key) || resolvePerson(slots.person, [ctx.sender]).length) pool = own;
+        else {
+            const owners = new Map<string, BrainPerson>(ctx.people.map(p => [p.id, p]));
+            for (const g of given) if (!owners.has(g.ownerId)) owners.set(g.ownerId, { id: g.ownerId, name: g.ownerName!, department: null, role: 'employee' });
+            const found = resolvePerson(slots.person, [...owners.values()].filter(p => p.id !== ctx.sender.id));
+            if (found.length > 1) return clarify('several_people_match', found.map(labelOf), slots.person);
+            if (!found.length) return clarify('person_not_found', [], slots.person);
+            pool = given.filter(c => c.ownerId === found[0].id);
+            if (!pool.length) return clarify('no_task_referenced', [...own, ...given].slice(0, MAX_NOTE_OPTIONS).map(noteLabel), `no open task you gave ${found[0].name}`);
+        }
+    }
+    if (!pool.length) return clarify('no_task_referenced');
+
+    const hint = slots.which.hints.join(' ');
+    if (!hint) {
+        const open = pool.filter(c => c.open);
+        if (open.length === 1) return toAction(open[0]);
+        return clarify('no_task_referenced', (open.length ? open : pool).slice(0, MAX_NOTE_OPTIONS).map(noteLabel));
+    }
+    const cands = hintCandidates(hint, pool);
+    const openCands = cands.filter(c => c.open);
+    const best = openCands.length ? openCands : cands;
+    if (best.length === 1) return toAction(best[0]);
+    if (!best.length) return clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(noteLabel), hint);
+    return clarify('several_tasks_match', best.slice(0, MAX_NOTE_OPTIONS).map(noteLabel), hint);
+}
+
+/**
+ * Owner 2026-10-20: remind the people doing tasks the sender GAVE (ctx.noteTargets: open, last 30 days). A name narrows
+ * whose tasks; no task words = all of that person's open tasks; "overdue" = only tasks given before today. Several people's
+ * tasks fit one task name → ask which. The server checks everything again (WorkspaceService.remindTasks).
+ */
+const MAX_REMIND = 50;
+function decideRemind(slots: Extract<Slots, { intent: 'remind_tasks' }>, ctx: BrainContext): Decision {
+    const label = (t: NoteTarget) => `${t.title} (${t.ownerName}, ${fromLabel(t.date)})`;
+    let pool = (ctx.noteTargets ?? []).filter(t => t.ownerId !== ctx.sender.id);
+    if (slots.overdueOnly) pool = pool.filter(t => t.date < ctx.today);
+    const everyone = !slots.person || EVERYONE_WORDS.has(norm(slots.person));
+    if (!everyone) {
+        const owners = new Map<string, BrainPerson>(ctx.people.map(p => [p.id, p]));
+        for (const g of ctx.noteTargets ?? []) if (!owners.has(g.ownerId)) owners.set(g.ownerId, { id: g.ownerId, name: g.ownerName, department: null, role: 'employee' });
+        const found = resolvePerson(slots.person!, [...owners.values()].filter(p => p.id !== ctx.sender.id));
+        if (found.length > 1) return clarify('several_people_match', found.map(labelOf), slots.person);
+        if (!found.length) return clarify('person_not_found', [], slots.person);
+        pool = pool.filter(t => t.ownerId === found[0].id);
+        if (!pool.length) return { outcome: 'REFUSE', reason: 'nothing_to_remind', detail: found[0].name };
+    }
+    if (!pool.length) return { outcome: 'REFUSE', reason: 'nothing_to_remind', detail: null };
+    const hint = slots.which.hints.join(' ');
+    let picked = pool;
+    if (hint) {
+        picked = hintCandidates(hint, pool);
+        if (!picked.length) return clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(label), hint);
+        if (new Set(picked.map(t => t.ownerId)).size > 1) return clarify('several_tasks_match', picked.slice(0, MAX_NOTE_OPTIONS).map(label), hint);
+    } else if (everyone && !slots.overdueOnly && !slots.which.all) {
+        // "remind them" with no name, no task and no "overdue": ask which, never remind everyone by guesswork.
+        return clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(label));
+    }
+    picked = picked.slice(0, MAX_REMIND);
+    return { outcome: 'CONFIRM', action: { type: 'remind_tasks', taskIds: picked.map(t => t.id), lines: picked.map(label) } };
+}
+
+/**
+ * Owner 2026-10-20: lock / unlock the person's OWN tasks (repeat every working day), or list the repeating ones. Team fixed
+ * tasks are set by an admin and are never changed here. The server checks again (WorkspaceService.setLocked).
+ */
+function decideLock(slots: Extract<Slots, { intent: 'lock_task' }>, ctx: BrainContext): Decision {
+    if (slots.action === 'list') return { outcome: 'ACT', action: { type: 'locked_list' } };
+    const r = resolveOwnAny(slots.which, ctx, false);
+    if (!r.ok) return r.decision;
+    const lock = slots.action === 'lock';
+    const fixed = r.tasks.filter(t => t.teamFixed);
+    const ok = r.tasks.filter(t => !t.teamFixed && (lock ? !t.locked : !!t.locked));
+    if (!ok.length) {
+        if (fixed.length) return { outcome: 'REFUSE', reason: 'team_fixed', detail: fixed.map(t => t.title).join('; ') };
+        return { outcome: 'REFUSE', reason: lock ? 'already_locked' : 'not_locked', detail: r.tasks.map(t => t.title).join('; ') };
+    }
+    return { outcome: 'CONFIRM', action: { type: 'lock_tasks', taskIds: ok.map(t => t.id), lock } };
 }
 
 /** Most people one group message may give work to (more → ask to narrow it down). */
@@ -578,6 +929,13 @@ const CAPABILITIES = [
     '• Mark things done ("finished the carpet one")',
     '• Add tasks for yourself or a teammate ("assign Vidya a task to chase the vendor")',
     '• Hand one of your tasks to a teammate',
+    '• Add a note to a task ("add note to onboarding: documents pending")',
+    '• Add a remark when you finish ("done 1: shared on the HR group")',
+    '• Move a task you gave to another day or person ("move Sanil\'s vendor task to Friday")',
+    '• Add a follow-up task ("follow up on task 2: collect the signed letter")',
+    '• Answer a support request from another team ("ok I\'ll do it", "can\'t, it\'s with the vendor")',
+    '• Remind someone about a task you gave them ("remind Srushti about onboarding")',
+    '• Make a task repeat every working day ("lock task 2", "unlock task 3")',
 ].join('\n');
 
 const STATE_PHRASE: Record<ProgressState, string> = {
@@ -601,7 +959,7 @@ function openTasksBlock(ctx: BrainContext): { list: string; hint: string } | nul
 function clarifyFacts(d: Extract<Decision, { outcome: 'CLARIFY' }>, ctx: BrainContext): ReplyFacts {
     const opts = d.options.join('\n');
     // Nothing is waiting for a yes after a clarifying question (except "unsure_answer", where the question still stands).
-    const base = { kind: `clarify_${d.reason}`, asksQuestion: true, claimsNothingDone: true, names: [ctx.sender.name], noYesNoQuestion: d.reason !== 'unsure_answer' };
+    const base = { kind: `clarify_${d.reason}`, asksQuestion: true, claimsNothingDone: true, names: [ctx.sender.name], noYesNoQuestion: d.reason !== 'unsure_answer' && d.reason !== 'suggest_add' };
     const block = openTasksBlock(ctx);
     // The generic "not sure" cases: say what is possible AND show the open tasks (code inserts them; never a vague question alone).
     const withOpenTasks = (describe: string, fallbackQ: string): ReplyFacts => block
@@ -610,6 +968,16 @@ function clarifyFacts(d: Extract<Decision, { outcome: 'CLARIFY' }>, ctx: BrainCo
     const withOptions = (describe: string, fallbackQ: string): ReplyFacts => ({
         ...base, describe, values: { options: opts }, required: d.options.length ? ['options'] : [], fallback: d.options.length ? `${fallbackQ}\n${opts}` : fallbackQ,
     });
+    // 2026-11-02: the AI's own reading is known ("Add a task: database setup in design login") → ask ONE question that offers
+    // it as the best guess, so a plain "yes" / a short correction finishes it (the request is kept as a draft, rule D).
+    // No task list: the question is no longer a bare "not sure" (the case Part B4 guarded against).
+    if ((d.reason === 'ai_flagged_ambiguity' || d.reason === 'low_confidence') && d.understood) {
+        const guess = clip(d.understood, 200);
+        const q = d.question ? clip(d.question, 200) : null;
+        return { ...base, noYesNoQuestion: false,
+            describe: `You think the person most likely wants this: "${guess}"${d.detail ? `. You were unsure about: ${d.detail}` : ''}. Ask ONE short, specific question that offers this reading as your best guess, so they can simply say yes or correct it${q ? ` (for example: "${q}")` : ''}. Do not list their tasks.`,
+            values: {}, required: [], fallback: q || `Just to check, did you mean: ${guess.replace(/[.\s]+$/, '')}?` };
+    }
     switch (d.reason) {
         case 'no_task_referenced': return withOptions('The person wants to act on a task but did not say which. Ask which one they mean and show the open tasks.', 'Which task do you mean?');
         case 'several_tasks_match': return withOptions('More than one task fits what the person said. Ask which one they mean, showing the matching tasks.', 'Which of these do you mean?');
@@ -619,9 +987,16 @@ function clarifyFacts(d: Extract<Decision, { outcome: 'CLARIFY' }>, ctx: BrainCo
         case 'department_not_found': return withOptions('No such department was found. Ask which department they mean, showing the known ones.', 'Which department do you mean?');
         case 'person_not_found': return { ...base, describe: `No one called "${d.detail}" could be found among the people the person can work with. Say so and ask who they meant.`, values: { person: d.detail || '' }, required: [], fallback: `I couldn't find anyone called ${d.detail}. Who did you mean?` };
         case 'no_recipient': return { ...base, describe: d.detail ? 'The person named a group, but work can only be given to one named person at a time. Ask who exactly it is for.' : 'The person did not say who it is for. Ask who it is for.', values: {}, required: [], fallback: 'Who is this for?' };
-        case 'no_task_content': return d.detail === 'new name' || d.detail === 'same name'
+        case 'no_task_content': if (d.detail === 'note') return { ...base, describe: 'The person wants to add a note to a task but did not say what the note is. Ask what the note should say.', values: {}, required: [], fallback: 'What should the note say?' };
+            return d.detail === 'new name' || d.detail === 'same name'
             ? { ...base, describe: d.detail === 'same name' ? 'The task already has that name. Say so and ask what the new name should be.' : 'The person wants to rename a task but did not give the new name. Ask what it should be.', values: {}, required: [], fallback: d.detail === 'same name' ? 'That task already has that name. What should the new name be?' : 'What should the new name be?' }
             : { ...base, describe: 'The person wants to add a task but did not say what it is. Ask what the task should be.', values: {}, required: [], fallback: 'What should the task be?' };
+        case 'note_missing': return { ...base, describe: `The person asked to add a note${d.detail ? ` for ${d.detail}` : ''} but did not say what it is. Ask ONE short question: what should the note say?`,
+            values: {}, required: [], fallback: `What note should I add${d.detail ? ` for ${first(d.detail)}` : ''}?` };
+        case 'suggest_add': return { ...base, describe: 'You are not sure what the person wants, but it looks like they want to add a task. Ask ONE short question: did they want to add this task (inserted by the system) to their own list? They can reply yes, or say who it is for.',
+            values: { task: `• ${d.detail || ''}` }, required: ['task'], fallback: `Did you want to add this task to your list?\n• ${d.detail || ''}\nReply *yes*, or tell me who it's for.` };
+        case 'add_or_assign': return { ...base, describe: `The person named a piece of work ([[work]]) but did not say who it is for. Ask ONE short question: should it go on their own list, or be assigned to someone (and who)?`,
+            values: { work: d.detail || 'this' }, required: [], fallback: `Should I add "${d.detail || 'this'}" to your own list, or assign it to someone? If someone, who?` };
         case 'too_many_tasks': return { ...base, describe: `Too many tasks in one message (the limit is ${d.detail}). Ask them to send fewer at a time.`, values: {}, required: [], fallback: `That is a lot of tasks at once. Could you send them in smaller groups (up to ${d.detail})?` };
         case 'nothing_pending': return withOpenTasks('Nothing is waiting for a yes or no from the person right now. Say so lightly and ask what they would like to do.', 'Nothing is waiting for a yes right now. What would you like to do?');
         case 'unsure_answer': return { ...base, describe: 'The person\'s answer was not clear. Ask them to confirm what they want, in a simple yes-or-no way.', values: { pending: d.detail || '' }, required: [], fallback: 'Sorry, I wasn\'t sure what you meant. Could you say yes or no, or tell me what to change?' };
@@ -632,22 +1007,68 @@ function clarifyFacts(d: Extract<Decision, { outcome: 'CLARIFY' }>, ctx: BrainCo
     }
 }
 
+/**
+ * Owner 2026-10-20: a new task gets a note ONLY when the person marked one ("note:" / "remark:"). Anything the AI put in
+ * "details" without that mark goes back into the title, so no word is lost and nothing becomes a note by guesswork
+ * (Sanil's "Add task … Technical exe, Ops manager, AFM" was turned into a note).
+ */
+// Owner 2026-10-20: the word itself is enough ("onboarding note Satish"); a ":" is not needed.
+export const NOTE_MARK = /(?:\b(?:note|notes|remark|remarks|nb)\b|नोट)/i;
+const NUMBERED_LINE = /^\s*\d{1,3}\s*[.)]\s+\S/;
+export function foldUnmarkedNotes<S extends Slots>(slots: S, ownWords: string): S {
+    if (slots.intent !== 'create_tasks' || NOTE_MARK.test(ownWords)) return slots;
+    // Owner 2026-10-20 (Roohi): a NUMBERED list with a detail on its own line under a task ("1. Diwali poll" then
+    // "Pending · from Team") keeps that detail as the task's note. Sanil's unnumbered lines are tasks, never notes.
+    const lines = ownWords.split('\n');
+    const numbered = lines.filter(l => NUMBERED_LINE.test(l)).length >= 2;
+    const detailLines = numbered ? lines.filter(l => l.trim() && !NUMBERED_LINE.test(l)).join('\n') : '';
+    const keep = (d: string) => numbered && isGrounded(d, detailLines);
+    return { ...slots, tasks: slots.tasks.map(t => (t.details && !keep(t.details) ? { ...t, title: clip(`${t.title} - ${t.details}`, MAX_TITLE_LENGTH), details: null } : t)) };
+}
+
+/** Owner 2026-10-20: a new task with a note reads "Onboarding (note: Satish)" in every preview. */
+const withNote = (t: { title: string; details: string | null }) => (t.details ? `${t.title} (note: ${t.details})` : t.title);
+
+/** Owner 2026-10-26: "move to Fri 30 Oct, give to Neeti" for a change preview. */
+function changeWords(a: Extract<Action, { type: 'change_task' }>, ctx: BrainContext): string {
+    const to = a.toId ? (a.toId === ctx.sender.id ? 'you' : ctx.people.find(p => p.id === a.toId)?.name ?? 'them') : null;
+    return [a.date ? `move to ${dayLabel(a.date)}` : '', to ? `give to ${to}` : ''].filter(Boolean).join(', ');
+}
+
 /** One line of a combined preview, written by code from verified data. */
 function batchLine(a: Action, ctx: BrainContext): string {
     const titleOf = (id: string) => ctx.tasks.find(t => t.id === id)?.title ?? 'that task';
     const who = (id: string) => (id === ctx.sender.id ? 'you' : ctx.people.find(p => p.id === id)?.name ?? 'them');
     switch (a.type) {
-        case 'complete_tasks': return `Mark done: ${a.taskIds.map(titleOf).join(', ')}`;
+        case 'complete_tasks': return `Mark done: ${a.taskIds.map(titleOf).join(', ')}${a.note ? ` (remark: ${a.note})` : ''}`;
         case 'progress_update': return a.state === 'done_all' || a.state === 'done_some' ? `Mark done: ${a.taskIds.map(titleOf).join(', ')}` : `Note ${STATE_PHRASE[a.state].replace(/^you are |^you have /, '')}: ${a.taskIds.map(titleOf).join(', ')}`;
-        case 'create_tasks': return `Add for ${who(a.assigneeId)}${a.date !== ctx.today ? ` (${dayLabel(a.date)})` : ''}: ${a.tasks.map(t => t.title).join(', ')}`;
-        case 'hand_over_task': return `Give "${titleOf(a.taskId)}" to ${who(a.toId)}`;
+        case 'create_tasks': return `Add for ${who(a.assigneeId)}${a.date !== ctx.today ? ` (${dayLabel(a.date)})` : ''}: ${a.tasks.map(withNote).join(', ')}${a.followUpOf ? ` (follow-up of "${a.followUpOf.title}")` : ''}${a.similar?.length ? ` ⚠️ ${who(a.assigneeId)} already ${a.assigneeId === ctx.sender.id ? 'have' : 'has'} a similar open task: ${a.similar.join('; ')}` : ''}`;
+        case 'hand_over_task': return `Give "${titleOf(a.taskId)}" to ${who(a.toId)}${a.note ? ` (note: ${a.note})` : ''}`;
         case 'delete_tasks': return `Delete: ${a.taskIds.map(titleOf).join(', ')}`;
         case 'rename_task': return `Rename "${titleOf(a.taskId)}" to "${a.title}"`;
+        case 'add_note': return `Add note to "${a.title}"${a.ownerName ? ` (${a.ownerName})` : ''}: ${a.note}`;
+        case 'change_task': return `Change "${a.title}"${a.ownerName ? ` (${a.ownerName})` : ''}: ${changeWords(a, ctx)}`;
+        case 'answer_request': return a.accept ? `Accept ${a.fromName}'s request: ${a.title}` : `Tell ${a.fromName} you can't take "${a.title}"${a.reason ? `: ${a.reason}` : ''}`;
+        case 'remind_tasks': return `Send a reminder about: ${a.lines.join(', ')}`;
+        case 'lock_tasks': return `${a.lock ? 'Repeat every working day' : 'Stop repeating'}: ${a.taskIds.map(titleOf).join(', ')}`;
         default: return 'One more change';
     }
 }
 
+/**
+ * 2026-11-02: a change that went ahead (or is previewed) although the AI noted a doubt ends with ONE short line, inserted by
+ * the system, saying what it was unsure of and that they can correct it, instead of a question before anything happens.
+ */
 function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionResult): ReplyFacts | null {
+    const facts = replyFactsBase(decision, ctx, result);
+    const aside = decision.outcome === 'ACT' || decision.outcome === 'CONFIRM' ? decision.aside : null;
+    if (!facts || !aside || !aside.trim()) return facts;
+    const line = `(I wasn't fully sure: ${clip(aside.trim().replace(/[.\s]+$/, ''), 160)}. If I got it wrong, just tell me.)`;
+    return { ...facts, describe: `${facts.describe} Finish with the short note about what you were unsure of (inserted by the system, on its own line).`,
+        values: { ...facts.values, aside: line }, required: [...facts.required, 'aside'], fallback: `${facts.fallback}\n\n${line}` };
+}
+
+function replyFactsBase(decision: Decision, ctx: BrainContext, result?: ExecutionResult): ReplyFacts | null {
     const sender = ctx.sender;
     const titleOf = (id: string) => ctx.tasks.find(t => t.id === id)?.title ?? 'that task';
     const personName = (id: string) => (id === sender.id ? 'you' : ctx.people.find(p => p.id === id)?.name ?? 'them');
@@ -663,6 +1084,10 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
             not_allowed_to_view: [d ? `They asked to see ${d}'s tasks, but they are not allowed to. Say so kindly.` : 'They asked for information they are not allowed to see. Say so kindly.', 'Sorry, that isn\'t something you can see.'],
             cannot_hand_over_to_self: ['They tried to give a task to themself. Say it is already theirs and ask who it should go to.', 'That task is already yours. Who should it go to?'],
             nothing_to_do: ['They have no open tasks left to act on. Say so cheerfully.', 'You have no open tasks right now.'],
+            already_locked: [`The task(s) already repeat every working day (${d}). Say so briefly.`, `That already repeats every working day: ${d}.`],
+            not_locked: [`The task(s) are not locked, so there is nothing to unlock (${d}). Say so briefly.`, `That task doesn't repeat, so there's nothing to unlock: ${d}.`],
+            team_fixed: [`That is a team fixed task set by an admin (${d}); it cannot be locked or unlocked here. Say so kindly.`, `That's a team fixed task set by your admin, so it can't be changed here: ${d}.`],
+            nothing_to_remind: [d ? `There are no open tasks they gave ${d} to remind about. Say so briefly.` : 'There are no open tasks they gave anyone to remind about. Say so briefly.', d ? `You have no open tasks given to ${d} to remind about.` : 'You have no open tasks given to anyone to remind about.'],
             nothing_in_group: [`There are no tasks from ${d || 'that day'} on their list. Say so briefly.`, `There are no tasks from ${d || 'that day'} on your list.`],
         };
         const [describe, fallback] = texts[decision.reason];
@@ -679,7 +1104,13 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
     const confirming = decision.outcome === 'CONFIRM';
 
     if (confirming && a.type === 'batch') {
-        const items = bullets(a.actions.map(x => batchLine(x, ctx)));
+        // Owner 2026-10-19: a list given to several people reads best one line per task: "1. Review quotation → Sanil".
+        const onlyCreates = a.actions.every(x => x.type === 'create_tasks');
+        const who = (id: string) => (id === sender.id ? 'You' : ctx.people.find(p => p.id === id)?.name ?? 'them');
+        const items = onlyCreates
+            ? a.actions.flatMap(x => x.type === 'create_tasks' ? x.tasks.map(t => `${withNote(t)} → ${who(x.assigneeId)}${x.date !== ctx.today ? ` (${dayLabel(x.date)})` : ''}`) : [])
+                .map((line, i) => `${i + 1}. ${line}`).join('\n')
+            : bullets(a.actions.map(x => batchLine(x, ctx)));
         const unclear = a.unclear.length ? a.unclear.join('; ') : '';
         return { kind: 'confirm_batch', describe: `Ask the person to confirm doing ALL of these together (one yes for everything). Nothing has happened yet.${unclear ? ' Also say, in a short separate sentence, that you could not work out one part ([[unclear]]) and they can send it again on its own.' : ''}`,
             values: { items, ...(unclear ? { unclear } : {}) }, required: ['items', ...(unclear ? ['unclear'] : [])], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
@@ -688,9 +1119,10 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
 
     if (confirming && a.type === 'complete_tasks') {
         const titles = a.taskIds.map(titleOf);
-        return { kind: 'confirm_complete', describe: `Ask the person to confirm marking ${titles.length === 1 ? 'this task' : `these ${titles.length} tasks`} as done. Nothing has been marked yet.`,
-            values: { tasks: bullets(titles), count: String(titles.length) }, required: ['tasks'], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
-            fallback: `Mark ${titles.length === 1 ? 'this' : `these ${titles.length}`} as done?\n${bullets(titles)}` };
+        const remark = a.note ? `Remark: ${a.note}` : '';
+        return { kind: 'confirm_complete', describe: `Ask the person to confirm marking ${titles.length === 1 ? 'this task' : `these ${titles.length} tasks`} as done${remark ? ', with their remark (inserted by the system)' : ''}. Nothing has been marked yet.`,
+            values: { tasks: bullets(titles), count: String(titles.length), ...(remark ? { remark } : {}) }, required: ['tasks', ...(remark ? ['remark'] : [])], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
+            fallback: `Mark ${titles.length === 1 ? 'this' : `these ${titles.length}`} as done?\n${bullets(titles)}${remark ? `\n${remark}` : ''}` };
     }
     if (confirming && a.type === 'progress_update') {
         const titles = a.taskIds.map(t => ctx.tasks.find(x => x.id === t)?.title ?? (ctx.pending?.kind === 'ping_reply' ? ctx.pending.taskTitles[ctx.pending.taskIds.indexOf(t)] : null) ?? 'that task');
@@ -704,12 +1136,15 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
     if (confirming && a.type === 'create_tasks') {
         const who = personName(a.assigneeId);
         const self = a.assigneeId === sender.id;
-        const lines = a.tasks.map(t => t.details ? `${t.title} — ${t.details}` : t.title);
+        const lines = a.tasks.map(withNote);
         const dateNote = a.date !== ctx.today ? ` for ${dayLabel(a.date)}` : '';
-        return { kind: 'confirm_create', describe: `Ask the person to confirm adding ${a.tasks.length === 1 ? 'this task' : `these ${a.tasks.length} tasks`} to ${self ? 'their own list' : `${who}'s list`}${dateNote}. Nothing has been added yet.`,
-            values: { assignee: who, tasks: bullets(lines), count: String(a.tasks.length), ...(dateNote ? { date: dayLabel(a.date) } : {}) },
-            required: ['tasks'], asksQuestion: true, claimsNothingDone: true, names: [sender.name, who],
-            fallback: `Add ${a.tasks.length === 1 ? 'this task' : `these ${a.tasks.length} tasks`} ${self ? 'to your list' : `for ${who}`}${dateNote}?\n${bullets(lines)}` };
+        // Owner 2026-10-26: the task it follows up, and a similar open task the person already has (inserted by the system)
+        const followUp = a.followUpOf ? `Follow-up of: ${a.followUpOf.title}` : '';
+        const warning = a.similar?.length ? `⚠️ ${self ? 'You already have' : `${who} already has`} a similar open task:\n${bullets(a.similar)}` : '';
+        return { kind: 'confirm_create', describe: `Ask the person to confirm adding ${a.tasks.length === 1 ? 'this task' : `these ${a.tasks.length} tasks`} to ${self ? 'their own list' : `${who}'s list`}${dateNote}.${followUp ? ' Mention it is a follow-up (inserted by the system).' : ''}${warning ? ' Point out the similar open task that already exists (inserted by the system) and ask if they still want to add it.' : ''} Nothing has been added yet.`,
+            values: { assignee: who, tasks: bullets(lines), count: String(a.tasks.length), ...(dateNote ? { date: dayLabel(a.date) } : {}), ...(followUp ? { followUp } : {}), ...(warning ? { warning } : {}) },
+            required: ['tasks', ...(followUp ? ['followUp'] : []), ...(warning ? ['warning'] : [])], asksQuestion: true, claimsNothingDone: true, names: [sender.name, who],
+            fallback: `Add ${a.tasks.length === 1 ? 'this task' : `these ${a.tasks.length} tasks`} ${self ? 'to your list' : `for ${who}`}${dateNote}?\n${bullets(lines)}${followUp ? `\n${followUp}` : ''}${warning ? `\n\n${warning}` : ''}` };
     }
     if (confirming && a.type === 'delete_tasks') {
         const titles = a.taskIds.map(titleOf);
@@ -723,18 +1158,63 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
             values: { from, to: a.title }, required: ['from', 'to'], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
             fallback: `Rename "${from}" to "${a.title}"?` };
     }
+    if (confirming && a.type === 'add_note') {
+        const whose = a.ownerName ? ` (${a.ownerName}'s task)` : '';
+        return { kind: 'confirm_note', describe: `Ask the person to confirm adding the note to the task${a.ownerName ? ` of ${a.ownerName}` : ''}. Nothing has changed yet.`,
+            values: { task: a.title, note: a.note }, required: ['task', 'note'], asksQuestion: true, claimsNothingDone: true, names: [sender.name, ...(a.ownerName ? [a.ownerName] : [])],
+            fallback: `Add this note to "${a.title}"${whose}?\nNote: ${a.note}` };
+    }
+    if (confirming && a.type === 'answer_request') {
+        const line = a.accept ? `Accept "${a.title}" from ${a.fromName}? It goes on your list.` : `Tell ${a.fromName} you can't take "${a.title}"?${a.reason ? `\nReason: ${a.reason}` : ''}`;
+        return { kind: a.accept ? 'confirm_accept_request' : 'confirm_decline_request',
+            describe: a.accept ? `Ask the person to confirm accepting ${a.fromName}'s support request (it goes on their list and ${a.fromName} is told). Nothing has changed yet.`
+                : `Ask the person to confirm telling ${a.fromName} they can't take the request${a.reason ? ', with their reason (inserted by the system)' : ' (they gave no reason, which is fine; do not ask for one)'}. Nothing has been sent yet.`,
+            values: { task: a.title, ...(a.reason ? { reason: `Reason: ${a.reason}` } : {}) }, required: ['task', ...(a.reason ? ['reason'] : [])],
+            asksQuestion: true, claimsNothingDone: true, names: [sender.name, a.fromName], fallback: line };
+    }
+    if (confirming && a.type === 'change_task') {
+        const what = changeWords(a, ctx);
+        const to = a.toId ? personName(a.toId) : null;
+        return { kind: 'confirm_change', describe: `Ask the person to confirm changing the task${a.ownerName ? ` of ${a.ownerName}` : ''}: ${what}.${to ? ` ${to} would be told about it.` : ''} Nothing has changed yet.`,
+            values: { task: a.title, change: what }, required: ['task', 'change'], asksQuestion: true, claimsNothingDone: true, names: [sender.name, ...(a.ownerName ? [a.ownerName] : []), ...(to ? [to] : [])],
+            fallback: `Change "${a.title}"${a.ownerName ? ` (${a.ownerName})` : ''}: ${what}?` };
+    }
+    if (confirming && a.type === 'lock_tasks') {
+        const titles = a.taskIds.map(titleOf);
+        return { kind: a.lock ? 'confirm_lock' : 'confirm_unlock', describe: a.lock
+                ? `Ask the person to confirm LOCKING ${titles.length === 1 ? 'this task' : 'these tasks'}: it will come back on their list every working day. Nothing has changed yet.`
+                : `Ask the person to confirm UNLOCKING ${titles.length === 1 ? 'this task' : 'these tasks'}: it will stop coming back every day (today's copy stays). Nothing has changed yet.`,
+            values: { tasks: bullets(titles) }, required: ['tasks'], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
+            fallback: a.lock ? `Lock ${titles.length === 1 ? 'this task' : 'these tasks'}? ${titles.length === 1 ? 'It' : 'They'} will come back every working day.\n${bullets(titles)}`
+                : `Stop repeating ${titles.length === 1 ? 'this task' : 'these tasks'}? Today's copy stays.\n${bullets(titles)}` };
+    }
+    if (a.type === 'locked_list') {
+        const mine = ctx.tasks.filter(t => t.locked).map(t => `🔒 ${taskLine(t)}`);
+        const team = ctx.tasks.filter(t => t.teamFixed).map(t => `📌 ${taskLine(t)} (team fixed)`);
+        const list = [...mine, ...team].join('\n');
+        if (!list) return { kind: 'locked_none', describe: 'The person has no repeating (locked) tasks. Say so and that they can say "lock task 2" to make one repeat.', values: {}, required: [], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: 'You have no repeating tasks. Say *lock task 2* to make a task come back every working day.' };
+        return { kind: 'locked_list', describe: 'Introduce the person\'s tasks that repeat every working day. The list is inserted by the system.', values: { list }, required: ['list'], asksQuestion: false, claimsNothingDone: false, names: [sender.name],
+            fallback: `Your repeating tasks:\n${list}\n\nSay *unlock* and the number to stop one repeating.` };
+    }
+    if (confirming && a.type === 'remind_tasks') {
+        return { kind: 'confirm_remind', describe: `Ask the person to confirm sending a reminder (WhatsApp and in-app) to the people doing ${a.lines.length === 1 ? 'this task' : `these ${a.lines.length} tasks`}. Nothing has been sent yet.`,
+            values: { tasks: bullets(a.lines), count: String(a.lines.length) }, required: ['tasks'], asksQuestion: true, claimsNothingDone: true, names: [sender.name],
+            fallback: `Send a reminder about ${a.lines.length === 1 ? 'this task' : `these ${a.lines.length} tasks`}?\n${bullets(a.lines)}` };
+    }
     if (confirming && a.type === 'hand_over_task') {
         const title = titleOf(a.taskId); const to = personName(a.toId);
-        return { kind: 'confirm_handover', describe: `Ask the person to confirm giving the task to ${to}. It would leave their list and ${to} would be told. Nothing has moved yet.`,
-            values: { task: title, assignee: to }, required: ['task'], asksQuestion: true, claimsNothingDone: true, names: [sender.name, to],
-            fallback: `Give "${title}" to ${to}? It will leave your list and ${to} will be told.` };
+        // Owner 2026-10-21: the note is part of the preview (inserted by the system, never reworded).
+        const noteLine = a.note ? `Note: ${a.note}` : '';
+        return { kind: 'confirm_handover', describe: `Ask the person to confirm giving the task to ${to}${noteLine ? ', with the note (inserted by the system)' : ''}. It would leave their list and ${to} would be told. Nothing has moved yet.`,
+            values: { task: title, assignee: to, ...(noteLine ? { note: noteLine } : {}) }, required: ['task', ...(noteLine ? ['note'] : [])], asksQuestion: true, claimsNothingDone: true, names: [sender.name, to],
+            fallback: `Give "${title}" to ${to}?${noteLine ? `\n${noteLine}` : ''}\nIt will leave your list and ${to} will be told.` };
     }
 
     if (a.type === 'chat' && a.kind === 'help') {
         return { kind: 'help', describe: 'Briefly tell the person what you can help with, then show the list.', values: { capabilities: CAPABILITIES }, required: ['capabilities'], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: `Here's what I can do:\n${CAPABILITIES}` };
     }
     if (a.type === 'chat') {
-        return { kind: 'smalltalk', describe: 'Reply in one or two warm, short sentences. If they ask about this conversation ("what did I just ask?"), answer briefly from the recent conversation, without numbers. If it fits, mention you can help with their tasks.', values: {}, required: [], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: 'Happy to help. Ask me about your tasks any time.' };
+        return { kind: 'smalltalk', describe: 'They are chatting; nothing is being changed. Reply naturally to what they said, following the recent conversation: answer a question about the chat ("why did you do that?", "what did I just ask?") from it, react to thanks, greetings, jokes or complaints like a friendly colleague would. Keep it short. Only if it fits, mention you can help with their tasks.', values: {}, required: [], asksQuestion: false, claimsNothingDone: false, names: [sender.name], fallback: 'Happy to help. Ask me about your tasks any time.' };
     }
     if (a.type === 'find_tasks') {
         // Flexible "look up tasks": the answer (with the filters it used) is written by code from the real rows.
@@ -778,6 +1258,10 @@ function replyFacts(decision: Decision, ctx: BrainContext, result?: ExecutionRes
             fallback: [details ? `${r.summary}\n${details}` : r.summary, ...(hint ? [hint] : [])].join('\n\n') };
     };
 
+    // Owner 2026-10-21: a suggested task saved straight away after a clear answer → say what was added, then the undo hint.
+    if (!confirming && (a.type === 'create_tasks' || a.type === 'batch') && result && /^Added\b/.test(result.summary)) return resultFacts('create_result', result, UNDO_HINT);
+    // 2026-11-02: several changes from one message carried out straight away (e.g. "done 1" + "add a task") → what happened + undo.
+    if (!confirming && a.type === 'batch' && result) return resultFacts('batch_result', result, UNDO_HINT);
     // Owner 2026-10-14: marked done straight away (no "Reply YES") → say what was done, then "Reply undo within 10 minutes".
     const finishedNow = a.type === 'complete_tasks' || (a.type === 'progress_update' && (a.state === 'done_all' || a.state === 'done_some'));
     if (!confirming && finishedNow && result && /^Marked\b/.test(result.summary)) return resultFacts('complete_result', result, UNDO_HINT);
@@ -812,15 +1296,15 @@ export const tasksDomain: DomainHandler = {
  */
 const TEAM_VIEW_SPEC: IntentSpec = {
     name: 'view_tasks',
-    description: 'wants to SEE tasks or progress: their own ("what do I have today", "anything pending?", "what are my carry forward tasks?"), another person\'s, their TEAM\'s ("how is my team doing", "what\'s pending in my team", "anything overdue in my team?"), a department\'s or the whole company\'s — for TODAY only. Any other day or range ("tomorrow", "yesterday", "this week", "last month") is "find_tasks".',
-    slots: '{"scope":"self"|"person"|"team"|"department"|"org"|"pending_overview","person":string|null,"department":string|null,"carried_forward_only":boolean}  — carried_forward_only = true only when they ask for their OWN tasks carried over / left from earlier days.',
+    description: 'wants to SEE tasks or progress: their own ("what do I have today", "anything pending?", "what are my carry forward tasks?"), another person\'s, their TEAM\'s ("how is my team doing", "what\'s pending in my team", "anything overdue in my team?", "what is my team doing?", "show my team\'s tasks"), a department\'s or the whole company\'s — for TODAY only. Any other day or range ("tomorrow", "yesterday", "this week", "last month") is "find_tasks".',
+    slots: '{"scope":"self"|"person"|"team"|"department"|"org"|"pending_overview","person":string|null,"department":string|null,"carried_forward_only":boolean,"team_list":boolean}  — carried_forward_only = true only when they ask for their OWN tasks carried over / left from earlier days. team_list (scope "team" only) = true when they want to SEE THE TASKS themselves ("what is my team doing", "what are my team working on", "show my team\'s tasks", "list everyone\'s tasks"); false when they ask about PROGRESS or numbers ("how is my team doing", "team progress", "how many are pending in my team").',
 };
 
 export const tasksDomainWithTeam: DomainHandler = {
     ...tasksDomain,
     intents: INTENT_SPECS.map(s => (s.name === 'view_tasks' ? TEAM_VIEW_SPEC : s.name === 'find_tasks' ? { ...s, slots: s.slots.replace(findQuerySchema(false), findQuerySchema(true)) } : s)),
     validateSlots(intent, raw, ctx) {
-        if (intent === 'view_tasks' && raw.scope === 'team') return { intent, scope: 'team', person: null, department: null };
+        if (intent === 'view_tasks' && raw.scope === 'team') return { intent, scope: 'team', person: null, department: null, ...(raw.team_list === true ? { teamList: true } : {}) };
         if (intent === 'find_tasks') { const query = validateQuery(raw); return query ? { intent, query } : null; }
         return validateSlots(intent, raw, ctx);
     },
@@ -828,7 +1312,7 @@ export const tasksDomainWithTeam: DomainHandler = {
         const s = interp.slots;
         if (s.intent === 'view_tasks' && s.scope === 'team') {
             if (!ctx.assignableIds.length) return { outcome: 'REFUSE', reason: 'not_allowed_to_view', detail: null };
-            return { outcome: 'ACT', action: { type: 'view_tasks', scope: 'team', personId: null, department: null } };
+            return { outcome: 'ACT', action: { type: 'view_tasks', scope: 'team', personId: null, department: null, ...(s.teamList ? { list: true } : {}) } };
         }
         return decide(interp, ctx, policy);
     },

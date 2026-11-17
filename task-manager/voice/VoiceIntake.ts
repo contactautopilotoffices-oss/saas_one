@@ -260,9 +260,10 @@ async function processNote(voice: VoiceNoteRef, sender: Sender, io: VoiceIO, sta
         const tidy = await io.cleanup(heard.text);
         const shown = clip(tidy.text, 1500);
 
-        // One YES at most: clear, tidy words go to the brain, which replies with "I heard" on top (a change → its own
-        // confirm question; a read → the answer). Unclear or untidied words, or anything the brain does not take
-        // (rooms / tickets, the AI down, not a smart-chat department) → "I heard … YES?" first.
+        // One YES at most: clear, tidy words go to a brain, which replies with "I heard" on top (a change → its own
+        // confirm question; a read → the answer). Owner 2026-11-14: the Unified Brain (tickets, rooms, questions) is
+        // offered them first, then the Task Manager's Smart chat (see offerToBrains). Unclear or untidied words, or
+        // anything neither takes (the AI down, nobody switched on for this person) → "I heard … YES?" first.
         let route: 'brain' | 'confirm' = 'confirm';
         if (tidy.cleaned && !tidy.unclear && io.now() - started < BRAIN_BUDGET_MS) {
             const took = await io.tryBrain({ phone: voice.phone, messageId: voice.messageId, text: shown, prefix: VOICE_TEXT.heardLine(shown) })
@@ -345,10 +346,29 @@ async function safeReply(io: VoiceIO, phone: string, text: string): Promise<bool
  */
 export async function handToBrain(input: { phone: string; messageId: string; text: string; prefix: string }, liveIO?: LiveIO): Promise<boolean> {
     const { claimSmartChat } = await import('../brain/live');
-    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice' });
+    const claim = await claimSmartChat({ phone: input.phone, messageId: input.messageId, text: input.text }, liveIO, { replyPrefix: input.prefix, via: 'voice', noBatch: true });
     if (!claim.handled) return false;
     if (claim.background) await claim.background();   // never throws: a problem becomes one apology
     return true;
+}
+
+type BrainHand = (input: { phone: string; messageId: string; text: string; prefix: string }) => Promise<boolean>;
+
+/**
+ * Owner 2026-11-14: a voice note works for the whole bot, not only for tasks. The Unified Brain (tickets, rooms,
+ * questions) is offered the words first, as it is for a typed message; if it does not take them (it is off or not live
+ * for this person, the request is about tasks, or anything went wrong) the Task Manager's Smart chat is offered them
+ * exactly as before. Neither taking them leaves the "I heard … YES?" question, as before.
+ */
+export async function offerToBrains(input: Parameters<BrainHand>[0], hands: { unified: BrainHand; tasks: BrainHand }): Promise<boolean> {
+    if (await hands.unified(input).catch(() => false)) return true;
+    return hands.tasks(input);
+}
+
+/** The Unified Brain's side of the hand-over, loaded only when a voice note is actually being handled. */
+async function handToUnifiedBrain(input: Parameters<BrainHand>[0]): Promise<boolean> {
+    const { handVoiceToBrain } = await import('@/backend/lib/aiLayer/brain/channels/whatsappLive');
+    return handVoiceToBrain(input);
 }
 
 /** Minimal slice of the Supabase client the store needs (so the store is testable with a fake). */
@@ -390,6 +410,8 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
     const { transcribeVoiceNote } = await import('./VoiceTranscriber');
     const { cleanTranscript } = await import('./VoiceCleanup');
     const { engyBrainLlm } = await import('../brain/llm');
+    // Owner 2026-10-28: the models picked in the Control Center ("AI models"); today's models when none / on any problem
+    const { chainFor } = await import('../ai/AiModelSettings');
     const store = makeVoiceStore(supabaseAdmin);
     const llm = engyBrainLlm();
     return {
@@ -403,9 +425,9 @@ export async function defaultVoiceIO(): Promise<VoiceIO> {
             return user ? { employeeId: null, userId: user.id } : null;
         },
         download: url => fetchMediaSafely(url),
-        transcribe: input => transcribeVoiceNote(input),
-        cleanup: text => cleanTranscript(text, { llm }),
-        tryBrain: input => handToBrain(input),
+        transcribe: async input => transcribeVoiceNote(input, { models: await chainFor('voice_transcribe') }),
+        cleanup: async text => cleanTranscript(text, { llm, models: await chainFor('voice_cleanup') }),
+        tryBrain: input => offerToBrains(input, { unified: handToUnifiedBrain, tasks: i => handToBrain(i) }),
         getState: phone => store.get(phone),
         setState: (phone, state) => store.set(phone, state),
         reply: (phone, text) => TaskMessagingService.sendFreeformReply(phone, text),

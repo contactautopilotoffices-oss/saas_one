@@ -36,10 +36,19 @@ function esc(s: string): string {
  * just that value, so exact/contains matching still works.
  */
 export function cityAliases(city: string): string[] {
-    const c = (city || '').trim().toLowerCase();
-    const key = PARENT_CITIES.find((k) => k.toLowerCase() === c);
-    if (key) return CITY_GROUPS[key];
-    return c ? [c] : [];
+    const raw = (city || '').trim().toLowerCase();
+    if (!raw) return [];
+    // A territory grant may name more than one metro ("Delhi & Noida"), so resolve
+    // each part — otherwise the whole string is matched literally and a lead
+    // tagged plain "Noida" falls outside the grant.
+    const parts = raw.split(/\s*(?:&|,|\/|\+)\s*/).map((p) => p.trim()).filter(Boolean);
+    const aliases: string[] = [];
+    for (const part of parts) {
+        const key = PARENT_CITIES.find((k) => k.toLowerCase() === part);
+        if (key) aliases.push(...CITY_GROUPS[key]);
+        else aliases.push(part);
+    }
+    return [...new Set(aliases)];
 }
 
 /**
@@ -47,11 +56,21 @@ export function cityAliases(city: string): string[] {
  * given cities' areas, across both the `city` and `location` columns.
  * Example: cityFilterOr(['Mumbai']) ->
  *   "city.ilike.%mumbai%,location.ilike.%mumbai%,city.ilike.%lower parel%,..."
+ *
+ * With `includeCampaign`, the campaign name is matched too. Roughly a third of
+ * the ad leads land with no city and no location at all, and the campaign
+ * ("Managed Office - Lower Parel (New)") is the only thing that says which
+ * market they belong to. Used for territory visibility, not for the city filter
+ * dropdown, where a campaign match would surprise someone picking a city.
  */
-export function cityFilterOr(cities: string[]): string {
+export function cityFilterOr(cities: string[], opts?: { includeCampaign?: boolean }): string {
     const aliases = [...new Set(cities.flatMap(cityAliases).map(esc).filter(Boolean))];
     return aliases
-        .flatMap((a) => [`city.ilike.%${a}%`, `location.ilike.%${a}%`])
+        .flatMap((a) => {
+            const conds = [`city.ilike.%${a}%`, `location.ilike.%${a}%`];
+            if (opts?.includeCampaign) conds.push(`campaign.ilike.%${a}%`);
+            return conds;
+        })
         .join(',');
 }
 

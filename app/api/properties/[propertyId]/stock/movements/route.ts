@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { isLiveStockItem, OLD_ITEM_LOCKED_MESSAGE } from '@/backend/lib/stock/propertyStock';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 
@@ -62,6 +66,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -87,6 +93,16 @@ export async function POST(
             );
         }
 
+        // As on the stock screen: a real amount. Adding or issuing needs more than 0 (a negative "add"
+        // would quietly reduce stock); an adjustment sets the count, which cannot go below 0.
+        const qty = Number(quantity);
+        if (!Number.isFinite(qty) || (action === 'adjust' ? qty < 0 : qty <= 0)) {
+            return NextResponse.json(
+                { error: action === 'adjust' ? 'quantity cannot be negative' : 'quantity must be more than 0' },
+                { status: 400 }
+            );
+        }
+
         // Get current item
         const { data: item, error: itemError } = await supabase
             .from('stock_items')
@@ -97,6 +113,10 @@ export async function POST(
 
         if (itemError || !item) {
             return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+        }
+
+        if (!(await isLiveStockItem(propertyId, item))) {
+            return NextResponse.json({ error: OLD_ITEM_LOCKED_MESSAGE }, { status: 409 });
         }
 
         // Calculate new quantity

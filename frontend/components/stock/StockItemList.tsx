@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, Suspense } from 'react';
-import { Search, Plus, Trash2, Edit2, Scan, Download, Upload } from 'lucide-react';
+import { Search, Plus, Trash2, Edit2, Scan, Download, Upload, QrCode, ClipboardList } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { createClient } from '@/frontend/utils/supabase/client';
 import Skeleton from '@/frontend/components/ui/Skeleton';
@@ -10,6 +10,9 @@ import StockItemDetailsModal from './StockItemDetailsModal';
 import BulkImportModal from './BulkImportModal';
 import { Toast } from '@/frontend/components/ui/Toast';
 import BarcodeGenerator, { downloadBarcode } from './Barcode';
+import StockQRSheetModal from './StockQRSheetModal';
+import CurrentStockModal from './CurrentStockModal';
+import { liveItems, withListFilter, type StockItemSource } from '@/frontend/lib/stock/itemSource';
 
 const BarcodeScannerModal = dynamic(
     () => import('./BarcodeScannerModal'),
@@ -20,7 +23,12 @@ interface StockItemListProps {
     propertyId: string;
     onRefresh?: () => void;
     propertyCode?: string;
+    propertyName?: string;
     initialSearch?: string;
+    /** Which list to show. Rows from the other list are never shown here. */
+    itemSource?: StockItemSource;
+    /** Old Stock tab: view only, nothing can be changed. */
+    readOnly?: boolean;
 }
 
 interface StockItem {
@@ -38,9 +46,15 @@ interface StockItem {
     created_at?: string;
     updated_at?: string;
     description?: string;
+    item_source?: string | null;
 }
 
-const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, propertyCode, initialSearch }) => {
+const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, propertyCode, propertyName, initialSearch, itemSource = 'legacy', readOnly = false }) => {
+    // Requisition-item lists are owned by procurement: no adding, deleting or renaming here.
+    const isRequisitionList = itemSource === 'catalog';
+    const canEditItems = !readOnly && !isRequisitionList;
+    const [showQRSheet, setShowQRSheet] = useState(false);
+    const [showCurrentStock, setShowCurrentStock] = useState(false);
     const [items, setItems] = useState<StockItem[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState(initialSearch || '');
@@ -58,20 +72,19 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
     const fetchItems = useCallback(async () => {
         try {
             setIsLoading(true);
-            const { data, error } = await supabase
-                .from('stock_items')
-                .select('*')
-                .eq('property_id', propertyId)
-                .order('name', { ascending: true });
+            const { data, error } = await withListFilter(filtered => {
+                const query = supabase.from('stock_items').select('*').eq('property_id', propertyId);
+                return (filtered ? query.eq('item_source', itemSource) : query).order('name', { ascending: true });
+            });
 
             if (error) throw error;
-            setItems(data || []);
+            setItems(liveItems(data || [], itemSource));
         } catch (err) {
             setToast({ message: 'Error loading items', type: 'error' });
         } finally {
             setIsLoading(false);
         }
-    }, [propertyId, supabase]);
+    }, [propertyId, supabase, itemSource]);
 
     useEffect(() => {
         fetchItems();
@@ -179,9 +192,29 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
         <div className="space-y-3">
             {/* Header */}
             <div className="flex justify-between items-center gap-2">
-                <h3 className="text-base sm:text-lg font-bold truncate">Inventory Items</h3>
+                <h3 className="text-base sm:text-lg font-bold truncate">{readOnly ? 'Old Stock Items' : 'Inventory Items'}</h3>
                 <div className="flex items-center gap-1.5 shrink-0">
-                    {selectedItems.size > 0 && (
+                    {!readOnly && items.length > 0 && (
+                        <>
+                            <button
+                                onClick={() => setShowQRSheet(true)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-all font-semibold text-xs"
+                                title="Download QR codes of all items as one PDF"
+                            >
+                                <QrCode size={14} />
+                                <span className="hidden sm:inline">QR PDF</span>
+                            </button>
+                            <button
+                                onClick={() => setShowCurrentStock(true)}
+                                className="flex items-center gap-1 px-2.5 py-1.5 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-all font-semibold text-xs"
+                                title="Enter the current stock of every item"
+                            >
+                                <ClipboardList size={14} />
+                                <span className="hidden sm:inline">Update Stock</span>
+                            </button>
+                        </>
+                    )}
+                    {canEditItems && selectedItems.size > 0 && (
                         <button
                             onClick={handleBulkDelete}
                             disabled={isDeleting}
@@ -191,6 +224,7 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                             {isDeleting ? '...' : selectedItems.size}
                         </button>
                     )}
+                    {canEditItems && (<>
                     <button
                         onClick={() => setShowBulkImport(true)}
                         className="p-1.5 border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 transition-all"
@@ -205,8 +239,20 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                         <Plus size={14} />
                         Add
                     </button>
+                    </>)}
                 </div>
             </div>
+
+            {isRequisitionList && !readOnly && (
+                <p className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">
+                    These are the items on your monthly requisition list. Delivery challans add to them automatically. Use Update Stock to enter what is in the store now.
+                </p>
+            )}
+            {readOnly && (
+                <p className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+                    Your stock list before the switch to requisition items. Kept for reference with its full history. Nothing here can be changed.
+                </p>
+            )}
 
             {/* Filters */}
             <div className="flex gap-2">
@@ -237,7 +283,7 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                 <table style={{ minWidth: '620px', width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr className="border-b border-gray-200 bg-gray-50">
-                                <th className="py-2.5 px-3 w-8 whitespace-nowrap">
+                                {canEditItems && <th className="py-2.5 px-3 w-8 whitespace-nowrap">
                                     <input
                                         type="checkbox"
                                         checked={filteredItems.length > 0 && selectedItems.size === filteredItems.length}
@@ -245,7 +291,7 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                                         className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                         title="Select All"
                                     />
-                                </th>
+                                </th>}
                                 <th className="text-left py-2.5 px-3 font-semibold text-xs text-gray-500 uppercase tracking-wide whitespace-nowrap">Code</th>
                                 <th className="text-left py-2.5 px-3 font-semibold text-xs text-gray-500 uppercase tracking-wide whitespace-nowrap">QR Code</th>
                                 <th className="text-left py-2.5 px-3 font-semibold text-xs text-gray-500 uppercase tracking-wide whitespace-nowrap">Name</th>
@@ -264,14 +310,14 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                                     : item.item_code;
                                 return (
                                     <tr key={item.id} className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${selectedItems.has(item.id) ? 'bg-blue-50' : ''}`}>
-                                        <td className="py-2.5 px-3 whitespace-nowrap">
+                                        {canEditItems && <td className="py-2.5 px-3 whitespace-nowrap">
                                             <input
                                                 type="checkbox"
                                                 checked={selectedItems.has(item.id)}
                                                 onChange={() => toggleSelectItem(item.id)}
                                                 className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                             />
-                                        </td>
+                                        </td>}
                                         <td className="py-2.5 px-3 whitespace-nowrap">
                                             <span className="text-xs font-mono text-gray-600">{shortCode}</span>
                                         </td>
@@ -310,12 +356,14 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                                                         <Download size={13} className="text-green-500" />
                                                     </button>
                                                 )}
+                                                {canEditItems && (<>
                                                 <button onClick={() => { setEditingItem(item); setShowFormModal(true); }} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
                                                     <Edit2 size={13} className="text-blue-500" />
                                                 </button>
                                                 <button onClick={() => handleDelete(item.id)} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors">
                                                     <Trash2 size={13} className="text-red-500" />
                                                 </button>
+                                                </>)}
                                             </div>
                                         </td>
                                     </tr>
@@ -327,7 +375,7 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
 
             {filteredItems.length === 0 && (
                 <div className="text-center py-10 text-gray-400 text-sm">
-                    No items found. Create one to get started!
+                    {isRequisitionList ? 'No items found.' : readOnly ? 'No old items.' : 'No items found. Create one to get started!'}
                 </div>
             )}
 
@@ -371,6 +419,28 @@ const StockItemList: React.FC<StockItemListProps> = ({ propertyId, onRefresh, pr
                     setToast({ message: 'Items imported successfully', type: 'success' });
                 }}
             />
+
+            {showQRSheet && (
+                <StockQRSheetModal
+                    items={items}
+                    propertyName={propertyName || propertyCode}
+                    onClose={() => setShowQRSheet(false)}
+                />
+            )}
+
+            {showCurrentStock && (
+                <CurrentStockModal
+                    propertyId={propertyId}
+                    items={items}
+                    onClose={() => setShowCurrentStock(false)}
+                    onSaved={(updated) => {
+                        setShowCurrentStock(false);
+                        fetchItems();
+                        onRefresh?.();
+                        setToast({ message: `Stock updated for ${updated} item(s)`, type: 'success' });
+                    }}
+                />
+            )}
 
             {/* Toast */}
             {toast && (

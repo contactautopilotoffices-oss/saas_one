@@ -8,8 +8,9 @@ import {
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
-    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode
+    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode, Briefcase
 } from 'lucide-react';
+import RecruitmentApproverSettings from './RecruitmentApproverSettings';
 import { createClient } from '@/frontend/utils/supabase/client';
 import WhatsAppServiceSettings from './WhatsAppServiceSettings';
 import PettyCashDeliveryStatus from './PettyCashDeliveryStatus';
@@ -92,6 +93,11 @@ const getRoleStyle = (roleId: string) => {
         case 'property_admin':
         case 'org_admin':
             return 'bg-purple-50 text-purple-700 border-purple-200';
+        case 'soft_service_staff':
+        case 'soft_service_manager':
+        case 'soft_service_supervisor':
+        case 'soft_services':
+            return 'bg-teal-50 text-teal-700 border-teal-200';
         case 'staff':
         case 'mst':
         case 'security':
@@ -112,6 +118,10 @@ const formatRoleLabel = (roleId: string) => {
     if (r === 'master_admin') return 'Master Admin';
     if (r === 'staff') return 'Staff';
     if (r === 'mst') return 'MST';
+    if (r === 'soft_service_staff') return 'Soft Service Staff';
+    if (r === 'soft_service_manager') return 'Soft Service Manager';
+    if (r === 'soft_service_supervisor') return 'Soft Service Supervisor';
+    if (r === 'soft_services') return 'Soft Services';
     if (r === 'sales') return 'Sales Executive';
     if (r === 'hr') return 'HR Admin';
     if (r === 'hr_head') return 'HR Head';
@@ -156,7 +166,7 @@ function SearchableUserPicker({
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 transition-all cursor-pointer"
             >
                 <UserPlus className="w-3.5 h-3.5 text-primary" />
-                <span>+ Add user...</span>
+                <span>Add user...</span>
                 <ChevronDown className="w-3 h-3 text-slate-400 ml-0.5" />
             </button>
 
@@ -245,6 +255,22 @@ export interface ModuleMeta {
 }
 
 const MODULES_META: ModuleMeta[] = [
+    // Owner 2026-11-17: hiring requests (manpower requisitions), Stage 2 of the Recruitment Module spec. The approver
+    // the request waits on is always told; these rules add who else is told, and on which channel.
+    {
+        id: 'recruitment',
+        name: 'Recruitment: hiring requests',
+        description: 'A manager raises a hiring request; the HR Head, then the Director, approve it. Who else is told of each step, and the reminders and escalation.',
+        icon: Briefcase,
+        color: 'text-amber-700 bg-amber-50 border-amber-100',
+        events: [
+            { key: 'requisition_awaiting_approval', name: 'Request awaiting approval (to the approver)', description: 'Sent to the HR Head or Director the request waits on, with a one-time decision link. Add anyone else who should know.', hasContextual: { approver: true } },
+            { key: 'requisition_reminder', name: 'Reminder at 24 h and 48 h (to the approver)', description: 'Sent when the request has waited a day, and again at two days, at each level.', hasContextual: { approver: true }, isReminder: true, reminderLabel: '24 h and 48 h' },
+            { key: 'requisition_escalated', name: 'Escalation at 72 h', description: "Sent to the Director (when the HR Head has not decided) or the Director's backup, plus anyone chosen here.", hasContextual: { approver: true } },
+            { key: 'requisition_decided', name: 'Decision (to the manager who raised it)', description: 'Approved, rejected, sent back, put on hold or resumed: the manager is told, with the reason.', hasContextual: { requester: true } },
+            { key: 'requisition_director_informed', name: 'In-plan approval (Director informed)', description: 'When the HR Head approves an in-plan role, the Director is notified for information.', hasContextual: { approver: true } },
+        ]
+    },
     {id:'petty_cash',name:'Petty Cash',description:'Allocation, approval, payment and expense review.',icon:ShoppingBag,color:'text-teal-600 bg-teal-50 border-teal-100',events:PC_NOTIFICATION_EVENTS},
     {
         id: 'hr_tickets',
@@ -325,6 +351,18 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { assignee: true, requester: true }
             },
             {
+                key: 'client_ticket_created',
+                name: 'Client-Raised Ticket Alert',
+                description: 'Sent to selected Omnichannel users/roles when a ticket is raised by a client or tenant.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
+                key: 'critical_ticket_created',
+                name: 'Critical Priority Ticket Alert',
+                description: 'Sent to selected Omnichannel users/roles when a ticket is created with or escalated to Critical priority.',
+                hasContextual: { assignee: true, requester: true }
+            },
+            {
                 key: 'ticket_assigned',
                 name: 'Ticket Assigned to Technician',
                 description: 'Sent to assigned technician with issue details, requester phone, and target SLA.',
@@ -335,6 +373,30 @@ const MODULES_META: ModuleMeta[] = [
                 name: 'Ticket Completed & Verification',
                 description: 'Sent upon ticket completion to verify and rate service quality.',
                 hasContextual: { requester: true }
+            },
+            {
+                key: 'ticket_waitlisted',
+                name: 'Ticket Waitlisted',
+                description: 'Sent when a ticket is parked on the waitlist. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { requester: true, assignee: true }
+            },
+            {
+                key: 'ticket_pending_validation',
+                name: 'Client Approval Needed',
+                description: 'Sent when the technician finishes and the client has to confirm the work. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'ticket_validated',
+                name: 'Client Approved or Rejected the Work',
+                description: 'Sent when the client confirms or rejects completed work. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { assignee: true }
+            },
+            {
+                key: 'ticket_reply',
+                name: 'Ticket Reply',
+                description: 'Sent when someone posts a reply on a ticket. Pick the channels and who hears about it below — the requester, the assigned technician, and any roles or users you add. Whoever wrote the reply is never notified. Internal notes are never sent.',
+                hasContextual: { assignee: true, requester: true }
             },
             {
                 key: 'reminder_ticket_sla',
@@ -371,7 +433,7 @@ const MODULES_META: ModuleMeta[] = [
                 key: 'checklist_completed',
                 name: 'Checklist Completed & Submitted',
                 description: 'Sent to designated supervisors/property admins when checklist photos and items are submitted.',
-                hasContextual: { requester: true }
+                hasContextual: { approver: true, requester: true }
             },
             {
                 key: 'checklist_overdue_alert',
@@ -605,20 +667,20 @@ const MODULES_META: ModuleMeta[] = [
     },
     {
         id: 'facility_requests',
-        name: 'Facility QR Requests',
-        description: 'Instant multi-channel alerts sent to internal maintenance staff and managers when an issue is reported via facility QR code.',
+        name: 'Client Support (QR Requests)',
+        description: 'Instant multi-channel alerts sent to property admins, MST, and soft services staff when an issue is reported via client support QR code.',
         icon: QrCode,
         color: 'text-sky-600 bg-sky-50 border-sky-100',
         events: [
             {
                 key: 'facility_request_created',
-                name: 'New Facility Request (QR Scanned)',
-                description: 'Sent immediately to designated maintenance staff, MST, and property admins to dispatch resolution.',
+                name: 'New Client Support Ticket (QR Scanned)',
+                description: 'Sent immediately to designated property admins, MST, and soft services staff to dispatch resolution.',
             },
             {
                 key: 'facility_request_resolved',
-                name: 'Facility Request Resolved',
-                description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
+                name: 'Client Support Ticket Resolved',
+                description: 'Sent to designated property managers when an on-ground staff member marks the client support request as resolved.',
             }
         ]
     },
@@ -652,6 +714,13 @@ const MODULES_META: ModuleMeta[] = [
 ];
 
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
+    recruitment: {
+        requisition_awaiting_approval: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_reminder: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_escalated: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_decided: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_requester: true },
+        requisition_director_informed: { channels: { email: true, whatsapp: false, push: false }, roles: [], user_ids: [], notify_approver: true },
+    },
     petty_cash: PC_DEFAULT_RULES,
     hr_tickets: {
         hr_ticket_created_submitter_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: false, notify_requester: true },
@@ -668,14 +737,20 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
     },
     tickets: {
         ticket_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+        client_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
+        critical_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
+        ticket_reply: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
+        ticket_waitlisted: { channels: { email: false, whatsapp: false, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+        ticket_pending_validation: { channels: { email: false, whatsapp: false, push: true }, roles: [], user_ids: [], notify_requester: true, notify_assignee: false },
+        ticket_validated: { channels: { email: false, whatsapp: false, push: true }, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: false },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
     },
     checklists: {
         checklist_slot_reminder: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true, reminder_minutes: 30 },
         checklist_started: { channels: { email: false, whatsapp: true, push: true }, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
-        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_requester: true },
+        checklist_completed: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'soft_service_manager', 'soft_service_supervisor'], user_ids: [], notify_approver: true, notify_requester: true },
         checklist_overdue_alert: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
         checklist_rated: { channels: { email: false, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
@@ -719,7 +794,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
     facility_requests: {
-        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
+        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'mst', 'staff', 'soft_service_staff'], user_ids: [], notify_assignee: true },
         facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
     },
     visitor_management: {
@@ -957,7 +1032,10 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 }
             }
 
-            const baseRoles = ['org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales'];
+            const baseRoles = [
+                'org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales',
+                'soft_service_staff', 'soft_service_manager', 'soft_service_supervisor', 'soft_services'
+            ];
             baseRoles.forEach(r => rolesSet.add(r));
 
             setAvailableRoles(
@@ -990,10 +1068,14 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         return p ? p.name : 'Property';
     };
 
+    const isOptInRule = (moduleId: string, eventKey: string): boolean =>
+        moduleId === 'petty_cash' || eventKey === 'client_ticket_created' || eventKey === 'critical_ticket_created';
+
     const getRule = (moduleId: string, eventKey: string): EventNotificationRule => {
         const mod = matrix[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
         const stored = mod[eventKey];
-        const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+        const fallback = DEFAULT_NOTIFICATION_MATRIX[moduleId]?.[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+        const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || fallback;
 
         if (selectedPropertyScope === 'global') {
             return globalRule;
@@ -1019,7 +1101,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
         setMatrix(prev => {
             const currentMod = prev[moduleId] || DEFAULT_NOTIFICATION_MATRIX[moduleId] || {};
             const stored = currentMod[eventKey];
-            const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+            const fallback = DEFAULT_NOTIFICATION_MATRIX[moduleId]?.[eventKey] || { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [] };
+            const globalRule: EventNotificationRule = moduleId === 'petty_cash' ? { ...PC_DEFAULT_RULES[eventKey], ...stored, channels: { ...PC_DEFAULT_RULES[eventKey].channels, ...stored?.channels } } : stored || fallback;
 
             if (selectedPropertyScope === 'global') {
                 const updatedGlobal = updateFn(globalRule);
@@ -1263,7 +1346,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
     const toggleContextual = (moduleId: string, eventKey: string, key: 'notify_assignee' | 'notify_requester' | 'notify_approver') => {
         updateRule(moduleId, eventKey, current => ({
             ...current,
-            [key]: moduleId === 'petty_cash' ? current[key] !== true : !(current[key] !== false)
+            [key]: isOptInRule(moduleId, eventKey) ? current[key] !== true : !(current[key] !== false)
         }));
     };
 
@@ -1498,6 +1581,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             {/* TAB VIEW: Voice Telephony Analytics */}
             {(mainTab === 'rules' || mainTab === 'templates') && <><nav aria-label="Notification modules" className="flex gap-2 overflow-x-auto py-2">{[...MODULES_META].sort((a,b)=>a.id==='tickets'?-1:b.id==='tickets'?1:0).map(module=><button type="button" key={module.id} aria-pressed={activeModuleTab===module.id} onClick={()=>setActiveModuleTab(module.id)} className={`shrink-0 rounded-lg border px-3 py-2 text-xs ${activeModuleTab===module.id?'bg-primary text-white':'bg-white text-slate-700'}`}>{module.id==='tickets'?'Tickets':module.name}</button>)}</nav><div className="flex gap-2"><button type="button" onClick={()=>setMainTab('rules')} aria-pressed={mainTab==='rules'} className="rounded-lg border px-3 py-2 text-xs">Channel & recipient rules</button><button type="button" onClick={()=>setMainTab('templates')} aria-pressed={mainTab==='templates'} className="rounded-lg border px-3 py-2 text-xs">Templates</button></div></>}
             {mainTab === 'templates' && <WhatsAppServiceSettings organizationId={organizationId} moduleId={activeModuleTab} featureKeys={MODULES_META.find(module => module.id === activeModuleTab)?.events.map(event => event.key)} />}
+            {mainTab === 'rules' && activeModuleTab === 'recruitment' && <RecruitmentApproverSettings organizationId={organizationId} users={allUsersList} />}
             {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email, WhatsApp or Push and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
             {mainTab === 'voice_analytics' && (
                 <VoiceAnomalyDashboard
@@ -1796,7 +1880,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_assignee === true : rule.notify_assignee !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_assignee === true : rule.notify_assignee !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_assignee')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -1807,7 +1891,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_requester === true : rule.notify_requester !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_requester === true : rule.notify_requester !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_requester')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />
@@ -1818,7 +1902,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                                                                 <label className="flex items-center gap-2 cursor-pointer">
                                                                     <input
                                                                         type="checkbox"
-                                                                        checked={module.id === 'petty_cash' ? rule.notify_approver === true : rule.notify_approver !== false}
+                                                                        checked={isOptInRule(module.id, ev.key) ? rule.notify_approver === true : rule.notify_approver !== false}
                                                                         onChange={() => toggleContextual(module.id, ev.key, 'notify_approver')}
                                                                         className="w-3.5 h-3.5 text-primary rounded border-slate-300"
                                                                     />

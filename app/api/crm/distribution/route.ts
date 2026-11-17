@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveCrmAccess, isCrmAccessError, readOrgId } from '@/backend/lib/crm/access';
 
+// crm_lead_distribution_members.user_id references auth.users, not public.users,
+// so PostgREST cannot embed `users(...)` on it. Hydrate display names separately.
+async function attachMemberUserInfo<T extends { members?: any[] }>(rules: T[]): Promise<T[]> {
+    const ids = [...new Set(rules.flatMap((r) => (r.members || []).map((m: any) => m.user_id)).filter(Boolean))];
+    if (ids.length === 0) return rules;
+    const { data: users } = await supabaseAdmin.from('users').select('id, full_name, email').in('id', ids);
+    const byId = new Map((users || []).map((u: any) => [u.id, u]));
+    for (const r of rules) {
+        for (const m of r.members || []) m.user_info = byId.get(m.user_id) || null;
+    }
+    return rules;
+}
+
 // GET /api/crm/distribution — list distribution rules for the org
 export async function GET(request: NextRequest) {
     const access = await resolveCrmAccess(request, readOrgId(request));
@@ -10,7 +23,7 @@ export async function GET(request: NextRequest) {
 
     const { data: rules, error } = await supabaseAdmin
         .from('crm_lead_distribution_rules')
-        .select('*, members:crm_lead_distribution_members(*, user_info:users(id, full_name, email))')
+        .select('*, members:crm_lead_distribution_members(*)')
         .eq('organization_id', access.organizationId)
         .eq('is_active', true)
         .order('campaign');
@@ -53,7 +66,7 @@ export async function GET(request: NextRequest) {
         .limit(500);
     const campaigns = [...new Set((campaignRows || []).map((r: any) => r.campaign).filter(Boolean))].sort();
 
-    return NextResponse.json({ rules: rules || [], members: orgMembers, campaigns });
+    return NextResponse.json({ rules: await attachMemberUserInfo(rules || []), members: orgMembers, campaigns });
 }
 
 // POST /api/crm/distribution — create or update a distribution rule
@@ -136,11 +149,12 @@ export async function POST(request: NextRequest) {
     // Fetch the final state
     const { data: rule } = await supabaseAdmin
         .from('crm_lead_distribution_rules')
-        .select('*, members:crm_lead_distribution_members(*, user_info:users(id, full_name, email))')
+        .select('*, members:crm_lead_distribution_members(*)')
         .eq('id', ruleId)
         .single();
 
-    return NextResponse.json({ rule }, { status: 201 });
+    const [hydrated] = rule ? await attachMemberUserInfo([rule]) : [null];
+    return NextResponse.json({ rule: hydrated }, { status: 201 });
 }
 
 // DELETE /api/crm/distribution?id= — deactivate a rule

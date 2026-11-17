@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { isOrganizationUserApprover, isOrganizationWideUserRole } from '@/backend/lib/users/managementRoles';
+import { ensureEmployeeProfile, type EnsureEmployeeProfileResult } from '@/backend/lib/users/employeeProfile';
 
 export async function POST(request: NextRequest) {
     try {
@@ -180,44 +181,26 @@ export async function POST(request: NextRequest) {
                 .eq('id', userId)
                 .single();
 
+            let employeeProfile: EnsureEmployeeProfileResult = { status: 'skipped' };
             if (approvedUserData) {
-                const appRole = targetRole || 'staff';
-                if (['hr', 'hr_head', 'staff', 'property_admin', 'org_super_admin', 'ops_super_admin'].includes(appRole)) {
-                    const fullName = approvedUserData.full_name || approvedUserData.raw_user_meta_data?.full_name || approvedUserData.email.split('@')[0];
-                    const nameParts = fullName.split(' ');
-                    const firstName = nameParts[0] || 'Employee';
-                    const lastName = nameParts.slice(1).join(' ') || '';
-                    const ecode = `E${Math.floor(100 + Math.random() * 900)}`;
-
-                    try {
-                        await adminClient
-                            .from('employee_profiles')
-                            .upsert({
-                                organization_id: targetOrgId,
-                                user_id: userId,
-                                employee_code: ecode,
-                                first_name: firstName,
-                                last_name: lastName,
-                                full_name: fullName,
-                                email: approvedUserData.email,
-                                contact_number: approvedUserData.phone || null,
-                                department: appRole.includes('hr') ? 'Human Resources' : 'Operations',
-                                designation: appRole === 'hr_head' ? 'HR Head' : (appRole === 'hr' ? 'HR Executive' : 'Executive'),
-                                is_hr_authority: appRole === 'hr' || appRole === 'hr_head',
-                                reconciliation_status: 'linked',
-                                is_active: true
-                            }, { onConflict: 'organization_id,employee_code' });
-                    } catch {
-                        /* ignore duplicate */
-                    }
-                }
+                employeeProfile = await ensureEmployeeProfile(adminClient, {
+                    organizationId: targetOrgId,
+                    userId,
+                    email: approvedUserData.email,
+                    fullName: approvedUserData.full_name || approvedUserData.raw_user_meta_data?.full_name || null,
+                    phone: approvedUserData.phone || null,
+                    appRole: targetRole || 'staff'
+                });
             }
 
             return NextResponse.json({
                 success: true,
                 message: 'User approved successfully',
                 approvedBy: callerProfile?.full_name || 'Admin',
-                approvedAt: now
+                approvedAt: now,
+                // Surfaced rather than swallowed: approval still succeeds, but a failure here
+                // leaves the user without an employee code and must be visible to the caller.
+                employeeProfile
             });
 
         } else {

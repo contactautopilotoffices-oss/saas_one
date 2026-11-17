@@ -6,6 +6,7 @@ import {
     User, Filter, Building2, Tag, CheckCircle, RefreshCw, Paperclip,
     Calendar, Sparkles, ExternalLink
 } from 'lucide-react';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface HRNotesTrackerTabProps {
     orgId: string;
@@ -547,7 +548,7 @@ export default function HRNotesTrackerTab({
                                                         {note.attachment_urls.map((url, i) => (
                                                             <a
                                                                 key={i}
-                                                                href={url}
+                                                                href={maskStorageUrl(url) || url}
                                                                 target="_blank"
                                                                 rel="noreferrer"
                                                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10.5px] font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-[#587e85] border border-slate-200 dark:border-slate-700 shadow-2xs"

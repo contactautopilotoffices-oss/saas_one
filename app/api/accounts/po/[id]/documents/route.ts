@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveAccountsAccess, isAccountsAccessError, readOrgId } from '@/backend/lib/accounts/access';
 import { logPoActivity } from '@/backend/lib/accounts/activity';
 import { PO_DOCS_BUCKET, ensurePoDocsBucket, signPoDocument } from '@/backend/lib/accounts/documents';
+import { ingestTaxInvoiceDocument } from '@/backend/lib/invoices/ingestPoDocument';
 import type { PoDocType, DocumentStatus, PoDocument, PoDocumentCreateResponse } from '@/backend/lib/accounts/trackerTypes';
 
 /**
@@ -18,6 +19,8 @@ import type { PoDocType, DocumentStatus, PoDocument, PoDocumentCreateResponse } 
  */
 
 const MAX_BYTES = 15 * 1024 * 1024;
+// Reading the invoice (OCR) runs after the response, so the upload itself stays fast.
+export const maxDuration = 120;
 
 const DOC_TYPES: PoDocType[] = [
     'tax_invoice', 'proforma_invoice', 'delivery_challan',
@@ -174,6 +177,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             invoice_amount: created.invoice_amount,
         },
     });
+
+    // A tax invoice uploaded here is ALSO read and checked by Invoice Control, so the Align screen
+    // can say whether it agrees with the PO. The document row above is not changed by this.
+    if (docType === 'tax_invoice' && fileUrl) {
+        const doc = { orgId: access.organizationId, poId: id, userId: access.user.id, docId: created.id as string, fileUrl, fileName, invoiceNo: created.invoice_no as string | null, invoiceDate };
+        after(async () => {
+            const r = await ingestTaxInvoiceDocument(doc).catch((e) => ({ ok: false as const, reason: e instanceof Error ? e.message : String(e) }));
+            if (!r.ok) console.error('[po documents] invoice check could not start:', r.reason);
+        });
+    }
 
     const document: PoDocument = {
         ...(created as Record<string, any>),

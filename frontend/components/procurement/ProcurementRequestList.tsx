@@ -11,6 +11,7 @@ import { formatDistanceToNow, format } from 'date-fns';
 import ConfirmModal from '../ui/ConfirmModal';
 import { Toast } from '../ui/Toast';
 import { useAuth } from '@/frontend/context/AuthContext';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface RequestItem {
     id?: string;
@@ -924,7 +925,7 @@ export default function ProcurementRequestList({
                                                             {comp.total_cost != null ? `Total Cost: ₹${Number(comp.total_cost).toLocaleString()}` : 'Total Cost: Not specified'}
                                                         </p>
                                                     </div>
-                                                    <a href={comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
+                                                    <a href={maskStorageUrl(comp.file_url) || comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
                                                         <FileText className="w-3 h-3" /> View File
                                                     </a>
                                                 </div>
@@ -1072,11 +1073,14 @@ export default function ProcurementRequestList({
                                         <Eye className="w-3.5 h-3.5" /> Received Item Photos ({selectedRequest.delivery_photos.length})
                                     </p>
                                     <div className="flex flex-wrap gap-2 pt-1">
-                                        {selectedRequest.delivery_photos.map((url: string, idx: number) => (
-                                            <a key={idx} href={url} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-xl border border-emerald-200 shadow-sm">
-                                                <img src={url} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
-                                            </a>
-                                        ))}
+                                        {selectedRequest.delivery_photos.map((url: string, idx: number) => {
+                                            const safeUrl = maskStorageUrl(url) || url;
+                                            return (
+                                                <a key={idx} href={safeUrl} target="_blank" rel="noreferrer" className="block relative group overflow-hidden rounded-xl border border-emerald-200 shadow-sm">
+                                                    <img src={safeUrl} alt={`Delivery Photo ${idx + 1}`} className="w-16 h-16 object-cover transition-transform group-hover:scale-105" />
+                                                </a>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             )}

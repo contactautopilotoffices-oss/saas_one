@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveAssetAccess, isAssetAccessError, readOrgId, canAccessProperty } from '@/backend/lib/assets/access';
+import { resolveAssetAccess, isAssetAccessError, readOrgId, canAccessProperty, canAccessCategory } from '@/backend/lib/assets/access';
 import { ASSET_SELECT, enrichAssets } from '@/backend/lib/assets/enrich';
 
 /** GET /api/assets/[id] — full detail: asset, computed health, AMC, and its event timeline. */
@@ -18,7 +18,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .maybeSingle();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    if (!asset) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+    // Outside the caller's categories (IT team: IT & Network only) reads as not found
+    if (!asset || !canAccessCategory(access, (asset as { category_id?: string | null }).category_id)) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
     if (!canAccessProperty(access, (asset as any).property_id)) {
         return NextResponse.json({ error: 'Forbidden: no access to this property' }, { status: 403 });
     }
@@ -48,8 +49,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (isAssetAccessError(access)) return access;
 
     const { data: current } = await supabaseAdmin.from('assets').select('*').eq('id', id).eq('organization_id', access.organizationId).maybeSingle();
-    if (!current) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+    if (!current || !canAccessCategory(access, current.category_id)) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
     if (!access.canManage) return NextResponse.json({ error: 'Forbidden: you cannot edit assets' }, { status: 403 });
+    if ('category_id' in body && !canAccessCategory(access, body.category_id || null)) {
+        return NextResponse.json({ error: 'Forbidden: you can only use the IT & Network category' }, { status: 403 });
+    }
 
     const EDITABLE = [
         'category_id', 'name', 'asset_type', 'make', 'model', 'serial_number', 'floor', 'location',
@@ -89,8 +93,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (isAssetAccessError(access)) return access;
     if (!access.canManage) return NextResponse.json({ error: 'Forbidden: you cannot remove assets' }, { status: 403 });
 
-    const { data: current } = await supabaseAdmin.from('assets').select('property_id, organization_id').eq('id', id).eq('organization_id', access.organizationId).maybeSingle();
-    if (!current) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+    const { data: current } = await supabaseAdmin.from('assets').select('property_id, organization_id, category_id').eq('id', id).eq('organization_id', access.organizationId).maybeSingle();
+    if (!current || !canAccessCategory(access, current.category_id)) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
 
     const { error } = await supabaseAdmin.from('assets').update({ deleted_at: new Date().toISOString() }).eq('id', id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

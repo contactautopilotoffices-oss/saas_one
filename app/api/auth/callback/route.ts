@@ -135,10 +135,14 @@ export async function GET(request: Request) {
 
             // STEP 2: Check Organization Membership
             if (orgMembership) {
-                if (redirect && redirect !== '/') {
-                    return NextResponse.redirect(`${requestUrl.origin}${redirect}`);
-                }
-                return NextResponse.redirect(`${requestUrl.origin}/org/${orgMembership.organization_id}/dashboard`);
+                const target = redirect && redirect !== '/' ? redirect : '/dashboard';
+                const res = NextResponse.redirect(`${requestUrl.origin}${target}`);
+                res.cookies.set('saas_org_id', orgMembership.organization_id, {
+                    path: '/',
+                    maxAge: 30 * 24 * 3600,
+                    sameSite: 'lax',
+                });
+                return res;
             }
 
             // SPECIAL CASE: Property-scoped signup (Join flow) - We still handle this sequentially if needed, 

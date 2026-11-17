@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useParams } from 'next/navigation';
-import { Wallet, IndianRupee, ArrowLeft, LogOut, Menu, X, Lock, Target, Siren } from 'lucide-react';
+import { Wallet, IndianRupee, ArrowLeft, LogOut, Menu, X, Lock, Target, Siren, Crosshair } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { accountsCaps } from '@/frontend/lib/accounts/roles';
 import { canSeeAop } from '@/frontend/lib/aop/access';
@@ -45,6 +45,8 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
 
     const links = [
         caps.canSee && { href: `/${orgId}/accounts`, label: 'Payment Tracker', icon: IndianRupee },
+        // The same AOP Bounty Procurement and super admins use. Invoice Control is a Payment Tracker tab.
+        caps.canSee && { href: `/${orgId}/accounts/bounty`, label: 'AOP Bounty', icon: Crosshair },
         canSeeAopTracker && { href: `/${orgId}/aop`, label: 'AOP Budget vs Actual', icon: Target },
         canEditEscalation && { href: `/${orgId}/settings/escalation`, label: 'Escalation SPOCs', icon: Siren },
     ].filter(Boolean) as { href: string; label: string; icon: React.ComponentType<{ className?: string }> }[];
@@ -58,7 +60,10 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
 
             <nav className="flex-1 min-h-0 px-3 py-4 space-y-1 overflow-y-auto" aria-label="Accounts navigation">
                 {links.map((l) => {
-                    const active = pathname?.startsWith(l.href);
+                    // Payment Tracker owns /accounts and the PO pages under it, not its sibling pages.
+                    const active = l.href.endsWith('/accounts')
+                        ? pathname === l.href || !!pathname?.startsWith(`${l.href}/po`)
+                        : !!pathname?.startsWith(l.href);
                     const Icon = l.icon;
                     return (
                         <Link

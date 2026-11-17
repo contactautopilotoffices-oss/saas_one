@@ -40,9 +40,11 @@ import type { ModuleKey } from '@/frontend/types/agentRuntime';
 
 /** What a step does. Drives its icon and lane in the canvas. */
 export type PlanStepKind =
+    | 'trigger'   // an event starts the run: a WhatsApp message, a webhook, a schedule
     | 'resolve'   // pin down missing context
     | 'search'    // reach outside the org (web, vendor sites)
     | 'fetch'     // read our own tables
+    | 'call'      // phone a person with the voice agent and collect their answers
     | 'decide'    // branch on a rule
     | 'draft'     // produce a document/message, unsent
     | 'approve'   // a human gate — the agent stops here
@@ -50,7 +52,7 @@ export type PlanStepKind =
     | 'notify';   // tell someone
 
 export const PLAN_STEP_KINDS: readonly PlanStepKind[] = [
-    'resolve', 'search', 'fetch', 'decide', 'draft', 'approve', 'write', 'notify',
+    'trigger', 'resolve', 'search', 'fetch', 'call', 'decide', 'draft', 'approve', 'write', 'notify',
 ] as const;
 
 /**
@@ -138,6 +140,13 @@ export interface AgentPlan {
     roles: PlanRole[];
     /** Honest caveats. Rendered, never swallowed. */
     notes: string[];
+    /**
+     * Set when the model WAS asked and failed, and the rules plan is shown in
+     * its place. The canvas names it. Before this field existed the failure was
+     * caught and discarded, and the fallback was labelled "no model ran" — so a
+     * timeout or a cut-off answer looked like a normal, if generic, plan.
+     */
+    fallbackReason?: string | null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -184,9 +193,24 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
     },
     whatsapp: {
         slug: 'whatsapp',
-        label: 'WhatsApp',
-        purpose: 'Reach site staff and vendors on WhatsApp.',
-        requires: ['WASENDER_API_KEY'],
+        label: 'WhatsApp (send)',
+        purpose: 'Send an approved WhatsApp template to site staff, the purchase team or a vendor.',
+        // Outbound WhatsApp goes through AiSensy (backend/services/WhatsAppService.ts).
+        // This used to require WASENDER_API_KEY, which no sending code reads.
+        requires: ['AISENSY_API_KEY'],
+    },
+    whatsapp_webhook: {
+        slug: 'whatsapp_webhook',
+        label: 'WhatsApp webhook (inbound)',
+        purpose: 'Start or continue a run when a WhatsApp message arrives (/api/webhooks/aisensy or /api/webhooks/whatsapp).',
+        requires: ['AISENSY_WEBHOOK_SECRET|WASENDER_WEBHOOK_SECRET'],
+    },
+    bolna_call: {
+        slug: 'bolna_call',
+        label: 'Voice call (Bolna)',
+        purpose: 'Phone people with the Bolna voice agent — one CSV row per call, each column filling the prompt variable of the '
+            + 'same name — and read back each transcript and recording through the per-call webhook.',
+        requires: ['BOLNA_API_KEY', 'SATEJ_BOLNA_AGENT_ID|BOLNA_AGENT_ID'],
     },
     push: {
         slug: 'push',
@@ -205,6 +229,9 @@ const TOOL_SPECS: Record<string, ToolSpec> = {
         requires: ['COUNCIL_API_KEY|OPENAI_API_KEY|GROQ_API_KEY'],
     },
 };
+
+/** Every tool this deployment knows. The one list the planner, the palette and preflight read. */
+export const TOOL_SLUGS: readonly string[] = Object.keys(TOOL_SPECS);
 
 /** True only when every named env var is present and non-empty. */
 /**

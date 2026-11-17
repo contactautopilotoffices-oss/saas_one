@@ -19,6 +19,11 @@
  * 'needs_manual_entry', surfaced in the Inbox review queue. Nothing is guessed.
  */
 
+import { ocrStep, withOcrActivity } from '@/backend/lib/ocr/activity';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
+
+
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // Was qwen/qwen3.8-27b until 2026-09-05, when Groq
 // retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
@@ -155,9 +160,17 @@ export const CRITICAL_FIELDS = [
 ] as const;
 
 /** Parse one bill PDF. Never throws — failures come back as { parsed: null, error }. */
-export async function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return { parsed: null, payload: {}, error: 'GROQ_API_KEY not set' };
+export function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
+    return withOcrActivity(
+        { source: 'electricity', contentType: 'application/pdf', bytes: pdfBytes.length },
+        () => parseBillPdfImpl(pdfBytes),
+        (r) => ({ ok: !!r.parsed && !r.error, error: r.error ?? null }),
+    );
+}
+
+async function parseBillPdfImpl(pdfBytes: Buffer): Promise<BillOcrResult> {
+    // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts).
+    if (!hasProviderKey('groq')) return { parsed: null, payload: {}, error: 'no Groq key is set (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)' };
 
     let text: string;
     try {
@@ -166,7 +179,9 @@ export async function parseBillPdf(pdfBytes: Buffer): Promise<BillOcrResult> {
         return { parsed: null, payload: {}, error: `pdf text extraction failed: ${e instanceof Error ? e.message : e}` };
     }
 
-    const content = await callGroq(apiKey, text ? textContent(text) : await imageContent(pdfBytes));
+    const groqStart = Date.now();
+    const content = await callGroq(text ? textContent(text) : await imageContent(pdfBytes));
+    ocrStep({ step: 'text_model', ms: Date.now() - groqStart, ok: content.ok, model: content.model ?? MODEL, provider: 'groq', note: content.ok ? undefined : content.error });
     if (!content.ok) return { parsed: null, payload: content.payload, error: content.error };
 
     // The prompt asks for {fields, confidence}. Tolerate the older flat shape too, so a
@@ -246,18 +261,29 @@ async function imageContent(pdfBytes: Buffer) {
     return parts;
 }
 
-interface GroqCallOk { ok: true; fields: Record<string, unknown>; payload: Record<string, unknown> }
-interface GroqCallErr { ok: false; payload: Record<string, unknown>; error: string }
+/** `model` = the model that produced this result (set by callGroq). */
+interface GroqCallOk { ok: true; fields: Record<string, unknown>; payload: Record<string, unknown>; model?: string }
+interface GroqCallErr { ok: false; payload: Record<string, unknown>; error: string; model?: string }
 
-async function callGroq(apiKey: string, content: any[]): Promise<GroqCallOk | GroqCallErr> {
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+// A chosen model that fails costs one attempt: today's model is then tried once.
+async function callGroq(content: Parameters<typeof callGroqWith>[1]): Promise<GroqCallOk | GroqCallErr> {
+    const chosen = await modelFor('bill_ocr', MODEL);
+    const first = await callGroqWith(chosen, content);
+    if (first.ok || chosen === MODEL) return { ...first, model: chosen };
+    markFailed('bill_ocr');
+    return { ...(await callGroqWith(MODEL, content)), model: MODEL };
+}
+
+async function callGroqWith(model: string, content: unknown[]): Promise<GroqCallOk | GroqCallErr> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-        const response = await fetch(GROQ_API_URL, {
+        const response = await fetchWithKeys('groq', GROQ_API_URL, key => ({
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                model: MODEL,
+                model,
                 messages: [
                     { role: 'system', content: SYSTEM_PROMPT },
                     { role: 'user', content },
@@ -266,7 +292,7 @@ async function callGroq(apiKey: string, content: any[]): Promise<GroqCallOk | Gr
                 response_format: { type: 'json_object' },
             }),
             signal: controller.signal,
-        });
+        }));
         clearTimeout(timeoutId);
 
         if (!response.ok) {

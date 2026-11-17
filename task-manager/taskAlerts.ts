@@ -1,4 +1,5 @@
 import { TaskMessagingService } from './TaskMessagingService';
+import { shortTime, timeLabel, type TaskDue } from './dueDates';
 
 /**
  * Event alerts (a task was assigned / handed over / finished / a superuser replied), sent ONLY as Meta-approved templates.
@@ -6,19 +7,31 @@ import { TaskMessagingService } from './TaskMessagingService';
  * rejection arrives after AiSensy has already said OK, so a free-text-first send silently fails. Kill switches and Pretend
  * Mode still apply (everything goes through TaskMessagingService.sendMessage).
  *
- *   task_assigned_v1             Task: {{1}} · Assigned by: {{2}} · Date: {{3}}   (+ a "tasks" quick-reply button)
+ *   task_assigned_v2             Task: {{1}} · Note: {{2}} · Assigned by: {{3}} · Date: {{4}}   (+ a "tasks" quick-reply button)
+ *                                (owner 2026-11-02: replaces v1 for every department, so the note reaches WhatsApp. Must be
+ *                                approved in AiSensy / Meta first; until then set AISENSY_TASK_ASSIGNED_CAMPAIGN=task_assigned_v1)
+ *   task_assigned_v1             Task: {{1}} · Assigned by: {{2}} · Date: {{3}}   (still works if the env names it: the note
+ *                                is then put on the Task line, as before)
  *   task_update_v2               Task: {{1}} · Assigned to: {{2}} · Update: {{3}}   (a superuser's reply, relayed)
  *   task_handover_v1             Hello {{1}} · {{2}} handed over · Task: {{3}} · Target date: {{4}}
  *   task_completed_notice_v1     Hello {{1}} · Task: {{2}} · Completed by: {{3}} ({{4}}) · At: {{5}}
  *   task_manager_team_digest_v1  Hello {{1}} · scope {{2}} · Date {{3}} · Members {{4}} · Done {{5}} · Pending {{6}} · Status {{7}}
  *   task_overdue_alert_v1        (rule "Overdue alert", built in TaskNotificationService) Hello {{1}} · {{2}} overdue · {{3}}
+ *   task_dependency_v1           Hello {{1}} · {{2}} says this is pending on you · Task: {{3}}   (owner 2026-10-19; must be
+ *                                approved in AiSensy / Meta before it is delivered. Until then the in-app notice still works.)
+ *   task_reminder_v1             Hello {{1}} · {{2}} is waiting on these tasks · {{3}}   (owner 2026-10-20, the person who GAVE
+ *                                the tasks reminds the person doing them; same approval note as above)
  */
 
-export const ASSIGNED_CAMPAIGN = process.env.AISENSY_TASK_ASSIGNED_CAMPAIGN || 'task_assigned_v1';
+export const ASSIGNED_CAMPAIGN = process.env.AISENSY_TASK_ASSIGNED_CAMPAIGN || 'task_assigned_v2';
+/** The old three-blank version (no Note line). Decided by the template NAME in use, like the morning standup v1/v2. */
+export const ASSIGNED_V1 = 'task_assigned_v1';
 export const UPDATE_CAMPAIGN = process.env.AISENSY_TASK_UPDATE_CAMPAIGN || 'task_update_v2';
 export const HANDOVER_CAMPAIGN = process.env.AISENSY_TASK_HANDOVER_CAMPAIGN || 'task_handover_v1';
 export const COMPLETED_CAMPAIGN = process.env.AISENSY_TASK_COMPLETED_CAMPAIGN || 'task_completed_notice_v1';
 export const TEAM_DIGEST_CAMPAIGN = process.env.AISENSY_TASK_TEAM_DIGEST_CAMPAIGN || 'task_manager_team_digest_v1';
+export const DEPENDENCY_CAMPAIGN = process.env.AISENSY_TASK_DEPENDENCY_CAMPAIGN || 'task_dependency_v1';
+export const REMINDER_CAMPAIGN = process.env.AISENSY_TASK_REMINDER_CAMPAIGN || 'task_reminder_v1';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -35,9 +48,9 @@ export function formatDate(date: string): string {
     return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : oneLine(date, 30);
 }
 
-/** One task → its title. Several → "1. A | 2. B", cut with "…and N more" to stay short. */
-export function taskList(titles: string[], max = 600): string {
-    const clean = titles.map(t => oneLine(t, 120)).filter(Boolean);
+/** One task → its title. Several → "1. A | 2. B", cut with "…and N more" to stay short. `each` = longest single item. */
+export function taskList(titles: string[], max = 600, each = 120): string {
+    const clean = titles.map(t => oneLine(t, each)).filter(Boolean);
     if (clean.length <= 1) return clean[0] || 'a task';
     let out = '';
     for (let i = 0; i < clean.length; i++) {
@@ -48,8 +61,44 @@ export function taskList(titles: string[], max = 600): string {
     return out;
 }
 
-export function assignedParams(titles: string[], fromLabel: string, date: string): [string, string, string] {
-    return [taskList(titles), oneLine(fromLabel, 100) || 'Your team', formatDate(date)];
+/** Meta rejects an empty blank, so "no note" is a dash. */
+export const NO_NOTE = '—';
+
+/** The Note blank: one task → its note. Several → "1. A | 3. C", numbered like the Task line (tasks without a note are left out). */
+export function noteList(notes: Array<string | null | undefined>, count: number, max = 600): string {
+    const clean = Array.from({ length: count }, (_, i) => oneLine(notes[i], 300));
+    if (count <= 1) return clean[0] || NO_NOTE;
+    let out = '';
+    const withNote = clean.map((n, i) => [i + 1, n] as const).filter(([, n]) => n);
+    for (let k = 0; k < withNote.length; k++) {
+        const item = `${withNote[k][0]}. ${withNote[k][1]}`;
+        const next = out ? `${out} | ${item}` : item;
+        if (next.length > max) return `${out} | …and ${withNote.length - k} more`;
+        out = next;
+    }
+    return out || NO_NOTE;
+}
+
+/** Owner 2026-11-02: " (Due: 5 Nov 2026, 5:00 PM)" or " (Due: 5 Nov 2026)"; '' when there is no due date. */
+export function dueSuffix(due: TaskDue | null | undefined): string {
+    if (!due?.date) return '';
+    const time = shortTime(due.time);
+    return ` (Due: ${formatDate(due.date)}${time ? `, ${timeLabel(time).toUpperCase()}` : ''})`;
+}
+
+/**
+ * task_assigned_v2: [tasks, note, from, date]. task_assigned_v1 (when the env still names it): [tasks, from, date], with
+ * any note put on the Task line as "Title (Note: …)", exactly as before. Either way a task with a due date reads
+ * "Title (Due: 5 Nov 2026, 5:00 PM)" on the Task line — the title is cut first, so the due date is never lost.
+ */
+export function assignedParams(titles: string[], fromLabel: string, date: string, notes: Array<string | null | undefined> = [], campaign: string = ASSIGNED_CAMPAIGN, dues: Array<TaskDue | null | undefined> = []): string[] {
+    const from = oneLine(fromLabel, 100) || 'Your team';
+    const items = titles.map((t, i) => `${oneLine(t, 120)}${dueSuffix(dues[i])}`);
+    if (campaign === ASSIGNED_V1) {
+        const folded = items.map((t, i) => { const n = oneLine(notes[i], 300); return n ? `${t} (Note: ${n})` : t; });
+        return [taskList(folded, 600, 460), from, formatDate(date)];
+    }
+    return [taskList(items, 600, 160), noteList(notes, titles.length), from, formatDate(date)];
 }
 
 export function updateParams(titles: string[], assigneeLabel: string, update: string): [string, string, string] {
@@ -57,8 +106,9 @@ export function updateParams(titles: string[], assigneeLabel: string, update: st
 }
 
 /** What the person receives, filled in (used as the Pretend-Mode preview and in logs). */
-export function assignedPreview(p: [string, string, string]): string {
-    return `🔔 A new task has been assigned to you.\n\nTask: ${p[0]}\nAssigned by: ${p[1]}\nDate: ${p[2]}\n\nReply "tasks" to see your list and mark it done.`;
+export function assignedPreview(p: string[]): string {
+    if (p.length === 3) return `🔔 A new task has been assigned to you.\n\nTask: ${p[0]}\nAssigned by: ${p[1]}\nDate: ${p[2]}\n\nReply "tasks" to see your list and mark it done.`;
+    return `🔔 A new task has been assigned to you.\n\nTask: ${p[0]}\nNote: ${p[1]}\nAssigned by: ${p[2]}\nDate: ${p[3]}\n\nReply "tasks" to see your list and mark it done.`;
 }
 
 export function updatePreview(p: [string, string, string]): string {
@@ -67,10 +117,11 @@ export function updatePreview(p: [string, string, string]): string {
 
 const validPhone = (phone?: string | null): phone is string => !!phone && phone.trim().length >= 10;
 
-/** "A new task has been assigned to you" — one message even for several tasks. Never throws. */
-export async function sendTaskAssigned(phone: string | null | undefined, input: { titles: string[]; fromLabel: string; date: string; messageType?: string; departmentId?: string }): Promise<boolean> {
+/** "A new task has been assigned to you" — one message even for several tasks. `notes[i]` / `dues[i]` belong to `titles[i]`
+ *  (pass a due date only once it was really saved). Never throws. */
+export async function sendTaskAssigned(phone: string | null | undefined, input: { titles: string[]; notes?: Array<string | null | undefined>; dues?: Array<TaskDue | null | undefined>; fromLabel: string; date: string; messageType?: string; departmentId?: string }): Promise<boolean> {
     if (!validPhone(phone) || input.titles.length === 0) return false;
-    const params = assignedParams(input.titles, input.fromLabel, input.date);
+    const params = assignedParams(input.titles, input.fromLabel, input.date, input.notes, ASSIGNED_CAMPAIGN, input.dues);
     try {
         return await TaskMessagingService.sendMessage(phone, assignedPreview(params), {
             messageType: input.messageType || 'task_assigned', departmentId: input.departmentId,
@@ -209,6 +260,50 @@ export async function sendTaskHandover(phone: string | null | undefined, input: 
     }
 }
 
+export function dependencyParams(recipientName: string, fromLabel: string, titles: string[]): [string, string, string] {
+    return [firstName(recipientName), oneLine(fromLabel, 100) || 'A teammate', taskList(titles)];
+}
+export function dependencyPreview(p: [string, string, string]): string {
+    return `⏳ Task Pending On You\n\nHello ${p[0]},\n${p[1]} says this task is waiting on you:\n📋 Task: ${p[2]}\nPlease check with them.`;
+}
+
+/** "This task of mine is pending on you" (owner 2026-10-19). Never throws. Gated like every other alert. */
+export async function sendTaskDependency(phone: string | null | undefined, input: { recipientName: string; fromLabel: string; titles: string[]; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone) || input.titles.length === 0) return false;
+    const params = dependencyParams(input.recipientName, input.fromLabel, input.titles);
+    try {
+        return await TaskMessagingService.sendMessage(phone, dependencyPreview(params), {
+            messageType: 'task_dependency', departmentId: input.departmentId,
+            campaignName: DEPENDENCY_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send pending-on-you alert:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}
+
+export function reminderParams(recipientName: string, fromLabel: string, titles: string[]): [string, string, string] {
+    return [firstName(recipientName), oneLine(fromLabel, 100) || 'A teammate', taskList(titles)];
+}
+export function reminderPreview(p: [string, string, string]): string {
+    return `🔔 Task Reminder\n\nHello ${p[0]},\n${p[1]} is waiting on these tasks:\n📋 ${p[2]}\nPlease update them when done.`;
+}
+
+/** "The tasks I gave you are still pending" (owner 2026-10-20). Never throws. Gated like every other alert. */
+export async function sendTaskReminder(phone: string | null | undefined, input: { recipientName: string; fromLabel: string; titles: string[]; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone) || input.titles.length === 0) return false;
+    const params = reminderParams(input.recipientName, input.fromLabel, input.titles);
+    try {
+        return await TaskMessagingService.sendMessage(phone, reminderPreview(params), {
+            messageType: 'task_reminder', departmentId: input.departmentId,
+            campaignName: REMINDER_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send task reminder:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}
+
 /** "A task you assigned has been completed" — to the person who GAVE the task(s). Never throws. */
 export async function sendTaskCompleted(phone: string | null | undefined, input: { giverName: string; titles: string[]; completedByName: string; department?: string | null; at?: Date; departmentId?: string }): Promise<boolean> {
     if (!validPhone(phone) || input.titles.length === 0) return false;
@@ -243,6 +338,64 @@ export async function sendTeamDigest(phone: string | null | undefined, input: Pa
         });
     } catch (err) {
         console.error('[taskAlerts] Failed to send team digest:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}
+
+/**
+ * Owner 2026-10-26 — "Support request from another team" (cross-department collaboration in the Send tab). Template
+ * task_support_request_v1 (owner 2026-10-27: worded without "support"): header "Request from another team" · Hello {{1}} ·
+ * {{2}} needs your help with a task · Task: {{3}} · Needed by: {{4}} · Tap Accept, or Can't do it (two quick-reply buttons;
+ * a tap reaches the bot as that text, the reason is optional) · footer "Autopilot Offices · Task Manager". It must be approved in AiSensy / Meta before it is delivered; until then the in-app notice still works.
+ */
+export const SUPPORT_REQUEST_CAMPAIGN = process.env.AISENSY_TASK_SUPPORT_REQUEST_CAMPAIGN || 'task_support_request_v1';
+
+export function supportRequestParams(recipientName: string, fromLabel: string, title: string, neededBy: string | null): [string, string, string, string] {
+    return [firstName(recipientName), oneLine(fromLabel, 100) || 'A colleague', oneLine(title, 200) || 'a task', neededBy ? formatDate(neededBy) : 'No date given'];
+}
+export function supportRequestPreview(p: [string, string, string, string]): string {
+    return `🤝 Request from another team\n\nHello ${p[0]},\n${p[1]} needs your help with a task.\nTask: ${p[2]}\nNeeded by: ${p[3]}\n\nTap Accept, or Can't do it.`;
+}
+
+/** Tells the receiver about a support request. Never throws. Gated like every other alert (kill switches, Pretend Mode). */
+export async function sendSupportRequest(phone: string | null | undefined, input: { recipientName: string; fromLabel: string; title: string; neededBy: string | null; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone)) return false;
+    const params = supportRequestParams(input.recipientName, input.fromLabel, input.title, input.neededBy);
+    try {
+        return await TaskMessagingService.sendMessage(phone, supportRequestPreview(params), {
+            messageType: 'task_support_request', departmentId: input.departmentId,
+            campaignName: SUPPORT_REQUEST_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send support request:', err instanceof Error ? err.message : err);
+        return false;
+    }
+}
+
+// ── Owner 2026-10-27: "Due soon" — one reminder before a task's deadline (Due dates switch in the Control Center) ─────────
+//   task_due_soon_v1   Hello {{1}} · Task: {{2}} · Due: {{3}} · Given by: {{4}}
+// Must be created and approved in AiSensy / Meta before it is delivered. Until then the in-app bell still works.
+
+export const DUE_SOON_CAMPAIGN = process.env.AISENSY_TASK_DUE_SOON_CAMPAIGN || 'task_due_soon_v1';
+
+export function dueSoonParams(recipientName: string, title: string, dueText: string, fromLabel: string): [string, string, string, string] {
+    return [firstName(recipientName), oneLine(title, 200) || 'a task', oneLine(dueText, 60), oneLine(fromLabel, 100) || 'You'];
+}
+export function dueSoonPreview(p: [string, string, string, string]): string {
+    return `⏰ Due soon\n\nHello ${p[0]},\nTask: ${p[1]}\nDue: ${p[2]}\nGiven by: ${p[3]}\n\nReply "tasks" to see your list and mark it done.`;
+}
+
+/** Reminds the person holding a task that its deadline is near. Never throws. Gated like every other alert. */
+export async function sendTaskDueSoon(phone: string | null | undefined, input: { recipientName: string; title: string; dueText: string; fromLabel: string; departmentId?: string }): Promise<boolean> {
+    if (!validPhone(phone)) return false;
+    const params = dueSoonParams(input.recipientName, input.title, input.dueText, input.fromLabel);
+    try {
+        return await TaskMessagingService.sendMessage(phone, dueSoonPreview(params), {
+            messageType: 'task_due_soon', departmentId: input.departmentId,
+            campaignName: DUE_SOON_CAMPAIGN, templateParams: params, templateOnly: true,
+        });
+    } catch (err) {
+        console.error('[taskAlerts] Failed to send due-soon reminder:', err instanceof Error ? err.message : err);
         return false;
     }
 }

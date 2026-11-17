@@ -26,7 +26,7 @@ import Image from 'next/image';
 import { useTheme } from '@/frontend/context/ThemeContext';
 import { ShiftToast } from '@/frontend/components/mst/ShiftStatus';
 import NavbarShiftStatus from '@/frontend/components/mst/NavbarShiftStatus';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import dynamic from 'next/dynamic';
 const UniversalQRScannerModal = dynamic(() => import('@/frontend/components/shared/UniversalQRScannerModal'), { ssr: false });
 
@@ -975,7 +975,7 @@ const MstDashboard = () => {
                                     propertyName={property.name}
                                     isStaff={true}
                                     userRole={userRole}
-                                    showInternalToggle={true}
+                                    showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
                                 />
                             )}
                             {activeTab === 'flow-map' && (
@@ -1252,7 +1252,7 @@ const DashboardTab = ({ tickets, completedCount, ticketStats, onTicketClick, use
                     <p className="text-xs text-text-tertiary">All requests for this property</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6 min-w-0">
+                <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6 min-w-0`}>
                     {isLoading ? (
                         [1, 2, 3].map(i => (
                             <div key={i} className="h-48 bg-surface-elevated border border-border rounded-2xl animate-pulse" />
@@ -1289,6 +1289,7 @@ const DashboardTab = ({ tickets, completedCount, ticketStats, onTicketClick, use
                                     photoUrl={ticket.photo_before_url}
                                     escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                                     raisedByTenant={(ticket.creator?.property_memberships || []).some((m: TicketCreatorMembership) => m.property_id === ticket.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                    isInternal={Boolean(ticket.internal)}
                                     onClick={() => {
                                         // Standardized Scroll Saving
                                         const scrollContainer = document.getElementById('main-scroll-container');
@@ -1560,7 +1561,7 @@ const RequestsTab = ({
                         <p className="text-text-tertiary text-xs mt-1">Try switching the filter to see more data.</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 sm:gap-6 min-w-0">
+                    <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6 min-w-0`}>
                         {filtered
                             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                             .map((ticket) => (
@@ -1584,6 +1585,7 @@ const RequestsTab = ({
                                         photoUrl={ticket.photo_before_url}
                                         escalationChain={(() => { const logs = ticket.ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a, b) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log, i) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                                         raisedByTenant={(ticket.creator?.property_memberships || []).some((m: TicketCreatorMembership) => m.property_id === ticket.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                                        isInternal={Boolean(ticket.internal)}
                                         onClick={() => {
                                             // Standardized Scroll Saving
                                             const scrollContainer = document.getElementById('main-scroll-container');

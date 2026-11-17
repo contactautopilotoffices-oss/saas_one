@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { recordAssetEvent } from '@/backend/lib/assets/enrich';
+import { resolveAssetAccessForUser, isAssetAccessError, canAccessCategory } from '@/backend/lib/assets/access';
 
 /**
  * GET /api/tickets/[id]/assets — assets logged against this ticket (for the
@@ -60,7 +61,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .from('organization_memberships')
         .select('role')
         .eq('user_id', user.id).eq('organization_id', ticket.organization_id).eq('is_active', true)
-        .in('role', ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner'])
+        // Owner 2026-11-03: + 'tech' (the Tech console has the Super Admin console's Requests tab, for its own organisation)
+        .in('role', ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'owner', 'tech'])
+        .limit(1)
         .maybeSingle();
     const isAdmin = !!profile?.is_master_admin || !!orgAdminRow;
     if (!isAdmin && ticket.assigned_to !== user.id) {
@@ -69,13 +72,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     let asset;
     if (asset_id) {
-        const { data } = await supabaseAdmin.from('assets').select('id, organization_id, property_id, name, asset_code').eq('id', asset_id).is('deleted_at', null).maybeSingle();
+        const { data } = await supabaseAdmin.from('assets').select('id, organization_id, property_id, category_id, name, asset_code').eq('id', asset_id).is('deleted_at', null).maybeSingle();
         asset = data;
     } else {
-        const { data } = await supabaseAdmin.from('assets').select('id, organization_id, property_id, name, asset_code').eq('qr_token', qr_token).is('deleted_at', null).maybeSingle();
+        const { data } = await supabaseAdmin.from('assets').select('id, organization_id, property_id, category_id, name, asset_code').eq('qr_token', qr_token).is('deleted_at', null).maybeSingle();
         asset = data;
     }
     if (!asset) return NextResponse.json({ error: 'That QR code does not match a known asset' }, { status: 404 });
+    // Owner 2026-11-02: the IT team works only on IT & Network assets. Anyone whose asset access can't be resolved
+    // here (e.g. an assigned vendor) keeps the previous behaviour.
+    const assetAccess = await resolveAssetAccessForUser({ id: user.id }, ticket.organization_id);
+    if (!isAssetAccessError(assetAccess) && !canAccessCategory(assetAccess, asset.category_id)) {
+        return NextResponse.json({ error: 'You can only log work on IT & Network assets' }, { status: 403 });
+    }
     if (asset.property_id !== ticket.property_id) {
         return NextResponse.json({ error: 'This asset belongs to a different property than the ticket' }, { status: 409 });
     }

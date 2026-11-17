@@ -7,6 +7,7 @@ const supabaseAdmin = createClient(
 );
 
 import dictionary from '@/backend/lib/ticketing/issueDictionary.json';
+import { resolveCaller, isCallerError, forbidden } from '@/backend/lib/auth/callerAccess';
 
 // Human-readable names for issue codes
 const issueCodeNames: Record<string, string> = {
@@ -30,6 +31,10 @@ const issueCodeNames: Record<string, string> = {
 
 // POST: Seed database from the hardcoded dictionary
 export async function POST(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const results = {
             skill_groups_created: 0,
@@ -129,6 +134,10 @@ export async function POST(request: NextRequest) {
 
 // GET: Check current seeding status
 export async function GET(request: NextRequest) {
+    // The issue dictionary is shared by every organisation: master admins only (the Master Admin screen).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!caller.isMasterAdmin && !caller.orgMemberships.some(m => m.role === 'master_admin')) return forbidden('Forbidden: master admins only');
     try {
         const { data: categories, error } = await supabaseAdmin
             .from('issue_categories')

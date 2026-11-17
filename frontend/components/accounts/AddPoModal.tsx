@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Loader2, Upload } from 'lucide-react';
+import { X, Loader2, Upload, Download } from 'lucide-react';
 import Papa from 'papaparse';
+import { downloadCsvContent } from '@/frontend/utils/downloadTemplate';
 
 interface Props { onClose: () => void; onDone: () => void; }
 
@@ -93,6 +94,24 @@ export default function AddPoModal({ onClose, onDone }: Props) {
                         </>
                     ) : (
                         <>
+                            <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-muted/60 border border-border">
+                                <p className="text-xs text-text-secondary">Download the CSV template with all columns accepted by the PO importer.</p>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const csv = [
+                                            'PO No,Vendor Name,Amount,Status,Department,Project Name,Category,po_date',
+                                            'PO-25/26-1001,ABC Engineering Pvt Ltd,125000,Open,Opex,SS Plaza,HVAC Maintenance,2026-04-15',
+                                            'PO-25/26-1002,XYZ Electricals,48500,Approved,Capex,Cyber City,Electrical Works,2026-04-18',
+                                        ].join('\n');
+                                        downloadCsvContent(csv, 'po_import_template.csv');
+                                    }}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-surface border border-border rounded-lg text-xs font-bold text-text-primary hover:bg-muted shrink-0"
+                                >
+                                    <Download className="w-3.5 h-3.5 text-primary" />
+                                    Template
+                                </button>
+                            </div>
                             <p className="text-sm text-text-secondary">Upload a CSV. Recognised columns: <span className="font-mono text-xs">Purchase Order# / PO No, Vendor Name, Amount / PO Value, Status, Department, Project Name / Site, Category</span>. Re-imports update by PO number.</p>
                             <label className="flex items-center justify-center gap-2 px-4 py-8 border border-dashed border-border rounded-xl text-sm text-text-secondary cursor-pointer hover:border-primary/40">
                                 {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}

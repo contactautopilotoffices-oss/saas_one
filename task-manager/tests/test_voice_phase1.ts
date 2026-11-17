@@ -37,7 +37,7 @@ function fakeGroq(script: Array<{ status?: number; body?: unknown; throws?: Erro
     }) as typeof fetch;
     return { f, calls };
 }
-const ENV = { GROQ_VOICE_API_KEY: 'test-key' };
+const ENV = { GROQ_API_KEY: 'test-key' };
 const OGG = 'audio/ogg; codecs=opus';
 const okBody = (text: string, extra: Record<string, unknown> = {}) => ({ text, language: 'hindi', duration: 12.4, segments: [{ no_speech_prob: 0.01 }], ...extra });
 
@@ -118,6 +118,39 @@ async function run() {
     g = fakeGroq([{ body: okBody('long one', { duration: 200 }) }]);
     r = await V.transcribeVoiceNote({ audio: Buffer.from('not-ogg-but-mp3-bytes'), mimeType: 'audio/mpeg' }, { fetch: g.f, env: ENV });
     check('length unknown up front (mp3) but Groq says 200 s → too_long', !r.ok && r.reason === 'too_long', r);
+
+    console.log('\n3b. Sarvam first (owner 2026-11-15: "sarvam goes first"), Whisper behind it');
+    const SV = { ...ENV, SARVAM_API_KEY: 'sarvam-test' };
+    const sarvamOk = (transcript: string) => ({ request_id: 'r1', transcript, language_code: 'hi-IN', language_probability: 0.9 });
+    const callsTo = (calls: Call[], url: string) => calls.filter(c => c.url === url).length;
+    g = fakeGroq([{ body: sarvamOk('Rahul ko kal ka task do') }]);
+    r = await V.transcribeVoiceNote({ audio: opusFile(12), mimeType: OGG }, { fetch: g.f, env: SV });
+    const sform = g.calls[0]?.form;
+    check('a 12 s note goes to Sarvam first and Sarvam answers', r.ok && r.model === 'sarvam:saaras:v4' && r.text === 'Rahul ko kal ka task do' && r.language === 'hi-IN' && g.calls.length === 1 && g.calls[0].url === V.SARVAM_TRANSCRIBE_URL, r);
+    check('the Sarvam request: saaras:v4, Roman letters, language detected, file voice.ogg, no Groq key sent',
+        sform?.get('model') === 'saaras:v4' && sform?.get('mode') === 'translit' && sform?.get('language_code') === 'unknown' && (sform?.get('file') as File | null)?.name === 'voice.ogg' && g.calls[0].auth === null);
+    g = fakeGroq([{ body: okBody('lamba message') }]);
+    r = await V.transcribeVoiceNote({ audio: opusFile(45), mimeType: OGG }, { fetch: g.f, env: SV });
+    check('a 45 s note skips Sarvam (it takes up to 30 s) and goes to Whisper', r.ok && r.model === 'whisper-large-v3' && callsTo(g.calls, V.SARVAM_TRANSCRIBE_URL) === 0 && r.failures.length === 0, r);
+    for (const failure of [{ status: 429 }, { status: 403 }, { status: 500 }, { throws: timeout }]) {
+        g = fakeGroq([failure, { body: okBody('task done') }]);
+        r = await V.transcribeVoiceNote({ audio: opusFile(8), mimeType: OGG }, { fetch: g.f, env: SV });
+        check(`Sarvam ${failure.status ?? 'timeout'} → Whisper answers`, r.ok && r.model === 'whisper-large-v3' && r.failures[0]?.model === 'sarvam:saaras:v4' && g.calls[1]?.url === V.GROQ_TRANSCRIBE_URL, r);
+    }
+    g = fakeGroq([{ body: sarvamOk('   ') }]);
+    r = await V.transcribeVoiceNote({ audio: opusFile(4), mimeType: OGG }, { fetch: g.f, env: SV });
+    check('Sarvam hears nothing → silent, Whisper not asked to invent something', !r.ok && r.reason === 'silent' && g.calls.length === 1, r);
+    g = fakeGroq([{ body: okBody('mp3 note') }]);
+    r = await V.transcribeVoiceNote({ audio: Buffer.from('mp3-bytes'), mimeType: 'audio/mpeg' }, { fetch: g.f, env: SV });
+    check('a note whose length cannot be read goes straight to Whisper', r.ok && r.model === 'whisper-large-v3' && callsTo(g.calls, V.SARVAM_TRANSCRIBE_URL) === 0, r);
+    g = fakeGroq([{ body: sarvamOk('sirf sarvam') }]);
+    r = await V.transcribeVoiceNote({ audio: opusFile(10), mimeType: OGG }, { fetch: g.f, env: { SARVAM_API_KEY: 'sarvam-test' } });
+    check('only the Sarvam key set: a short note still works', r.ok && r.model === 'sarvam:saaras:v4', r);
+    r = await V.transcribeVoiceNote({ audio: opusFile(50), mimeType: OGG }, { fetch: g.f, env: { SARVAM_API_KEY: 'sarvam-test' } });
+    check('only the Sarvam key set: a 50 s note says plainly no key can take it', !r.ok && r.reason === 'no_key' && /up to 30 s/.test(r.detail), r);
+    g = fakeGroq([{ body: okBody('no sarvam') }]);
+    r = await V.transcribeVoiceNote({ audio: opusFile(10), mimeType: OGG }, { fetch: g.f, env: ENV });
+    check('no Sarvam key: exactly as before, Whisper only', r.ok && r.model === 'whisper-large-v3' && g.calls.length === 1, r);
 
     console.log('\n4. Silence and Whisper inventions');
     for (const [name, body] of [

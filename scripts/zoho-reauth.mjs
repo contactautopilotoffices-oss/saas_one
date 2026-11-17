@@ -7,8 +7,14 @@
  *   node scripts/zoho-reauth.mjs BOOKS      '<code>' [redirect_uri]
  *   node scripts/zoho-reauth.mjs MAIL       '<code>' [redirect_uri]
  *   node scripts/zoho-reauth.mjs ELEC_MAIL  '<code>' [redirect_uri]
+ *   node scripts/zoho-reauth.mjs WORKDRIVE  '<code>' [redirect_uri]
  *
  * Reads   ZOHO_<PREFIX>_CLIENT_ID / _CLIENT_SECRET / _DC
+ *         (WORKDRIVE falls back to the ZOHO_BOOKS_* client when it has none of its own —
+ *          one Self Client can mint a second token with WorkDrive scopes, and the Books
+ *          token is untouched. That client is the purchase@worksquare.in Self Client, so the
+ *          grant code must be generated while signed in as purchase@. Read-only scopes:
+ *          WorkDrive.users.READ,WorkDrive.team.READ,WorkDrive.teamfolders.READ,WorkDrive.files.READ)
  * Writes  ZOHO_<PREFIX>_REFRESH_TOKEN
  *
  * Grant codes expire in as little as 3 minutes, so this exists to be READY
@@ -20,12 +26,18 @@
  */
 import { readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 
-const PREFIXES = { BOOKS: 'ZOHO_BOOKS', MAIL: 'ZOHO_MAIL', ELEC_MAIL: 'ZOHO_ELEC_MAIL' };
+const PREFIXES = { BOOKS: 'ZOHO_BOOKS', MAIL: 'ZOHO_MAIL', ELEC_MAIL: 'ZOHO_ELEC_MAIL', WORKDRIVE: 'ZOHO_WORKDRIVE' };
 
 const [, , which, code, redirectUri] = process.argv;
 const prefix = PREFIXES[(which || '').toUpperCase()];
 if (!prefix || !code) {
-    console.error(`usage: node scripts/zoho-reauth.mjs <BOOKS|MAIL|ELEC_MAIL> '<grant code>' [redirect_uri]`);
+    console.error(`usage: node scripts/zoho-reauth.mjs <BOOKS|MAIL|ELEC_MAIL|WORKDRIVE> '<grant code>' [redirect_uri]`);
+    process.exit(1);
+}
+// A real grant code looks like 1000.abc123….def456. Catch a pasted placeholder before Zoho does.
+if (!/^\d{4}\.[A-Za-z0-9]+\.[A-Za-z0-9]+$/.test(code)) {
+    console.error(`That does not look like a Zoho grant code (expected something like 1000.xxxx.yyyy).\n` +
+        `Generate one at api-console.zoho.com → Self Client → Generate Code, then paste it in place of '<grant code>'.`);
     process.exit(1);
 }
 
@@ -35,9 +47,11 @@ const env = Object.fromEntries(
         .map((l) => { const i = l.indexOf('='); return [l.slice(0, i).trim(), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
 );
 
-const clientId = env[`${prefix}_CLIENT_ID`];
-const clientSecret = env[`${prefix}_CLIENT_SECRET`];
-const dc = (env[`${prefix}_DC`] || 'com').replace(/^\.+/, '');
+const clientPrefix = prefix === 'ZOHO_WORKDRIVE' && !env.ZOHO_WORKDRIVE_CLIENT_ID ? 'ZOHO_BOOKS' : prefix;
+if (clientPrefix !== prefix) console.log(`No ${prefix}_CLIENT_ID — using the ${clientPrefix} client.`);
+const clientId = env[`${clientPrefix}_CLIENT_ID`];
+const clientSecret = env[`${clientPrefix}_CLIENT_SECRET`];
+const dc = (env[`${clientPrefix}_DC`] || 'com').replace(/^\.+/, '');
 if (!clientId || !clientSecret) {
     console.error(`${prefix}_CLIENT_ID / ${prefix}_CLIENT_SECRET missing from .env — add the new app's credentials first.`);
     process.exit(1);
@@ -51,7 +65,12 @@ const res = await fetch(`https://accounts.zoho.${dc}/oauth/v2/token`, {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.toString(),
 });
-const data = await res.json();
+const text = await res.text();
+let data;
+try { data = JSON.parse(text); } catch {
+    console.error(`Zoho returned a non-JSON page (HTTP ${res.status}) — usually a malformed code or the wrong data centre (.${dc}).`);
+    process.exit(1);
+}
 
 if (!data.refresh_token) {
     console.error('\nNo refresh token returned. Zoho said:\n' + JSON.stringify(data, null, 2));

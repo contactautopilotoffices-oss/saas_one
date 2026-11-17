@@ -75,12 +75,10 @@ export async function POST(
             return NextResponse.json({ error: uploadError.message }, { status: 500 });
         }
 
-        const { data: publicData } = supabaseAdmin.storage
-            .from('sop-videos')
-            .getPublicUrl(filePath);
+        const proxyUrl = `/api/storage/sop-videos/${filePath}`;
 
         return NextResponse.json(
-            { success: true, url: publicData.publicUrl, path: filePath },
+            { success: true, url: proxyUrl, path: filePath },
             { status: 201 }
         );
     } catch (err) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 // GET: Fetch all generators for a property
 export async function GET(
@@ -7,6 +8,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     const { data, error } = await supabase
@@ -28,6 +31,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const body = await request.json();
 
@@ -86,6 +91,8 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const generatorId = searchParams.get('id');

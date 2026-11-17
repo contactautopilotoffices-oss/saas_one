@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
         // migration 20260904000001_app_role_ops_super_admin.
         const ORG_LEVEL_ROLES = [
             'org_super_admin', 'super_tenant', 'ops_super_admin', 'procurement', 'finance', 'accounts',
-            'hr', 'hr_head', 'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner'
+            'hr', 'hr_head', 'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'admin', 'owner', 'tech', 'it', 'design'
         ];
         // Property-level roles that belong in property_memberships
         const PROPERTY_LEVEL_ROLES = [
@@ -304,6 +304,16 @@ export async function POST(request: NextRequest) {
             }
 
 
+        } else if (isNewRoleOrgLevel && oldRoleSource === 'org' && organizationId) {
+            // Same-level ORG role change (e.g. procurement → tech), even when the screen also sent a property: the
+            // organisation membership is what decides the dashboard after sign-in, so that is the row to change.
+            const { error: orgUpdateError } = await adminClient
+                .from('organization_memberships')
+                .update({ role: newRole, is_active: true })
+                .eq('user_id', userId)
+                .eq('organization_id', organizationId);
+
+            if (orgUpdateError) throw orgUpdateError;
         } else if (propertyId) {
             // Same-level property role change (e.g., staff → mst)
             const { error: propUpdateError } = await adminClient
@@ -324,7 +334,9 @@ export async function POST(request: NextRequest) {
             if (orgUpdateError) throw orgUpdateError;
         }
 
-        const RESOLVER_ROLES = ['mst', 'staff'];
+        // Owner 2026-11-16: `soft_service_supervisor` is a resolver too, so an admin can give an existing supervisor
+        // the soft-service skill from the user screen and have them join the soft-service assignment pool.
+        const RESOLVER_ROLES = ['mst', 'staff', 'soft_service_supervisor'];
         const isNewResolver = RESOLVER_ROLES.includes(newRole);
         const isOldResolver = RESOLVER_ROLES.includes(oldRole);
 
@@ -363,10 +375,16 @@ export async function POST(request: NextRequest) {
                     // Staff -> soft_services
                     const VALID_MST_SKILLS = ['technical', 'plumbing', 'vendor'];
                     const VALID_STAFF_SKILLS = ['soft_services', 'technical'];
+                    // A supervisor resolves soft-service work only (no `technical`, unlike staff).
+                    const VALID_SUPERVISOR_SKILLS = ['soft_services'];
 
                     const skillsForResolverPool = newRole === 'mst'
                         ? skills.filter(s => VALID_MST_SKILLS.includes(s))
-                        : (newRole === 'staff' ? skills.filter(s => VALID_STAFF_SKILLS.includes(s)) : []);
+                        : newRole === 'staff'
+                            ? skills.filter(s => VALID_STAFF_SKILLS.includes(s))
+                            : (newRole === 'soft_service_supervisor'
+                                ? skills.filter(s => VALID_SUPERVISOR_SKILLS.includes(s))
+                                : []);
 
                     // Clear existing stats for this property
                     await adminClient.from('resolver_stats').delete().eq('user_id', userId).eq('property_id', propertyId);

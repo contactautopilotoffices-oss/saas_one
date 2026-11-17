@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { resolveAssetAccess, isAssetAccessError, readOrgId, canAccessProperty } from '@/backend/lib/assets/access';
+import { resolveAssetAccess, isAssetAccessError, readOrgId, canAccessProperty, canAccessCategory } from '@/backend/lib/assets/access';
 import { recordAssetEvent } from '@/backend/lib/assets/enrich';
 
 /**
@@ -20,8 +20,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const access = await resolveAssetAccess(request, readOrgId(request, body));
     if (isAssetAccessError(access)) return access;
 
-    const { data: asset } = await supabaseAdmin.from('assets').select('id, organization_id, property_id').eq('id', id).eq('organization_id', access.organizationId).maybeSingle();
-    if (!asset) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
+    const { data: asset } = await supabaseAdmin.from('assets').select('id, organization_id, property_id, category_id').eq('id', id).eq('organization_id', access.organizationId).maybeSingle();
+    if (!asset || !canAccessCategory(access, asset.category_id)) return NextResponse.json({ error: 'Asset not found' }, { status: 404 });
     if (!canAccessProperty(access, asset.property_id)) return NextResponse.json({ error: 'Forbidden: no access to this property' }, { status: 403 });
 
     const { event_type, title, description, amount, cost_head, amc_contract_id, photo_urls, occurred_at } = body;

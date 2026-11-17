@@ -10,13 +10,13 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  *   - Complete a payment / enter UTR (finance): the `accounts` role + super/master.
  */
 
-const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin'];
+const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'master_admin', 'ops_super_admin', 'director'];
 // NOTE: property_admin is deliberately NOT a procurement role here. Property admins run
 // a site, not the purchase ledger, and must not reach the Payment Tracker at all.
 const PROCUREMENT_ROLES = ['purchase_manager', 'purchase_executive', 'procurement'];
-const VIEW_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts', 'ops_super_admin'])];
-const ALIGN_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts', 'ops_super_admin'])];
-const COMPLETE_ROLES = ['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin'];
+const VIEW_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts'])];
+const ALIGN_ROLES = [...new Set([...ORG_ADMIN_ROLES, ...PROCUREMENT_ROLES, 'accounts'])];
+const COMPLETE_ROLES = ['accounts', 'org_super_admin', 'master_admin', 'ops_super_admin', 'director'];
 
 export interface AccountsAccess {
     user: { id: string; email?: string };
@@ -88,8 +88,17 @@ async function resolveAccessForUser(
     const orgIds = [...new Set(viewMemberships.map((m) => m.organization_id).filter(Boolean))] as string[];
     let organizationId: string | null = requestedOrgId || null;
     if (organizationId) {
-        if (!(isMasterAdmin || orgIds.includes(organizationId)))
-            return NextResponse.json({ error: 'Forbidden: no accounts access to this organization' }, { status: 403 });
+        if (!(isMasterAdmin || orgIds.includes(organizationId))) {
+            const { data: setRow } = await supabaseAdmin
+                .from('payment_tracker_settings')
+                .select('approver_user_ids')
+                .eq('organization_id', organizationId)
+                .maybeSingle();
+            const isDesignated = (setRow?.approver_user_ids || []).includes(user.id);
+            if (!isDesignated) {
+                return NextResponse.json({ error: 'Forbidden: no accounts access to this organization' }, { status: 403 });
+            }
+        }
     } else if (orgIds.length === 1) {
         organizationId = orgIds[0];
     } else if (orgIds.length > 1) {

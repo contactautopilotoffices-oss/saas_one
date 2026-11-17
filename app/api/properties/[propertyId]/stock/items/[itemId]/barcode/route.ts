@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string; itemId: string }> }
 ) {
     const { propertyId, itemId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -46,6 +49,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string; itemId: string }> }
 ) {
     const { propertyId, itemId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {

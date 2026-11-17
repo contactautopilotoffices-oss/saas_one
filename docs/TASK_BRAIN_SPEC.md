@@ -9,6 +9,17 @@ Code: `task-manager/brain/` · Tests: `tests/test_brain_phase2_core.ts`, `tests/
    Justification `[BAA p.115]`: **N/A — this is a workflow.** The pathway is known (a closed list of intents); only the *reading of free text* is open-ended, and that is one classification call, not an agent. `[BAA p.104]`
    Head-to-head vs. the deterministic path `[BAA pp.94–95, 99]`: **not yet run.** The existing keyword/regex front door (`TaskGateway`) is the deterministic path. The fair comparison is Phase 3 *shadow mode* on real messages, because the 140-case set below was tuned against (see 10). Until then: accuracy 92.9–98.6% on the labelled set (below) | median latency ≈ 3.1 s | ≈ $0.34 per 1,000 messages.
 
+**1a. Rewrite step (added 2026-10-21, learned from Otto's planner, `backend/lib/hr-assistant/planner.ts` on main)** `brain/rewrite.ts`: before understanding, ONE small call turns a follow-up into one complete request ("same for Neeti" after "add task call vendor for Rushabh" -> "add task call vendor for Neeti"). Still a workflow: one more fixed step, no tools, no loop. `[BAA p.104]`
+   Runs only when there is an earlier chat (conversation memory ON) and no yes/no/pick question is waiting. Model: the cheap reply models (`qwen3.8-27b` -> `glm-5.3-flash`), because a wrong rewrite is low cost: it is only a helper, the person's own words stay the "message" and win on any disagreement, and every change is still code-checked and confirmed. `[BAA p.112]` Errors never escape: a failure, a reply slower than 4 s, or a rewrite naming a person or number not in the chat -> dropped, and the bot carries on with the original message. `[BAA pp.93-94]` Prompt: 4 numbered steps, explicit no-skip clause, one example. `[BAA pp.105, 114]` Evaluation: offline tests only (`tests/test_brain_rewrite.ts`); **accuracy and latency on real chats not yet measured** (step 5). Off switch: `rewrite: false` in the brain options.
+
+**1b. Steps 3-6 (added 2026-10-21, learned from Otto)**
+   - **Step 3, two-step reading** (`interpretMessageTwoStep`, `brain/interpret.ts`): a short call picks the KIND (names + one-line descriptions only), then the normal understand call sees ONLY that kind's rules and slots (plus "answer_pending" when a question waits, and any second kind for rule A). Kinds with no details (chat, help, unknown) skip the second call. If step 1 fails, or step 2 answers a kind step 1 did not allow, the one-step reading runs, so it is never worse than before. **OFF** (`TWO_STEP_READING` in `brain/llm.ts`), because doctrine L2 requires it to beat the one-step reading on the same cases first: `run_eval.ts --two-step`. `[BAA pp.94-95, 104]`
+   - **Step 4, natural replies when nothing changes** (superseded 2026-10-22, see "Changes 2026-10-22" below) (`replySystemPromptFree`, `changesNothing` in `brain/index.ts`): showing or finding tasks, chat and refusals are written freely (1-4 sentences, up to 800 chars, numbers allowed only when given, two emoji). Previews (CONFIRM), questions (CLARIFY) and every change, including a plain status note, keep the strict rules. The checker still rejects invented numbers, false "done" claims, gendered pronouns and yes/no questions nothing waits for. Cost of a false positive: low (nothing changes). `[BAA p.112]` Off switch: `freeReplies: false`.
+   - **Step 5, model for understanding only** (superseded 2026-10-22: Haiku now runs every step, one key `CLAUDE_API_KEY`) (`STRONGER_UNDERSTAND_MODEL` in `brain/llm.ts`): **Claude Haiku** (`anthropic:claude-haiku-5-5`) is tried first, with the bot's OWN keys `WHATSAPP_BOT_ANTHROPIC_API_KEY` and backups `_2` to `_5`; the usual models stay as backups (no key, rate limit, overload or timeout -> next key, then the usual models). Replies are unchanged (cheap models). `[BAA p.112]` Groq gpt-oss-120b was tried first (own keys `WHATSAPP_BOT_GROQ_API_KEY`, `_2`..`_5`): on the free plan every key answered 429 (about one ~5,500-token message a minute per key), 0/8 on the real set vs 3/8 for glm-5.3-flash, so it was dropped; its code stays for a paid plan. **Measured 2026-10-21 on the real set (8 cases):** Claude Haiku 7/8 and Claude Sonnet 7/8 vs glm-5.3-flash 3/8 and Groq 0/8; intent right 8/8 for both Claude models; the one miss ("also add one for harsh") asks back instead of acting, which is safe. Owner decision: Claude stays; no wider comparison is needed. Fix found by this run: Claude 5.x rejects `temperature` (HTTP 400), so `anthropicComplete` no longer sends it. `[BAA pp.94-95, 118-119]`
+   - **Add-task rule (owner 2026-10-21):** no person named -> the sender's own list, never a question (Sher); a word that is not a teammate stays in the title (Sanil, "Sailee rest FNF"). "?" only when they clearly want to give it to someone but did not say who.
+   - **Step 6, real failures in the test set** (`brain/eval/cases_real.ts`, group `real`): Sher's "add task follow up regarding Checklist" and Sanil's "Task. / Add Sailee rest FNF" (plus close variants and two memory follow-ups), scored on intent, outcome, person and title words. Included in the nightly tuning (`BotLearningHousekeeping.allCases`) with their chat lines, and in `run_eval.ts --set real`.
+   - Tests (offline): `tests/test_brain_smarter.ts` (steps 3-6), `tests/test_brain_rewrite.ts` (step 2).
+
 **2. Context** `[BAA p.112]`
    Knows: the sender's name/role/department, today's date and weekday, the **names** (never ids or phone numbers) of people they can work with, their own numbered tasks, department names, and any question the bot is waiting on. Does **not** know: other people's tasks, anything outside that list, or any data it could change.
 
@@ -26,7 +37,7 @@ Code: `task-manager/brain/` · Tests: `tests/test_brain_phase2_core.ts`, `tests/
    Numbered ordered steps: **yes** (understand: 9 steps; reply: 7) | Explicit no-skip clause: **yes** ("Do not skip any") | Single-shot examples: **yes** (two for understand incl. the "two AMC tasks → don't choose" case; one for reply) | Terminal state written to data: **Phase 4** (decision + audit row per message).
 
 **6. Memory** `[BAA pp.100–103]`
-   Does this workload repeat? **no** for the model → **no write-tool**. Short-lived conversation state (a pending question, a preview) is ordinary session state, not agent memory.
+   Does this workload repeat? **no** for the model → **no write-tool**. Conversation memory (last 20 chat lines, 24 h, `ConversationMemory.ts`) is read-only context for the model, switched ON by the owner on 2026-10-21; the model never writes to it. `[BAA pp.100-103]` Short-lived conversation state (a pending question, a preview) is ordinary session state, not agent memory.
 
 **7. Multi-agent?** `[BAA p.116]`
    **Single workflow, two separate prompts** (understand / reply) and a **domain plug-in boundary** (tasks now; facility is a hand-off stub). Separate prompts: a change to reply wording cannot regress understanding. Separate domains: joining the facility assistant later adds a domain, not a rewrite. Different model per step is the "per-task model" reason in `[BAA p.116]`.
@@ -87,6 +98,171 @@ Prompt versions OFF, the Phase 4 prompt remains byte-identical. Invalid or unava
 built-in prompt. Admin-labelled real mistakes become permanent evaluation cases; a nightly workflow can draft a
 candidate, but code gates and an admin activation are required before it becomes live.
 
+### Changes 2026-10-19 (HR roll-out): several people per request, unfinished requests, "add or assign?"
+
+**1. Workflow or agent?** `[BAA p.115]` Still a **workflow** (understand → validate → decide → reply). No new tools, no
+new model, no new loop. The model still only proposes; code resolves every name and checks every permission.
+
+**2. Context** `[BAA p.112]` New pending kind `draft`: the person's own words for an unfinished request plus the exact
+question the bot asked, kept for 30 minutes (`DRAFT_TTL_MIN`). Given to the model as a separate, labelled block (fixed
+rule D) and counted as the person's own words for grounding. It is never the assistant's text.
+
+**3. Cost of a false positive** `[BAA p.112]` **high** (it assigns work) → unchanged: every new task, for any number of
+people, is shown in ONE preview and saved only after a yes. A person the sender may not give work to is left out and
+named in the preview, never silently dropped or added.
+
+**4. Tools** `[BAA pp.93–94, 107]` N/A — no tool added. `create_tasks` slots gain `assignees` (whole message) and a
+per-task `assignees`; both are bounded (10 names, 60 chars) and every name is resolved by `resolvePerson` and
+`mayGiveWorkTo` before anything is proposed. `"assignee":"?"` → `CLARIFY add_or_assign` (no action).
+
+**5. Prompt** `[BAA pp.105, 114]` Locked fixed rules added outside the tunable steps: **D** (unfinished request: answer
+/ side question / new request / drop, by meaning) and **E** (yes / no / change answers in English, Hindi, Hinglish).
+The tunable steps and examples are unchanged, so stored prompt versions still apply.
+
+**6. Memory** `[BAA pp.100–103]` The draft is conversation state, not agentic memory: no write tool, scoped to one
+phone, expires after 30 minutes or when the request is confirmed, refused or dropped.
+
+**7. Multi-agent?** `[BAA p.116]` Single workflow. Several people / a person per line become the existing `batch`
+action (one preview, one yes), so no new execution path.
+
+**8. Evaluation** `[BAA pp.118–119]` Offline: `task-manager/tests/test_brain_hr_requests.ts` (27 checks: several
+people, a per-line list, "remove 2" on a list, the "both" regression, "add or assign?", a side question keeping the
+draft, "rehne do", a person not allowed, 30 vs 31 tasks, draft expiry); the existing brain tests pass (two checks
+updated for the new limit and preview wording). Live model: **not yet measured**.
+
+**9. Trace** `[BAA pp.119–120]` Unchanged audit row per turn; the draft is visible in the saved state (`pending.kind`).
+
+**10. Laws knowingly violated, and why:** **L2** — the new rules are tested offline with a scripted model only; they
+must be checked on the live model (`run_eval.ts` with new HR cases, owner approval for provider cost) and on real HR
+messages before wider roll-out. Limit raised 15 → 30 per message on owner request.
+
+### Changes 2026-10-20: notes on tasks (new task with a note, and "add note to …")
+
+**1. Workflow or agent?** `[BAA p.115]` Still a **workflow**. One new intent, `add_note`, decided by plain code; no new
+tool, model or loop.
+
+**2. Context** `[BAA p.112]` New optional `noteTargets`: open tasks the sender GAVE others in the last 30 days (id,
+title, holder name, day; at most 200). Used only by code to find the task; the model never sees ids.
+
+**3. Cost of a false positive** `[BAA p.112]` **medium** (a note lands on the wrong task). Every note is previewed and
+saved only after a yes. Two tasks that fit → the bot asks which, showing whose task each is. A named person only narrows
+the search (never a new task or a hand-over). The server re-checks permission in `WorkspaceService.addNote` (holder,
+giver, anyone above the holder, or a superuser).
+
+**4. Tools** `[BAA pp.93–94, 107]` N/A, no tool added. New `ExecIO.addNote` calls the checked server function. Slots
+are bounded (note 300 chars, person 60, hints 6).
+
+**5. Prompt** `[BAA pp.105, 114]` New intent spec `add_note`; `create_tasks` now explains `details` (a dash alone is not
+a note; unsure → keep it in the title; "note:" always is). Tunable steps and examples unchanged.
+
+**6. Memory** `[BAA pp.100–103]` None added. For a note, the "which one?" choice and "change the note" replay keep the
+person's own words (so the note text is grounded on their message).
+
+**7. Multi-agent?** `[BAA p.116]` Single workflow; `add_note` also works inside a `batch` preview.
+
+**8. Evaluation** `[BAA pp.118–119]` Offline: `task-manager/tests/test_brain_notes.ts` (15 checks: new task with a
+note, note on a given task by name, two matches → pick, single match, own task by number, unknown person, ungrounded
+note, missing note). Existing brain tests pass. Live model: **not yet measured**.
+
+**9. Trace** `[BAA pp.119–120]` Audit row `task_note_added` (actor, task, note, via) plus the usual per-turn row.
+
+**10. Laws knowingly violated, and why:** **L2**: tested offline with a scripted model only; how well the live model
+separates a note from a title (the "-" case) must be checked on real HR messages before wider roll-out.
+
+### Changes 2026-10-20 (b): notes only when marked, lists split, resend is not a yes, "remind …"
+
+**1. Workflow or agent?** `[BAA p.115]` Still a **workflow**. One new intent, `remind_tasks`, decided by plain code.
+
+**2. Context** `[BAA p.112]` Reuses `noteTargets` (open tasks the sender gave, last 30 days) to find what to remind about.
+
+**3. Cost of a false positive** `[BAA p.112]` **medium** (a reminder reaches people). Always previewed, sent only after
+a yes; several people's tasks fit one name → asks which; no name, no task and no "overdue" → asks, never reminds everyone.
+Server re-checks (`WorkspaceService.remindTasks`): only open tasks the actor gave, at most once an hour per task, only
+where "Assigned by me" is ON. A wrong yes is now blocked in code: a reply longer than one line or 8 words is never a yes
+(`isShortReply`); it becomes a change and a new preview.
+
+**4. Tools** `[BAA pp.93–94, 107]` N/A, no tool added. New `ExecIO.remindTasks`. New template `task_reminder_v1`.
+
+**5. Prompt** `[BAA pp.105, 114]` `create_tasks`: a note only with "note:" / "remark:", and a list is one task per line or
+item. Fixed rule E: sending the request again is a change, never a yes. New intent spec `remind_tasks`. In code,
+`foldUnmarkedNotes` puts any unmarked "details" back into the title (nothing becomes a note by guesswork).
+
+**6. Memory** `[BAA pp.100–103]` None added.
+
+**7. Multi-agent?** `[BAA p.116]` Single workflow.
+
+**8. Evaluation** `[BAA pp.118–119]` Offline: `test_brain_notes.ts` now 27 checks (adds Sanil's list, the resend case,
+5 remind cases); `test_brain_hr_requests.ts` updated (an unmarked detail stays in the title). Existing brain tests pass.
+Live model: **not yet measured**.
+
+**9. Trace** `[BAA pp.119–120]` Audit row `task_reminded` per task (actor, holder, via).
+
+**10. Laws knowingly violated, and why:** **L2**: scripted model only; list splitting and remind-vs-new-task must be
+checked on the live model with real HR messages.
+
+### Changes 2026-10-20 (c): lock / unlock tasks from WhatsApp
+
+**1. Workflow or agent?** `[BAA p.115]` Still a **workflow**. One new intent, `lock_task` (lock / unlock / list).
+
+**2. Context** `[BAA p.112]` Each of the person's own tasks now carries `locked` / `teamFixed` (from its template, the same
+rule as the Tasks tab). No new data is sent to the model.
+
+**3. Cost of a false positive** `[BAA p.112]` **low to medium** (a task repeats daily, or stops). Always previewed, done only
+after a yes; own tasks only; team fixed tasks refused; already locked / not locked said so. The server re-checks
+(`WorkspaceService.setLocked`, holder only).
+
+**4. Tools** `[BAA pp.93–94, 107]` N/A, no tool added. New `ExecIO.setLocked` calls the existing checked function.
+
+**5–7.** New intent spec only; no memory; single workflow (also works inside a `batch` preview).
+
+**8. Evaluation** `[BAA pp.118–119]` Offline: `task-manager/tests/test_brain_lock.ts` (7 checks). Live model: **not yet measured**.
+
+**9. Trace** `[BAA pp.119–120]` Existing audit rows `task_locked` / `task_unlocked`.
+
+**10. Laws knowingly violated, and why:** **L2**: scripted model only.
+
+### Changes 2026-10-22: talk like Otto (the HR policy bot), Haiku for every step, 20 test cases
+
+Owner: the bot must be naturally conversational, never depend on fixed keywords, and follow the chat like Otto does.
+
+- **Model** `[BAA p.112]`: Claude Haiku (`CHATBOT_MODEL` in `brain/llm.ts`) for EVERY step: understanding, the rewrite and
+  the reply. Backups after it: `glm-5.3-flash`, then `qwen3.8-27b` (Engy, `COUNCIL_API_KEY`). One key only: `CLAUDE_API_KEY`
+  (renamed from `WHATSAPP_BOT_ANTHROPIC_API_KEY`; no `_2`..`_5`). No key, a rate limit, no credit or a Claude outage -> the
+  backups answer, so the bot never goes silent `[BAA pp.93-94]`. Voice-note clean-up is not the chatbot and keeps its cheap
+  models (`CHEAP_CLEANUP_MODELS`). The nightly tuning stays on the backup models: its cost cap has no Claude price, so the
+  Claude call is refused before it is made and nothing is spent.
+- **Last 5 messages as real context** `[BAA p.112]`: `CONVERSATION_LINES = 5` in `brain/prompt.ts` (the person's and the
+  bot's messages; memory still keeps 20). The understanding, the rewrite and the reply all see the same 5. The understand
+  prompt now reads them as the whole conversation (topic, follow-ups like "why?" / "and Neeti?", corrections, short replies
+  that continue the topic), by MEANING, never by keywords. Unchanged: the newest message is the request, an older request is
+  never acted on unless the newest points at it, and the lines are untrusted data (doctrine L12).
+- **Strict only at the moment of change** `[BAA p.115]`: the strict reply prompt is used only for a preview that waits for a
+  yes (`outcome CONFIRM`). Everything else (chat, answers, lists, questions on the way to a request, what was just done) uses
+  the natural prompt, which asks it to answer what they said, follow the chat and vary its wording. Off switch: `freeReplies: false`.
+- **Fewer reply rules**: the checker keeps only rules that stop wrong facts or a broken conversation: unknown or missing
+  placeholders, an invented number or name, a gendered pronoun, a false "done", a required question not asked, a yes/no
+  question nothing waits for, and a runaway reply (1,500+ characters). Dropped as style: length 500/800, emoji count,
+  markdown, "exactly one question", list placement. `renderReply` still lays lists on their own lines and turns `**bold**`
+  into WhatsApp `*bold*`.
+- **Keyword shortcuts left as they are**: exact commands ("done 2", "tasks", "undo", "One front door") and a plain
+  "yes" / "no" / "2" to a waiting question are answered by code for speed. They never stand in the way: anything else goes
+  to the AI and is read by meaning.
+- **Test set cut to 20** (owner): `eval/cases.ts` 15 cases (one or two per kind of request, two Hinglish) + `eval/cases_real.ts`
+  5 real chats. `cases_phase4.ts` (39 Hinglish, 10 team) deleted. Used by `run_eval.ts --set base|real` and the nightly tuning.
+- **Evaluation** `[BAA pp.118–119]`: offline only (scripted model, no cost): `test_brain_smarter.ts` (models, key, which
+  prompt per outcome), `test_brain_phase2_core.ts` section 12 (the checker), `test_conversation_memory.ts` and
+  `test_part_b_context.ts` (5 messages), `test_brain_phase2_eval_assets.ts` / `test_team_reports.ts` (the 20 cases). All brain
+  tests pass except 2 team-report prompt checks that already failed before this change. **L2** knowingly open: the natural
+  replies are not yet measured on the live model; owner's cost rule applies (small live runs only, with their OK).
+
+### Owner rule (2026-10-22): keep paid test runs small
+
+Live-model test runs (`run_eval.ts`, anything that calls Claude or another paid model) cost money every time. Owner rule:
+- **Never run every set together as a routine check** (the sets were cut to 20 cases in all on 2026-10-22). Not "just to be sure".
+- Run only the few cases that touch the change: `--set real`, or `--only <group>` with `--limit 10` or less.
+- Ask the owner before any live run larger than that.
+- Normal checks use the offline tests (`task-manager/tests/test_brain_*.ts`), which use a fake model and cost nothing.
+
 ## Agent Spec — Task Brain Prompt Auto-Tuner
 
 **1. Workflow or agent?** **workflow** — load new labelled cases → draft tunable sections once → validate in code →
@@ -113,7 +289,7 @@ versions. Voting agents would add cost without adding authority.
 
 **8. Evaluation — all four axes** `[BAA pp.118–119]` System: resumable batches, three attempts per unavailable case,
 US$0.25 nightly cap. Quality: base English + Hinglish + team + live cases; no lower overall score, at most one lost case
-per group, and zero unsafe/missed-clarify/wrong-proposal results. Human audit: **100% of activations** require an admin
+per group, and no more unsafe/missed-clarify/wrong-proposal results than the prompt in use (see Changes 2026-11-05). Human audit: **100% of activations** require an admin
 click. Tool interaction: N/A. Efficiency: zero provider calls on quiet nights; cost and checkpoints are persisted.
 
 **9. Trace** `[BAA pp.119–120]` Version, source-label timestamp, case-level before/after scores, retries, cost, status,
@@ -122,3 +298,374 @@ rejection reason, activation actor and alert audits are persisted. Offline fake-
 **10. Laws knowingly violated, and why:** L6's independent-family rubric grader is not used; the safety gate is the
 hand-written answer key plus deterministic scorer and required human activation. No paid auto-tune run has been made,
 so real cost and improvement quality remain unmeasured until the owner explicitly approves provider use.
+
+### Changes 2026-11-05: a test replays with the chat the live bot had
+
+With conversation memory on, the live bot reads the last 8 messages and rewrites short follow-ups from them, but a saved test
+kept only `recent` (4 short lines), so "add this too" was tested on less than the bot really had. An unfinished request
+(`pending.kind = 'draft'`) was dropped altogether.
+
+- **Context** `[BAA p.112]`: `sanitizeReplayContext` now keeps the last 8 chat lines and an unfinished request. Replay goes
+  through the normal path, so these tests also run the rewrite step, inside the same cost cap.
+- **Privacy (owner decision 2026-11-05):** each line is cut to 300 characters; phone numbers and email addresses are
+  removed; names and task words stay. Review items are deleted after 30 days, but a saved test keeps its chat until the row
+  is deleted, and the app has no delete for saved tests yet. Reads go through `requireControlCentre`. The chat also reaches the
+  models in the Learning loop chain: all of it for a review summary, the last 4 lines at 200 characters for a draft.
+- **Cost** `[BAA p.119]`: the draft input stays capped for that reason; the largest case is tested against the cap on Opus.
+
+Tests saved before this change keep only `recent`; they cannot get their chat back. Not yet measured with a real AI.
+
+### Changes 2026-11-05: lessons are kept until they are in use
+
+A rejected version used to mark its labelled cases as used, so its lessons never came back: v1 learned from 13 cases, v2 from
+4 and v3 from 3, each starting from the built-in prompt, so learning could not add up.
+
+- **Memory** `[BAA pp.100–103]`: a lesson counts as learned only once a version built on it is `active`. Draft input is every
+  saved test newer than the version in use, repaired, without tests that cannot be judged, capped at the newest 12
+  (`MAX_DRAFT_LESSONS`) so the input stays under the cost cap on the dearest model. Only new labels still start a paid run, so
+  a rejected night is never retried unchanged.
+- **Rejected attempts** `[BAA p.114]`: the last 3 versions rejected on their merits go to the drafter as `previous_attempts`,
+  declared untrusted data, with a rule to try a different change. Technical stops are left out, and an admin's name is never
+  sent. Step 2 of the drafter's prompt changed; the steps stay numbered with the no-skip clause.
+
+Known limit: lessons older than the newest 12 are not sent until newer ones are learned. The model has no memory or write
+tool (§6 is unchanged); this is code choosing its input. Not yet measured with a real AI.
+
+### Changes 2026-11-05: judged against the prompt in use, and tests that can be passed
+
+All three versions so far were rejected with "safety metric was not zero". The prompt in use had never been at zero
+(1–3 unsafe, 1 missed question, 1–2 wrong proposals), so a better prompt could not pass: v1 scored 66.7% against 63.6%
+with the same safety numbers. All 15 base cases passed; nearly all failures came from the saved live tests. Fed the exact
+answer each saved test asks for, with no AI, only 7 of 23 came out clean.
+
+- **Gate** `[BAA p.118]`: a candidate is compared with the prompt in use: no safety metric may go up, no test that was safe
+  may become flagged (equal totals can hide a swap), no lower overall score, at most one lost case per group. Passing still
+  only means `waiting`: **100% of activations stay an admin click**, so §3's false-positive control is unchanged. Rejections
+  therefore err strict: model randomness that flags one new test rejects the version.
+- **Saved tests** (the rubric scale's top mark means "matches ground truth" `[BAA p.97]`, which these tests could not
+  reach): `repairReviewLabel` runs on load and when a test is written. It removes `mustNotMutate` from expected proposals (the scorer counts any proposal as unsafe,
+  and a proposal already waits for YES), turns names into ids, drops details the action does not carry, and refuses tests no
+  answer could pass. Rows are not edited. Refused tests are listed as "not counted" on the version, never silently hidden.
+- **Ask first or act at once** both count for a change in a saved test: the confirmation policy (One front door) decides
+  that, not the prompt, and the safety test runs with the default policy, unlike the live bot.
+- **Group bug**: a group at 0 passes has no entry and was read as -Infinity, so 1 → 0 rejected a version. It now reads as 0.
+- **Trace** `[BAA pp.119–120]`: per-test failures are kept in `eval_before` / `eval_after` and shown on the version. §9
+  claimed case-level scores were persisted; they were deleted with `evaluation_state` until now.
+
+- **Why a model failed is kept** `[BAA pp.119–120]`: the failure reasons of earlier models were dropped whenever a later one
+  succeeded, so Claude's drafts failed unseen on all three nights while Opus wrote 30 of 30 review summaries. Each reason is
+  now saved in `eval_after.draftFailures` and shown on the version; a size failure states how many characters it used.
+- **Size limit stated** `[BAA p.114]`: the drafter's step 3 now gives the characters it may add (20% of the current text,
+  729 for the built-in prompt; four 600-character edits fit the per-line rule but not this total). The limit itself did
+  not change. Whether it caused those failures is unconfirmed until the next run records the reasons.
+
+Laws: follows L5 and L6 rule 5 in spirit (the grader's own output is audited). L6's independent-family grader is still not
+used, as in §10. Only the review summariser's test-writing rules changed; its Spec Block in
+`docs/BOT_REVIEW_UPGRADE_PLAN.md` still holds, and no model, tool or path changed. Not yet measured: no paid run has been
+made with these changes.
+
+### Changes 2026-10-20: small edits and its own nightly slot
+
+Every draft since 16 Oct was rejected: the draft step ran inside the 60-second housekeeping job, so the model (asked to
+rewrite every step and example) was always cut off, and the one that finished went over the size limit. Now:
+
+- **Small edits** `[BAA pp.105, 114]`: the model returns at most 4 line edits (`replace` / `insert_after` / `delete`);
+  code applies them to a copy (`applyPromptEdits`, bounded: existing line numbers, one line of at most 600 characters).
+  The same `validatePromptSections` size and shape checks then run. Rejections leave the current text untouched.
+- **Own slot** `[BAA p.115]`: writing a version runs in `/api/cron/bot-autotune` (once a night, 02:15 India time, 5-minute
+  limit, model timeout 4 minutes, `CRON_SECRET`). The 15-minute housekeeping only continues testing (`draft: false`).
+- Unchanged: the cost cap, the eval gate before any version is used, owner approval, rollback.
+- **Evaluation**: `task-manager/tests/test_autotune_edits.ts` (13 checks); `test_phase5_learning_loop.ts` passes.
+
+### Changes 2026-10-28: Claude Sonnet 5.5 drafts first; the three draft failures fixed
+
+Every draft from 26–28 Oct was rejected, each model for its own reason: `gemini-3.8-flash` failed to fetch or timed out
+(the HTTP status was cut off by the 120-character error clip), `gemini-2.5-flash` returned cut-off JSON (its built-in
+thinking used up the 1,800-token limit), and `glm-5.3-flash` gave wrong line numbers.
+
+**1. Workflow or agent?** Unchanged: **workflow**. `[BAA p.104]` Justification (a/b): unchanged, the model only proposes
+   wording `[BAA p.115]`. Head-to-head `[BAA pp.94–95, 99]`: **not run** (no live calls were made, owner instruction).
+**2. Context** `[BAA p.112]` Unchanged, except each current line is now sent as `[index] text`, so the model does not have to count.
+**3. Cost of a false positive** `[BAA p.112]` **high** (unchanged) → model tier: **Claude Sonnet 5.5** first (owner
+   2026-10-28), then `gemini-3.8-flash`, `gemini-2.5-flash`, `glm-5.3-flash`, because a stronger drafter gives fewer
+   rejected nights; the eval gate and human activation still guard live traffic.
+**4. Tools** `[BAA pp.93–94, 107]` None. Errors still become a rejected version with a reason; the reason now drops URLs and
+   keeps 200 characters, so the provider's HTTP status is visible. Args validated: `applyPromptEdits` also strips a copied
+   `[n] ` prefix. MCP: no `[BAA p.106]`.
+**5. Prompt** `[BAA pp.105, 114]` Numbered steps: yes (6). No-skip clause: yes. Single-shot example: yes. Terminal state
+   written to data: yes (unchanged). Step 5 now says the index is the `[number]`, and the text must be non-empty, ≤600 chars.
+**6. Memory** `[BAA pp.100–103]` Unchanged (none).
+**7. Multi-agent?** `[BAA p.116]` Unchanged (single workflow).
+**8. Evaluation** `[BAA pp.118–119]`
+   System: Claude prices added to the cost cap (`PRICE`, Anthropic list prices: Haiku 5.5 $0.10/$0.50, Sonnet 5.5 $2/$10,
+   Opus 5.5 $4/$20, Fable 5.1 $10/$50 per 1M tokens). Before this, every Claude call was refused by the cap, **including
+   the live bot's Haiku during the nightly safety test, which silently fell back to glm**. The safety test now measures Haiku.
+   Quality assurance (rubric: family none, tier none, scale none, manual audit 100% of activations) `[BAA pp.96–98]`: unchanged.
+   Tool interaction: N/A `[BAA p.95]`. Efficiency `[BAA p.119]`: draft limit 1,800 → 3,000 tokens (thinking room; only
+   used tokens are charged); `gemini-2.5-flash` thinking off (`thinkingBudget: 0`); nightly cap unchanged.
+**9. Trace** `[BAA pp.119–120]` Unchanged; the drafting model is still recorded in `change_summary`. Ad-hoc testing:
+   offline only (`test_autotune_edits.ts`, 17 checks; `test_ai_models_2026_10_28.ts`; `test_phase5_learning_loop.ts`).
+**10. Laws knowingly violated, and why:**
+   - **L6** `[BAA pp.96–97]`: the drafter (Claude Sonnet) is now the same family as the live bot (Claude Haiku). Owner
+     decision 2026-10-28. The grader is still the deterministic scorer plus human activation, not a model, so no
+     same-family *grading* is introduced.
+   - **L2** `[BAA pp.94–95]`: no paid head-to-head of Sonnet vs Gemini drafts; first real result is the next nightly run.
+   - The "Learning loop" chain also drives **review summaries** (`BotReviewSummary.ts`), so they now try Sonnet first too.
+
+### Changes 2026-10-21: suggest the task when unsure; a clear answer saves it with undo
+
+Sanil wrote "Task. / Add Sailee rest FNF": the model read "Sailee" as the person, found no one, and the bot kept asking.
+
+- **When** `[BAA p.112]`: only when the bot did not understand (`unknown_intent`, `low_confidence`, `not_grounded`) or a name
+  matched nobody (`person_not_found`), the message looks like adding a task ("add", "task", …), and the person did not say
+  who it is for ("assign", "give", "ko de"). Never when the model has a specific question of its own.
+- **What**: code takes the task from the person's own words (command words removed, one line, never a question) and asks
+  once: "Did you want to add this task to your list? Reply yes, or tell me who it's for." (`CLARIFY suggest_add`).
+- **Clear answer → saved without a second yes** (owner decision): "yes" / "add task" / "for me" → their own list;
+  "assign it to Neeti" → Neeti, only when every task is the suggested one and every person resolved and allowed.
+  Only while "One front door" is ON (it provides undo: "Reply undo within 10 minutes"); otherwise the normal preview.
+  Undo deletes the task; the holder gets the existing "deleted your task" bell (WhatsApp would need a new template).
+- **Cost of a false positive**: low (one task, undoable for 10 minutes, permission re-checked by `WorkspaceService.assign`).
+- **Evaluation**: `task-manager/tests/test_brain_suggest.ts` (Sanil's exact messages, 14 checks); all brain tests pass.
+  **L2** knowingly open: scripted model only.
+
+
+### Changes 2026-10-21 (b): a note when giving or assigning, and the task window on the website
+
+Neeti wanted to say why when she gives a task ("share the final headcount by Friday").
+
+- **WhatsApp** `[BAA p.112]`: "give task 2 to Srushti, note: ..." puts the note on the hand-over (`hand_over_task.note`);
+  the yes/no preview and the "Done" reply both show it. "add note" with no text → `CLARIFY note_missing`
+  ("What note should I add for Srushti?"), kept as an unfinished request so the next message fills it.
+- **Server** `[BAA p.105]`: `assign` and `handOver` take an optional `note` (300 characters at most, code-checked). It is
+  saved as a "Remark:" line, and the WhatsApp alert and the bell show it on the task line, for example
+  "Navratri budget and count update (Note: ...)". No new template (owner chose option A).
+- **Website**: each card has a "View / Assign" button (the only way to open the window; the card still drags). The window
+  shows every note, the holder, who gave it, dates, the two status moves for its column, "Add note", and "Give to"
+  (several people; one = hand over, several = each gets a copy, then the task moves to the first person).
+  The server re-checks every action; the window only offers what the board already allows.
+- **Evaluation**: `test_brain_notes.ts` sections 8 and 9; `test_handover_phase1.ts` checks the moved "Give to" rule.
+  Related brain tests pass. **L2** knowingly open: scripted model only; the window is type checked and linted, not
+  covered by an automated browser test.
+
+### Changes 2026-10-21 (c): add a task in one step; "what is my team doing?" lists every task
+
+Sher wrote "add task follow up regarding Checklist" and got two questions ("your list or someone?", then "is that right?").
+
+- **Nobody named → their own list** `[BAA p.112]`: the AI is told to use "me" when no one is named. Code also treats an
+  unknown person as "me", unless the message says to assign it ("assign", "delegate", "someone else", "ko de", ...): then it
+  asks who (`CLARIFY no_recipient`), never guessing.
+- **Clear creates are saved straight away with undo** `[BAA p.115]` (owner decision, also for other people:
+  "assign Vidya ..."): `ConfirmPolicy.confirmCreates = false` only while "One front door" is ON (it provides "Reply undo
+  within 10 minutes"). Still asked first: anyone named who may not get the work (the preview says so), and everything while
+  the switch is OFF. Permission is re-checked by `WorkspaceService.assign` either way.
+- **Team list vs team progress**: `view_tasks` scope "team" gets `team_list`. "What is my team doing?" → every task of each
+  person (today and carried forward, status, "from 19 Oct") via `buildTeamTaskList`; "how is my team doing?" → counts
+  (`buildTeamReport`, unchanged). Both now read each person's numbered list, so carried-forward work is included.
+- **Long replies**: split between lines into messages of at most 3,800 characters (`splitLongReply`), in order.
+- **Evaluation**: `task-manager/tests/test_brain_direct_add.ts` (Sher's exact message, 27 checks); `test_brain_hr_requests.ts`
+  section 5 updated to the new rule; all brain tests pass. **L2** knowingly open: scripted model only.
+
+### Changes 2026-10-26: remark with "done", change date / person, follow-ups, duplicate warning
+
+Owner's Task Manager upgrade list (website and WhatsApp). Still a **workflow**: no new AI call, no tools, no loop; the AI
+only fills new slots, code validates and decides, the same checked server functions do the work. `[BAA pp.104, 115]`
+
+- **Remark with "done"** `[BAA p.105]`: `complete_tasks` gets an optional `note` ("done 1: shared on the HR group"). It must
+  be the person's own words (grounding, like notes); an invented remark → not grounded → nothing happens. After the tasks are
+  marked done, the remark is saved on each one through `WorkspaceService.addNote` with `tellGiver` (the giver gets an in-app
+  bell; no WhatsApp: the approved "task done" template has no place for it). A reply to a superuser's request passes the
+  remark on as the relayed note. Optional by design: "done 1" alone never asks for one (owner: no pop-ups).
+- **`change_task`** (new intent) `[BAA pp.93, 107]`: "move Sanil's vendor task to Friday", "give the onboarding task to
+  Neeti instead". The intent description says when NOT to use it (renaming → `rename_task`; giving away one's own task →
+  `hand_over_task`). Resolved like notes (own list by number, or words among own tasks and the open tasks they gave; a name
+  only narrows whose task). New person checked with the existing rule (refused, never guessed); no date and no person →
+  asks. Always previewed, then YES. Carried out by `WorkspaceService.editTask` (only the giver or a superuser; the new person
+  is checked like a new task and told; fields not sent stay as they are). Errors come back as the reply text, never thrown.
+- **Follow-ups** `[BAA p.105]`: `create_tasks` gets `follow_up` (a number from their list or words of the task name). Code
+  resolves it to ONE existing task (asks when several fit) and links the new task(s) after they are created
+  (`TaskLinks.linkTasks`; skipped, logged once, until migration `20261026000003` runs — the task itself is saved either way).
+- **Duplicate warning** `[BAA p.112]`: before adding, each new task is compared (`taskSimilarity.isSimilarTitle`, strict:
+  near-identical wording only) with that person's open tasks the bot already knows: the sender's own list, or open tasks the
+  sender gave that person. A match → always previewed first (even while direct adds are on), with the similar task shown
+  by the system. Cost of a false positive: low (one extra question); of a miss: a duplicate task, as before.
+- **Not on WhatsApp: file attachments.** Images and files sent to the bot already mean "import this task list" or "facility
+  ticket"; a third meaning needs an owner decision on how to tell them apart. Attachments are website-only for now.
+- **Evaluation** `[BAA pp.94–95, 118–119]`: `task-manager/tests/test_upgrades_2026_10_26.ts` (offline, scripted model; also
+  covers the similarity rule, page scale, and attachment type checks). **L2 / L5 knowingly open:** no head-to-head on real
+  messages and no rubric run for the new slots yet; `cases_real.ts` has no "done N: remark", change or follow-up cases.
+  Before relying on it widely, add those cases and run `run_eval.ts` against the real model.
+
+### Changes 2026-10-26 (b): answering support requests on WhatsApp; AI second pass for the duplicate alert
+
+- **`answer_request`** (new intent) `[BAA pp.104, 107]`: someone in another department sent a SUPPORT REQUEST (Send tab,
+  `CollaborationService`); the receiver answers in their own words ("haan kar dunga", "can't, payroll is with the vendor").
+  The waiting requests are added to the AI's context only when there are some (`support_requests_waiting_for_answer`), so
+  everyone else's prompt is unchanged. The description says when NOT to use it (never a new task). Code picks the request
+  (never guesses between several), a decline needs a reason in the person's own words (grounding; asked for when missing),
+  always previewed then YES, carried out by `CollaborationService.respond` (only the receiver, only while waiting,
+  conditional claim). Errors come back as reply text.
+- **AI duplicate check** (`task-manager/aiDuplicate.ts`) — still a **workflow**: one call, no tools `[BAA p.104]`.
+  Justification (a) `[BAA p.115]`: "same work in other words" cannot be hard-coded; the word check stays first and the AI is
+  asked only when it finds nothing. Cost of a false positive: **low** (one extra "are you sure?") → the cheap models
+  `qwen3.8-27b` → `glm-5.3-flash` `[BAA p.112]`. Prompt: 4 numbered steps, explicit no-skip clause, one worked example,
+  JSON with `reasoning` before `match` `[BAA pp.97, 105, 114]`. Never throws; 4 s timeout; any odd answer = no match
+  `[BAA pp.93–94]`. At most 5 people per check, side by side. Off switch: `TASK_AI_DUPLICATE_CHECK=off`. Web only (New task
+  window and Send tab); the WhatsApp bot keeps the word check (its decision step is plain synchronous code).
+- **Evaluation** `[BAA pp.94–95, 118–119]`: offline only (`test_upgrades_2026_10_26.ts` sections 4e, 5). **L2 / L5 / L6
+  knowingly open:** no head-to-head of word-only vs word+AI on real titles, no rubric, no real-model run of
+  `answer_request`. Before relying on them widely: collect ~50 real pairs of titles (same / not same) and measure both
+  checks, and add Hinglish accept/decline cases to `cases_real.ts`.
+
+### Changes 2026-10-27: the team list shows only people who use the Task Manager
+
+"Show my team's tasks" listed 40 people with "no tasks today" while only 3 were active: the team was everyone in a
+department with the Task Manager ON, cut at 40 by name, so the active people fell past the cut.
+
+- **Who is in "my team"** `[BAA p.104]` (workflow, no AI change): `readTeam` keeps the same permission rule
+  (`visibleAndAssignable`, superusers hidden from each other), then only people who are **unlocked**
+  (`TaskAccessService.partition`: department ON and kickoff recorded), and only then the 40-person cap. Applies to both
+  `buildTeamTaskList` ("what is my team doing?") and `buildTeamReport` ("how is my team doing?").
+- **The list** (`buildTeamTaskList`, pure): a second line sums up `To do · In progress · Carried forward · Done`; each
+  person's tasks are ordered carried forward → in progress → to do → done. Same tasks as before (today + carried forward,
+  each person's numbered list); no new data is read.
+- **Evaluation**: `test_brain_direct_add.ts` section 6 (+3 checks, all pass). Prompt, intents and tools are unchanged, so
+  no prompt evaluation was needed. **L2** stays knowingly open as before (scripted model only).
+
+### Changes 2026-10-27 (b): task import uses Claude Sonnet 5.5 for both steps
+
+- **Owner decision:** reading a photo or screenshot of a task list (`TaskImportParser.imageToText`) now tries
+  `anthropic:claude-sonnet-5-5` first (`CLAUDE_API_KEY`, the bot's key), then `qwen3.8-27b`, then `glm-5.3-flash` (the
+  previous chain) `[BAA p.112]`. Still a **workflow**: one call per model, no tools `[BAA p.104]`. Owner follow-up the
+  same day: turning the text into tasks (`structureText`, text and Excel imports too) uses the same chain, through
+  `anthropicComplete`; an unusable JSON reply moves on to Qwen. The preview and YES before saving are unchanged.
+- **Failure handling** `[BAA pp.93–94]`: `anthropicVision` throws before any network call when the key is missing, the
+  type is not JPEG / PNG / GIF / WebP, or the image is over 3.75 MB, and on any HTTP error or empty reply, so the next
+  model reads it. Keys are never logged.
+- **Evaluation:** `test_import_parser_stage1.ts` (+3 checks; all four import test files pass). **L2 knowingly open:** no
+  measured head-to-head of Sonnet vs Qwen on real task-list photos (the Qwen choice came from the Stage 1 image test).
+  Before relying on it: run the Stage 1 sample images through both and compare field accuracy and cost.
+
+### Changes 2026-10-27 (c): the reason for "can't do it" is optional
+
+- **Owner decision** `[BAA p.107]`: declining a request from another department no longer needs a reason (website,
+  server and WhatsApp). `decideAnswer` no longer asks for one; a reason the person does give is still kept and still
+  grounded in their own words (`checkGrounding`), so the AI cannot invent one. **One YES still confirms** either answer
+  (accept or decline) — a stray tap never answers a request on its own `[BAA p.115]`.
+- **Template** `task_support_request_v1` ends "Tap Accept, or Can't do it." with two quick-reply buttons; a tap reaches
+  the bot as that text and goes through the same `answer_request` path (natural-language users only).
+- **Evaluation**: `test_upgrades_2026_10_26.ts` section 5 updated ("Can't do it" with no reason → one YES → declined
+  without a reason; +2 source checks). Prompt and intents unchanged. **L2** knowingly open (scripted model only).
+
+### Changes 2026-10-27 (d): "Accept" button in one tap
+
+- **Owner decision** `[BAA p.115]`: the request template's **Accept** quick-reply arrives as the exact text "Accept". It
+  is now an exact command in the "One front door" fast path (`frontDoor.ts`, plain code, no AI call): with **exactly one**
+  request from another department waiting, it is accepted at once (`answer_request`, same permission-checked
+  `CollaborationService.respond`). Several waiting, none waiting, any other wording, or a question still open → the AI path
+  as before (it asks which one; typed answers still get one YES). "Can't do it" is unchanged: one YES, because declining
+  tells the sender at once and cannot be taken back (owner chose option a).
+- Only while "One front door" is ON and nothing else is waiting for an answer (same rule as "done 2").
+- **Evaluation**: `test_front_door.ts` +3 checks (exact text only; one request → act; several / none → AI). **L2**
+  knowingly open (no live run).
+
+## Agent Spec — model choice from the Control Center (owner 2026-10-28)
+
+Control Center → **AI models**: per Task Manager AI job, a main model and up to 3 backups (`task_manager_ai_models`,
+migration `20261028140001`). Code: `task-manager/ai/aiCatalog.ts` (jobs, models, "can this model do this job"),
+`task-manager/ai/AiModelSettings.ts` (saved chains, key status by name, `chainFor`), `app/api/task-manager/ai-models`,
+`frontend/components/task-manager/AiModelsPanel.tsx`. Jobs: WhatsApp understand / reply / tidy, voice speech-to-text and
+clean-up, task import (photos / text), duplicate check, superuser chat, learning loop. Tests: `tests/test_ai_models_2026_10_28.ts`.
+
+**1. Workflow or agent?** No change to any job's shape: each stays the workflow it was; only WHICH model each fixed step
+   calls becomes a setting. `[BAA p.104]` Justification: N/A (no new agent). `[BAA p.115]`
+   Head-to-head `[BAA pp.94–95, 99]`: **not run.** The planned comparison (understand on Claude Haiku, reply/tidy on Groq
+   gpt-oss-120b / Llama 3.3 70B / glm-5.3-flash) could not run on the developer machine: `CLAUDE_API_KEY` and
+   `WHATSAPP_BOT_GROQ_API_KEY` are only on the server. Owner: skip for now; use the panel's **Test** (real latency, server keys).
+**2. Context** `[BAA p.112]` Unchanged per step. Splitting understand / reply / tidy keeps each step's context separate,
+   and a different model per step is the book's "per-task model" reason. `[BAA p.116]`
+**3. Cost of a false positive** `[BAA p.112]` Unchanged and stated on the screen: understanding is **high** (it decides
+   actions) → keep a strong model there; reply and tidy are **low** (checked by code, plain fallback) → a faster, cheaper
+   model is acceptable. The setting does not enforce this; the default keeps Claude Haiku on every step (measured 7/8 vs
+   glm 3/8, Groq 0/8 on 2026-10-21).
+**4. Tools** `[BAA pp.93–94, 107]` No model-facing tools added. Errors never escape: a saved model that is unknown, cannot
+   do the job (e.g. a text model for photos) or has no key is skipped; a read failure or a missing table → today's chain;
+   today's chain always follows as the last resort. Saving a model that cannot do the job is refused by the server.
+   MCP: no (in-process setting). `[BAA p.106]`
+**5. Prompt** `[BAA pp.105, 114]` Unchanged (same prompts on any model).
+**6. Memory** `[BAA pp.100–103]` None added.
+**7. Multi-agent?** `[BAA p.116]` No; one workflow, now with a per-step model choice.
+**8. Evaluation** `[BAA pp.118–119]`
+   System: the setting is read at most once a minute per server; the panel's Test measures one real call (ms).
+   Quality assurance (rubric: family none, tier none, scale none, manual audit 0%) `[BAA pp.96–98]`: **not measured for a
+   new model.** Before switching the WhatsApp understanding model, run `run_eval.ts --set real` with the server's keys.
+   Tool interaction: n/a. `[BAA p.95]` Agent efficiency: unchanged until a model is changed. `[BAA p.119]`
+**9. Trace** `[BAA pp.119–120]` Each save is an audit row (`task_ai_models_updated`: job, models, who). Existing brain
+   traces already record which model answered each step (`interpretModel`, `replyModel`).
+**10. Laws knowingly violated, and why:**
+   - **L2** `[BAA pp.94–95]`: a model can be switched from the screen without a fresh head-to-head on the same cases. Owner
+     decision (2026-10-28) to allow it; mitigated by the default being today's measured chain, the Test button, and
+     today's chain always following as the fallback.
+   - **L6** `[BAA pp.96–97]`: if the learning loop is set to the same family as the live bot, its drafts are graded by a
+     same-family model. Not blocked; the default keeps Gemini for the loop and Claude for the bot.
+
+
+## Agent Spec — Smart chat fixes from the 27–31 Oct failures, message batching (2026-11-02)
+
+Diagnosis (audit log `brain_live`, 355 turns 19 Oct–2 Nov, read-only): in every studied failure the AI's own summary was
+right and the code around it threw the reading away. ~1 reply in 4 was a question back (29 doubt blocks, 19 unknown, 14
+unsure answers, 11 low confidence, 10 "nothing is waiting"). Median 5.8 s per reply, p90 10.2 s.
+
+**1. Workflow or agent?**  workflow (unchanged: understand → decide in code → reply). Justification (a) `[BAA p.115]`.
+   Head-to-head `[BAA pp.94–95, 99]`: not re-run for this change (see 10).
+
+**2. Context** `[BAA p.112]`  Unchanged, plus: several quick messages arrive as ONE turn, one line per message (prompt rule H);
+   a second reading gets an `important_note` only when the first one answered a question that was not there.
+
+**3. Cost of a false positive** `[BAA p.112]`
+   - Tasks added to the person's OWN list (undo 10 min): **low** → saved despite a doubt or a confidence of 0.5–0.8; the doubt
+     is one inserted line of the reply (`aside`).
+   - Anything touching other people, telling a giver a task is done, deleting: **higher** → a doubt the AI wrote down becomes
+     ONE question offering the AI's reading (`understood` / `question`); a middling confidence becomes a preview.
+   - Below 0.5 (`SOFT_CHANGE_CONFIDENCE_MIN`): always asks. Model tier unchanged (Claude Haiku, Control Center chain).
+
+**4. Tools** — none exposed to the model (unchanged). New code-only step: the inbox (`task-manager/SmartChatInbox.ts`), every
+   call wrapped, errors → "answer alone, as before" `[BAA p.94]`.
+
+**5. Prompt** `[BAA pp.105, 114]`  New FIXED rules (outside the tunable steps, so a tuned version cannot drop them):
+   E2 yes-with-a-reason is a yes; F never "answer_pending" when nothing is pending, "Change of mind:" = classify the whole
+   corrected request; G most likely reading, doubts only for equally likely readings; H several lines = one turn.
+
+**6. Memory** `[BAA pp.100–103]`  Unchanged (no write tool). The inbox is a queue, not memory: text blanked when the turn ends.
+
+**7. Multi-agent?** `[BAA p.116]`  Single. The changes sit in the decide code and fixed prompt rules; the reply prompt is untouched.
+
+**8. Evaluation** `[BAA pp.118–119]`
+   System: batching adds a quiet window (`QUIET_MS` 2.5 s, max 7 s); the rewrite call is now skipped for messages that stand
+   alone (≤ 6 words or pointing back still rewritten), saving up to 4 s on most long messages. Not yet measured live.
+   Quality assurance: offline — `task-manager/tests/test_brain_fixes_2026_11_02.ts` (65 checks), existing brain suites
+   updated where they encoded the old rules (phase2_core: 0.79 → preview; safety invariant now at 0.5; phase4_live: a
+   `not_handled` trace row is allowed). real failures covered offline (see addendum b); **live-model run not done** (owner OK
+   needed for provider cost). No rubric (L6 gap unchanged).
+   Tool interaction: n/a. Agent efficiency: +1 understand call only when the first reading answered a missing question.
+
+**9. Trace** `[BAA pp.119–120]`  New: every eligible message that falls through to the old bot writes a `brain_live` row with
+   `status: 'not_handled'` and `why` (older_conversation + state type / facility_open / handoff). Never the text.
+
+**10. Laws knowingly violated, and why:**
+   - **L2** `[BAA pp.94–95]`: the new decide rules were not A/B-tested on the live model before shipping; offline scripted tests
+     only. Reason: the failures were in code, not the model; run `run_eval.ts --set real` with the owner's OK.
+   - **L6** `[BAA pp.96–98]`: no rubric grader (unchanged gap).
+   - **Migration** `20261102000001_whatsapp_smart_chat_inbox.sql` must be applied by a person; until then batching is off and
+     the old in-memory merge (now fixed: same confirm rules, a merged "yes" is carried out, a merged question is remembered,
+     no message dropped on a plain reply) is used.
+
+**Addendum 2026-11-02 (b) — conversation memory and prompt caching** `[BAA pp.100-103, 119]`
+   - The bot's replies are stored compacted (`compactBotText`): inserted lists become one bracket, headings go, so the
+     question at the end always survives the 300-character cut. Automatic messages (any send with a rule / message type:
+     digests, reminders, alerts) are stored as one marked line, and at most the newest 2 are shown to the AI.
+   - Every step now sees the last **8** messages (was 5). Memory still keeps 20 for 24 h; no write tool (L7 unchanged).
+   - Claude calls send the fixed instructions as one cached block (`cache_control: ephemeral`); per-person data stays in the
+     user part. `tokensIn` still counts the cached part; `cachedIn` reports it. Cache hit rate not yet measured live.
+   - The 7 real failures were NOT added to the paid eval set (owner 2026-10-22: 20 cases maximum); they are covered by the
+     offline test `test_brain_fixes_2026_11_02.ts` (65 checks).

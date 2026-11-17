@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, isOrgAdmin, allPropertyIds, propertyOrgId } from '@/backend/lib/auth/callerAccess';
 
 /**
  * POST /api/properties
@@ -9,6 +10,8 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
  */
 export async function POST(request: NextRequest) {
     try {
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
         const body = await request.json();
         const {
             organization_id,
@@ -25,6 +28,11 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({
                 error: 'Missing required fields: organization_id, name'
             }, { status: 400 });
+        }
+
+        // Only an admin of that organisation (or a master admin) may add a property to it.
+        if (!isOrgAdmin(caller, organization_id)) {
+            return forbidden('Forbidden: only an organisation admin can add properties');
         }
 
         // Validate capacity
@@ -104,22 +112,28 @@ export async function GET(request: NextRequest) {
             return NextResponse.json([]);
         }
 
-        let { data: properties, error } = await supabaseAdmin
-            .from('properties')
-            .select('*')
-            .eq('organization_id', organizationId)
-            .is('deleted_at', null)
-            .order('name');
+        // Signed-in callers only. An organisation member (or master admin) sees every property of
+        // the organisation; someone who only belongs to some properties sees just those.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const isOrgMember = caller.isMasterAdmin || caller.orgMemberships.some(m => m.organization_id === organizationId);
+        const ownPropertyIds = allPropertyIds(caller);
+        if (!isOrgMember && ownPropertyIds.length === 0) {
+            return forbidden('Forbidden: no access to this organization');
+        }
+        const onlyIds = isOrgMember ? null : ownPropertyIds;
+
+        let { data: properties, error } = await (onlyIds
+            ? supabaseAdmin.from('properties').select('*').eq('organization_id', organizationId).in('id', onlyIds).is('deleted_at', null).order('name')
+            : supabaseAdmin.from('properties').select('*').eq('organization_id', organizationId).is('deleted_at', null).order('name'));
 
         if (error) {
             // Defensive fallback if deleted_at column does not exist in DB schema yet (Postgres code 42703)
             if (error.code === '42703' || error.message?.includes('deleted_at')) {
                 console.warn('[PropertyAPI] properties.deleted_at column missing, falling back to basic query.');
-                const fallback = await supabaseAdmin
-                    .from('properties')
-                    .select('*')
-                    .eq('organization_id', organizationId)
-                    .order('name');
+                const fallback = await (onlyIds
+                    ? supabaseAdmin.from('properties').select('*').eq('organization_id', organizationId).in('id', onlyIds).order('name')
+                    : supabaseAdmin.from('properties').select('*').eq('organization_id', organizationId).order('name'));
                 properties = fallback.data;
                 error = fallback.error;
             }
@@ -147,6 +161,15 @@ export async function DELETE(request: NextRequest) {
 
         if (!propertyId) {
             return NextResponse.json({ error: 'Property ID is required' }, { status: 400 });
+        }
+
+        // Only an admin of the property's organisation (or a master admin) may remove it.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const orgId = await propertyOrgId(propertyId);
+        if (!orgId) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+        if (!isOrgAdmin(caller, orgId)) {
+            return forbidden('Forbidden: only an organisation admin can remove properties');
         }
 
         const now = new Date().toISOString();

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
-import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 // Extract floor number from description
 function extractFloorNumber(description: string): number | null {
@@ -96,9 +96,63 @@ export async function GET(request: NextRequest) {
         const materialsRequired = searchParams.get('materialsRequired');
         const floorNumber = searchParams.get('floorNumber') || searchParams.get('floor_number') || searchParams.get('floor');
 
-        // Use admin client for org-wide or all-property queries to bypass RLS row restrictions
-        const isAllProperties = propertyId === 'all';
-        const queryClient = ((organizationId && (!propertyId || isAllProperties)) || isAllProperties) ? createAdminClient() : supabase;
+        // Resolve user roles and memberships to prevent unauthorized ticket leaks
+        const adminSupabase = createAdminClient();
+        const [orgMemsRes, propMemsRes] = await Promise.all([
+            adminSupabase.from('organization_memberships').select('role, organization_id, is_active').eq('user_id', user.id),
+            adminSupabase.from('property_memberships').select('role, property_id').eq('user_id', user.id).eq('is_active', true)
+        ]);
+
+        const orgRoles = (orgMemsRes.data || []).map(m => (m.role || '').toLowerCase().trim());
+        // Owner 2026-11-03: the org-level Tech team tracks every ticket of its own organisation(s) in the Tech console's
+        // Requests tab. Only those organisations; who may edit, assign or delete is unchanged.
+        const techOrgIds = Array.from(new Set((orgMemsRes.data || [])
+            .filter(m => (m.role || '').toLowerCase().trim() === 'tech' && m.is_active !== false && m.organization_id)
+            .map(m => m.organization_id as string)));
+        const propMems = propMemsRes.data || [];
+        const propRoles = propMems.map(m => (m.role || '').toLowerCase().trim());
+        const userPropIds = Array.from(new Set(propMems.map(m => m.property_id).filter(Boolean)));
+
+        const isOrgSuperAdmin = orgRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin', 'ops_super_admin'].includes(r));
+        const isPropertyAdmin = propRoles.some(r => ['property_admin', 'ops_super_admin'].includes(r));
+        const isStaffOrMst = propRoles.some(r => ['mst', 'staff', 'tech', 'soft_service_manager', 'soft_service_supervisor'].includes(r));
+        const isVendor = propRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r)) || orgRoles.some(r => ['vendor', 'maintenance_vendor'].includes(r));
+        const isTenant = propRoles.some(r => ['tenant', 'super_tenant'].includes(r)) && !isOrgSuperAdmin && !isPropertyAdmin && !isStaffOrMst;
+
+        const isAllProperties = !propertyId || propertyId === 'all';
+        const isAllOrgs = !organizationId || organizationId === 'all';
+
+        // A user may always list the tickets assigned to themselves, at any property (owner 2026-11-02: the org-level
+        // IT team is assigned tickets across properties it holds no property membership in).
+        const isOwnAssignedQuery = assignedTo === user.id;
+
+        // Org-level Tech, asking for one of its own organisations (or not naming one): scoped to those organisations below.
+        const isTechScope = !isOrgSuperAdmin && techOrgIds.length > 0 && (isAllOrgs || techOrgIds.includes(organizationId as string));
+
+        // Non-superadmins cannot query all properties across the organization (except their own assigned tickets)
+        if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && !isTechScope) {
+            if (userPropIds.length === 0) {
+                return NextResponse.json({ tickets: [], total: 0 });
+            }
+        }
+
+        // If a specific property is requested, ensure non-superadmin belongs to that property (or, for Tech, that the
+        // property belongs to one of its organisations)
+        if (propertyId && !isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery) {
+            if (!userPropIds.includes(propertyId)) {
+                let techProperty = false;
+                if (isTechScope) {
+                    const { data: prop } = await adminSupabase.from('properties').select('organization_id').eq('id', propertyId).maybeSingle();
+                    techProperty = !!prop && techOrgIds.includes(prop.organization_id as string);
+                }
+                if (!techProperty) {
+                    return NextResponse.json({ error: 'You do not have access to tickets for this property.' }, { status: 403 });
+                }
+            }
+        }
+
+        // Use admin client when user has verified admin permissions (or Tech, scoped to its organisations); else user client
+        const queryClient = (isOrgSuperAdmin || isPropertyAdmin || isTechScope) ? adminSupabase : supabase;
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
@@ -114,7 +168,6 @@ export async function GET(request: NextRequest) {
                 material_requests${materialsRequired === 'true' ? '!inner' : ''}(id)
             `;
 
-
         let query = queryClient
             .from('tickets')
             .select(selectStr, { count: 'exact' })
@@ -124,8 +177,15 @@ export async function GET(request: NextRequest) {
                 (offsetParam ? parseInt(offsetParam) : 0) + (limitParam ? parseInt(limitParam) : 100) - 1
             );
 
-        if (propertyId && !isAllProperties) query = query.eq('property_id', propertyId);
-        if (organizationId) query = query.eq('organization_id', organizationId);
+        if (propertyId && !isAllProperties) {
+            query = query.eq('property_id', propertyId);
+        } else if (isAllProperties && isTechScope && !isOwnAssignedQuery) {
+            query = query.in('organization_id', techOrgIds);
+        } else if (isAllProperties && !isOrgSuperAdmin && !isOwnAssignedQuery && userPropIds.length > 0) {
+            query = query.in('property_id', userPropIds);
+        }
+
+        if (organizationId && !isAllOrgs) query = query.eq('organization_id', organizationId);
         if (status) {
             if (status.includes(',')) {
                 query = query.in('status', status.split(',').map(s => s.trim()));
@@ -133,10 +193,20 @@ export async function GET(request: NextRequest) {
                 query = query.eq('status', status);
             }
         }
-        if (isInternal !== null && isInternal !== undefined) {
+
+        // Internal tickets isolation: Tenants and Vendors can NEVER access internal tickets
+        if (isTenant || isVendor) {
+            query = query.eq('internal', false);
+        } else if (isInternal !== null && isInternal !== undefined) {
             query = query.eq('internal', isInternal === 'true');
         }
-        if (assignedTo) query = query.eq('assigned_to', assignedTo);
+
+        // Vendor scoping: Vendors only see tickets assigned to them
+        if (isVendor && !isOrgSuperAdmin && !isPropertyAdmin && !isStaffOrMst) {
+            query = query.eq('assigned_to', user.id);
+        } else if (assignedTo) {
+            query = query.eq('assigned_to', assignedTo);
+        }
         if (raisedBy) query = query.eq('raised_by', raisedBy);
         if (slaBreached === 'true') {
             // Include tickets where sla_deadline has passed OR sla_breached flag is explicitly set
@@ -194,7 +264,7 @@ export async function GET(request: NextRequest) {
         if (raisedByRole) {
             // Get user IDs with the specified role from memberships
             let membershipQuery;
-            if (propertyId) {
+            if (propertyId && !isAllProperties) {
                 // Scoped: only tenants of this specific property
                 membershipQuery = supabase
                     .from('property_memberships')
@@ -202,7 +272,7 @@ export async function GET(request: NextRequest) {
                     .eq('property_id', propertyId)
                     .eq('role', raisedByRole)
                     .eq('is_active', true);
-            } else if (organizationId) {
+            } else if (organizationId && !isAllOrgs) {
                 // Scoped: users with this role across any property in this org
                 membershipQuery = supabase
                     .from('property_memberships')
@@ -290,53 +360,60 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // 1. Quick rule-based pre-pass to get DB priority BEFORE Groq runs
-        const preClassification = classifyTicketEnhanced(title || description);
+        // Tenants/clients can NEVER create internal tickets. Force internal to false for tenant role.
+        const adminClient = createAdminClient();
+        const { data: userPropMembership } = await adminClient
+            .from('property_memberships')
+            .select('role')
+            .eq('property_id', propId)
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .maybeSingle();
+
+        let isTenant = userPropMembership?.role === 'tenant' || userPropMembership?.role === 'super_tenant';
+        if (!userPropMembership) {
+            const { data: userOrgMembership } = await adminClient
+                .from('organization_memberships')
+                .select('role')
+                .eq('organization_id', orgId)
+                .eq('user_id', user.id)
+                .maybeSingle();
+            if (userOrgMembership?.role === 'tenant' || userOrgMembership?.role === 'super_tenant') {
+                isTenant = true;
+            }
+        }
+
+        const effectiveInternal = isTenant ? false : internalValue;
+
+        // 1. Owner 2026-11-15: the AI sorts every ticket (title AND description), choosing from this property's
+        //    categories; the keyword rules only decide when every model fails (backend/lib/ticketing/resolver.ts).
         let categoryId = null;
         let skillGroupId = null;
         let priority = 'medium';
         let slaHours = 24;
 
-        if (preClassification.issue_code) {
-            const { data: preCatData } = await supabase
-                .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
-                .eq('code', preClassification.issue_code)
-                .limit(1)
-                .maybeSingle();
-            if (preCatData) {
-                categoryId = preCatData.id;
-                skillGroupId = preCatData.skill_group_id;
-                priority = preCatData.priority || 'medium';
-                slaHours = preCatData.sla_hours || 24;
-            }
-        }
-
-        // 2. Full hybrid classification — pass DB priority so Groq uses it as anchor
-        const resolution = await resolveClassification(title || description, priority);
+        const ticketText = [title, description].map(s => String(s ?? '').trim()).filter(Boolean).filter((s, i, all) => all.indexOf(s) === i).join('\n');
+        const resolution = await resolveClassification(ticketText, { propertyId: propId, organizationId: orgId });
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
 
-        // 3. If Groq resolved a different issue_code, re-fetch IDs
-        if (issue_code && issue_code !== preClassification.issue_code) {
-            const { data: catData, error: catError } = await supabase
+        // 2. The chosen category's row (this property's own first, then the shared one): its team, usual priority, SLA.
+        if (issue_code) {
+            const { data: catRows, error: catError } = await supabase
                 .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
+                .select('id, skill_group_id, priority, sla_hours, property_id')
                 .eq('code', issue_code)
-                .limit(1)
-                .maybeSingle();
+                .limit(50);
 
             if (catError) {
                 console.error('[TICKET API] Error fetching category:', catError);
             }
 
+            const catData = (catRows ?? []).find(c => propId && c.property_id === propId) ?? (catRows ?? []).find(c => !c.property_id) ?? (catRows ?? [])[0];
             if (catData) {
                 categoryId = catData.id;
                 skillGroupId = catData.skill_group_id;
-                const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
-                if ((priorityRank[catData.priority] ?? 0) > (priorityRank[priority] ?? 0)) {
-                    priority = catData.priority;
-                }
+                priority = catData.priority || 'medium';
                 slaHours = catData.sla_hours || slaHours;
             } else {
                 console.warn('[TICKET API] \u26a0\ufe0f Issue code not found in issue_categories:', issue_code);
@@ -365,7 +442,9 @@ export async function POST(request: NextRequest) {
         }
 
         // 3. CREATE TICKET
-        const ticketNumber = `TKT-${Date.now()}`;
+        const ticketNumber = propId
+            ? await generateNextTicketNumber(supabase, propId, orgId)
+            : `AP-GEN-${Date.now()}`;
 
         const { data: ticket, error: insertError } = await supabase
             .from('tickets')
@@ -379,14 +458,16 @@ export async function POST(request: NextRequest) {
                 skill_group_id: skillGroupId,
                 priority: (() => {
                     if (explicitPriority) return explicitPriority;
-                    const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
+                    // The AI may only raise the category's usual priority ('critical' counts as the top, never lowered).
+                    const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
                     const groqP = resolution.priority?.toLowerCase() || '';
                     return (priorityRank[groqP] ?? -1) > (priorityRank[priority] ?? -1) ? groqP : priority;
                 })(),
                 status: assignedTo ? 'assigned' : 'open',
                 assigned_to: assignedTo || undefined,
                 raised_by: user.id,
-                internal: internalValue,
+                internal: effectiveInternal,
+                is_internal: effectiveInternal,
                 is_vague: isVague,
                 sla_hours: slaHours,
                 floor_number: extractFloorNumber(title || description) ?? undefined,
@@ -400,7 +481,8 @@ export async function POST(request: NextRequest) {
                 risk_flag: resolution.risk_flag,
                 llm_reasoning: resolution.llm_reasoning,
                 classification_source: decisionSource,
-                confidence_score: resolution.llmResult ? 90 : 100
+                // The AI's own 0–100 rating (shown as "72% (Medium)"); the keyword rules keep the old fixed 100
+                confidence_score: resolution.confidenceScore ?? 100
             })
             .select('*')
             .single();
@@ -413,7 +495,6 @@ export async function POST(request: NextRequest) {
         }
 
         // Auto-attach the default escalation hierarchy (property-specific first, then org-wide fallback)
-        const adminClient = createAdminClient();
         let { data: defaultHierarchy } = await adminClient
             .from('escalation_hierarchies')
             .select('id')
@@ -492,24 +573,9 @@ export async function POST(request: NextRequest) {
             console.error('[Ticket API] Classification logging error:', err);
         });
 
-        // Trigger Web Push Notifications asynchronously
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-
-            // Trigger unified notification (handles both creation broadcast and auto-assignment)
-            NotificationService.afterTicketCreated(finalTicket.id).catch(err => {
-                console.error('>>>>>>>>>> [NOTIFICATION TEST] Notification error (Unified):', err);
-            });
-
-            // If priority is critical, send an urgent alert to all property staff/admins
-            if (finalTicket.priority === 'critical') {
-                NotificationService.afterCriticalTicketCreated(finalTicket.id).catch(err => {
-                    console.error('>>>>>>>>>> [NOTIFICATION TEST] Critical notification error:', err);
-                });
-            }
-        } catch (err) {
-            console.error('>>>>>>>>>> [NOTIFICATION TEST] Failed to load NotificationService:', err);
-        }
+        // Notifications are not sent from here. The INSERT above fires trg_tickets_outbox, and the
+        // Omnichannel matrix (Settings -> Notifications -> Tickets) decides the recipients and the
+        // channels for every one of them — email, WhatsApp and in-app/push alike.
 
         return NextResponse.json({
             success: true,

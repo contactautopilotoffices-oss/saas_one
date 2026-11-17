@@ -6,6 +6,8 @@ import { sectionedList } from './text';
  * Only for Smart-chat departments, and only while the "One front door" switch (Task Access panel) is ON.
  *
  *   • Exact commands — "done 2", "done 1 and 3", "done all", "tasks" — are answered by code: no AI call, no YES.
+ *     Owner 2026-10-27: also the "Accept" button of the request template — accepted at once when exactly ONE request from
+ *     another department is waiting (several → the AI asks which one). "Can't do it" still goes to the AI and one YES.
  *     Anything not exact or not valid (a number that is not on the list) goes to the AI exactly as before.
  *   • "undo" reverses the person's OWN last change within 10 minutes: done / in-progress back to what it was, new tasks
  *     removed. A hand-over is NOT undone (only the new holder may pass a task on) — the bot says who to ask instead.
@@ -23,7 +25,8 @@ export type ExactCommand =
     | { kind: 'done'; numbers: number[] }
     | { kind: 'done_all' }
     | { kind: 'view' }
-    | { kind: 'undo' };
+    | { kind: 'undo' }
+    | { kind: 'accept' };
 
 /** Only these exact shapes. Anything else (a sentence, a typo, extra words) is NOT exact and goes to the AI. */
 export function parseExactCommand(text: string): ExactCommand | null {
@@ -31,8 +34,11 @@ export function parseExactCommand(text: string): ExactCommand | null {
     if (!t) return null;
     if (/^(undo|undo that|undo it|undo last|wapas karo|wapas|galti se|galti ho gayi)$/.test(t)) return { kind: 'undo' };
     if (/^(tasks?|my tasks|view tasks|status|today'?s? tasks)$/.test(t)) return { kind: 'view' };
+    if (t === 'accept') return { kind: 'accept' };   // the template's quick-reply button (exact text only)
     if (/^(done ?all|done-all|all done|complete all|completed all|finished all)$/.test(t)) return { kind: 'done_all' };
-    const m = /^(?:done|complete|completed|finish|finished)(?: (?:my )?tasks?)? ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t);
+    const m = /^(?:done|complete|completed|finish|finished)(?: (?:my )?tasks?)? ((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*)$/.exec(t)
+        // 2026-11-02 (Lohitaksha's "TASK 4 DONE", 28 Oct): the number first — "task 4 done", "4 done", "#4 done", "tasks 2, 3 completed"
+        ?? /^(?:(?:my )?tasks? ?(?:no\.? ?|number )?|#)?((?:\d{1,2})(?:(?: ?, ?| and | & | )\d{1,2})*) (?:is |are )?(?:done|completed|complete|finished)$/.exec(t);
     if (m) {
         const numbers = [...new Set(m[1].split(/ ?, ?| and | & | /).filter(Boolean).map(Number))];
         if (numbers.length && numbers.every(n => Number.isInteger(n) && n >= 1)) return { kind: 'done', numbers };
@@ -112,6 +118,13 @@ export function planExact(cmd: ExactCommand, ctx: BrainContext): ExactPlan | nul
         const firstOpen = ctx.tasks.find(t => t.status !== 'completed');
         const hint = firstOpen ? `Reply *done ${firstOpen.n}* when you finish task ${firstOpen.n}.` : 'All done for today ✅';
         return { kind: 'reply', text: `📋 *Your tasks today*\n\n${list(ctx.tasks)}\n\n${hint}` };
+    }
+    if (cmd.kind === 'accept') {
+        // Only when there is no doubt which request: exactly one waiting. Otherwise the AI asks which one (or explains).
+        const waiting = ctx.supportRequests ?? [];
+        if (waiting.length !== 1) return null;
+        const r = waiting[0];
+        return { kind: 'act', action: { type: 'answer_request', requestId: r.id, title: r.title, fromName: r.fromName, accept: true, reason: null } };
     }
     const open = ctx.tasks.filter(t => t.status !== 'completed');
     if (cmd.kind === 'done_all') return open.length ? { kind: 'act', action: { type: 'complete_tasks', taskIds: open.map(t => t.id) } } : null;

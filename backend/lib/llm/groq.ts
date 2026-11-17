@@ -1,6 +1,10 @@
 /**
  * Groq LLM Client for Hybrid Ticket Classification
- * 
+ *
+ * 2026-11-15: NO LONGER CALLED for ticket sorting. Every ticket is now sorted by backend/lib/ticketing/aiClassifier.ts,
+ * on the models chosen in Brain → AI models ("Sorting new tickets"). This file is kept unchanged so nothing that may
+ * still import it breaks.
+ *
  * Purpose: Tie-breaker between ambiguous candidate buckets
  * - Never invents new buckets
  * - Strict input/output schema validation
@@ -9,6 +13,8 @@
 
 import { z } from 'zod';
 import { SkillGroup } from '../ticketing/classifyTicket';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 
 // Input schema (what we send to Groq)
 const LLMInputSchema = z.object({
@@ -108,7 +114,18 @@ Analyze the situation and return structured JSON.`;
 /**
  * Call Groq API with timeout and error handling
  */
+// Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = GROQ_MODEL, as
+// before: one attempt. A chosen model that fails is rested and GROQ_MODEL is tried once; if that fails too the rules
+// verdict stands, exactly as for any failure of this step.
 export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
+    const chosen = await modelFor('ticket_classify', GROQ_MODEL);
+    const first = await classifyWith(chosen, input);
+    if (!first.fallbackUsed || chosen === GROQ_MODEL) return first;
+    markFailed('ticket_classify');
+    return classifyWith(GROQ_MODEL, input);
+}
+
+async function classifyWith(model: string, input: LLMInput): Promise<GroqResponse> {
     const startTime = Date.now();
 
     // Validate input
@@ -122,12 +139,12 @@ export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
         };
     }
 
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-        console.warn('[GroqClient] GROQ_API_KEY not configured, using fallback');
+    // Owner 2026-11-15: the shared Groq keys, in turn (backend/lib/llm/providerKeys.ts).
+    if (!hasProviderKey('groq')) {
+        console.warn('[GroqClient] no Groq key is set, using fallback');
         return {
             success: false,
-            error: 'GROQ_API_KEY not configured',
+            error: 'no Groq key is set (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)',
             latencyMs: Date.now() - startTime,
             fallbackUsed: true,
         };
@@ -137,14 +154,14 @@ export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
     try {
-        const response = await fetch(GROQ_API_URL, {
+        const response = await fetchWithKeys('groq', GROQ_API_URL, key => ({
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`,
+                'Authorization': `Bearer ${key}`,
             },
             body: JSON.stringify({
-                model: GROQ_MODEL,
+                model,
                 messages: [
                     { role: 'system', content: buildSystemPrompt() },
                     { role: 'user', content: buildUserPrompt(input) },
@@ -154,7 +171,7 @@ export async function classifyWithGroq(input: LLMInput): Promise<GroqResponse> {
                 response_format: { type: 'json_object' },
             }),
             signal: controller.signal,
-        });
+        }));
 
         clearTimeout(timeoutId);
 

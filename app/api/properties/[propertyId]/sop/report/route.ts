@@ -20,17 +20,41 @@ export async function GET(
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify admin role for this property
-    const { data: membership } = await supabaseAdmin
-        .from('property_memberships')
-        .select('role')
-        .eq('property_id', propertyId)
-        .eq('user_id', user.id)
-        .eq('is_active', true)
+    // Verify admin role for this property. Org-wide roles (ops_super_admin,
+    // org_super_admin, ...) live on organization_memberships and have no
+    // per-property row, so both tables are checked. The org lookup is scoped to
+    // this property's organization so it cannot grant cross-tenant access.
+    const { data: propertyOrg } = await supabaseAdmin
+        .from('properties')
+        .select('organization_id')
+        .eq('id', propertyId)
         .maybeSingle();
+
+    const [propMembershipRes, orgMembershipRes] = await Promise.all([
+        supabaseAdmin
+            .from('property_memberships')
+            .select('role')
+            .eq('property_id', propertyId)
+            .eq('user_id', user.id)
+            .eq('is_active', true)
+            .maybeSingle(),
+        propertyOrg?.organization_id
+            ? supabaseAdmin
+                .from('organization_memberships')
+                .select('role')
+                .eq('organization_id', propertyOrg.organization_id)
+                .eq('user_id', user.id)
+                .eq('is_active', true)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+    ]);
+    const membership = propMembershipRes.data;
     
     const userRole = (membership?.role || '').toLowerCase();
-    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin'].includes(userRole);
+    const orgRole = (orgMembershipRes.data?.role || '').toLowerCase();
+    const isAdmin =
+        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole) ||
+        ['org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(orgRole);
 
     if (!isAdmin) {
         return NextResponse.json({ error: 'Forbidden: Admin access required' }, { status: 403 });

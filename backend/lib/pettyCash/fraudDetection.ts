@@ -49,8 +49,11 @@ export interface DuplicateCheckInput {
 }
 
 export interface DuplicateCheckResult {
+    /** Hard block: exact UTR or exact receipt file already claimed. */
     isDuplicate: boolean;
     reason?: string;
+    /** Soft signal for accounts to review; the expense is still saved. */
+    warning?: string;
     matchedRef?: string;
     matchedExpenseId?: string;
     matchedRequestNo?: string;
@@ -60,9 +63,9 @@ export interface DuplicateCheckResult {
 
 /**
  * Multi-layer fraud and duplicate prevention:
- * 1. Exact & Near-match UTR / payment reference (catches transposed digits e.g. 428910289418 vs 428910284918)
- * 2. Identical transaction heuristic (same amount, vendor & date in the same request or organization)
- * 3. Exact file hash matching for receipt proofs
+ * 1. Exact UTR / payment reference (block) and near-match UTR, e.g. transposed digits (warning)
+ * 2. Identical transaction heuristic: same amount, vendor & date (warning; real claims look like this too)
+ * 3. Exact file hash matching for receipt proofs (block)
  */
 export async function detectDuplicateExpense(
     input: DuplicateCheckInput
@@ -98,12 +101,12 @@ export async function detectDuplicateExpense(
         }
     }
 
-    // Fetch existing active expenses for this organization (excluding rejected)
+    // Fetch existing active expenses for this organization (excluding rejected and withdrawn)
     const { data: existingExpenses, error } = await supabaseAdmin
         .from('petty_cash_expenses')
         .select('id, request_id, expense_date, amount, vendor, payment_mode, payment_ref, request:petty_cash_requests(request_no)')
         .eq('organization_id', organizationId)
-        .neq('review_status', 'rejected')
+        .not('review_status', 'in', '(rejected,withdrawn)')
         .order('created_at', { ascending: false })
         .limit(300);
 
@@ -120,9 +123,12 @@ export async function detectDuplicateExpense(
 
     // 2. Check UTR / Payment Reference Duplicate (Exact & Near Match)
     if (normInputRef && normInputRef.length >= 4 && isNonCash) {
+        // An exact match anywhere must win over a near match found earlier in the list.
+        let nearMatch: DuplicateCheckResult | null = null;
         for (const exp of filtered) {
             const expNormRef = normalizeRef(exp.payment_ref);
-            if (!expNormRef || expNormRef.length < 4) continue;
+            // Cash rows carry placeholders ("NA", "cash"), not real references.
+            if (exp.payment_mode === 'Cash' || !expNormRef || expNormRef.length < 4) continue;
 
             const reqNo = (exp.request as any)?.request_no || 'another request';
 
@@ -146,10 +152,10 @@ export async function detectDuplicateExpense(
                     const dist = damerauLevenshtein(normInputRef, expNormRef);
                     // Damerau distance <= 1 means 1 transposed pair (e.g. 94 <-> 49) or 1 typo digit
                     // Distance <= 2 on 12-digit strings is also high-probability OCR typo
-                    if (dist <= 1 || (normInputRef.length >= 10 && dist <= 2)) {
-                        return {
-                            isDuplicate: true,
-                            reason: `Suspicious duplicate reference: '${paymentRef}' is nearly identical (typo/transposed digits) to already claimed UTR '${exp.payment_ref}' (${reqNo}, ₹${exp.amount} on ${exp.expense_date}).`,
+                    if (!nearMatch && (dist <= 1 || (normInputRef.length >= 10 && dist <= 2))) {
+                        nearMatch = {
+                            isDuplicate: false,
+                            warning: `Suspicious duplicate reference: '${paymentRef}' is nearly identical (typo/transposed digits) to already claimed UTR '${exp.payment_ref}' (${reqNo}, ₹${exp.amount} on ${exp.expense_date}).`,
                             matchedRef: exp.payment_ref,
                             matchedExpenseId: exp.id,
                             matchedRequestNo: reqNo,
@@ -160,6 +166,7 @@ export async function detectDuplicateExpense(
                 }
             }
         }
+        if (nearMatch) return nearMatch;
     }
 
     // 3. Check Identical Transaction Heuristic
@@ -186,8 +193,8 @@ export async function detectDuplicateExpense(
 
                 if (sameReq && vendorMatch) {
                     return {
-                        isDuplicate: true,
-                        reason: `Duplicate transaction detected: An identical expense of ₹${amount} for '${exp.vendor || 'Vendor'}' on ${expenseDate} is already logged in this request (${reqNo}).`,
+                        isDuplicate: false,
+                        warning: `Possible duplicate: An identical expense of ₹${amount} for '${exp.vendor || 'Vendor'}' on ${expenseDate} is already logged in this request (${reqNo}).`,
                         matchedRef: exp.payment_ref,
                         matchedExpenseId: exp.id,
                         matchedRequestNo: reqNo,
@@ -199,8 +206,8 @@ export async function detectDuplicateExpense(
                 // If across different requests in the same org and vendor matches closely
                 if (!sameReq && normVendor && expNormVendor && normVendor === expNormVendor) {
                     return {
-                        isDuplicate: true,
-                        reason: `Duplicate transaction alert: Identical ₹${amount} payment to '${exp.vendor}' on ${expenseDate} was already claimed in ${reqNo}.`,
+                        isDuplicate: false,
+                        warning: `Possible duplicate: Identical ₹${amount} payment to '${exp.vendor}' on ${expenseDate} was already claimed in ${reqNo}.`,
                         matchedRef: exp.payment_ref,
                         matchedExpenseId: exp.id,
                         matchedRequestNo: reqNo,

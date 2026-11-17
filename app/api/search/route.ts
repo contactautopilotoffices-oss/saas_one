@@ -1,29 +1,41 @@
 import { createClient } from '@/frontend/utils/supabase/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { resolveCaller, isCallerError } from '@/backend/lib/auth/callerAccess';
+import { resolveCrmAccess, isCrmAccessError, scopeLeadsQuery, sanitizeSearchTerm } from '@/backend/lib/crm/access';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
-    const query = searchParams.get('q');
+    // Characters with meaning in PostgREST filters are stripped, so the text cannot change the filter.
+    const query = sanitizeSearchTerm(searchParams.get('q') || '');
     const orgId = searchParams.get('org_id');
 
     if (!query || query.length < 2) {
         return NextResponse.json({ results: [] });
     }
 
+    // Signed-in users only. Tickets, users, properties and organisations below are read with the
+    // caller's own session, so the database's row rules apply.
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+
     const supabase = await createClient();
 
     try {
         const scope = searchParams.get('scope');
 
-        let leadsQuery = supabaseAdmin
-            .from('crm_leads')
-            .select('id, company_name, contact_person, email, contact_number, location, organization_id')
-            .or(`company_name.ilike.%${query}%,contact_person.ilike.%${query}%,email.ilike.%${query}%,contact_number.ilike.%${query}%`);
-
-        if (orgId) {
-            leadsQuery = leadsQuery.eq('organization_id', orgId);
-        }
+        // CRM leads follow the CRM's own rules: only people with CRM access, admins see their org,
+        // reps see their own leads and markets. Anyone else simply gets no lead results.
+        const crmAccess = await resolveCrmAccess(request, orgId);
+        const leadsQuery = isCrmAccessError(crmAccess)
+            ? Promise.resolve({ data: [] as Record<string, unknown>[] })
+            : scopeLeadsQuery(
+                supabaseAdmin
+                    .from('crm_leads')
+                    .select('id, company_name, contact_person, email, contact_number, location, organization_id')
+                    .or(`company_name.ilike.%${query}%,contact_person.ilike.%${query}%,email.ilike.%${query}%,contact_number.ilike.%${query}%`),
+                crmAccess,
+            ).limit(10);
 
         const [
             ticketsRes,
@@ -56,7 +68,7 @@ export async function GET(request: Request) {
                 .or(`name.ilike.%${query}%,code.ilike.%${query}%`)
                 .limit(5),
 
-            leadsQuery.limit(10)
+            leadsQuery
         ]);
 
         const results = [

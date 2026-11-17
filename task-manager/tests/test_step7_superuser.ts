@@ -38,7 +38,7 @@ async function run() {
 
     console.log('\n3. The AI reader is checked before it is believed');
     const fake = (payload: unknown, ok = true) => (async () => ({ ok, json: async () => ({ choices: [{ message: { content: JSON.stringify(payload) } }] }) })) as unknown as typeof fetch;
-    const env = { GROQ_TASK_CHAT_API_KEY: 'k' };
+    const env = { GROQ_API_KEY: 'k' };
     const msg = 'how are the folks in procurement getting along';
     const good = await SuperuserAIInterpreter.interpret(msg, { departments: ['Procurement'] }, { env, fetch: fake({ kind: 'department_progress', subject: 'procurement', title: null }) });
     check('a grounded answer is accepted', good?.kind === 'department_progress' && (good as any).subject === 'procurement', good);
@@ -52,9 +52,11 @@ async function run() {
     check('a provider error → nothing returned (no crash)', await SuperuserAIInterpreter.interpret(msg, { departments: [] }, { env, fetch: fake({}, false) }) === null);
 
     // ── stubbed world for the router / executor ──────────────────────────────
-    process.env.GROQ_TASK_CHAT_API_KEY = 'k'; // present, but fetch below is fake
+    process.env.GROQ_API_KEY = 'k'; // present, but fetch below is fake
     const aiCalls: string[] = [];
     (globalThis as any).fetch = async (_u: string, init: any) => {
+        // Owner 2026-10-28: the "AI models" setting is read from the database first; offline, that read fails → today's model
+        if (!String(_u).includes('api.groq.com')) throw new Error('offline test: no database');
         aiCalls.push(String(init?.body));
         const body = JSON.parse(init.body);
         const message = JSON.parse(body.messages[1].content).message as string;
@@ -124,7 +126,9 @@ async function run() {
 
     reset();
     await say('how are the folks in procurement getting along');
-    check('unusual wording: the AI reads it, and the answer is still the real Procurement data', aiCalls.length === 1 && toolCalls.includes('progress:d-proc'), { aiCalls: aiCalls.length, toolCalls });
+    // 2026-11-02 (owner): the old bot's separate "Superuser chat" AI is retired (Smart chat answers superusers with the main
+    // model). The old bot no longer calls it, so unusual wording reads nothing here (and invents nothing).
+    check('unusual wording: the old bot no longer calls the retired superuser AI, and reads no data by guesswork', aiCalls.length === 0 && toolCalls.length === 0, { aiCalls: aiCalls.length, toolCalls });
 
     reset();
     await say('help');

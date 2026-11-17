@@ -1,5 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
+
+/**
+ * Every handler here uses the service role, so each one checks the caller first: signed in, and
+ * a master admin, an internal member of the property's organisation, or an internal member of the
+ * property itself (clients, tenants and vendors are refused). Returns a response to send back when
+ * the caller is refused, or null when they may continue.
+ */
+async function refuseUnlessPropertyAccess(request: NextRequest, propertyId: string): Promise<NextResponse | null> {
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    const orgId = await propertyOrgId(propertyId);
+    if (!orgId) return NextResponse.json({ error: 'Property not found' }, { status: 404 });
+    if (!canUseProperty(caller, propertyId, orgId)) return forbidden('Forbidden: no access to this property');
+    return null;
+}
 
 // GET: Fetch all vendors for a property
 export async function GET(
@@ -7,6 +23,8 @@ export async function GET(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const refused = await refuseUnlessPropertyAccess(request, propertyId);
+    if (refused) return refused;
     const supabase = createAdminClient();
 
     const { data, error } = await supabase
@@ -37,6 +55,8 @@ export async function POST(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const refused = await refuseUnlessPropertyAccess(request, propertyId);
+    if (refused) return refused;
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -96,6 +116,8 @@ export async function PATCH(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const refused = await refuseUnlessPropertyAccess(request, propertyId);
+    if (refused) return refused;
     const supabase = createAdminClient();
     const body = await request.json();
 
@@ -131,6 +153,8 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string }> }
 ) {
     const { propertyId } = await params;
+    const refused = await refuseUnlessPropertyAccess(request, propertyId);
+    if (refused) return refused;
     const supabase = createAdminClient();
     const { searchParams } = new URL(request.url);
     const vendorId = searchParams.get('id');
@@ -140,6 +164,17 @@ export async function DELETE(
     }
 
     try {
+        // The vendor must belong to this property: the dependent rows below are deleted by vendor id alone.
+        const { data: owned } = await supabase
+            .from('vendors')
+            .select('id')
+            .eq('id', vendorId)
+            .eq('property_id', propertyId)
+            .maybeSingle();
+        if (!owned) {
+            return NextResponse.json({ error: 'Vendor not found at this property' }, { status: 404 });
+        }
+
         // Delete dependent records first to satisfy foreign key constraints
         await supabase
             .from('vendor_daily_revenue')

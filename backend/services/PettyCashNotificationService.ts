@@ -22,7 +22,8 @@ async function context(event:PcOutboxEvent,channel:PcChannel){
         supabaseAdmin.from('petty_cash_requests').select('*').eq('id',p.request_id).eq('organization_id',p.organization_id).maybeSingle(),
         supabaseAdmin.from('system_config').select('key,value').in('key',[`${channel}_notifications_enabled`,`${channel}_petty_cash_enabled`]),
     ]);
-    const settings=checked(settingsResult);const request=checked(requestResult);const system=checked(systemResult);
+    const settings=checked(settingsResult);const request=checked(requestResult);
+    const system = systemResult.error ? [] : (systemResult.data || []);
     if(system?.some(row=>row.value===false))return null;
     if(!request||request.property_id!==p.property_id||request.requester_id!==p.requester_id||request.workflow_version!==2||request.request_type!=='advance')return null;
     const rule=effectivePcRule(settings,p.property_id,definition.key,channel);if(!rule)return null;

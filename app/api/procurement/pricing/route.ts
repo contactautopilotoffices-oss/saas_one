@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { PricingAndAliasService } from '@/backend/lib/procurement/pricingAndAliasService';
+import { resolveCaller, isCallerError, forbidden, guardOrg, guardProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
+import { isProcurementAdmin } from '@/backend/lib/auth/procurementAccess';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,6 +12,13 @@ export async function GET(request: NextRequest) {
 
         if (!organizationId) {
             return NextResponse.json({ error: 'organization_id is required' }, { status: 400 });
+        }
+        // Reading: internal members of the property (which must be in this organisation) or of the organisation.
+        {
+            const denied = propertyId
+                ? (await guardProperty(request, propertyId)) || ((await propertyOrgId(propertyId)) !== organizationId ? NextResponse.json({ error: 'Property does not belong to this organization' }, { status: 400 }) : null)
+                : await guardOrg(request, organizationId);
+            if (denied) return denied;
         }
 
         const items = await PricingAndAliasService.getCatalogWithSitePrices(organizationId, propertyId);
@@ -27,6 +36,12 @@ export async function POST(request: NextRequest) {
 
         if (!organization_id || !item_id || !property_id || unit_price === undefined) {
             return NextResponse.json({ error: 'Missing required fields: organization_id, item_id, property_id, unit_price' }, { status: 400 });
+        }
+        {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            if (!isProcurementAdmin(caller, organization_id)) return forbidden('Forbidden: procurement or admin access is required');
+            if ((await propertyOrgId(property_id)) !== organization_id) return NextResponse.json({ error: 'Property does not belong to this organization' }, { status: 400 });
         }
 
         const adminSupabase = createAdminClient();

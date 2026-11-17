@@ -11,6 +11,8 @@ export interface AiSensyTemplateOptions {
     userName?: string;
     mediaUrl?: string;
     mediaFilename?: string;
+    /** Value for an authentication template's copy-code button (the OTP itself). */
+    copyCode?: string;
 }
 
 export interface AiSensySendResult {
@@ -69,7 +71,7 @@ export class AiSensyService {
             const sanitizedParams = (options.templateParams || []).map(p => sanitizeWhatsAppParam(p));
             const userName = sanitizeWhatsAppParam(options.userName ?? 'User');
 
-            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string } } = {
+            const bodyPayload: { apiKey: string; campaignName: string; destination: string; userName: string; templateParams: string[]; source: string; media?: { url: string; filename: string }; buttons?: unknown[] } = {
                 apiKey,
                 campaignName: options.campaignName,
                 destination,
@@ -83,6 +85,16 @@ export class AiSensyService {
                     url: options.mediaUrl,
                     filename: options.mediaFilename || 'ticket_attachment.jpg'
                 };
+            }
+
+            if (options.copyCode) {
+                // Meta sends the copy-code button of an authentication template as a URL-type button parameter.
+                bodyPayload.buttons = [{
+                    type: 'button',
+                    sub_type: 'url',
+                    index: 0,
+                    parameters: [{ type: 'text', text: options.copyCode }],
+                }];
             }
 
             console.info('[AiSensy] Sending campaign', {

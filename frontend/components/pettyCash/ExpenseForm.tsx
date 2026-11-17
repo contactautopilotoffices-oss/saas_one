@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { inr, PC_CATEGORIES, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
 import ProofUpload from './ProofUpload';
 import { pcFetch, pcJson, pettyCashToday, type Context, type Upload, type Expense } from './workflowTypes';
 import type { PettyCashOcrData } from '@/app/api/petty-cash/ocr/route';
-import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Sparkles, CheckCircle2, AlertCircle, ShieldAlert, Building2, Users, FileCheck2, FileWarning, MessageSquareText, Receipt } from 'lucide-react';
 
 export default function ExpenseForm({
     context,
@@ -13,6 +13,8 @@ export default function ExpenseForm({
     balance,
     correction,
     existingExpenses,
+    proofThreshold = 500,
+    requestDate,
     onSaved
 }: {
     context: Context;
@@ -20,6 +22,9 @@ export default function ExpenseForm({
     balance: number;
     correction?: Expense;
     existingExpenses?: Expense[];
+    proofThreshold?: number;
+    /** Request date (YYYY-MM-DD, India time). Bills dated before it are not accepted. */
+    requestDate?: string;
     onSaved: () => void;
 }) {
     const [proofs, setProofs] = useState<Upload[]>([]);
@@ -28,6 +33,7 @@ export default function ExpenseForm({
     const [error, setError] = useState('');
     const [key] = useState(() => crypto.randomUUID());
     const [amount, setAmount] = useState('');
+    const [spendMode, setSpendMode] = useState<'Operation' | 'Client'>(correction?.spend_mode || 'Operation');
     const [selectedCategory, setSelectedCategory] = useState(correction?.category || PC_CATEGORIES[0] || 'Travel');
     const [customCategory, setCustomCategory] = useState('');
     const [vendor, setVendor] = useState(correction?.vendor || '');
@@ -35,7 +41,18 @@ export default function ExpenseForm({
     const [paymentMode, setPaymentMode] = useState(correction?.payment_mode || PC_PAYMENT_MODES[0] || 'Cash');
     const [paymentRef, setPaymentRef] = useState(correction?.payment_ref || '');
     const [description, setDescription] = useState(correction?.description || '');
+    const [noBillReason, setNoBillReason] = useState('');
+    const [noBillMode, setNoBillMode] = useState(false);
     const [ocrData, setOcrData] = useState<PettyCashOcrData | null>(null);
+
+    const effectiveThreshold = proofThreshold ?? 500;
+    const spendAmount = Number(amount) || 0;
+    const requiresProof = !correction && spendAmount > effectiveThreshold;
+    const missingProof = requiresProof && proofs.length === 0;
+    const isNoBillActive = !correction && !requiresProof && noBillMode;
+    const needsNoBillReason = !correction && !requiresProof && (noBillMode || proofs.length === 0);
+    const missingNoBillReason = needsNoBillReason && noBillReason.trim().length < 10;
+    const billBeforeRequest = !correction && !!requestDate && !!expenseDate && expenseDate < requestDate;
 
     const spendCents = Math.round(Number(amount) * 100);
     const validAmount =
@@ -46,29 +63,11 @@ export default function ExpenseForm({
         spendCents <= Math.round(balance * 100);
     const remaining = (Math.round(balance * 100) - spendCents) / 100;
 
-    const clientDuplicate = useMemo(() => {
-        if (!existingExpenses || !existingExpenses.length) return null;
-        const normRef = paymentRef.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-        const isNonCash = paymentMode !== 'Cash';
-        for (const exp of existingExpenses) {
-            if (correction && exp.id === correction.id) continue;
-            const expNorm = (exp.payment_ref || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            if (isNonCash && normRef && expNorm && normRef === expNorm) {
-                return `UTR '${paymentRef}' is already claimed in this request for ₹${exp.amount} (${exp.vendor}).`;
-            }
-            if (amount && Number(amount) === Number(exp.amount) && expenseDate === exp.expense_date?.slice(0, 10)) {
-                const normVendor = vendor.trim().toLowerCase();
-                const expVendor = (exp.vendor || '').trim().toLowerCase();
-                if (normVendor && expVendor && (normVendor === expVendor || normVendor.includes(expVendor) || expVendor.includes(normVendor))) {
-                    return `Identical expense of ₹${amount} for '${exp.vendor}' on ${expenseDate} is already recorded in this request.`;
-                }
-            }
-        }
-        return null;
-    }, [existingExpenses, paymentRef, paymentMode, amount, vendor, expenseDate, correction]);
+    const { clientDuplicate, clientSimilar } = findClientDuplicates(existingExpenses, correction, paymentRef, paymentMode, amount, vendor, expenseDate);
 
     const isBlockedDuplicate = Boolean(ocrData?.is_duplicate_ref || clientDuplicate);
-    const duplicateMessage = ocrData?.duplicate_warning || clientDuplicate;
+    const duplicateMessage = ocrData?.is_duplicate_ref ? ocrData.duplicate_warning : clientDuplicate;
+    const similarWarning = !isBlockedDuplicate ? (ocrData?.duplicate_warning || clientSimilar) : null;
 
     const handleOcrExtracted = (ocr: PettyCashOcrData) => {
         setOcrData(ocr);
@@ -123,6 +122,7 @@ export default function ExpenseForm({
                             )
                         );
                     } else {
+                        const isNoBillSubmit = !correction && !requiresProof && (noBillMode || proofs.length === 0);
                         await pcFetch(
                             `/api/petty-cash/${requestId}/expenses`,
                             pcJson({
@@ -134,7 +134,10 @@ export default function ExpenseForm({
                                 expense_date: expenseDate,
                                 payment_mode: paymentMode,
                                 payment_ref: paymentRef,
+                                spend_mode: spendMode,
                                 documents: proofs,
+                                has_no_bill: isNoBillSubmit,
+                                ...(isNoBillSubmit || noBillReason.trim() ? { no_bill_reason: noBillReason.trim() } : {}),
                                 idempotency_key: key
                             })
                         );
@@ -185,6 +188,7 @@ export default function ExpenseForm({
                                 name="expense_date"
                                 type="date"
                                 value={expenseDate}
+                                min={requestDate}
                                 max={pettyCashToday()}
                                 onChange={e => setExpenseDate(e.target.value)}
                                 required
@@ -197,6 +201,37 @@ export default function ExpenseForm({
                             Remaining after this expense: {inr(remaining)}
                         </p>
                     )}
+
+                    {/* Spend Mode Selector: Operation vs Client */}
+                    <div>
+                        <span className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                            Spend Mode / Type <span className="text-rose-500">*</span>
+                        </span>
+                        <div className="grid grid-cols-2 gap-2.5">
+                            <button
+                                type="button"
+                                onClick={() => setSpendMode('Operation')}
+                                className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-black transition-all ${
+                                    spendMode === 'Operation'
+                                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/25'
+                                        : 'bg-slate-50 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#282e33]'
+                                }`}
+                            >
+                                <Building2 size={15} /> Operational Spend
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSpendMode('Client')}
+                                className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl border text-xs font-black transition-all ${
+                                    spendMode === 'Client'
+                                        ? 'bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-500/25'
+                                        : 'bg-slate-50 dark:bg-[#21262d] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#282e33]'
+                                }`}
+                            >
+                                <Users size={15} /> Client Spend
+                            </button>
+                        </div>
+                    </div>
 
                     {/* Vision AI OCR Validation Card */}
                     {ocrData && (
@@ -361,22 +396,169 @@ export default function ExpenseForm({
                 />
             </label>
 
-            <ProofUpload
-                org={context.organization_id}
-                requestId={requestId}
-                value={proofs}
-                onChange={newProofs => {
-                    setProofs(newProofs);
-                    if (newProofs.length === 0) {
-                        setOcrData(null);
-                        setError('');
-                    }
-                }}
-                disabled={busy}
-                onBusyChange={setUploading}
-                onOcrExtracted={handleOcrExtracted}
-                label={correction ? 'Replacement bills / receipts' : 'Bills / receipts / payment screenshots'}
-            />
+            {/* Property Proof Rule Dynamic Badge */}
+            {!correction && spendAmount > 0 && (
+                <div className={`p-3 rounded-xl border text-xs flex items-center gap-2.5 ${
+                    requiresProof
+                        ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200'
+                        : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-900 dark:text-emerald-200'
+                }`}>
+                    {requiresProof ? (
+                        <FileWarning size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                        <FileCheck2 size={16} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    )}
+                    <div>
+                        <p className="font-bold">
+                            {requiresProof
+                                ? `Bill / Proof Mandatory (Amount > ₹${effectiveThreshold})`
+                                : `No Bill Required (Amount ≤ ₹${effectiveThreshold})`}
+                        </p>
+                        <p className="text-[11px] opacity-90 mt-0.5">
+                            {requiresProof
+                                ? `Property rule requires a valid bill/receipt upload for expenses over ₹${effectiveThreshold}.`
+                                : `Property allows bill-free recording up to ₹${effectiveThreshold}. If you have no bill, give the reason below.`}
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Documentation Choice when below threshold */}
+            {!correction && spendAmount > 0 && !requiresProof && (
+                <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-[#21262d] rounded-xl text-xs font-semibold">
+                    <button
+                        type="button"
+                        onClick={() => { setNoBillMode(false); }}
+                        className={`flex-1 py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            !noBillMode
+                                ? 'bg-white dark:bg-[#161b22] text-slate-900 dark:text-white shadow-sm font-bold'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <Receipt size={14} /> Upload Bill / Receipt
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => { setNoBillMode(true); setOcrData(null); }}
+                        className={`flex-1 py-1.5 px-3 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                            noBillMode
+                                ? 'bg-white dark:bg-[#161b22] text-amber-700 dark:text-amber-400 shadow-sm font-bold'
+                                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                    >
+                        <MessageSquareText size={14} /> No Bill (Upload Proof / Reason)
+                    </button>
+                </div>
+            )}
+
+            {isNoBillActive ? (
+                <div className="space-y-3 p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-900/40">
+                    <div className="text-xs text-amber-900 dark:text-amber-200">
+                        <p className="font-bold flex items-center gap-1.5">
+                            <MessageSquareText size={14} className="text-amber-600 dark:text-amber-400" />
+                            No-Bill Expense (Informal Purchase Proof)
+                        </p>
+                        <p className="text-[11px] opacity-90 mt-0.5">
+                            If the vendor gave no bill, you can attach a <strong>WhatsApp chat approval screenshot</strong>, supervisor message, or photo proof. A declared reason is required below.
+                        </p>
+                    </div>
+
+                    <ProofUpload
+                        org={context.organization_id}
+                        requestId={requestId}
+                        value={proofs}
+                        onChange={setProofs}
+                        disabled={busy}
+                        onBusyChange={setUploading}
+                        label="Supervisor Chat / WhatsApp Approval Proof (Screenshot or photo — Optional)"
+                    />
+
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Reason there is no bill <span className="text-rose-500">*</span>
+                        <textarea
+                            className="pc-input mt-1.5"
+                            name="no_bill_reason"
+                            value={noBillReason}
+                            onChange={e => setNoBillReason(e.target.value)}
+                            placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
+                            required
+                            minLength={10}
+                            maxLength={500}
+                        />
+                    </label>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-slate-400 font-medium">Quick reason:</span>
+                        {[
+                            { label: 'Auto / Cab', text: 'Auto / cab fare — unmetered driver gives no printed bill' },
+                            { label: 'Daily Wage Labor', text: 'Daily wage coolie / loading labor payment' },
+                            { label: 'Tea & Refreshment', text: 'Tea and pantry refreshments from local tea stall' },
+                            { label: 'Local Small Vendor', text: 'Emergency local hardware / stationery from unorganized shop' }
+                        ].map(chip => (
+                            <button
+                                key={chip.label}
+                                type="button"
+                                onClick={() => setNoBillReason(chip.text)}
+                                className="text-[10px] px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800 bg-white dark:bg-[#161b22] text-amber-800 dark:text-amber-300 hover:border-amber-500 transition-colors"
+                            >
+                                + {chip.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            ) : (
+                <>
+                    <ProofUpload
+                        org={context.organization_id}
+                        requestId={requestId}
+                        value={proofs}
+                        onChange={newProofs => {
+                            setProofs(newProofs);
+                            if (newProofs.length === 0) {
+                                setOcrData(null);
+                                setError('');
+                            }
+                        }}
+                        disabled={busy}
+                        onBusyChange={setUploading}
+                        onOcrExtracted={handleOcrExtracted}
+                        label={correction ? 'Replacement bills / receipts' : requiresProof ? 'Bills / receipts / payment screenshots (Required)' : 'Bills / receipts / payment screenshots (Optional)'}
+                    />
+
+                    {needsNoBillReason && (
+                        <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                                Reason there is no bill <span className="text-rose-500">*</span>
+                                <textarea
+                                    className="pc-input mt-1.5"
+                                    name="no_bill_reason"
+                                    value={noBillReason}
+                                    onChange={e => setNoBillReason(e.target.value)}
+                                    placeholder="e.g. Auto rickshaw fare, driver gives no receipt"
+                                    required
+                                    minLength={10}
+                                    maxLength={500}
+                                />
+                            </label>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                Tip: If you have a WhatsApp chat or supervisor approval screenshot, click <strong>&quot;No Bill (Upload Proof / Reason)&quot;</strong> above to attach it as proof.
+                            </p>
+                        </div>
+                    )}
+                </>
+            )}
+
+            {billBeforeRequest && (
+                <p role="alert" className="text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5">
+                    <AlertCircle size={14} /> Bill date cannot be before the request date ({requestDate}).
+                </p>
+            )}
+
+            {similarWarning && (
+                <p role="status" className="p-3 rounded-xl border bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" /> <span>Possible duplicate: {similarWarning} Accounts will see this note.</span>
+                </p>
+            )}
 
             {isBlockedDuplicate && (
                 <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-500/50 text-rose-800 dark:text-rose-200 text-xs space-y-1 animate-in fade-in duration-200">
@@ -393,13 +575,55 @@ export default function ExpenseForm({
                 </div>
             )}
 
+            {missingProof && (
+                <p role="alert" className="text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5">
+                    <AlertCircle size={14} /> Please attach bill/receipt proof before submitting (amount exceeds ₹{effectiveThreshold}).
+                </p>
+            )}
+
             {error && <p role="alert" className="text-red-600 text-xs">{error}</p>}
             <button
                 className="pc-button mt-2"
-                disabled={busy || uploading || (!!correction && !proofs.length) || (!correction && !validAmount) || isBlockedDuplicate}
+                disabled={
+                    busy ||
+                    uploading ||
+                    (!!correction && !proofs.length) ||
+                    (!correction && !validAmount) ||
+                    missingProof ||
+                    missingNoBillReason ||
+                    billBeforeRequest ||
+                    description.trim().length < 3 ||
+                    isBlockedDuplicate
+                }
             >
                 {busy ? 'Saving…' : correction ? 'Submit corrected proof' : 'Save expense'}
             </button>
         </form>
     );
+}
+
+// Exact UTR reuse blocks; a same amount/date/vendor match only warns (two auto rides can cost the same).
+function findClientDuplicates(
+    existingExpenses: Expense[] | undefined, correction: Expense | undefined,
+    paymentRef: string, paymentMode: string, amount: string, vendor: string, expenseDate: string
+): { clientDuplicate: string | null; clientSimilar: string | null } {
+    const normRef = paymentRef.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const isNonCash = paymentMode !== 'Cash';
+    let similar: string | null = null;
+    for (const exp of existingExpenses || []) {
+        if (correction && exp.id === correction.id) continue;
+        if (exp.review_status === 'rejected' || exp.review_status === 'withdrawn') continue;
+        const expNorm = (exp.payment_ref || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (isNonCash && exp.payment_mode !== 'Cash' && normRef && expNorm && normRef === expNorm) {
+            return { clientDuplicate: `UTR '${paymentRef}' is already claimed in this request for ₹${exp.amount} (${exp.vendor}).`, clientSimilar: null };
+        }
+        if (!similar && amount && Number(amount) === Number(exp.amount) && expenseDate === exp.expense_date?.slice(0, 10)) {
+            const normVendor = vendor.trim().toLowerCase();
+            const expVendor = (exp.vendor || '').trim().toLowerCase();
+            if (normVendor && expVendor && (normVendor === expVendor || normVendor.includes(expVendor) || expVendor.includes(normVendor))) {
+                similar = `An expense of ₹${amount} for '${exp.vendor}' on ${expenseDate} is already recorded in this request. Save only if this is a separate purchase.`;
+            }
+        }
+    }
+    return { clientDuplicate: null, clientSimilar: similar };
 }

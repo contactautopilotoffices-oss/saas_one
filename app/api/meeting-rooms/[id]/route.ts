@@ -87,7 +87,8 @@ export async function PATCH(
             size,
             amenities,
             status,
-            propertyId
+            propertyId,
+            hourly_rate
         } = body;
 
         const updateData: any = {};
@@ -99,6 +100,17 @@ export async function PATCH(
         if (amenities !== undefined) updateData.amenities = amenities;
         if (status !== undefined) updateData.status = status;
         if (propertyId !== undefined) updateData.property_id = propertyId;
+        if (hourly_rate !== undefined) {
+            if (hourly_rate === null || hourly_rate === '') {
+                updateData.hourly_rate = null;
+            } else {
+                const rate = typeof hourly_rate === 'number' || typeof hourly_rate === 'string' ? Number(hourly_rate) : NaN;
+                if (!Number.isFinite(rate) || rate < 0) {
+                    return NextResponse.json({ error: 'Price per hour must be a number of 0 or more' }, { status: 400 });
+                }
+                updateData.hourly_rate = rate;
+            }
+        }
 
         // Recalculate organization_id if property is changing
         if (propertyId !== undefined && propertyId !== room.property_id) {

@@ -17,11 +17,14 @@ async function run() {
 
     let user: { id: string; email: string } | null = null;
     let admin = false;
+    let tech = false;
     auth.currentUser = async () => user;
     auth.isAdmin = async () => admin;
-    const as = (who: 'anon' | 'employee' | 'admin') => {
-        user = who === 'anon' ? null : { id: who === 'admin' ? 'admin-1' : 'emp-1', email: `${who}@example.com` };
+    auth.isTech = async () => tech;
+    const as = (who: 'anon' | 'employee' | 'admin' | 'tech') => {
+        user = who === 'anon' ? null : { id: who === 'admin' ? 'admin-1' : who === 'tech' ? 'tech-1' : 'emp-1', email: `${who}@example.com` };
         admin = who === 'admin';
+        tech = who === 'tech';
     };
 
     const req = (url: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) =>
@@ -36,11 +39,27 @@ async function run() {
         routes.push([label, () => m[method](req(url, { method, body: body ?? (method === 'POST' ? {} : undefined) }))]);
     };
     const base = '../../app/api/task-manager';
+    // Owner 2026-10-22: the Control Centre routes are for the Tech team only (super admins are refused)
     await add('testing-config GET', `${base}/testing-config/route`, 'GET', '/api/task-manager/testing-config');
     await add('testing-config POST (kill switch)', `${base}/testing-config/route`, 'POST', '/api/task-manager/testing-config', { action: 'toggle_global_kill_switch', halt: false });
     await add('testing-config POST (send now)', `${base}/testing-config/route`, 'POST', '/api/task-manager/testing-config', { action: 'trigger_dispatch', dryRun: false });
     await add('manager-role GET (people + phones)', `${base}/manager-role/route`, 'GET', '/api/task-manager/manager-role');
     await add('manager-role POST (kickoffs, roles)', `${base}/manager-role/route`, 'POST', '/api/task-manager/manager-role', { employeeId: 'x', action: 'send_employee_kickoff' });
+    const controlCentre = routes.splice(0);
+
+    console.log('\n0. Control Centre routes (Tech only)');
+    for (const [label, call] of controlCentre) {
+        as('anon');
+        const anon = await status(call);
+        as('employee');
+        const emp = await status(call);
+        as('admin');
+        const adm = await status(call);
+        as('tech');
+        const tch = await status(call);
+        check(`${label}: not signed in → 401, employee → 403, super admin → 403, tech → let through`, anon === 401 && emp === 403 && adm === 403 && !refused(tch), { anon, emp, adm, tch });
+    }
+
     await add('reminders POST (can message a phone)', `${base}/reminders/route`, 'POST', '/api/task-manager/reminders', { action: 'nudge_member', phone: '9876543210' });
     await add('dashboard GET (old)', `${base}/dashboard/route`, 'GET', '/api/task-manager/dashboard');
     await add('dashboard POST (old)', `${base}/dashboard/route`, 'POST', '/api/task-manager/dashboard', { action: 'create_task' });

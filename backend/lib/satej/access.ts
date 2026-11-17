@@ -1,0 +1,45 @@
+/**
+ * Who may use Meera, for the /api/satej routes.
+ *
+ * The same rule as the procurement catalogue (backend/lib/procurement/catalogAccess.ts):
+ * an active membership of the organisation with the procurement, org super
+ * admin or master admin role. The organisation id comes from the caller and is
+ * only trusted after that membership check — never on its own.
+ */
+
+import { NextResponse } from 'next/server';
+import { createClient } from '@/frontend/utils/supabase/server';
+import { isProcurementUser } from '@/backend/lib/procurement/catalogAccess';
+import { isValidUuid } from '@/backend/lib/utils';
+
+export interface SatejCaller {
+    userId: string;
+    name: string;
+}
+
+export async function requireSatejCaller(organizationId: string | null | undefined): Promise<SatejCaller | NextResponse> {
+    if (!organizationId || !isValidUuid(organizationId)) {
+        return NextResponse.json({ error: 'organizationId is required' }, { status: 400 });
+    }
+    const supabase = await createClient();
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!(await isProcurementUser(user.id, organizationId))) {
+        return NextResponse.json({ error: 'Meera is available to the procurement team and org super admins.' }, { status: 403 });
+    }
+    const meta = (user.user_metadata ?? {}) as { full_name?: string; name?: string };
+    return { userId: user.id, name: meta.full_name || meta.name || user.email || 'Team member' };
+}
+
+/**
+ * May this caller change what Meera says to every vendor? Org super admins and
+ * master admins only — the procurement desk can propose a script, not publish it.
+ */
+export async function canPublishVoiceScript(userId: string, organizationId: string): Promise<boolean> {
+    const { supabaseAdmin } = await import('@/backend/lib/supabase/admin');
+    const [{ data: m }, { data: u }] = await Promise.all([
+        supabaseAdmin.from('organization_memberships').select('role').eq('user_id', userId).eq('organization_id', organizationId).eq('is_active', true).maybeSingle(),
+        supabaseAdmin.from('users').select('is_master_admin').eq('id', userId).maybeSingle(),
+    ]);
+    return !!u?.is_master_admin || ['org_super_admin', 'master_admin'].includes(String(m?.role ?? ''));
+}

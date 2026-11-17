@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { AiSensyService } from '@/backend/services/AiSensyService';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { sanitizeWhatsAppParam } from '@/backend/lib/whatsapp/sanitize';
+import { rememberTicketReplyMessage } from '@/backend/lib/whatsapp/ticketReply';
 
 /**
  * POST /api/admin/whatsapp/retry
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
             });
             sent = res.success;
             sendError = res.error;
+            if (res.success) await rememberTicketReplyMessage(row, res.messageIds);
         } else {
             sent = await WhatsAppService.sendAsync(row.phone, {
                 message: row.message,

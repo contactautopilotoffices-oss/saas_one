@@ -19,7 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { composePlan, bindTools, ALL_SCOPE_OPTION, type AgentPlan, type PlanSlot } from '@/backend/lib/agents/plan';
+import { composePlan, bindTools, ALL_SCOPE_OPTION, TOOL_SLUGS, type AgentPlan, type PlanSlot } from '@/backend/lib/agents/plan';
 import { composePlanWithModel } from '@/backend/lib/agents/planModel';
 import { AGENT_MODULES } from '@/frontend/types/agentRuntime';
 import { AGENT_TABLE_CATALOG } from '@/app/api/agents/_shared';
@@ -114,6 +114,13 @@ async function hydrateSlots(plan: AgentPlan, db: Db, orgId: string): Promise<Age
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The planner is one model call with a 240 s timeout of its own (COUNCIL_LLM_TIMEOUT_MS).
+ * Without this the platform default applied, and a slow plan was cut off with an
+ * HTML 504 the console could only describe as "took too long".
+ */
+export const maxDuration = 300;
+
 export async function POST(request: NextRequest) {
     try {
         const supabase = await createClient();
@@ -147,8 +154,7 @@ export async function POST(request: NextRequest) {
         // scan POs for anomalies came back asking which site to buy a fan for.
         // composePlanWithModel falls back to those rules on any failure, so this
         // is strictly better, never worse.
-        const toolSlugs = bindTools(['db_read', 'db_write', 'web_search', 'email', 'whatsapp', 'push', 'llm', 'zoho_books'])
-            .map((t) => t.slug);
+        const toolSlugs = [...TOOL_SLUGS];
 
         const plan = await composePlanWithModel({
             description,
@@ -159,7 +165,9 @@ export async function POST(request: NextRequest) {
         void composePlan; void availableTables;
         const hydrated = await hydrateSlots(plan, supabase, orgId);
 
-        return NextResponse.json({ ok: true, plan: hydrated });
+        // tool_catalog: every tool, with its live status, so the flow palette can
+        // offer (and flag) tools the plan has not used yet.
+        return NextResponse.json({ ok: true, plan: hydrated, tool_catalog: bindTools([...TOOL_SLUGS]) });
     } catch (e) {
         return NextResponse.json({ error: (e as Error).message }, { status: 500 });
     }

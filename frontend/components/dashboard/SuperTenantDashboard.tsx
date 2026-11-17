@@ -16,7 +16,7 @@ import Loader from '@/frontend/components/ui/Loader';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
 import TenantRoomBooking from '@/frontend/components/meeting-rooms/TenantRoomBooking';
 import SettingsView from './SettingsView';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import NotificationBell from './NotificationBell';
 import PendingActionsBell from './PendingActionsBell';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -922,7 +922,7 @@ const SuperTenantDashboard = () => {
                     <p className="text-sm text-text-tertiary mt-1">Try adjusting your filters or raising a new request.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className={`${TICKET_GRID_CLASS} gap-3`}>
                     {filteredTickets.map(t => (
                         <TicketCard
                             key={t.id}
@@ -945,6 +945,7 @@ const SuperTenantDashboard = () => {
                             propertyName={t.property?.name}
                             escalationChain={(() => { const logs = (t as any).ticket_escalation_logs; if (!logs || logs.length === 0) return undefined; const sorted = [...logs].sort((a: any, b: any) => new Date(a.escalated_at).getTime() - new Date(b.escalated_at).getTime()); const chain: { name: string; avatar?: string | null }[] = []; sorted.forEach((log: any, i: number) => { if (i === 0 && log.from_employee?.full_name) chain.push({ name: log.from_employee.full_name, avatar: log.from_employee.user_photo_url }); if (log.to_employee?.full_name) chain.push({ name: log.to_employee.full_name, avatar: log.to_employee.user_photo_url }); }); return chain.length > 0 ? chain : undefined; })()}
                             raisedByTenant={((t.creator as any)?.property_memberships || []).some((m: any) => m.property_id === t.property_id && ['tenant', 'super_tenant'].includes((m.role || '').toLowerCase()))}
+                            isInternal={Boolean((t as any).internal)}
                             onClick={() => router.push(`/tickets/${t.id}?from=requests`)}
                             onEdit={t.raised_by === user?.id ? (e) => {
                                 e.stopPropagation();

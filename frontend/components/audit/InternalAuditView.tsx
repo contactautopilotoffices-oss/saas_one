@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
+import { downloadTemplateFromUrl } from '@/frontend/utils/downloadTemplate';
 
 interface AuditChecklistItem {
     id: string;
@@ -186,6 +187,15 @@ export default function InternalAuditView({ organizationId, propertyId }: Props)
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={() => downloadTemplateFromUrl('/api/audit/template', 'Internal_Audit_Template.xlsx').catch(err => alert(err?.message || 'Failed to download template'))}
+                        className="flex items-center gap-2 px-4 py-2 bg-white text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-50 transition-all cursor-pointer border border-slate-200"
+                        title="Download Excel template accepted by Internal Audit importer"
+                    >
+                        <Download className="w-4 h-4 text-primary" />
+                        Template (.xlsx)
+                    </button>
                     <input 
                         type="file" 
                         id="audit-import" 

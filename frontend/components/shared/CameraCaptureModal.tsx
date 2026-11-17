@@ -24,6 +24,8 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
     const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
     const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
+    const [zoomCapability, setZoomCapability] = useState<{ min: number; max: number; step: number } | null>(null);
+    const [activeZoom, setActiveZoom] = useState<number>(1);
 
     // Unified Effect for opening/closing
     useEffect(() => {
@@ -103,6 +105,24 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             streamRef.current = stream;
 
+            // Detect hardware zoom capability (e.g. 0.5x ultra-wide, 1x, 2x)
+            const videoTrack = stream.getVideoTracks()[0];
+            if (videoTrack && typeof (videoTrack as any).getCapabilities === 'function') {
+                try {
+                    const caps = (videoTrack as any).getCapabilities();
+                    if (caps.zoom) {
+                        setZoomCapability({
+                            min: caps.zoom.min || 1,
+                            max: caps.zoom.max || 1,
+                            step: caps.zoom.step || 0.1,
+                        });
+                        setActiveZoom(1);
+                    }
+                } catch (e) {
+                    console.warn("Could not query zoom capabilities:", e);
+                }
+            }
+
             // We'll use a side effect to set the srcObject when the video element renders
             if (!isRetry) {
                 // Trigger rendering of the video element if it's not already there
@@ -125,6 +145,17 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
             setIsCameraActive(false);
         } finally {
             setIsStarting(false);
+        }
+    };
+
+    const applyZoom = async (zoomValue: number) => {
+        const track = streamRef.current?.getVideoTracks()[0];
+        if (!track) return;
+        try {
+            await (track as any).applyConstraints({ advanced: [{ zoom: zoomValue }] });
+            setActiveZoom(zoomValue);
+        } catch (e) {
+            console.warn('Failed to apply camera zoom:', e);
         }
     };
 
@@ -175,8 +206,58 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
 
         const context = canvas.getContext('2d');
         if (context) {
+            // Draw camera frame
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+
+            // OPTION B: Live verification watermark stamped on canvas
+            const now = new Date();
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const dStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+            const tStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+            const stampText = `LIVE AUDIT: ${dStr} ${tStr}`;
+
+            const fontSize = Math.max(14, Math.round(canvas.width * 0.026));
+            context.font = `bold ${fontSize}px monospace, sans-serif`;
+            const textMetrics = context.measureText(stampText);
+            const paddingX = Math.round(fontSize * 0.7);
+            const paddingY = Math.round(fontSize * 0.45);
+            const dotRadius = Math.round(fontSize * 0.28);
+            const dotGap = Math.round(fontSize * 0.4);
+            const boxWidth = textMetrics.width + paddingX * 2 + dotRadius * 2 + dotGap;
+            const boxHeight = fontSize + paddingY * 2;
+            const margin = Math.round(fontSize * 0.8);
+            const boxX = canvas.width - boxWidth - margin;
+            const boxY = canvas.height - boxHeight - margin;
+
+            context.save();
+            // Background pill
+            context.fillStyle = 'rgba(15, 23, 42, 0.88)';
+            context.beginPath();
+            if ((context as any).roundRect) {
+                (context as any).roundRect(boxX, boxY, boxWidth, boxHeight, 6);
+            } else {
+                context.rect(boxX, boxY, boxWidth, boxHeight);
+            }
+            context.fill();
+            context.lineWidth = 1;
+            context.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            context.stroke();
+
+            // Emerald green live indicator dot
+            const dotCenterX = boxX + paddingX + dotRadius;
+            const dotCenterY = boxY + boxHeight / 2;
+            context.beginPath();
+            context.arc(dotCenterX, dotCenterY, dotRadius, 0, Math.PI * 2);
+            context.fillStyle = '#10b981';
+            context.fill();
+
+            // Watermark text
+            context.fillStyle = '#ffffff';
+            context.textBaseline = 'middle';
+            context.fillText(stampText, dotCenterX + dotRadius + dotGap, dotCenterY);
+            context.restore();
+
+            const imageDataUrl = canvas.toDataURL('image/jpeg', 0.88);
             setCapturedImage(imageDataUrl);
             stopCamera();
         }
@@ -208,7 +289,10 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
                 return new File([u8arr], filename, { type: mime });
             };
 
-            const file = dataUrlToFile(capturedImage, `photo_${Date.now()}.jpg`);
+            const now = new Date();
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const filename = `LIVE_CAPTURE_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+            const file = dataUrlToFile(capturedImage, filename);
             onCapture(file);
             onClose();
         } catch (err) {
@@ -292,6 +376,49 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, title =
                                     className={`w-full h-full object-cover ${isStarting ? 'opacity-0' : 'opacity-100'} transition-opacity`}
                                     style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }}
                                 />
+
+                                {/* Hardware Zoom Selector (0.5x Ultra Wide, 1x Standard, 2x Telephoto) */}
+                                {zoomCapability && zoomCapability.max > zoomCapability.min && !capturedImage && isCameraActive && (
+                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1 rounded-full bg-black/65 backdrop-blur-md z-30 border border-white/10 shadow-lg pointer-events-auto">
+                                        {zoomCapability.min <= 0.6 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => applyZoom(0.5)}
+                                                className={`w-7 h-7 rounded-full text-[10px] font-black transition-all flex items-center justify-center cursor-pointer ${
+                                                    activeZoom <= 0.6
+                                                        ? 'bg-amber-400 text-black shadow-sm font-black scale-105'
+                                                        : 'bg-white/15 text-white/80 hover:bg-white/30 hover:text-white'
+                                                }`}
+                                            >
+                                                .5
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => applyZoom(1)}
+                                            className={`w-7 h-7 rounded-full text-[10px] font-black transition-all flex items-center justify-center cursor-pointer ${
+                                                activeZoom >= 0.9 && activeZoom <= 1.2
+                                                    ? 'bg-amber-400 text-black shadow-sm font-black scale-105'
+                                                    : 'bg-white/15 text-white/80 hover:bg-white/30 hover:text-white'
+                                            }`}
+                                        >
+                                            1x
+                                        </button>
+                                        {zoomCapability.max >= 2 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => applyZoom(2)}
+                                                className={`w-7 h-7 rounded-full text-[10px] font-black transition-all flex items-center justify-center cursor-pointer ${
+                                                    activeZoom >= 1.9
+                                                        ? 'bg-amber-400 text-black shadow-sm font-black scale-105'
+                                                        : 'bg-white/15 text-white/80 hover:bg-white/30 hover:text-white'
+                                                }`}
+                                            >
+                                                2x
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
                         <canvas ref={canvasRef} className="hidden" />

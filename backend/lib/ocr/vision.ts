@@ -17,15 +17,17 @@
  * glm-5.3-flash, kimi-k3 and qwen3.8-27b.
  */
 
-import { resolveProvider } from '@/backend/lib/council/llm';
+import { resolveProvider, priceOf } from '@/backend/lib/council/llm';
+import { ocrStep } from '@/backend/lib/ocr/activity';
 import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
+import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
-export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'qwen3.8-27b'] as const;
+export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'deepseek-v4.1-flash'] as const;
 
 /** Default: best extraction quality per rupee in testing. */
 export const DEFAULT_VISION_MODEL =
-    process.env.OCR_VISION_MODEL || 'qwen3.8-27b';
+    process.env.OCR_VISION_MODEL || 'glm-5.3-flash';
 
 const TIMEOUT_MS = Number(process.env.OCR_VISION_TIMEOUT_MS || 60_000);
 
@@ -36,6 +38,8 @@ export interface VisionExtractInput {
     instruction: string;
     model?: string;
     maxTokens?: number;
+    /** Engy only: skip the model's hidden reasoning. Right for plain reading; wrong for judgement. */
+    thinkingOff?: boolean;
     /** When true, ask for response_format json_object. */
     json?: boolean;
 }
@@ -57,8 +61,12 @@ export interface VisionExtractResult {
  * Never throws: every failure comes back as { ok: false, error }, matching the
  * convention in documentBank/ocr.ts so a caller's control flow is unchanged.
  */
-export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
-    const model = input.model || DEFAULT_VISION_MODEL;
+async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtractResult> {
+    let model = input.model || DEFAULT_VISION_MODEL;
+    // qwen3.8-27b on Engy is text-only; automatically switch to multimodal glm-5.3-flash
+    if (model.includes('qwen3.8-27b')) {
+        model = 'glm-5.3-flash';
+    }
 
     // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
     const engyKey = (process.env.ENGY_API_KEY || process.env.engy || '').trim();
@@ -93,6 +101,8 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
         messages: [{ role: 'user', content }],
     };
     if (input.json) body.response_format = { type: 'json_object' };
+    // Reading a page is not a puzzle: do not let the model spend its budget "thinking" (Engy only).
+    if (input.thinkingOff && /engy\./i.test(baseUrl)) body.thinking = { type: 'disabled' };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -107,6 +117,9 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
 
         if (!res.ok) {
             const detail = (await res.text().catch(() => '')).slice(0, 400);
+            if (/does not support image input/i.test(detail) && model !== 'glm-5.3-flash') {
+                return visionExtractRaw({ ...input, model: 'glm-5.3-flash' });
+            }
             return { ...base, ok: false, error: `${provider} ${res.status}: ${detail}` };
         }
 
@@ -149,4 +162,31 @@ export async function visionExtract(input: VisionExtractInput): Promise<VisionEx
     } finally {
         clearTimeout(timer);
     }
+}
+
+/** The public entry point: the read itself, plus one step in the OCR activity log (tokens and cost included). */
+export async function visionExtract(input: VisionExtractInput): Promise<VisionExtractResult> {
+    const t0 = Date.now();
+    // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = today's model, as before.
+    // A caller that names its own model (task import, the proctor) is left alone. A chosen model that fails costs one
+    // attempt: today's model is then tried once.
+    let r: VisionExtractResult;
+    if (input.model) {
+        r = await visionExtractRaw(input);
+    } else {
+        const chosen = await modelFor('ocr_vision', DEFAULT_VISION_MODEL);
+        r = await visionExtractRaw({ ...input, model: chosen });
+        if (!r.ok && chosen !== DEFAULT_VISION_MODEL) {
+            markFailed('ocr_vision'); // rested, so the remaining page batches of this document go straight to today's model
+            r = await visionExtractRaw({ ...input, model: DEFAULT_VISION_MODEL });
+        }
+    }
+    const rate = priceOf(r.model);
+    ocrStep({
+        step: 'vision_model', ms: Date.now() - t0, ok: r.ok, model: r.model, provider: r.provider,
+        tokens_in: r.usage?.prompt, tokens_out: r.usage?.completion,
+        cost_usd: r.usage ? (r.usage.prompt * rate.input + r.usage.completion * rate.output) / 1e6 : undefined,
+        note: `${input.pages.length} page image${input.pages.length === 1 ? '' : 's'}${r.ok ? '' : `: ${r.error ?? 'failed'}`}`,
+    });
+    return r;
 }

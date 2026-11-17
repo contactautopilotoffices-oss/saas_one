@@ -38,34 +38,41 @@ export async function PUT(
             return NextResponse.json({ error: 'areas must be an array' }, { status: 400 });
         }
 
-        // Validate each area
-        for (const area of areas) {
-            if (!area.id || !area.label || !area.coordinates) {
-                return NextResponse.json(
-                    { error: 'Each area must have id, label, and coordinates' },
-                    { status: 400 }
-                );
+        // Sanitize and validate each area
+        const sanitizedAreas = areas.map((area: any, idx: number) => {
+            const id = area.id || `area-${Date.now()}-${idx}`;
+            const label = (area.label && typeof area.label === 'string' && area.label.trim())
+                ? area.label.trim()
+                : `Area ${idx + 1}`;
+
+            let coords = area.coordinates;
+            if ((!coords || typeof coords.x !== 'number') && Array.isArray(area.points) && area.points.length > 0) {
+                const minX = Math.round(Math.min(...area.points.map((p: any) => p.x)));
+                const maxX = Math.round(Math.max(...area.points.map((p: any) => p.x)));
+                const minY = Math.round(Math.min(...area.points.map((p: any) => p.y)));
+                const maxY = Math.round(Math.max(...area.points.map((p: any) => p.y)));
+                coords = { x: minX, y: minY, width: Math.max(10, maxX - minX), height: Math.max(10, maxY - minY) };
             }
-            if (typeof area.coordinates.x !== 'number' || typeof area.coordinates.y !== 'number' ||
-                typeof area.coordinates.width !== 'number' || typeof area.coordinates.height !== 'number') {
-                return NextResponse.json(
-                    { error: 'coordinates must contain numeric x, y, width, height' },
-                    { status: 400 }
-                );
-            }
-            if (!Array.isArray(area.linked_step_ids)) {
-                return NextResponse.json(
-                    { error: 'linked_step_ids must be an array' },
-                    { status: 400 }
-                );
-            }
-        }
+
+            const x = typeof coords?.x === 'number' && !isNaN(coords.x) ? coords.x : 0;
+            const y = typeof coords?.y === 'number' && !isNaN(coords.y) ? coords.y : 0;
+            const width = typeof coords?.width === 'number' && !isNaN(coords.width) && coords.width > 0 ? coords.width : 50;
+            const height = typeof coords?.height === 'number' && !isNaN(coords.height) && coords.height > 0 ? coords.height : 50;
+
+            return {
+                ...area,
+                id,
+                label,
+                coordinates: { x, y, width, height },
+                linked_step_ids: Array.isArray(area.linked_step_ids) ? area.linked_step_ids : [],
+            };
+        });
 
         // Update template with areas
         const { error: updateError } = await supabaseAdmin
             .from('sop_templates')
             .update({
-                cad_areas: areas,
+                cad_areas: sanitizedAreas,
                 updated_at: new Date().toISOString(),
             })
             .eq('id', templateId);
@@ -76,7 +83,7 @@ export async function PUT(
 
         // Update linked checklist items with cad_area_id
         const areaMap = new Map<string, string[]>();
-        for (const area of areas) {
+        for (const area of sanitizedAreas) {
             for (const stepId of area.linked_step_ids) {
                 const existing = areaMap.get(stepId) || [];
                 existing.push(area.id);

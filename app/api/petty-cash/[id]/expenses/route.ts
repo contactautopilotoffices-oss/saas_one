@@ -72,23 +72,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
                 .map(s => (s.metadata as any)?.file_hash)
                 .filter(Boolean);
 
-            if (fileHashes.length > 0) {
+            if (fileHashes.length > 0 || dupCheck.warning) {
                 const { data: lastAct } = await supabaseAdmin
                     .from('petty_cash_activity')
-                    .select('id, metadata')
+                    .select('id, remark, metadata')
                     .eq('request_id', id)
                     .eq('action', 'expense_recorded')
-                    .order('created_at', { ascending: false })
+                    .eq('metadata->>expense_id', (data as { id: string }).id)
                     .limit(1)
                     .maybeSingle();
 
                 if (lastAct) {
+                    // A fuzzy fraud match is saved, not blocked; the remark shows it on the timeline accounts reviews.
                     await supabaseAdmin
                         .from('petty_cash_activity')
                         .update({
+                            ...(dupCheck.warning ? { remark: `${lastAct.remark || ''} [Fraud Guard: ${dupCheck.warning}]`.trim() } : {}),
                             metadata: {
                                 ...((lastAct.metadata as any) || {}),
-                                file_hashes: fileHashes,
+                                ...(fileHashes.length > 0 ? { file_hashes: fileHashes } : {}),
+                                ...(dupCheck.warning ? { fraud_warning: dupCheck.warning } : {}),
                             }
                         })
                         .eq('id', lastAct.id);
@@ -98,5 +101,5 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             console.warn('Metadata linking warning:', e);
         }
     }
-    return error ? pcError(error) : NextResponse.json({ expense: data }, { status: 201 });
+    return error ? pcError(error) : NextResponse.json({ expense: data, ...(dupCheck.warning ? { warning: dupCheck.warning } : {}) }, { status: 201 });
 }

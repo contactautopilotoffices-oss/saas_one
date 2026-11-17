@@ -78,10 +78,12 @@ export async function POST(request: NextRequest) {
 
             const VALID_MST_SKILLS = ['technical', 'plumbing', 'vendor'];
             const VALID_STAFF_SKILLS = ['soft_services'];
+            // Owner 2026-11-16: a soft service supervisor is a resolver for soft-service work, like staff.
+            const SOFT_SERVICE_ROLES = ['staff', 'soft_service_supervisor'];
 
             const isEligibleAsResolver = role === 'mst'
                 ? skills.some(s => VALID_MST_SKILLS.includes(s))
-                : (role === 'staff' ? skills.some(s => VALID_STAFF_SKILLS.includes(s)) : false);
+                : (SOFT_SERVICE_ROLES.includes(role) ? skills.some(s => VALID_STAFF_SKILLS.includes(s)) : false);
 
             if (isEligibleAsResolver) {
                 // Get or determine skill group

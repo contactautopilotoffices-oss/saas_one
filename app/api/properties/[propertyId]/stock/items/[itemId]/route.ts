@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { getPropertyStockSource, isLiveStockItem, OLD_ITEM_LOCKED_MESSAGE, REQUISITION_LIST_LOCKED_MESSAGE } from '@/backend/lib/stock/propertyStock';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function GET(
     request: NextRequest,
     { params }: { params: Promise<{ propertyId: string; itemId: string }> }
 ) {
     const { propertyId, itemId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -34,6 +38,8 @@ export async function PUT(
     { params }: { params: Promise<{ propertyId: string; itemId: string }> }
 ) {
     const { propertyId, itemId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
@@ -42,8 +48,24 @@ export async function PUT(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        const { data: existing } = await supabase
+            .from('stock_items')
+            .select('*')
+            .eq('id', itemId)
+            .eq('property_id', propertyId)
+            .maybeSingle();
+        if (existing && !(await isLiveStockItem(propertyId, existing))) {
+            return NextResponse.json({ error: OLD_ITEM_LOCKED_MESSAGE }, { status: 409 });
+        }
+
         const body = await request.json();
         const { name, category, unit, min_threshold, location, description } = body;
+
+        if (existing?.item_source === 'catalog' && (
+            (name && name !== existing.name) || (category && category !== existing.category) || (unit && unit !== existing.unit)
+        )) {
+            return NextResponse.json({ error: 'Name, unit and category of requisition stock items come from Manage Items and cannot be changed here.' }, { status: 409 });
+        }
 
         const { data: item, error: updateError } = await supabase
             .from('stock_items')
@@ -79,12 +101,18 @@ export async function DELETE(
     { params }: { params: Promise<{ propertyId: string; itemId: string }> }
 ) {
     const { propertyId, itemId } = await params;
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
     const supabase = await createClient();
 
     try {
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         if (authError || !user) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        if (await getPropertyStockSource(propertyId) === 'catalog') {
+            return NextResponse.json({ error: REQUISITION_LIST_LOCKED_MESSAGE }, { status: 409 });
         }
 
         // Delete cascades to stock_movements due to FK

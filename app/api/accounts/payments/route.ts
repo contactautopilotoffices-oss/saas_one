@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveAccountsAccess, isAccountsAccessError, readOrgId } from '@/backend/lib/accounts/access';
 import { planPaymentTransition, paymentActorFromAccess } from '@/backend/lib/accounts/transitions';
+import { invoiceVerdictForPo } from '@/backend/lib/invoices/alignGuard';
 import { notifyPaymentAligned, notifyPaymentRequested } from '@/backend/lib/accounts/notify';
 import { logPoActivity } from '@/backend/lib/accounts/activity';
 
 const SELECT = `
     *,
-    po:zoho_purchase_orders(id, po_number, vendor_name, po_amount, department, project_name, category),
+    po:zoho_purchase_orders(id, po_number, vendor_name, po_amount, department, project_name, category, zoho_po_id, status),
     aligner:users!po_payments_aligned_by_fkey(id, full_name),
     completer:users!po_payments_completed_by_fkey(id, full_name),
     creator:users!po_payments_created_by_fkey(id, full_name)
@@ -22,7 +23,8 @@ export async function GET(request: NextRequest) {
     const status = sp.get('status'); // 'aligned' | 'completed' | null(all non-cancelled)
     const page = Math.max(1, parseInt(sp.get('page') || '1'));
     const pageSize = Math.min(100, Math.max(1, parseInt(sp.get('page_size') || '25')));
-    const search = (sp.get('search') || '').trim();
+    // Commas and brackets break PostgREST's .or() parser (a 500 that read as "nothing found").
+    const search = (sp.get('search') || '').replace(/[,()%*\\]/g, ' ').trim().slice(0, 80);
     const dateFrom = sp.get('date_from');
     const dateTo = sp.get('date_to');
 
@@ -123,6 +125,32 @@ export async function POST(request: NextRequest) {
         }, { status: 409 });
     }
 
+    // --- Invoice check -------------------------------------------------------------
+    // Soft by design, exactly like the duplicate guard above: it warns, it never blocks.
+    // The aligner sees whether the invoice agrees with the PO, and if it does not (or has
+    // not arrived) must say why they are proceeding. The verdict and the reason are frozen
+    // onto the tranche for whoever completes the payment later.
+    const invoiceVerdict = action === 'align' ? await invoiceVerdictForPo(access.organizationId, po.id) : null;
+    const overrideReason = typeof body.invoice_override_reason === 'string' ? body.invoice_override_reason.trim() : '';
+    if (invoiceVerdict?.needsReason && overrideReason.length < 10) {
+        return NextResponse.json({
+            error: 'invoice_not_verified',
+            invoice: {
+                state: invoiceVerdict.state,
+                message: invoiceVerdict.message,
+                invoice_number: invoiceVerdict.invoiceNumber,
+                failed_rules: invoiceVerdict.failedRules,
+                reasons: invoiceVerdict.reasons,
+                headline: invoiceVerdict.headline,
+                next: invoiceVerdict.next,
+                stage: invoiceVerdict.stage,
+                // The caller re-sends with invoice_override_reason to proceed.
+                reason_required: true,
+                min_reason_length: 10,
+            },
+        }, { status: 409 });
+    }
+
     // Next tranche number for this PO (ignoring cancelled).
     const { data: existing } = await supabaseAdmin
         .from('po_payments').select('tranche_no').eq('po_id', po.id).neq('status', 'cancelled')
@@ -137,6 +165,8 @@ export async function POST(request: NextRequest) {
             po_number: po.po_number,
             vendor_name: po.vendor_name,
             tranche_no: trancheNo,
+            invoice_match_at_align: invoiceVerdict?.state ?? null,
+            invoice_override_reason: invoiceVerdict?.needsReason ? overrideReason : null,
             ...plan.patch,
         })
         .select(SELECT)
@@ -156,10 +186,13 @@ export async function POST(request: NextRequest) {
         action: plan.notifyKind === 'requested' ? 'payment_requested' : 'aligned',
         toStatus: created.status,
         actorId: access.user.id,
-        note: plan.notifyKind === 'requested'
+        note: (plan.notifyKind === 'requested'
             ? `Requested tranche #${created.tranche_no}`
-            : `Aligned tranche #${created.tranche_no}`,
+            : `Aligned tranche #${created.tranche_no}`)
+            + (invoiceVerdict?.needsReason && overrideReason ? ` — without a valid invoice (${invoiceVerdict.state.replace(/_/g, ' ')}): "${overrideReason}"` : ''),
         detail: {
+            invoice_match_at_align: invoiceVerdict?.state ?? null,
+            invoice_override_reason: invoiceVerdict?.needsReason ? overrideReason : null,
             requested_amount: Number(created.requested_amount),
             percent_of_po: created.percent_of_po ?? null,
             po_amount: Number(po.po_amount),
@@ -177,6 +210,8 @@ export async function POST(request: NextRequest) {
             requested_amount: created.requested_amount,
             payment_term: created.payment_term,
             aligned_by_name: (created.aligner as any)?.full_name ?? null,
+            invoice_match_at_align: invoiceVerdict?.state ?? null,
+            invoice_override_reason: invoiceVerdict?.needsReason ? overrideReason : null,
         }).catch(() => {});
     } else if (plan.notifyKind === 'requested') {
         notifyPaymentRequested({

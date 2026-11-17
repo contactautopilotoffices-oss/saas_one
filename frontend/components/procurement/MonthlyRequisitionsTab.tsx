@@ -7,17 +7,20 @@ import {
     Building2, Calendar, Search, RefreshCw, Loader2, AlertCircle,
     Plus, FileSpreadsheet, Eye, UserCheck, X, ShieldCheck,
     DollarSign, User as UserIcon, ArrowRight, Send, ShoppingCart, Truck, PackageCheck, FileCheck2, Trash2,
-    IndianRupee
+    IndianRupee,
+    MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ModalPortal from '../ui/ModalPortal';
 import SiteRequisitionSheet from './SiteRequisitionSheet';
 import ApproverRequisitionModal from './ApproverRequisitionModal';
-import { siteVendorQuotation, siteEstimatedAmount } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { siteVendorQuotation, siteEstimatedAmount, fileRevision, quoteBatchId, REPLACEABLE_STATUSES } from '@/backend/lib/procurement/requisition-approval.mjs';
 
 import PropertyBudgetManagerModal from './PropertyBudgetManagerModal';
 import BulkApproverUploadModal from './BulkApproverUploadModal';
+import ReplaceComparisonFileModal, { type ReplaceableUpload } from './ReplaceComparisonFileModal';
 import MonthlyFeedbackFormModal from './MonthlyFeedbackFormModal';
+import DeliveryChallanModal from './DeliveryChallanModal';
 import { SHOW_LEGACY_PER_PROPERTY_CONTROLS } from './procurementFeatureFlags';
 import RequisitionApproverSelect, { type RequisitionApprover } from './RequisitionApproverSelect';
 
@@ -39,6 +42,7 @@ interface MonthlyRequisition {
     file_name: string;
     file_size_bytes?: number;
     notes?: string;
+    site_notes?: string;
     status: string; // 'submitted' | 'uploaded' | 'acknowledged' | 'pending_approval' | 'approved' | 'rejected' | 'ordered'
     created_at: string;
     acknowledged_at?: string;
@@ -58,6 +62,8 @@ interface MonthlyRequisition {
     budget_limit?: number;
     over_budget_amount?: number;
     budget_breakdown?: any;
+    /** From confirmed delivery challans; the status itself stays as approval / Issue PO need it. */
+    delivery?: { state: 'none' | 'partial' | 'delivered'; items_ordered: number; items_complete: number; challans: number } | null;
 }
 
 interface MonthlyRequisitionsTabProps {
@@ -115,6 +121,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [approverModalReq, setApproverModalReq] = useState<MonthlyRequisition | null>(null);
     const [vendorQuoteModalReq, setVendorQuoteModalReq] = useState<MonthlyRequisition | null>(null);
     const [issuePoModalReq, setIssuePoModalReq] = useState<MonthlyRequisition | null>(null);
+    const [challanModalReq, setChallanModalReq] = useState<MonthlyRequisition | null>(null);
     const [showBudgetManagerModal, setShowBudgetManagerModal] = useState<boolean>(false);
     const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState<boolean>(false);
 
@@ -143,6 +150,9 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
     const [searchQuery, setSearchQuery] = useState<string>('');
     const [isExportingAll, setIsExportingAll] = useState<boolean>(false);
     const [showBulkApprovalModal, setShowBulkApprovalModal] = useState<boolean>(false);
+    // Replace Comparison File: opened from a row (target set) or from the toolbar (picker).
+    const [showReplaceModal, setShowReplaceModal] = useState<boolean>(false);
+    const [replaceTarget, setReplaceTarget] = useState<ReplaceableUpload | null>(null);
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
     const handleDownloadAllPropertiesExcel = () => {
@@ -339,6 +349,54 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         fetchRequisitions();
     }, [fetchRequisitions]);
 
+    // A sent comparison file can be replaced until a PO is issued or an approved site receives a delivery.
+    const canReplaceFile = (req: MonthlyRequisition) =>
+        isProcurementRole && REPLACEABLE_STATUSES.includes(req.status) && Boolean(siteVendorQuotation(req)) &&
+        !(req.status === 'approved' && (req.delivery?.challans || 0) > 0);
+
+    const replaceableUploads = useMemo<ReplaceableUpload[]>(() => {
+        const groups = new Map<string, { upload: ReplaceableUpload; sortKey: string; months: Set<string> }>();
+        for (const req of requisitions) {
+            if (!canReplaceFile(req)) continue;
+            const quote = siteVendorQuotation(req) || {};
+            const batchId = quoteBatchId(req);
+            const key = batchId || req.id;
+            const month = `${MONTH_NAMES[(req.requisition_month || 1) - 1]} ${req.requisition_year}`;
+            const existing = groups.get(key);
+            if (existing) {
+                existing.upload.siteCount += 1;
+                existing.months.add(month);
+                existing.upload.revision = Math.max(existing.upload.revision, fileRevision(req));
+                continue;
+            }
+            groups.set(key, {
+                sortKey: String(quote.replaced_at || quote.uploaded_at || req.created_at || ''),
+                months: new Set([month]),
+                upload: {
+                    key, batchId: batchId || undefined, requisitionId: batchId ? undefined : req.id,
+                    label: batchId ? '' : `${req.property?.name || 'Property'} · ${month}`,
+                    fileName: quote.file_name || '', siteCount: 1, revision: fileRevision(req)
+                }
+            });
+        }
+        return [...groups.values()]
+            .sort((a, b) => b.sortKey.localeCompare(a.sortKey))
+            .map(({ upload, months }) => upload.batchId
+                ? { ...upload, label: `Multi-site upload · ${[...months].join(', ')}` }
+                : upload);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [requisitions, isProcurementRole]);
+
+    const openReplaceForRow = (req: MonthlyRequisition) => {
+        const batchId = quoteBatchId(req);
+        setReplaceTarget(replaceableUploads.find(upload => upload.key === (batchId || req.id)) || {
+            key: batchId || req.id, batchId: batchId || undefined, requisitionId: batchId ? undefined : req.id,
+            label: req.property?.name || 'Property', fileName: siteVendorQuotation(req)?.file_name || '',
+            siteCount: 1, revision: fileRevision(req)
+        });
+        setShowReplaceModal(true);
+    };
+
     // Handle Vendor Quotation Submission
     const handleVendorQuotationSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -484,6 +542,24 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
         );
     }
 
+    // If inspecting / reviewing a requisition in-body (retains sidebar, top header, and full width)
+    if (approverModalReq) {
+        return (
+            <ApproverRequisitionModal
+                isInline={true}
+                isOpen={true}
+                requisition={approverModalReq}
+                allRequisitions={requisitions}
+                currentUser={user}
+                onClose={() => setApproverModalReq(null)}
+                onStatusUpdated={() => {
+                    fetchRequisitions();
+                    setApproverModalReq(null);
+                }}
+            />
+        );
+    }
+
     return (
         <div className="space-y-6">
             {/* Header Section */}
@@ -518,6 +594,16 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                 <Upload className="w-3.5 h-3.5 text-sky-600 shrink-0" />
                                 <span>Upload Quote (Multi-Site)</span>
                             </button>
+                            {isProcurementRole && (
+                                <button
+                                    onClick={() => { setReplaceTarget(null); setShowReplaceModal(true); }}
+                                    className="h-9 px-3 inline-flex items-center gap-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 font-bold text-xs whitespace-nowrap transition-all cursor-pointer shrink-0"
+                                    title="Upload a corrected comparison file for a batch already sent for approval"
+                                >
+                                    <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                                    <span>Replace Comparison File</span>
+                                </button>
+                            )}
                         </>
                     )}
 
@@ -586,7 +672,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                             className="h-9 px-4 inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-black text-xs whitespace-nowrap transition-all shadow-md shadow-primary/20 hover:scale-[1.02] cursor-pointer shrink-0"
                         >
                             <Plus className="w-4 h-4 shrink-0" />
-                            <span>+ Create Requisition</span>
+                            <span>Create Requisition</span>
                         </button>
                     )}
                 </div>
@@ -598,6 +684,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                     { id: 'all', label: 'All Requisitions', count: requisitions.length },
                     { id: 'submitted', label: 'Submitted (Site)', count: requisitions.filter(r => r.status === 'submitted' || r.status === 'uploaded').length },
                     { id: 'pending_approval', label: 'Pending Approval', count: requisitions.filter(r => r.status === 'pending_approval' || r.status === 'acknowledged').length },
+                    { id: 'rejected', label: 'Rejected', count: requisitions.filter(r => r.status === 'rejected').length },
                     { id: 'approved', label: 'Approved', count: requisitions.filter(r => r.status === 'approved').length },
                     { id: 'ordered', label: 'PO Issued / Ordered', count: requisitions.filter(r => r.status === 'ordered').length },
                 ].map(st => {
@@ -790,7 +877,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                     className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold text-xs shadow-md shadow-primary/20 transition-all flex items-center gap-2 cursor-pointer"
                                 >
                                     <Plus className="w-4 h-4" />
-                                    <span>+ Create Requisition Sheet</span>
+                                    <span>Create Requisition Sheet</span>
                                 </button>
                             )}
 
@@ -836,6 +923,12 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                             <span className="block text-[11px] font-bold text-emerald-600">
                                                                 Floor: {req.floor_tag}
                                                             </span>
+                                                        )}
+                                                        {req.site_notes && (
+                                                            <div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-1 truncate max-w-[220px]" title={`Creator note: ${req.site_notes}`}>
+                                                                <MessageSquare className="w-3 h-3 text-amber-600 shrink-0" />
+                                                                <span className="truncate italic">&quot;{req.site_notes}&quot;</span>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
@@ -904,6 +997,14 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                              req.status === 'pending_approval' ? 'Pending Approval' : req.status}
                                                         </span>
                                                     </span>
+                                                    {req.status === 'pending_approval' && siteVendorQuotation(req)?.is_reapproval && (
+                                                        <span
+                                                            className="inline-flex items-center h-5 px-2 rounded-md text-[10px] font-black uppercase tracking-wider whitespace-nowrap bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
+                                                            title={siteVendorQuotation(req)?.reapproval_note || 'Comparison file was replaced after it was sent for approval'}
+                                                        >
+                                                            Re-approval · Rev {fileRevision(req)}
+                                                        </span>
+                                                    )}
                                                     {req.status === 'pending_approval' && req.approver_info?.name && (
                                                         <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500 whitespace-nowrap truncate max-w-[140px]" title={req.approver_info.name}>
                                                             Approver: <strong className="text-slate-600 dark:text-slate-300 font-semibold">{req.approver_info.name}</strong>
@@ -912,6 +1013,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                     {req.status === 'ordered' && req.po_info?.po_number && (
                                                         <span className="text-[10px] font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
                                                             #{req.po_info.po_number}
+                                                        </span>
+                                                    )}
+                                                    {req.delivery && (
+                                                        <span
+                                                            className={`inline-flex items-center gap-1 text-[10px] font-bold whitespace-nowrap ${req.delivery.state === 'delivered' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+                                                            title={`${req.delivery.challans} delivery challan${req.delivery.challans === 1 ? '' : 's'} received`}
+                                                        >
+                                                            {req.delivery.state === 'delivered'
+                                                                ? <PackageCheck className="w-3 h-3 shrink-0" />
+                                                                : <Truck className="w-3 h-3 shrink-0" />}
+                                                            {req.delivery.state === 'delivered'
+                                                                ? 'Delivered'
+                                                                : `Partly delivered · ${req.delivery.items_complete} of ${req.delivery.items_ordered} items`}
                                                         </span>
                                                     )}
                                                 </div>
@@ -947,6 +1061,18 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         </button>
                                                     )}
 
+                                                    {/* Procurement: correct the comparison file already sent and ask for re-approval */}
+                                                    {canReplaceFile(req) && (
+                                                        <button
+                                                            onClick={() => openReplaceForRow(req)}
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
+                                                            title={quoteBatchId(req) ? 'Replace the comparison file for every site in this upload and send for re-approval' : 'Replace the attached file and send for re-approval'}
+                                                        >
+                                                            <RefreshCw className="w-3.5 h-3.5 text-white shrink-0" />
+                                                            <span>Replace File</span>
+                                                        </button>
+                                                    )}
+
                                                     {/* Procurement: Issue Purchase Order when status is approved */}
                                                     {isProcurementRole && req.status === 'approved' && (
                                                         <button
@@ -964,6 +1090,18 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                                                         >
                                                             <ShoppingCart className="w-3.5 h-3.5 text-white shrink-0" />
                                                             <span>Issue PO</span>
+                                                        </button>
+                                                    )}
+
+                                                    {/* Property admin or ops super admin: delivery challan, from approval onwards */}
+                                                    {(isPropertyAdmin || userRoleLower === 'ops_super_admin') && (req.status === 'approved' || req.status === 'ordered') && (
+                                                        <button
+                                                            onClick={() => setChallanModalReq(req)}
+                                                            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold whitespace-nowrap transition-all shadow-xs shrink-0 cursor-pointer"
+                                                            title="Upload the delivery challan and add received items to stock"
+                                                        >
+                                                            <Truck className="w-3.5 h-3.5 text-white shrink-0" />
+                                                            <span>Delivery Challan</span>
                                                         </button>
                                                     )}
 
@@ -1111,6 +1249,15 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 )}
             </AnimatePresence>
             </ModalPortal>
+
+            {challanModalReq && (
+                <DeliveryChallanModal
+                    requisitionId={challanModalReq.id}
+                    title={`${challanModalReq.property?.name || 'Property'} - ${MONTH_NAMES[(challanModalReq.requisition_month || 1) - 1]} ${challanModalReq.requisition_year}`}
+                    onClose={() => setChallanModalReq(null)}
+                    onConfirmed={(message) => { alert(message); fetchRequisitions(); }}
+                />
+            )}
 
             {/* Modal: Issue Purchase Order (PO) */}
             <ModalPortal>
@@ -1262,18 +1409,7 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
             </AnimatePresence>
             </ModalPortal>
 
-            {/* In-App Approver Review Modal */}
-            <ApproverRequisitionModal
-                isOpen={!!approverModalReq}
-                onClose={() => setApproverModalReq(null)}
-                requisition={approverModalReq}
-                allRequisitions={requisitions}
-                currentUser={user}
-                onStatusUpdated={() => {
-                    fetchRequisitions();
-                    setApproverModalReq(null);
-                }}
-            />
+            {/* Requisition review is rendered in-body when active */}
 
             {/* Property Monthly Requisition Budgets Manager Modal */}
             <PropertyBudgetManagerModal
@@ -1300,6 +1436,19 @@ export default function MonthlyRequisitionsTab({ user, organizationId, propertyI
                 onSuccess={() => {
                     fetchRequisitions();
                 }}
+            />
+            {/* Replace the comparison file already sent and request re-approval */}
+            <ReplaceComparisonFileModal
+                isOpen={showReplaceModal}
+                onClose={() => { setShowReplaceModal(false); setReplaceTarget(null); }}
+                onSuccess={() => fetchRequisitions()}
+                organizationId={approverOrganizationId}
+                target={replaceTarget}
+                uploads={replaceableUploads}
+                approvers={approverUsers}
+                approversLoading={approversLoading}
+                approversError={approversError}
+                onRetryApprovers={fetchApprovers}
             />
             {/* Monthly Requisition Feedback Modal */}
             <MonthlyFeedbackFormModal

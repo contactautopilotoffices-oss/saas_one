@@ -197,7 +197,7 @@ JSON scores.
   - **What changed:** only the changed lines, **green = added, red = removed**, with 2 unchanged lines around each
     change for context, plus a "Show full text" toggle. Uses the existing `promptSectionDiff`, so the logic doesn't
     change.
-  - **Test results:** a small table, before vs. after: overall pass rate, safety failures (must be 0), and each
+  - **Test results:** a small table, before vs. after: overall pass rate, safety failures (must not go up), and each
     test group (English, Hinglish, team, live). Drops are shown in red. No raw JSON. The JSON stays in a folded
     "Raw data" section for developers.
 - Activate / Reject buttons sit in that panel too, so you decide while reading. **Roll back** stays at the top of

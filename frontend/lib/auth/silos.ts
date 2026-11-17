@@ -16,7 +16,7 @@ export const ACCOUNTS_ONLY_ROLES = ['accounts'];
 // reaches the workspace through the sidebar instead of being locked into it.
 export const FMS_ROLES = [
     'property_admin', 'tenant', 'security', 'staff', 'mst', 'vendor', 'org_admin',
-    'owner', 'admin', 'procurement', 'org_super_admin', 'ops_super_admin', 'super_tenant', 'maintenance_vendor',
+    'owner', 'admin', 'procurement', 'org_super_admin', 'ops_super_admin', 'super_tenant', 'maintenance_vendor', 'tech', 'it', 'design',
 ];
 
 /** A membership flattened to just what silo resolution needs. */
@@ -53,7 +53,7 @@ export function resolveSilo(
         const orgId =
             memberships.find(m => m.role && silo.list.includes(m.role) && m.orgId)?.orgId ||
             fallbackOrgId;
-        if (orgId) return { kind: silo.kind, orgId, path: `/${orgId}/${silo.segment}` };
+        if (orgId) return { kind: silo.kind, orgId, path: `/${silo.segment}` };
     }
     return null;
 }

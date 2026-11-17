@@ -40,6 +40,13 @@ async function run() {
     check('"done 6" (already done) → a plain reply, nothing changed', (plan('done 6') as any).kind === 'reply' && /already done/.test((plan('done 6') as any).text));
     check('"done 9" (not on the list) → NOT handled here, the AI explains', plan('done 9') === null);
     check('"done all" → every open task (not the finished one)', JSON.stringify((plan('done all') as any).action.taskIds) === '["t1","t2","t3","t4","t5"]');
+    // Owner 2026-10-27: the request template's "Accept" button — one tap when exactly one request is waiting
+    const req = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `r${i + 1}`, title: `Request ${i + 1}`, fromName: 'Sahil Gorde', fromDepartment: 'Tech' }));
+    check('"Accept" (the button) is an exact command; other wording is not', F.parseExactCommand('Accept')?.kind === 'accept' && F.parseExactCommand('accept.')?.kind === 'accept' && F.parseExactCommand('accept it please') === null && F.parseExactCommand("Can't do it") === null);
+    const acc = F.planExact({ kind: 'accept' }, { ...ctx, supportRequests: req(1) });
+    const accAction = acc?.kind === 'act' && acc.action.type === 'answer_request' ? acc.action : null;
+    check('one request waiting → accepted at once (no AI, no YES)', !!accAction && accAction.accept === true && accAction.requestId === 'r1' && accAction.reason === null, acc);
+    check('several requests, or none → the AI asks which one / explains', F.planExact({ kind: 'accept' }, { ...ctx, supportRequests: req(2) }) === null && F.planExact({ kind: 'accept' }, { ...ctx, supportRequests: [] }) === null && F.planExact({ kind: 'accept' }, ctx) === null);
     check('"done all" with nothing open → the AI handles it', F.planExact({ kind: 'done_all' }, { ...ctx, tasks: [ctx.tasks[5]] }) === null);
     check('"tasks" → the numbered list, with status marks', (plan('tasks') as any).kind === 'reply' && /1\. Carpet Installation PO ⏳/.test((plan('tasks') as any).text) && /6\. Agreement Followup ✅/.test((plan('tasks') as any).text));
     check('"tasks" with no tasks → says so', /no tasks today/.test((F.planExact({ kind: 'view' }, { ...ctx, tasks: [] }) as any).text));

@@ -87,6 +87,9 @@ export interface TaskAssignment {
     completed_at: string | null;
     created_at: string;
     updated_at: string;
+    /** 'zoho' for a task imported from Zoho Mail; null/absent for tasks made in this app. */
+    source?: string | null;
+    external_id?: string | null;
     employee?: Employee | null;
     template?: TaskTemplate | null;
 }

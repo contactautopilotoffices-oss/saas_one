@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Send, Plus, Loader2, Megaphone, CalendarClock, X, Check, AlertCircle, Play } from 'lucide-react';
+import Link from 'next/link';
+import { Send, Plus, Loader2, Megaphone, CalendarClock, X, Check, AlertCircle, Play, PhoneCall } from 'lucide-react';
 
 interface Campaign {
     id: string;
@@ -167,6 +168,14 @@ export default function CampaignsManager({ orgId }: { orgId: string }) {
                     >
                         <Plus className="w-4 h-4" /> New Campaign
                     </button>
+                    <Link
+                        href={`/${orgId}/crm/settings?tab=outreach`}
+                        className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm transition-all"
+                        title="Configure 1-tap automated outreach & test message simulator"
+                    >
+                        <PhoneCall className="w-4 h-4 text-emerald-300" />
+                        Lead Outreach & Simulator
+                    </Link>
                 </div>
             </div>
 

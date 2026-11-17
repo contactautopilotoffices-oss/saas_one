@@ -24,6 +24,8 @@
  * which is ample for text a model has to read rather than a human.
  */
 
+import { ocrTimed } from './activity';
+import { loadPdfjs } from './pdfjs';
 import sharp from 'sharp';
 
 /** Pages beyond this are not read. Matches MAX_PAGES in documentBank/ocr.ts. */
@@ -68,7 +70,14 @@ export interface RasterizeResult {
  * render is recorded in `warnings` and skipped, because one bad page must not
  * cost the caller the pages that did render.
  */
-export async function rasterizePdf(
+export function rasterizePdf(
+    pdfBytes: Buffer,
+    opts: RasterizeOptions = {},
+): Promise<RasterizeResult> {
+    return ocrTimed('rasterize', () => rasterizePdfImpl(pdfBytes, opts), (r) => `${r.pages.length} of ${r.totalPages} page${r.totalPages === 1 ? '' : 's'}${r.warnings.length ? `; ${r.warnings[0]}` : ''}`);
+}
+
+async function rasterizePdfImpl(
     pdfBytes: Buffer,
     opts: RasterizeOptions = {},
 ): Promise<RasterizeResult> {
@@ -80,7 +89,7 @@ export async function rasterizePdf(
     // a text layer must not pay to load them.
     const [{ createCanvas }, pdfjs] = await Promise.all([
         import('@napi-rs/canvas'),
-        import('pdfjs-dist/legacy/build/pdf.mjs'),
+        loadPdfjs(),
     ]);
 
     const doc = await pdfjs.getDocument({

@@ -92,6 +92,10 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             { code: 'technical', label: 'Technical', icon: Wrench },
             { code: 'soft_services', label: 'Soft Services', icon: Sparkles },
         ],
+        // Owner 2026-11-16: a supervisor needs the soft-service skill to join the soft-service assignment pool.
+        soft_service_supervisor: [
+            { code: 'soft_services', label: 'Soft Services', icon: Sparkles },
+        ],
     };
 
     const toggleSkill = (code: string) => {
@@ -514,7 +518,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             }
 
             // For cross-level changes (property ↔ org), refetch all users
-            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head'];
+            const ORG_LEVEL_ROLES = ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head', 'tech', 'it', 'design'];
             const wasPropertyLevel = !!user?.propertyRole && !user?.orgRole;
             const wasOrgLevel = !!user?.orgRole;
             const isNowOrgLevel = ORG_LEVEL_ROLES.includes(newRole);
@@ -599,6 +603,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             'soft_service_supervisor',
             'procurement',
             'accounts',
+            'tech',
+            'it',
+            'design',
             'sales',
             'bd_rep',
             'vendor',
@@ -621,6 +628,9 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         if (lower === 'staff') return 'Staff';
         if (lower === 'procurement' || lower === 'procurement_user') return 'Procurement';
         if (lower === 'finance' || lower === 'accounts') return 'Finance / Accounts';
+        if (lower === 'tech') return 'Tech';
+        if (lower === 'it') return 'IT';
+        if (lower === 'design') return 'Design';
         if (lower === 'sales' || lower === 'sales_executive') return 'Sales / CRM';
         if (lower === 'bd_rep' || lower === 'bd_admin' || lower === 'bd_super_admin') return 'Business Development';
         if (lower === 'security') return 'Security / Front Desk';
@@ -1042,7 +1052,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                                         </div>
                                                     </div>
 
-                                                    {(editingRole === 'mst' || editingRole === 'staff') && (
+                                                    {SKILL_OPTIONS[editingRole] && (
                                                         <div className="space-y-2 pt-2 border-t border-slate-100">
                                                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Selected Skills</p>
                                                             <div className="space-y-1">

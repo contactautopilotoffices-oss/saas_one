@@ -34,6 +34,8 @@ const MstDashboard = dynamic(() => import('./MstDashboard'), { loading: RoleLoad
 const SecurityDashboard = dynamic(() => import('./SecurityDashboard'), { loading: RoleLoading });
 const PropertyAdminDashboard = dynamic(() => import('./PropertyAdminDashboard'), { loading: RoleLoading });
 const OrgAdminDashboard = dynamic(() => import('./OrgAdminDashboard'), { loading: RoleLoading });
+const TechDashboard = dynamic(() => import('./TechDashboard'), { loading: RoleLoading });
+const DepartmentConsole = dynamic(() => import('./DepartmentConsole'), { loading: RoleLoading });
 const MasterAdminDashboard = dynamic(() => import('./MasterAdminDashboard'), { loading: RoleLoading });
 const SoftServiceManagerDashboard = dynamic(() => import('./SoftServiceManagerDashboard'), { loading: RoleLoading });
 const SuperTenantDashboard = dynamic(() => import('./SuperTenantDashboard'), { loading: RoleLoading });
@@ -52,7 +54,7 @@ interface BDQuickStatsData {
 function AccountsWorkspaceRedirect({ orgId }: { orgId?: string | null }) {
     const router = useRouter();
     useEffect(() => {
-        if (orgId) router.replace(`/${orgId}/accounts`);
+        if (orgId) router.replace('/accounts');
     }, [orgId, router]);
 
     return (
@@ -178,7 +180,7 @@ const UnifiedDashboard = () => {
         if (dashboardContent === undefined && !isLoading && (role === 'bd_admin' || role === 'bd_super_admin' || role === 'bd_rep')) {
             const orgId = dashboardOrgId || session?.org_id;
             if (orgId) {
-                router.replace(`/${orgId}/crm`);
+                router.replace('/crm');
             }
         }
     }, [isLoading, role, dashboardOrgId, session?.org_id, router, dashboardContent]);
@@ -217,8 +219,24 @@ const UnifiedDashboard = () => {
     }
 
     if (role === 'org_super_admin' || role === 'org_admin') {
+        const isFromCrm = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('from') === 'crm';
+        if (dashboardContent !== undefined && isFromCrm) {
+            return <GenericPettyCashDashboard>{dashboardContent}</GenericPettyCashDashboard>;
+        }
         // OrgAdminDashboard includes BDQuickStats card — fetches its own CRM data
         return <OrgAdminDashboard />;
+    }
+
+    // Tech team console (owner 2026-10-22): its own copy of the Super Admin tabs that work without super-admin rights,
+    // plus the Task Manager Control Centre
+    if (role === 'tech') {
+        return <TechDashboard />;
+    }
+
+    // IT and Design consoles (owner 2026-10-28): Meeting Room, Grievances, Task Manager, Feedback, Settings, Profile;
+    // IT also gets Assets
+    if (role === 'it' || role === 'design') {
+        return <DepartmentConsole department={role} />;
     }
 
     // Ops Super Admin — operations management dashboard with all property access & pending validation card

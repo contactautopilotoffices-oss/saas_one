@@ -67,6 +67,18 @@ const LEVEL_COLORS = [
   'from-purple-600 to-purple-700',
 ];
 
+/**
+ * The nearest ancestor that really scrolls, else the page. Owner 2026-11-07: the Tech console scrolls inside its own
+ * <main>, so dragging near the edge must scroll that, not the window; on other consoles this is still the page.
+ */
+function scrollParentOf(el: HTMLElement | null): Element {
+    for (let node = el?.parentElement ?? null; node; node = node.parentElement) {
+        const { overflowY } = getComputedStyle(node);
+        if ((overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight) return node;
+    }
+    return document.scrollingElement ?? document.documentElement;
+}
+
 function initLevel(levelNumber: number): EscalationLevel {
   return {
     level_number: levelNumber,
@@ -441,6 +453,7 @@ export default function EscalationHierarchyBuilder({ organizationId, propertyId,
   function handleDragStart(e: React.DragEvent, emp: Employee) {
     dragEmployee.current = emp;
     e.dataTransfer.effectAllowed = 'copy';
+    const scroller = scrollParentOf(e.currentTarget as HTMLElement);
 
     // Global dragover fires anywhere on the page — auto-scroll based on cursor Y
     const onGlobalDragOver = (ev: DragEvent) => {
@@ -451,10 +464,10 @@ export default function EscalationHierarchyBuilder({ organizationId, propertyId,
       const y = ev.clientY;
       const vh = window.innerHeight;
       if (y < ZONE) {
-        const step = () => { window.scrollBy(0, -SPEED); autoScrollRef.current = requestAnimationFrame(step); };
+        const step = () => { scroller.scrollBy(0, -SPEED); autoScrollRef.current = requestAnimationFrame(step); };
         autoScrollRef.current = requestAnimationFrame(step);
       } else if (y > vh - ZONE) {
-        const step = () => { window.scrollBy(0, SPEED); autoScrollRef.current = requestAnimationFrame(step); };
+        const step = () => { scroller.scrollBy(0, SPEED); autoScrollRef.current = requestAnimationFrame(step); };
         autoScrollRef.current = requestAnimationFrame(step);
       } else {
         stopAutoScroll();

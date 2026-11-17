@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { CARRY_LOOKBACK_DAYS, TaskDatabaseService, buildNumberedList, carryDaysOf } from './TaskDatabaseService';
+import { MAX_CARRY_DAYS, TaskDatabaseService, buildNumberedList, carryDaysOf } from './TaskDatabaseService';
 import { addDaysIso } from './dateRange';
 
 /** Owner 2026-10-15: progress for a date RANGE (to), optionally counting unfinished tasks carried in from before it
@@ -152,7 +152,7 @@ export class TaskProgressService {
         const [inRange, carried] = await Promise.all([
             allInRange(),
             days > 0
-                ? supabaseAdmin.from('task_assignments').select('*').gte('assigned_date', addDaysIso(date, -Math.min(days, CARRY_LOOKBACK_DAYS))).lt('assigned_date', date).neq('status', 'completed').in('employee_id', empIds)
+                ? supabaseAdmin.from('task_assignments').select('*').gte('assigned_date', addDaysIso(date, -Math.min(days, MAX_CARRY_DAYS))).lt('assigned_date', date).neq('status', 'completed').in('employee_id', empIds)
                 : Promise.resolve({ data: [], error: null }),
         ]);
         if (inRange.error || carried.error) {

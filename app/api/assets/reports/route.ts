@@ -17,8 +17,12 @@ export async function GET(request: NextRequest) {
     const propIds = scopedPropertyIds(access, propertyId);
     if (propIds !== null && propIds.length === 0) return NextResponse.json({ error: 'Forbidden: no access to this property' }, { status: 403 });
 
+    // IT team: only IT & Network assets count anywhere in the report (null = every category)
+    const catIds = access.allowedCategoryIds;
+
     let query = supabaseAdmin.from('assets').select(ASSET_SELECT).eq('organization_id', access.organizationId).is('deleted_at', null);
     if (propIds !== null) query = query.in('property_id', propIds);
+    if (catIds !== null) query = query.in('category_id', catIds);
     const { data: assetsRaw, error } = await query;
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -69,12 +73,13 @@ export async function GET(request: NextRequest) {
 
     let costQuery = supabaseAdmin
         .from('asset_events')
-        .select('property_id, amount, occurred_at, asset:assets!inner(property:properties(name))')
+        .select('property_id, amount, occurred_at, asset:assets!inner(category_id, property:properties(name))')
         .eq('organization_id', access.organizationId)
         .eq('event_type', 'cost')
         .eq('cost_head', 'rnm')
         .gte('occurred_at', yearStart);
     if (propIds !== null) costQuery = costQuery.in('property_id', propIds);
+    if (catIds !== null) costQuery = costQuery.in('asset.category_id', catIds);
     const { data: costRows } = await costQuery;
 
     const spendByProperty = new Map<string, { name: string; mtd: number; ytd: number }>();

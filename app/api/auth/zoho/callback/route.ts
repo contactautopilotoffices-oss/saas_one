@@ -202,9 +202,14 @@ export async function GET(request: Request) {
         }
 
         if (orgMembership) {
-            return NextResponse.redirect(
-                `${appOrigin}${redirect || `/org/${orgMembership.organization_id}/dashboard`}`
-            );
+            const target = redirect || '/dashboard';
+            const res = NextResponse.redirect(`${appOrigin}${target}`);
+            res.cookies.set('saas_org_id', orgMembership.organization_id, {
+                path: '/',
+                maxAge: 30 * 24 * 3600,
+                sameSite: 'lax',
+            });
+            return res;
         }
 
         if (propertyCode) {

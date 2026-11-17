@@ -40,6 +40,21 @@ const nextConfig: NextConfig = {
    */
   serverExternalPackages: ['@napi-rs/canvas', 'pdfjs-dist'],
 
+  /**
+   * CHROMIUM FOR THE TASK MANAGER USAGE REPORT PDF.
+   *
+   * @sparticuz/chromium finds its browser through a path it works out at runtime, so
+   * Next's file tracing cannot see the bin folder and leaves it out of the deployment.
+   * The route then fails on Vercel with: The input directory ".../bin" does not exist.
+   *
+   * Listed only for the two routes that print a PDF, because the folder is 66 MB and
+   * must not be copied into every function.
+   */
+  outputFileTracingIncludes: {
+    '/api/reports/task-manager-usage/pdf': ['./node_modules/@sparticuz/chromium/bin/**/*'],
+    '/api/cron/task-manager-report': ['./node_modules/@sparticuz/chromium/bin/**/*'],
+  },
+
   images: {
     remotePatterns: [
       {

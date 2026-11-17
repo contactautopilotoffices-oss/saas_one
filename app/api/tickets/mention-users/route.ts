@@ -20,30 +20,46 @@ export async function GET(request: NextRequest) {
         }
 
         const { searchParams } = new URL(request.url);
-        const propertyId = searchParams.get('propertyId');
+        const search = searchParams.get('search')?.toLowerCase() || null;
+        const rawPropertyId = searchParams.get('propertyId');
+        const propertyId = rawPropertyId && rawPropertyId !== 'all' ? rawPropertyId : null;
         let organizationId = searchParams.get('organizationId');
-        const search = searchParams.get('search')?.trim().toLowerCase() || '';
+        if (organizationId === 'all') organizationId = null;
+
+        const adminClient = createAdminClient();
+
+        // Resolve organizationId if missing
+        if (!organizationId) {
+            if (propertyId) {
+                const { data: prop } = await adminClient
+                    .from('properties')
+                    .select('organization_id')
+                    .eq('id', propertyId)
+                    .maybeSingle();
+
+                if (prop?.organization_id) {
+                    organizationId = prop.organization_id;
+                }
+            } else {
+                const { data: mem } = await adminClient
+                    .from('organization_memberships')
+                    .select('organization_id')
+                    .eq('user_id', currentUser.id)
+                    .eq('is_active', true)
+                    .limit(1)
+                    .maybeSingle();
+
+                if (mem?.organization_id) {
+                    organizationId = mem.organization_id;
+                }
+            }
+        }
 
         if (!propertyId && !organizationId) {
             return NextResponse.json(
                 { error: 'Missing required parameter: propertyId or organizationId' },
                 { status: 400 }
             );
-        }
-
-        const adminClient = createAdminClient();
-
-        // Resolve property and its organization if propertyId is provided
-        if (propertyId && !organizationId) {
-            const { data: prop } = await adminClient
-                .from('properties')
-                .select('organization_id')
-                .eq('id', propertyId)
-                .maybeSingle();
-
-            if (prop?.organization_id) {
-                organizationId = prop.organization_id;
-            }
         }
 
         // Fetch property memberships and organization memberships in parallel
@@ -54,7 +70,13 @@ export async function GET(request: NextRequest) {
                     .select('role, custom_designation, user:users!property_memberships_user_id_fkey(id, full_name, email)')
                     .eq('property_id', propertyId)
                     .eq('is_active', true)
-                : Promise.resolve({ data: [] as any[], error: null }),
+                : organizationId
+                    ? adminClient
+                        .from('property_memberships')
+                        .select('role, custom_designation, user:users!property_memberships_user_id_fkey(id, full_name, email), properties!inner(organization_id)')
+                        .eq('properties.organization_id', organizationId)
+                        .eq('is_active', true)
+                    : Promise.resolve({ data: [] as any[], error: null }),
             organizationId
                 ? adminClient
                     .from('organization_memberships')

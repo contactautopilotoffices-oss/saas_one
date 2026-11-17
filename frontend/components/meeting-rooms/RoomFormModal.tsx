@@ -18,6 +18,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ isOpen, onClose, onSucces
     const [location, setLocation] = useState('');
     const [capacity, setCapacity] = useState('4');
     const [size, setSize] = useState('');
+    const [hourlyRate, setHourlyRate] = useState('');
     const [photoUrl, setPhotoUrl] = useState('');
     const [amenities, setAmenities] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -29,6 +30,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ isOpen, onClose, onSucces
             setLocation(room.location);
             setCapacity(room.capacity.toString());
             setSize(room.size?.toString() || '');
+            setHourlyRate(room.hourly_rate != null ? String(room.hourly_rate) : '');
             setPhotoUrl(room.photo_url);
             setAmenities(room.amenities || []);
         } else {
@@ -37,6 +39,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ isOpen, onClose, onSucces
             setLocation('');
             setCapacity('4');
             setSize('');
+            setHourlyRate('');
             setPhotoUrl('');
             setAmenities([]);
         }
@@ -93,7 +96,11 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ isOpen, onClose, onSucces
             size: size ? parseInt(size) : null,
             photo_url: photoUrl,
             amenities,
-            propertyId
+            propertyId,
+            // Blank price: send nothing, unless an existing price is being cleared.
+            hourly_rate: hourlyRate.trim() !== ''
+                ? Number(hourlyRate)
+                : (room?.hourly_rate != null ? null : undefined)
         };
 
         try {
@@ -214,6 +221,19 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ isOpen, onClose, onSucces
                                 className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
                             />
                         </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Price per Hour (₹)</label>
+                        <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={hourlyRate}
+                            onChange={e => setHourlyRate(e.target.value)}
+                            placeholder="e.g. 500 (before GST, used for revenue sheet)"
+                            className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
+                        />
                     </div>
 
                     {/* Amenities Checkboxes */}

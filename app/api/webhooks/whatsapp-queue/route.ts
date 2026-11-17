@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { WhatsAppService } from '@/backend/services/WhatsAppService';
 import { AiSensyService } from '@/backend/services/AiSensyService';
+import { rememberTicketReplyMessage } from '@/backend/lib/whatsapp/ticketReply';
 
 /**
  * POST /api/webhooks/whatsapp-queue
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
 
             sent = result.success;
             sendError = result.error;
+            if (result.success) await rememberTicketReplyMessage(claimedRow, result.messageIds);
         } else {
             // Legacy WasenderAPI free-text path
             sent = await WhatsAppService.sendAsync(row.phone, {

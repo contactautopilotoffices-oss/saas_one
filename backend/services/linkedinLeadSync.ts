@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveDistributionAssignee } from '@/backend/lib/crm/distribution';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { LeadOutreachService } from './LeadOutreachService';
 import {
     LinkedInConfig,
     LinkedInAuthError,
@@ -184,6 +185,7 @@ export async function syncLinkedInLeadsForOrg(cfg: LinkedInConfig): Promise<Lead
             inserted++;
             if (newLead?.id) {
                 NotificationService.afterLeadCreated(newLead.id).catch(e => console.error(e));
+                LeadOutreachService.sendLeadFollowupOutreach(newLead.id).catch((e: any) => console.error('[LinkedIn sync] Lead outreach error:', e));
             }
         }
     }

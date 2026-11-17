@@ -200,7 +200,7 @@ async function run() {
     check('at the spending cap it stops — it does not keep trying other models', /cost cap/.test(stopped) && !/glm-5\.3-flash:/.test(stopped), stopped);
     check('the drafting model is recorded on the version (visible on the Prompt versions card)', /\[drafted by \$\{draft\.model\}\]/.test(read('task-manager/BotLearningHousekeeping.ts')));
     const G = await import('../brain/geminiLlm');
-    check('a dedicated GEMINI_AUTOTUNE_API_KEY is preferred; models overridable', /GEMINI_AUTOTUNE_API_KEY \|\| process\.env\.GEMINI_API_KEY/.test(read('task-manager/brain/geminiLlm.ts')) && G.geminiDraftModels().join() === 'gemini-3.8-flash,gemini-2.5-flash');
+    check('the shared Gemini keys are used (owner 2026-11-15: no dedicated key); models overridable', /geminiKeys\(\)\[0\]/.test(read('task-manager/brain/geminiLlm.ts')) && !/GEMINI_AUTOTUNE_API_KEY \|\|/.test(read('task-manager/brain/geminiLlm.ts')) && G.geminiDraftModels().join() === 'gemini-3.8-flash,gemini-2.5-flash');
 
     console.log('\n11. Superusers get company progress at midday from ANY team rule; manager switch moved to Task Access');
     const { TaskAccessService: TA } = await import('../TaskAccessService');

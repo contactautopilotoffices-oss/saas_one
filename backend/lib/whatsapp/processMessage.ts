@@ -6,9 +6,9 @@ import ffmpeg from 'fluent-ffmpeg';
 import sharp from 'sharp';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
-import { classifyTicketEnhanced } from '@/backend/lib/ticketing/classifyTicket';
 import { WhatsAppService, type WhatsAppOptions } from '@/backend/services/WhatsAppService';
 import { getWhatsAppProperties } from './assistant/access';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 const BUCKET_NAME = 'ticket_photos';
 const VIDEO_BUCKET = 'ticket_videos';
@@ -61,7 +61,8 @@ function decryptWhatsAppMedia(encryptedBuffer: Buffer, mediaKeyBase64: string, m
     return Buffer.concat([decipher.update(encData), decipher.final()]);
 }
 
-async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
+/** Exported 2026-11-14 for the Unified Brain (a photo sent earlier is attached to the ticket it describes). */
+export async function uploadMediaToStorage(mediaUrl: string, ticketId: string, mediaKeyBase64?: string, preloaded?: Buffer): Promise<string | null> {
     try {
         let encryptedBuffer = preloaded;
         if (!encryptedBuffer) {
@@ -315,45 +316,30 @@ export async function processIncomingMessage(
         // ── Run Groq classification ───────────────────────────────────────────
         const ticketText = messageText || 'Maintenance request via WhatsApp';
 
-        const preClassification = classifyTicketEnhanced(ticketText);
+        // Owner 2026-11-15: the AI sorts every ticket, choosing from this property's categories; the keyword rules only
+        // decide when every model fails (backend/lib/ticketing/resolver.ts).
         let categoryId: string | null = null;
         let skillGroupId: string | null = null;
         let priority = 'medium';
         let slaHours = 24;
 
-        if (preClassification.issue_code) {
-            const { data: catData } = await supabaseAdmin
+        const resolution = await resolveClassification(ticketText, { propertyId, organizationId });
+        const { issue_code, skill_group, confidence, decisionSource } = resolution;
+        const isVague = confidence === 'low';
+
+        if (issue_code) {
+            // The chosen category's row: this property's own first, then the shared one.
+            const { data: catRows } = await supabaseAdmin
                 .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
-                .eq('code', preClassification.issue_code)
-                .limit(1)
-                .maybeSingle();
+                .select('id, skill_group_id, priority, sla_hours, property_id')
+                .eq('code', issue_code)
+                .limit(50);
+            const rows = (catRows ?? []) as Array<{ id: string; skill_group_id: string | null; priority: string | null; sla_hours: number | null; property_id: string | null }>;
+            const catData = rows.find(c => c.property_id === propertyId) ?? rows.find(c => !c.property_id) ?? rows[0];
             if (catData) {
                 categoryId = catData.id;
                 skillGroupId = catData.skill_group_id;
                 priority = catData.priority || 'medium';
-                slaHours = catData.sla_hours || 24;
-            }
-        }
-
-        const resolution = await resolveClassification(ticketText, priority);
-        const { issue_code, skill_group, confidence, decisionSource } = resolution;
-        const isVague = confidence === 'low';
-
-        if (issue_code && issue_code !== preClassification.issue_code) {
-            const { data: catData } = await supabaseAdmin
-                .from('issue_categories')
-                .select('id, skill_group_id, priority, sla_hours')
-                .eq('code', issue_code)
-                .limit(1)
-                .maybeSingle();
-            if (catData) {
-                categoryId = catData.id;
-                skillGroupId = catData.skill_group_id;
-                const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
-                if ((priorityRank[catData.priority] ?? 0) > (priorityRank[priority] ?? 0)) {
-                    priority = catData.priority;
-                }
                 slaHours = catData.sla_hours || slaHours;
             }
         }
@@ -369,8 +355,9 @@ export async function processIncomingMessage(
         }
 
         // ── Create ticket ─────────────────────────────────────────────────────
-        const ticketNumber = `TKT-${Date.now()}`;
-        const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 };
+        const ticketNumber = await generateNextTicketNumber(supabaseAdmin, propertyId, organizationId);
+        // The AI may only raise the category's usual priority ('critical' counts as the top, never lowered).
+        const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
         const groqPriority = resolution.priority?.toLowerCase() || '';
         const dbPriority = priority;
         const finalPriority = (priorityRank[groqPriority] ?? -1) > (priorityRank[dbPriority] ?? -1)
@@ -415,7 +402,8 @@ export async function processIncomingMessage(
                 risk_flag: resolution.risk_flag,
                 llm_reasoning: resolution.llm_reasoning,
                 classification_source: decisionSource,
-                confidence_score: resolution.llmResult ? 90 : 100,
+                // The AI's own 0–100 rating (shown as "72% (Medium)"); the keyword rules keep the old fixed 100
+                confidence_score: resolution.confidenceScore ?? 100,
                 wa_message_id: waMessageId,
                 ...(processingOptions.requestId ? { wa_assistant_request_id: processingOptions.requestId } : {}),
                 ...(processingOptions.interpreterInputHash ? { wa_assistant_input_hash: processingOptions.interpreterInputHash } : {}),
@@ -526,15 +514,8 @@ export async function processIncomingMessage(
             console.error('[WA WEBHOOK] Classification log error:', err);
         });
 
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-            await NotificationService.afterTicketCreated(ticket.id);
-            if (finalPriority === 'critical') {
-                await NotificationService.afterCriticalTicketCreated(ticket.id);
-            }
-        } catch (err) {
-            console.error('[WA WEBHOOK] NotificationService import error:', err);
-        }
+        // Notifications: the ticket INSERT fires trg_tickets_outbox, and the Omnichannel matrix
+        // decides the recipients and the channels, exactly as for a ticket raised in the app.
 
         const priorityEmoji: Record<string, string> = {
             critical: '🔴', high: '🟠', medium: '🟡', low: '🟢',

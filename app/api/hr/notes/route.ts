@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { resolveCaller, isCallerError, forbidden, orgRolesIn } from '@/backend/lib/auth/callerAccess';
+import { isHrAdmin } from '@/backend/lib/auth/hrAccess';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -9,14 +11,20 @@ export async function GET(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const orgId = searchParams.get('orgId');
-        const userId = searchParams.get('userId');
-        const role = (searchParams.get('role') || 'employee').toLowerCase();
         const noteType = searchParams.get('type') || 'all'; // 'all' | 'internal' | 'public'
         const search = searchParams.get('search')?.trim().toLowerCase() || '';
 
         if (!orgId) {
             return NextResponse.json({ success: false, error: 'Organization ID is required' }, { status: 400 });
         }
+
+        // Who is asking comes from the login, and their role from the database, never from ?userId= or ?role=.
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!(await isHrAdmin(caller, orgId))) return forbidden('Forbidden: HR admins only');
+        const userId = caller.userId;
+        const myRoles = orgRolesIn(caller, orgId);
+        const { data: myProfile } = await supabaseAdmin.from('employee_profiles').select('is_director_authority').eq('user_id', userId).maybeSingle();
 
         // Fetch comments with their associated ticket details
         let query = supabaseAdmin
@@ -78,8 +86,8 @@ export async function GET(request: Request) {
         }
 
         // Filter and sanitize by organization and role permissions
-        const isSuperAdmin = ['org_super_admin', 'master_admin', 'super_admin'].includes((role || '').toLowerCase());
-        const isDirector = role === 'director';
+        const isSuperAdmin = caller.isMasterAdmin || myRoles.some(r => ['org_super_admin', 'master_admin', 'super_admin'].includes(r));
+        const isDirector = myRoles.includes('director') || Boolean(myProfile?.is_director_authority);
         const includeSubmitter = searchParams.get('includeSubmitter') === 'true';
 
         const filtered = (comments || [])

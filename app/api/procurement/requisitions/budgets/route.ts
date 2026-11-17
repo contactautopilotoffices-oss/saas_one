@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, guardOrg, guardProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
+import { isProcurementAdmin } from '@/backend/lib/auth/procurementAccess';
 
 export async function GET(request: NextRequest) {
     try {
@@ -7,6 +9,21 @@ export async function GET(request: NextRequest) {
         const organizationId = searchParams.get('organization_id') || searchParams.get('organizationId');
         const propertyId = searchParams.get('property_id') || searchParams.get('propertyId');
         const floorTag = searchParams.get('floor_tag') || searchParams.get('floorTag');
+
+        if (!organizationId) {
+            // Every organisation's budgets: master admins only.
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            if (!caller.isMasterAdmin) return NextResponse.json({ error: 'organization_id is required' }, { status: 400 });
+        } else {
+            // Reading: internal members of the property (which must be in this organisation) or of the organisation.
+            {
+                const denied = propertyId
+                        ? (await guardProperty(request, propertyId)) || ((await propertyOrgId(propertyId)) !== organizationId ? NextResponse.json({ error: 'Property does not belong to this organization' }, { status: 400 }) : null)
+                        : await guardOrg(request, organizationId);
+                if (denied) return denied;
+            }
+        }
 
         const adminSupabase = createAdminClient();
 
@@ -88,6 +105,18 @@ export async function POST(request: NextRequest) {
 
         const upsertRows = Array.from(deduplicatedMap.values());
 
+        // Procurement or admin of every organisation in the batch, and each property in its organisation.
+        {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            for (const row of upsertRows as { organization_id?: string; property_id?: string }[]) {
+                if (!row.organization_id || !isProcurementAdmin(caller, row.organization_id)) return forbidden('Forbidden: procurement or admin access is required');
+                if (row.property_id && (await propertyOrgId(row.property_id)) !== row.organization_id) {
+                    return NextResponse.json({ error: 'A property does not belong to its organization' }, { status: 400 });
+                }
+            }
+        }
+
         if (upsertRows.length === 0) {
             return NextResponse.json({ error: 'organization_id and property_id are required for all budget items' }, { status: 400 });
         }
@@ -122,6 +151,13 @@ export async function DELETE(request: NextRequest) {
         }
 
         const adminSupabase = createAdminClient();
+        {
+            const caller = await resolveCaller(request);
+            if (isCallerError(caller)) return caller;
+            const { data: row } = await adminSupabase.from('property_monthly_requisition_budgets').select('organization_id').eq('id', id).maybeSingle();
+            if (!row) return NextResponse.json({ error: 'Budget not found' }, { status: 404 });
+            if (!isProcurementAdmin(caller, row.organization_id)) return forbidden('Forbidden: procurement or admin access is required');
+        }
         const { error } = await adminSupabase
             .from('property_monthly_requisition_budgets')
             .delete()

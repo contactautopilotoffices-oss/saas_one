@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { resolveCaller, isCallerError, isOrgAdmin, forbidden } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/ppm/debug?organization_id=&limit=20
@@ -14,6 +15,10 @@ export async function GET(request: NextRequest) {
     if (!organizationId) {
         return NextResponse.json({ error: 'organization_id required' }, { status: 400 });
     }
+    // A debugging aid: organisation admins only.
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!isOrgAdmin(caller, organizationId)) return forbidden('Forbidden: organisation admins only');
 
     const { data, error } = await supabaseAdmin
         .from('ppm_schedules')

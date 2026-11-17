@@ -9,6 +9,7 @@ import { Button } from '@/frontend/components/ui/button';
 import { Settings, Download, Save, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Toast } from '@/frontend/components/ui/Toast';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { downloadTemplateFromUrl } from '@/frontend/utils/downloadTemplate';
 
 interface Props {
     propertyId: string;
@@ -385,6 +386,17 @@ export function RosterDashboard({ propertyId }: Props) {
         }
     };
 
+    const handleDownloadTemplate = async () => {
+        try {
+            await downloadTemplateFromUrl(
+                `/api/roster/template?propertyId=${encodeURIComponent(propertyId)}&month=${encodeURIComponent(monthStr)}`,
+                `Roster_Template_${monthStr}.xlsx`
+            );
+        } catch (err: any) {
+            setNotification({ message: err?.message || 'Failed to download roster template', type: 'error' });
+        }
+    };
+
     const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -485,6 +497,15 @@ export function RosterDashboard({ propertyId }: Props) {
                         <Settings className="w-3 h-3 mr-1.5" /> Shift Codes
                     </Button>
                     
+                    <Button
+                        variant="outline"
+                        onClick={handleDownloadTemplate}
+                        className="rounded-full h-8 text-xs px-3 bg-white"
+                        title="Download Roster Excel template accepted by the importer"
+                    >
+                        <Download className="w-3 h-3 mr-1.5" /> Template
+                    </Button>
+
                     <label className="flex items-center justify-center border rounded-full text-xs hover:bg-gray-50 cursor-pointer bg-white px-3 h-8 border-gray-200">
                         <input type="file" accept=".xlsx" className="hidden" onChange={handleImportFile} />
                         Import Excel

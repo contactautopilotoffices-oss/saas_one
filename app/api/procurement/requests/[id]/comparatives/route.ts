@@ -183,7 +183,8 @@ export async function PATCH(
                 ticket_id: ticketId,
                 user_id: user.id,
                 comment: `Comparative quote${costFormatted} was ${actionText} by ${actorName}${overrideContext}${commentNote}.`,
-                is_internal: false
+                is_internal: false,
+                metadata: { system_update: true } // automatic log line, not a person's reply: no WhatsApp
             }).then(({ error }) => {
                 if (error) console.error('[Comparative API] Comment log error:', error.message);
             });

@@ -24,6 +24,7 @@ import {
     Zap
 } from 'lucide-react';
 import TaskProgressGauge from './TaskProgressGauge';
+import ZohoTasksButton from './ZohoTasksButton';
 import DateRangePicker, { DateRange, isSingleDay, localDay, rangeLabel, todayRange } from './DateRangePicker';
 import { createClient } from '@/frontend/utils/supabase/client';
 
@@ -68,6 +69,8 @@ interface TaskAssignmentItem {
         phone: string;
     };
     template?: TaskTemplate;
+    /** 'zoho' when imported from Zoho Mail. */
+    source?: string | null;
     /** Owner 2026-10-15: an unfinished task from before the chosen dates, shown under "Carry forward". */
     is_carried_forward?: boolean;
 }
@@ -746,6 +749,9 @@ export default function TaskAssignmentDashboard({
                         <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
                     </button>
 
+                    {/* Zoho Tasks import (the signed-in person's own Zoho account) */}
+                    <ZohoTasksButton onSynced={() => { void fetchData(true); }} />
+
                     {/* Action Buttons */}
                     {(isReportingManager || isSuperuser) && (
                         <>
@@ -1281,6 +1287,11 @@ export default function TaskAssignmentDashboard({
                                                                     {task.template.task_type.toUpperCase()}
                                                                 </span>
                                                             )}
+                                                            {task.source === 'zoho' && (
+                                                                <span className="inline-flex items-center text-[8px] font-bold px-1.5 py-0.2 rounded-full bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-900/60 flex-shrink-0" title="Imported from Zoho Mail">
+                                                                    ZOHO
+                                                                </span>
+                                                            )}
                                                         </div>
 
                                                         {task.description && (
@@ -1481,7 +1492,6 @@ export default function TaskAssignmentDashboard({
                                 <input
                                     type="text"
                                     required
-                                    placeholder="e.g. Clean Room 101, Prepare Q3 Audit"
                                     value={assignTitle}
                                     onChange={(e) => setAssignTitle(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all"
@@ -1495,7 +1505,6 @@ export default function TaskAssignmentDashboard({
                                 </label>
                                 <textarea
                                     rows={2}
-                                    placeholder="Additional instructions or context..."
                                     value={assignDesc}
                                     onChange={(e) => setAssignDesc(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all resize-none"
@@ -1572,7 +1581,6 @@ export default function TaskAssignmentDashboard({
                                 <input
                                     type="text"
                                     required
-                                    placeholder="e.g. Clean Meeting Room A, Submit Daily Report"
                                     value={newTemplateTitle}
                                     onChange={(e) => setNewTemplateTitle(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all"
@@ -1617,7 +1625,6 @@ export default function TaskAssignmentDashboard({
                                 </label>
                                 <textarea
                                     rows={2}
-                                    placeholder="Standard operating procedure or instructions..."
                                     value={newTemplateDesc}
                                     onChange={(e) => setNewTemplateDesc(e.target.value)}
                                     className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 focus:outline-none transition-all resize-none"

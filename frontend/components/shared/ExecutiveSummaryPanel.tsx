@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { fetchAllExecutivePropertyTickets } from './executiveSummaryTickets';
 
 interface TicketData {
     id: string;
@@ -109,13 +110,7 @@ export default function ExecutiveSummaryPanel({ propertyId, idPrefix = 'esp' }: 
             setIsLoading(true);
             setError(null);
             try {
-                const { data: tickets, error: ticketsError } = await supabase
-                    .from('tickets')
-                    .select('id, category, status, created_at, resolved_at, internal, floor_number, issue_category:category_id(name)')
-                    .eq('property_id', propertyId)
-                    .order('created_at', { ascending: false });
-
-                if (ticketsError) throw new Error(ticketsError.message);
+                const tickets = await fetchAllExecutivePropertyTickets(supabase, propertyId);
 
                 const { data: property } = await supabase
                     .from('properties')

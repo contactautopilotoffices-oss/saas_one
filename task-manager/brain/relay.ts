@@ -31,6 +31,8 @@ export interface RelayIO {
     /** Sends through the safety gate (kill switches, Pretend Mode) as the approved `task_update_v2` template. */
     send(phone: string, update: string, from: string, titles: string[]): Promise<boolean>;
     audit(details: Record<string, unknown>): Promise<void>;
+    /** Owner 2026-10-20: the dashboard bell (+ push) for the person who gave the tasks. Optional. */
+    bell?(personId: string, update: string, from: string, titles: string[]): Promise<void>;
 }
 
 export interface RelayResult { told: string[]; couldNot: string[] }
@@ -55,6 +57,7 @@ export async function relayToAssigners(
         const who = await io.getPerson(assignerId);
         if (!who || !who.active) continue;
         try {
+            if (io.bell) await io.bell(who.id, update, from, titles);
             const ok = !!who.phone_number && await io.send(who.phone_number, update, from, titles);
             (ok ? out.told : out.couldNot).push(who.name);
             await io.audit({ assignerId, actorId: input.actor.id, state: input.state, count: titles.length, delivered: ok });
@@ -83,5 +86,10 @@ export async function defaultRelayIO(): Promise<RelayIO> {
         // Approved template ("Update regarding a task you assigned"), so it also reaches people outside the 24-hour window.
         send: (phone, update, from, titles) => sendTaskUpdate(phone, { titles, assigneeLabel: from, update, messageType: 'task_update' }),
         audit: details => TaskDatabaseService.logAudit({ eventType: 'task_reply_relayed', details }),
+        async bell(personId, update, from, titles) {
+            const { shortList, taskBell } = await import('../taskBell');
+            const who = await TaskDatabaseService.getEmployeeById(personId).catch(() => null);
+            void taskBell({ userId: personId, kind: 'TASK_UPDATE', title: `Update from ${from}`, message: `${update}: ${shortList(titles)}`, departmentName: who?.department_name ?? null });
+        },
     };
 }

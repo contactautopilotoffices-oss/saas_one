@@ -3,6 +3,7 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
 import { getISTDateBounds } from '@/backend/utils/timezone';
+import { resolveCaller, isCallerError, forbidden, canUseProperty, propertyOrgId, type CallerAccess } from '@/backend/lib/auth/callerAccess';
 
 // Create admin client for operations that need to bypass RLS
 const getAdminClient = () => createAdminClient(
@@ -10,6 +11,24 @@ const getAdminClient = () => createAdminClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { autoRefreshToken: false, persistSession: false } }
 );
+
+/**
+ * Who may see this property's visitor log: 'staff' (internal members, master admin), 'host' (a
+ * tenant or other outside member: only their own visitors), or 'none'.
+ */
+async function visitorAccess(caller: CallerAccess, propertyId: string): Promise<'staff' | 'host' | 'none'> {
+    const orgId = await propertyOrgId(propertyId);
+    if (!orgId) return 'none';
+    if (canUseProperty(caller, propertyId, orgId)) return 'staff';
+    const member = caller.propertyMemberships.some(m => m.property_id === propertyId)
+        || caller.orgMemberships.some(m => m.organization_id === orgId);
+    return member ? 'host' : 'none';
+}
+
+async function fullName(userId: string): Promise<string | null> {
+    const { data } = await getAdminClient().from('users').select('full_name').eq('id', userId).maybeSingle();
+    return (data?.full_name as string | undefined) || null;
+}
 
 // POST: Check-in a visitor
 export async function POST(
@@ -65,11 +84,11 @@ export async function POST(
             coming_from: body.coming_from || null,
             whom_to_meet: body.whom_to_meet || 'General Visit',
             host_id: body.host_id || null,
-            created_by: user?.id || body.created_by || null,
+            created_by: user?.id || null, // never from the request: the kiosk has no login
             photo_url: body.photo_url || null,
             checkin_time: new Date().toISOString(),
             status: 'checked_in',
-            approval_status: body.approval_status || defaultApprovalStatus,
+            approval_status: defaultApprovalStatus, // decided here, never by the visitor
         };
 
         let { data: visitor, error: insertError } = await supabaseAdmin
@@ -164,8 +183,22 @@ export async function GET(
     const approvalStatus = searchParams.get('approval_status'); // 'pending' | 'approved' | 'rejected' | 'all'
     const date = searchParams.get('date'); // 'today' | 'week' | 'month' | specific date
     const search = searchParams.get('search'); // Visitor ID or name
-    const hostId = searchParams.get('host_id') || searchParams.get('host_user_id') || searchParams.get('user_id');
-    const hostName = searchParams.get('host_name');
+    let hostId = searchParams.get('host_id') || searchParams.get('host_user_id') || searchParams.get('user_id');
+    let hostName = searchParams.get('host_name');
+
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (propertyId === 'all') {
+        if (!caller.isMasterAdmin) return forbidden('Forbidden: pick a property');
+    } else {
+        const access = await visitorAccess(caller, propertyId);
+        if (access === 'none') return forbidden('Forbidden: no access to this property');
+        if (access === 'host') {
+            // A tenant (or other outside member) sees only visitors coming to see them.
+            hostId = caller.userId;
+            hostName = await fullName(caller.userId);
+        }
+    }
 
     // Helper to apply common filters (date & search) to any query
     const applyCommonFilters = (q: any) => {
@@ -325,6 +358,20 @@ export async function PATCH(
     // Handle Visitor Entry Approval / Rejection action
     if (body.action === 'approval' || body.approval_status) {
         const approvalStatus = body.approval_status; // 'approved' | 'rejected' | 'pending'
+        if (!['approved', 'rejected', 'pending'].includes(approvalStatus)) {
+            return NextResponse.json({ error: 'approval_status must be approved, rejected or pending' }, { status: 400 });
+        }
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        const access = await visitorAccess(caller, propertyId);
+        if (access === 'none') return forbidden('Forbidden: no access to this property');
+        if (access === 'host') {
+            const me = caller.userId;
+            const myName = (await fullName(me) || '').trim().toLowerCase();
+            const isMine = visitor.host_id === me || visitor.whom_to_meet_uid === me
+                || (!!myName && String(visitor.whom_to_meet || '').trim().toLowerCase() === myName);
+            if (!isMine) return forbidden('Forbidden: you can only approve your own visitors');
+        }
         const { data: updatedVisitor, error: updateError } = await supabaseAdmin
             .from('visitor_logs')
             .update({

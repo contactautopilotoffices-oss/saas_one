@@ -72,8 +72,10 @@ export async function GET(request: NextRequest) {
     }
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-    const signedUrls = await signDocumentBankFiles((data || []).map((d) => d.file_path));
-    const documents = (data || []).map((d, i) => ({ ...d, signed_url: signedUrls[i] }));
+    const documents = (data || []).map((d) => ({
+        ...d,
+        signed_url: `/api/document-bank/${d.id}/download`,
+    }));
 
     return NextResponse.json({ provisioned: true, documents });
 }
@@ -228,8 +230,7 @@ export async function POST(request: NextRequest) {
             }, { onConflict: 'master_item_id,property_id,audit_period_year' });
         }
 
-        const [signedUrl] = await signDocumentBankFiles([inserted.file_path]);
-        return NextResponse.json({ document: { ...inserted, signed_url: signedUrl } }, { status: 201 });
+        return NextResponse.json({ document: { ...inserted, signed_url: `/api/document-bank/${inserted.id}/download` } }, { status: 201 });
     } catch (err) {
         console.error('[document-bank] upload error:', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

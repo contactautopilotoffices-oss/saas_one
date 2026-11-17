@@ -696,3 +696,14 @@ help no longer names a fixed number. Tests: rollout 45/45; regression unchanged.
   everyone + except); code turns it into people, ONLY those the sender may give work to (max 40), and shows one preview
   listing every name → one YES. The AI never lists names itself. Tests: `test_part_b_context.ts` 48/48; real AI: all six
   phrasings tried gave the right people.
+
+### 2026-10-20: tickets and rooms reachable again for Smart chat teams
+**Problem:** for a team with Smart chat ON, "Hi" got the task greeting instead of the Create Ticket / Book Meeting Room menu. "Raise ticket" got "send HI first", and a quick "I want to raise a ticket" could be dropped with no reply.
+
+**Fix (minimal, no switch):**
+- **Smart chat:** in `task-manager/brain/live.ts`, `isMenuOrFacilityMessage` sends greetings and menu words, ticket requests and room bookings to the old bot before any AI call or message merging. Messages that mention a task stay with Smart chat.
+- **Merged follow-ups:** a ticket or room request merged into a reply that is already being written now gets "please send that as its own message" instead of silence.
+- **Ticket bot:** in `backend/lib/whatsapp/interpreter/coordinator.mjs`, `isDirectTicketRequest` makes "I want to raise a ticket", "log a complaint" or "new ticket" start the ticket flow (it asks for the issue), like `isDirectBookingRequest` already does for rooms.
+- **Test:** `task-manager/tests/test_menu_facility_routing.ts`, offline.
+
+**Checks:** that test passes. Smart chat phase 4, HR requests and notes tests pass, and interpreter conversation tests pass 52/52. `whatsapp-interpreter-task-compatibility` (2) and `whatsapp-interpreter-user-picker` (3) already failed before this change. Typecheck is clean.

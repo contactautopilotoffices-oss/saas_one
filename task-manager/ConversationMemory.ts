@@ -19,7 +19,50 @@ const STORE_CHARS = 500;     // per message, as stored
 const PROMPT_CHARS = 300;    // per message, as shown to the AI
 
 export type Speaker = 'person' | 'bot';
-export interface Turn { who: Speaker; text: string; at: string }
+/** `auto` (2026-11-02) = a scheduled / automatic message (digest, reminder, alert), not a reply in the conversation. */
+export interface Turn { who: Speaker; text: string; at: string; auto?: boolean }
+
+/** 2026-11-02: at most this many automatic messages are shown to the AI (the newest), so they never crowd out the real chat. */
+export const MAX_AUTO_SHOWN = 2;
+const AUTO_CHARS = 160;      // an automatic message, as stored: one short line
+
+/**
+ * 2026-11-02: the bot's reply as the AI should remember it. Replies are usually "a sentence, a long inserted list, a question";
+ * cutting the raw text at 300 characters lost the question at the end (the part that matters most). Lists become one short
+ * bracket ("[Carpet PO; Kone AMC; +3 more]") and section headings go, so the sentences and the question always fit.
+ * Pure, never throws.
+ */
+const ITEM = /^(?:[•\-*▪◦]|\d{1,2}[.)])\s+/;
+const HEADING = /^[^\p{L}\p{N}]{0,4}\*[^*]{1,60}\*(?:\s*\(\d+\))?\s*:?$/u;
+export function compactBotText(raw: string, max = PROMPT_CHARS): string {
+    const segments = String(raw ?? '').split(/\n+/).flatMap(line => line.split(/\s+(?=•\s)/)).map(s => s.trim()).filter(Boolean);
+    const parts: Array<{ text: string } | { items: string[] }> = [];
+    for (const seg of segments) {
+        if (HEADING.test(seg)) continue;                                   // "🔄 *Carry forward tasks*"
+        if (ITEM.test(seg)) {
+            const item = seg.replace(ITEM, '').replace(/\s+/g, ' ').trim();
+            const lastPart = parts[parts.length - 1];
+            if (lastPart && 'items' in lastPart) lastPart.items.push(item); else parts.push({ items: [item] });
+        } else parts.push({ text: seg.replace(/\s+/g, ' ') });
+    }
+    const render = (short: boolean) => parts.map(p => {
+        if ('text' in p) return p.text;
+        if (short) return `[${p.items.length} item${p.items.length === 1 ? '' : 's'}]`;
+        const shown = p.items.slice(0, 3).map(i => (i.length > 40 ? `${i.slice(0, 39)}…` : i));
+        return `[${shown.join('; ')}${p.items.length > 3 ? `; +${p.items.length - 3} more` : ''}]`;
+    }).join(' ').trim();
+    let out = render(false);
+    if (out.length > max) out = render(true);
+    if (out.length > max) {
+        // Still too long: keep the start and the end (the question), drop the middle.
+        const keepEnd = Math.min(140, Math.floor(max / 2));
+        out = `${out.slice(0, max - keepEnd - 2).trimEnd()} … ${out.slice(-keepEnd).trimStart()}`;
+    }
+    return out;
+}
+
+/** 2026-11-02: an automatic message as one short line, marked as such for the AI. */
+export const autoLine = (raw: string): string => `(automatic message) ${compactBotText(raw, AUTO_CHARS)}`;
 
 /** The "Conversation memory" switch (settings, cached 30 s; env forces it ON). */
 export const memoryEnabled = () => botSwitchOn('conversationMemory');
@@ -32,13 +75,17 @@ const warn = (what: string, err: unknown) =>
  * Add one message to the person's memory. `at` = when it happened (for a person's message: when it ARRIVED, so a reply that
  * was sent while it was still being routed is ordered after it).
  */
-export async function appendTurn(phone: string | null | undefined, who: Speaker, text: string | null | undefined, at: string = new Date().toISOString()): Promise<void> {
+export async function appendTurn(phone: string | null | undefined, who: Speaker, text: string | null | undefined, at: string = new Date().toISOString(), opts: { auto?: boolean } = {}): Promise<void> {
     if (!phone || !(await memoryEnabled())) return;
     const key = phoneKey(phone);
-    const clean = oneLine(text, STORE_CHARS);
+    // 2026-11-02: the bot's replies are stored compacted (lists shortened, the question kept); automatic messages as one line.
+    const clean = who === 'bot'
+        ? oneLine(opts.auto ? autoLine(String(text ?? '')) : compactBotText(String(text ?? '')), STORE_CHARS)
+        : oneLine(text, STORE_CHARS);
     if (key.length < 10 || !clean) return;
     try {
-        const { error } = await supabaseAdmin.rpc('whatsapp_memory_append', { p_phone_key: key, p_turn: { who, text: clean, at }, p_keep: KEEP_TURNS });
+        const turn: Turn = { who, text: clean, at, ...(who === 'bot' && opts.auto ? { auto: true } : {}) };
+        const { error } = await supabaseAdmin.rpc('whatsapp_memory_append', { p_phone_key: key, p_turn: turn, p_keep: KEEP_TURNS });
         if (error) warn('append', error);
     } catch (err) { warn('append', err); }
 }
@@ -46,9 +93,14 @@ export async function appendTurn(phone: string | null | undefined, who: Speaker,
 /** Pure: the stored turns → lines for the AI, oldest first ("Person: …" / "Assistant: …"). */
 export function toTranscript(turns: unknown, limit = KEEP_TURNS): string[] {
     if (!Array.isArray(turns)) return [];
-    return turns
+    const sorted = turns
         .filter((t): t is Turn => !!t && typeof t === 'object' && (t.who === 'person' || t.who === 'bot') && typeof t.text === 'string' && typeof t.at === 'string')
-        .sort((a, b) => a.at.localeCompare(b.at))
+        .sort((a, b) => a.at.localeCompare(b.at));
+    // 2026-11-02: only the newest MAX_AUTO_SHOWN automatic messages stay (a morning digest + reminders must not fill the window).
+    const autos = sorted.filter(t => t.auto);
+    const dropped = new Set(autos.slice(0, Math.max(0, autos.length - MAX_AUTO_SHOWN)));
+    return sorted
+        .filter(t => !dropped.has(t))
         .slice(-limit)
         .map(t => `${t.who === 'person' ? 'Person' : 'Assistant'}: ${oneLine(t.text, PROMPT_CHARS)}`);
 }

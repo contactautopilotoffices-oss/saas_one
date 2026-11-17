@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardProperty, propertyOrgId } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/audit/submissions?property_id=...&period=...
@@ -12,11 +13,16 @@ export async function GET(request: NextRequest) {
     const period = searchParams.get('period') || '2025-26';
 
     if (!propertyId) return NextResponse.json({ error: 'Property ID required' }, { status: 400 });
+    const denied = await guardProperty(request, propertyId);
+    if (denied) return denied;
+    const orgId = await propertyOrgId(propertyId);
 
     // Join with master items to show the full checklist even if no submission exists
+    // (the property's organisation's items, plus any shared ones with no organisation).
     const { data: masterItems, error: mError } = await supabaseAdmin
         .from('audit_master_items')
         .select('*')
+        .or(`organization_id.eq.${orgId},organization_id.is.null`)
         .order('si_no', { ascending: true });
 
     if (mError) return NextResponse.json({ error: mError.message }, { status: 500 });
@@ -52,7 +58,12 @@ export async function PATCH(request: NextRequest) {
         if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
         const body = await request.json();
-        const { master_item_id, property_id, organization_id, status, remark, proof_url, audit_period_year } = body;
+        const { master_item_id, property_id, status, remark, proof_url, audit_period_year } = body;
+        if (!property_id) return NextResponse.json({ error: 'property_id required' }, { status: 400 });
+        const denied = await guardProperty(request, property_id);
+        if (denied) return denied;
+        // The organisation always comes from the property, not from the request.
+        const organization_id = await propertyOrgId(property_id);
 
         const { data, error } = await supabaseAdmin
             .from('property_audit_submissions')

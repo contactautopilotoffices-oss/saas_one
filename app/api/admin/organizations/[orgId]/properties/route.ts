@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { resolveCaller, isCallerError, forbidden, belongsToOrg } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET /api/admin/organizations/[orgId]/properties
@@ -12,6 +13,10 @@ export async function GET(
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    // Members of the organisation (also vendors and tenants, whose screens show the property names).
+    const caller = await resolveCaller(request);
+    if (isCallerError(caller)) return caller;
+    if (!(await belongsToOrg(caller, orgId))) return forbidden('Forbidden: no access to this organization');
 
     const { data, error } = await supabaseAdmin
         .from('properties')

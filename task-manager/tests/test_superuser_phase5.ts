@@ -76,6 +76,7 @@ async function run() {
     const realCollab = acc.isSuperuserCollabEnabled.bind(TaskAccessService);
     let collabOn = new Set<string>(['d1']);
     acc.isSuperuserCollabEnabled = async (d: string) => collabOn.has(d);
+    acc.isTeamAssignEnabled = async () => false; // owner 2026-10-19 "assign to anyone in team" is not what this test is about
     const canAssign = async (actor: string, target: string) => { try { await PermissionService.assertCanAssignTask(actor, target); return true; } catch (e) { return e instanceof PermissionDeniedError ? false : Promise.reject(e); } };
     check('Procurement → Saniel (a superuser) is allowed when the switch is ON', await canAssign('u1', 'u9'));
     collabOn = new Set();
@@ -434,11 +435,13 @@ async function run() {
     check('the live preview is built from the SAME template blanks the server sends (template only)', /import \{ buildPingTemplatePreview \} from '@\/task-manager\/pingMessage'/.test(panelSrc) && /deliver/.test(read('task-manager/SuperuserPingService.ts')) && /buildPingTemplateParams\(input, recipient\.name\)/.test(read('task-manager/SuperuserPingService.ts')) && /templateOnly: true/.test(read('task-manager/SuperuserPingService.ts')) && /buildPingTemplateParams\(i, recipientName\)/.test(read('task-manager/pingMessage.ts')));
     check('the view offers send now, schedule in 15-minute steps, cancel, and the shared regular reminder', /Send now/.test(panelSrc) && /step=\{900\}/.test(panelSrc) && /Cancel/.test(panelSrc) && /Regular reminders/.test(panelSrc));
     const tab = read('frontend/components/procurement/ProcurementTasksTab.tsx');
-    check('the Tasks tab shows the view only for a team whose switch is ON and when there is someone to work with', /const collab = ok\.superuserCollab\?\.enabled && ok\.superuserCollab\.superusers\.length/.test(tab) && /\.\.\.\(collab \? \[\{ id: 'superuser' as View/.test(tab));
+    // Owner 2026-10-26: the Send tab now always shows (it also holds "Other departments"); the superuser side ("Your
+    // manager") still only for a team whose switch is ON and when there is someone to work with.
+    check('the "Your manager" side shows only for a team whose switch is ON and when there is someone to work with', /const superCollab = ok\.superuserCollab\?\.enabled && ok\.superuserCollab\.superusers\.length/.test(tab) && /side === 'manager' && superCollab \?/.test(tab) && /\{superCollab && crossDeptOn && \(/.test(tab));
     const panelUi = read('frontend/components/task-manager/TaskAccessPanel.tsx');
-    check('the Control Center has the per-department switch with its SQL-file banner', /Send tasks to a superuser: \{d\.superuserCollabEnabled/.test(panelUi) && /action: 'set_superuser_collab', departmentId/.test(panelUi) && /20261007000006_task_manager_superuser_pings\.sql/.test(panelUi));
+    check('the Control Center has the per-department switch with its SQL-file banner', /label: 'Send tasks to a superuser'[^}]*on: d\.superuserCollabEnabled/.test(panelUi) && /action: 'set_superuser_collab', departmentId/.test(panelUi) && /20261007000006_task_manager_superuser_pings\.sql/.test(panelUi));
     const permSrc = read('task-manager/PermissionService.ts');
-    check('the permission change is exactly one guarded branch (superuser target + switch ON)', /target\.role === 'superuser' && actor\.department_id && await TaskAccessService\.isSuperuserCollabEnabled\(actor\.department_id\)/.test(permSrc));
+    check('the permission change is exactly one guarded branch (superuser target + switch ON)', /target\.role === 'superuser' && actor\.department_id && await TaskAccessService\.isSuperuserCollabEnabled\(actor\.department_id, actor\.id\)/.test(permSrc));
     const relaySrc = read('task-manager/brain/relay.ts');
     check('the relay module never receives the person\'s message (its inputs are state, tasks and a paraphrased note)', !/message|text:/.test(relaySrc.split('export interface RelayIO')[0].replace(/\/\*\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/userMessage/g, '')) || /input: \{ actor: RelayPerson; taskIds: string\[\]; state: ProgressState; note: string \| null/.test(relaySrc));
 

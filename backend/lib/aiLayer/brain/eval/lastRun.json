@@ -1,0 +1,187 @@
+{
+  "ranAt": "2026-11-14T08:45:39.700Z",
+  "grader": {
+    "model": "glm-5.3-flash",
+    "audited": 16,
+    "auditedAgree": 14
+  },
+  "models": [
+    {
+      "model": "anthropic:claude-haiku-5-5",
+      "cases": 56,
+      "passed": 56,
+      "toolChoice": 1,
+      "quality": 2.88,
+      "unsafe": 0,
+      "avgCostUsd": 0.000286,
+      "medianLatencyMs": 2016,
+      "avgToolCalls": 0.82,
+      "groups": [
+        {
+          "group": "conversation",
+          "passed": 3,
+          "total": 3
+        },
+        {
+          "group": "memory",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "photos",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "roles",
+          "passed": 8,
+          "total": 8
+        },
+        {
+          "group": "rooms",
+          "passed": 7,
+          "total": 7
+        },
+        {
+          "group": "safety",
+          "passed": 9,
+          "total": 9
+        },
+        {
+          "group": "tasks",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "group": "tickets",
+          "passed": 13,
+          "total": 13
+        },
+        {
+          "group": "utilities",
+          "passed": 4,
+          "total": 4
+        }
+      ],
+      "failed": []
+    },
+    {
+      "model": "anthropic:claude-sonnet-5-5",
+      "cases": 56,
+      "passed": 56,
+      "toolChoice": 1,
+      "quality": 2.81,
+      "unsafe": 0,
+      "avgCostUsd": 0.004168,
+      "medianLatencyMs": 2265,
+      "avgToolCalls": 0.86,
+      "groups": [
+        {
+          "group": "conversation",
+          "passed": 3,
+          "total": 3
+        },
+        {
+          "group": "memory",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "photos",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "roles",
+          "passed": 8,
+          "total": 8
+        },
+        {
+          "group": "rooms",
+          "passed": 7,
+          "total": 7
+        },
+        {
+          "group": "safety",
+          "passed": 9,
+          "total": 9
+        },
+        {
+          "group": "tasks",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "group": "tickets",
+          "passed": 13,
+          "total": 13
+        },
+        {
+          "group": "utilities",
+          "passed": 4,
+          "total": 4
+        }
+      ],
+      "failed": []
+    },
+    {
+      "model": "anthropic:claude-opus-5-5",
+      "cases": 56,
+      "passed": 56,
+      "toolChoice": 1,
+      "quality": 2.87,
+      "unsafe": 0,
+      "avgCostUsd": 0.006895,
+      "medianLatencyMs": 2382,
+      "avgToolCalls": 0.84,
+      "groups": [
+        {
+          "group": "conversation",
+          "passed": 3,
+          "total": 3
+        },
+        {
+          "group": "memory",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "photos",
+          "passed": 5,
+          "total": 5
+        },
+        {
+          "group": "roles",
+          "passed": 8,
+          "total": 8
+        },
+        {
+          "group": "rooms",
+          "passed": 7,
+          "total": 7
+        },
+        {
+          "group": "safety",
+          "passed": 9,
+          "total": 9
+        },
+        {
+          "group": "tasks",
+          "passed": 2,
+          "total": 2
+        },
+        {
+          "group": "tickets",
+          "passed": 13,
+          "total": 13
+        },
+        {
+          "group": "utilities",
+          "passed": 4,
+          "total": 4
+        }
+      ],
+      "failed": []
+    }
+  ]
+}

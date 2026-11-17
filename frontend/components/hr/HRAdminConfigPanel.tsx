@@ -197,7 +197,7 @@ export function SearchableEmployeeSelector({
             >
                 <span className="flex items-center gap-1.5 truncate">
                     <Plus className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{placeholder} (Select employee to add...)</span>
+                    <span className="truncate">{placeholder || 'Select employee to add...'}</span>
                 </span>
                 <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
@@ -447,7 +447,10 @@ export default function HRAdminConfigPanel({ orgId }: HRAdminConfigPanelProps = 
                     director_profile_ids: selectedDirectorIds,
                     flow_assignees: payloadFlowAssignees,
                     flow_levels: payloadFlowLevels,
-                    manual_escalation: customData?.manual_escalation
+                    manual_escalation: customData?.manual_escalation,
+                    // Property-wise routing (Grievance & HR Query); undefined keys are dropped, keeping the saved value
+                    flow_assignees_by_property: customData?.flow_assignees_by_property,
+                    primary_property_id: customData?.primary_property_id
                 })
             });
 

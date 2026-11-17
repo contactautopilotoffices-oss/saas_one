@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { resolveCaller, isCallerError, forbidden, isInternalOrgMember } from '@/backend/lib/auth/callerAccess';
 
 /**
  * GET   /api/org-efficiency/tasks?orgId=&from=&to=&owner=&goalId=&status=
@@ -14,6 +15,10 @@ export async function GET(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const orgId = searchParams.get('orgId');
         if (!orgId) return NextResponse.json({ error: 'orgId required' }, { status: 400 });
+        // Signed-in internal staff of this organisation only (clients, tenants and vendors are refused).
+        const caller = await resolveCaller(request);
+        if (isCallerError(caller)) return caller;
+        if (!(await isInternalOrgMember(caller, orgId))) return forbidden('Forbidden: no access to this organization');
 
         let query = supabase
             .from('oem_tasks')

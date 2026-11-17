@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Clock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Clock, AlertTriangle, CheckCircle2, Hourglass } from 'lucide-react';
 
 interface SLALiveTimerProps {
     slaDueAt: string | null;
@@ -19,9 +19,13 @@ export default function SLALiveTimer({ slaDueAt, status, compact = false }: SLAL
     } | null>(null);
 
     const isResolvedOrClosed = status === 'resolved' || status === 'closed';
+    // HR has already resolved the ticket; only the submitter's confirmation is pending,
+    // so the resolution TAT countdown no longer applies.
+    const isAwaitingAcknowledgement = status === 'pending_acknowledgement';
+    const isTimerStopped = isResolvedOrClosed || isAwaitingAcknowledgement;
 
     useEffect(() => {
-        if (!slaDueAt || isResolvedOrClosed) return;
+        if (!slaDueAt || isTimerStopped) return;
 
         const updateTimer = () => {
             const dueTime = new Date(slaDueAt).getTime();
@@ -43,7 +47,16 @@ export default function SLALiveTimer({ slaDueAt, status, compact = false }: SLAL
         const interval = setInterval(updateTimer, 1000);
 
         return () => clearInterval(interval);
-    }, [slaDueAt, isResolvedOrClosed]);
+    }, [slaDueAt, isTimerStopped]);
+
+    if (isAwaitingAcknowledgement) {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-lg border border-amber-200 dark:border-amber-800 whitespace-nowrap">
+                <Hourglass className="w-3 h-3 shrink-0" />
+                Awaiting employee confirmation
+            </span>
+        );
+    }
 
     if (isResolvedOrClosed) {
         return (

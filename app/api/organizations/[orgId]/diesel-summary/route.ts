@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 // GET: Cross-property diesel summary for Super Admin
 export async function GET(
@@ -7,6 +8,8 @@ export async function GET(
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
 

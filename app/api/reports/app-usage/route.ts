@@ -40,6 +40,7 @@ const MAX_DAYS = 366;
 const PAGE_SIZE = 1000;
 const MAX_PAGES = 200;
 const PAGE_WAVE = 6;
+const EMPLOYEE_BATCH = 150;
 const VIEW_ROLES = ['org_super_admin', 'master_admin'];
 
 // ── Date helpers (IST calendar days, YYYY-MM-DD strings) ─────────────────────
@@ -324,17 +325,36 @@ export async function GET(request: NextRequest) {
     // ── Org-wide modules (no property column) ───────────────────────────────
     const orgWide: { key: string; label: string; actions: number; users: number | null; available: boolean }[] = [];
     const orgTask = Promise.all(ORG_MODULES.map(async (m) => {
-        const { rows, error } = await fetchAll((a, b) =>
-            supabaseAdmin.from(m.table)
-                .select(m.userCol ? `id, ${m.userCol}, created_at` : 'id, created_at')
-                .eq('organization_id', access.organizationId)
+        // One query for the organisation, or batches of its employees when the table has no organization_id.
+        let scopes: (string[] | null)[] = [null];
+        if (m.scopeByEmployee) {
+            const { rows: employees, error: employeeError } = await fetchAll((a, b) =>
+                supabaseAdmin.from('employee_profiles').select('user_id')
+                    .eq('organization_id', access.organizationId)
+                    .order('user_id').range(a, b));
+            if (employeeError) {
+                console.error('[app-usage] employee_profiles:', employeeError.message);
+                orgWide.push({ key: m.key, label: m.label, actions: 0, users: null, available: false });
+                return;
+            }
+            const ids = employees.map(e => str(e.user_id)).filter((id): id is string => !!id);
+            scopes = [];
+            for (let i = 0; i < ids.length; i += EMPLOYEE_BATCH) scopes.push(ids.slice(i, i + EMPLOYEE_BATCH));
+        }
+        const results = await Promise.all(scopes.map(ids => fetchAll((a, b) => {
+            const query = supabaseAdmin.from(m.table)
+                .select(m.userCol ? `id, ${m.userCol}, created_at` : 'id, created_at');
+            return (ids ? query.in(m.userCol as string, ids) : query.eq('organization_id', access.organizationId))
                 .gte('created_at', fromTs).lt('created_at', toTsExclusive)
-                .order('id').range(a, b));
+                .order('id').range(a, b);
+        })));
+        const error = results.find(r => r.error)?.error ?? null;
         if (error) {
             if (!isMissingRelation(error)) console.error(`[app-usage] ${m.table}:`, error.message);
             orgWide.push({ key: m.key, label: m.label, actions: 0, users: null, available: false });
             return;
         }
+        const rows = results.flatMap(r => r.rows);
         const users = new Set<string>();
         for (const r of rows) {
             const userId = m.userCol ? str(r[m.userCol]) : null;

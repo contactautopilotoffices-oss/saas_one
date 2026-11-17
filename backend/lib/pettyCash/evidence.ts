@@ -4,7 +4,8 @@ export function evidenceType(bytes: Uint8Array): string | null {
     const ascii = (start: number, end: number) => String.fromCharCode(...bytes.slice(start, end));
     if (ascii(0, 5) === '%PDF-' && bytes.length > 20 && ascii(Math.max(0, bytes.length - 1024), bytes.length).includes('%%EOF')) return 'application/pdf';
     if ([137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => bytes[i] === n)) return 'image/png';
-    if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 && bytes[bytes.length - 2] === 255 && bytes[bytes.length - 1] === 217) return 'image/jpeg';
+    // Phones (e.g. Samsung) append data after the JPEG end marker; validateEvidence still decodes the image.
+    if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
     if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
     return null;
 }

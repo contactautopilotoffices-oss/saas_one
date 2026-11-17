@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { NotificationService } from '@/backend/services/NotificationService';
+import { getLevelAssigneeCandidates, getTicketPropertyId } from '@/backend/lib/hr/levelAssignees';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -9,18 +10,17 @@ export async function runAutoSlaEscalation() {
     const nowIso = new Date().toISOString();
 
     // Fetch org escalation config for dynamic level assignees & levels
-    let flowAssigneesConfig: any = {};
+    let escalationConfig: any = {};
     let flowLevelsConfig: any = {};
     try {
         const { data: orgSettings } = await supabaseAdmin
             .from('organization_settings')
-            .select('hr_escalation_config')
+            .select('hr_escalation_config, notification_matrix')
             .limit(1)
             .maybeSingle();
-        if (orgSettings?.hr_escalation_config) {
-            flowAssigneesConfig = orgSettings.hr_escalation_config.flow_assignees || {};
-            flowLevelsConfig = orgSettings.hr_escalation_config.flow_levels || {};
-        }
+        const configObj = orgSettings?.notification_matrix?.hr_escalation_config || orgSettings?.hr_escalation_config || {};
+        escalationConfig = configObj;
+        flowLevelsConfig = configObj.flow_levels || {};
     } catch (e) {
         console.warn('Could not read hr_escalation_config in slaEscalation:', e);
     }
@@ -55,8 +55,9 @@ export async function runAutoSlaEscalation() {
             Boolean(ticket.category?.is_anonymous);
 
         // Check if custom step assignees are defined for this flow & level
-        const levelCustomAssignees = flowAssigneesConfig[ticketType]?.[String(nextLevel)] || flowAssigneesConfig[ticketType]?.[nextLevel];
-        const hasExplicitCustomAssignees = Array.isArray(levelCustomAssignees) && levelCustomAssignees.length > 0;
+        // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+        const levelCustomAssignees = getLevelAssigneeCandidates(escalationConfig, ticketType, nextLevel, getTicketPropertyId(ticket));
+        const hasExplicitCustomAssignees = levelCustomAssignees.length > 0;
 
         // Check category SLA days for next level
         const nextLevelCategorySla = ticket.category ? (ticket.category as any)[`l${nextLevel}_sla_days`] : undefined;

@@ -15,13 +15,14 @@ interface BookableProperty {
 const LAST_PROPERTY_KEY = 'book_room_last_property';
 
 /**
- * Meeting room booking for HR and CRM users.
+ * Meeting room booking for HR, CRM, IT and Design users.
  * Step 1: choose a property. Step 2: choose a room and slot (no credits needed).
  */
 export default function BookMeetingRoomPage() {
     const params = useParams();
-    const orgId = params.orgId as string;
-    const { user } = useAuth();
+    const { user, membership } = useAuth();
+    // URLs without the organisation (e.g. /dashboard?tab=meeting_room) fall back to the user's own organisation
+    const orgId = (params.orgId as string) || membership?.org_id || '';
     const [properties, setProperties] = useState<BookableProperty[]>([]);
     const [selectedPropertyId, setSelectedPropertyId] = useState<string>('');
     const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +38,7 @@ export default function BookMeetingRoomPage() {
                 const data = await res.json();
                 if (!res.ok) {
                     setError(res.status === 403
-                        ? 'Meeting room booking is available for HR and CRM teams only.'
+                        ? 'Meeting room booking is available for HR, CRM, IT and Design teams only.'
                         : (data.error || 'Failed to load properties'));
                     return;
                 }

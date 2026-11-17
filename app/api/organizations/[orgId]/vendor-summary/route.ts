@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { guardOrg } from '@/backend/lib/auth/callerAccess';
 
 // GET: Organization-wide vendor revenue summary (Super Admin)
 export async function GET(
@@ -7,6 +8,8 @@ export async function GET(
     { params }: { params: Promise<{ orgId: string }> }
 ) {
     const { orgId } = await params;
+    const denied = await guardOrg(request, orgId);
+    if (denied) return denied;
     const { searchParams } = new URL(request.url);
 
     const period = searchParams.get('period') || 'today'; // 'today' | 'month' | 'year'

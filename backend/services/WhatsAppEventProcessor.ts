@@ -1,10 +1,19 @@
 import { usesBulkApprovalSummary, siteVendorQuotation } from '@/backend/lib/procurement/requisition-approval.mjs';
-import { requisitionNotes, batchWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
+import { requisitionNotes, batchWhatsAppOptions, reapprovalWhatsAppOptions } from '@/backend/lib/procurement/requisition-approval.mjs';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
-import { WhatsAppRecipientResolver, ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
+import { WhatsAppRecipientResolver, type ResolvedWhatsAppUser } from '@/backend/services/WhatsAppRecipientResolver';
 import { WhatsAppQueueService } from '@/backend/services/WhatsAppQueueService';
 import { PettyCashNotificationService } from '@/backend/services/PettyCashNotificationService';
 import { sanitizeWhatsAppParam, sanitizeWhatsAppParams } from '@/backend/lib/whatsapp/sanitize';
+import {
+    isCriticalPriority,
+    isInternalTicket,
+    isTicketEscalatedToCritical,
+    isTicketRaisedByClient,
+    normalizePhoneKey,
+} from '@/backend/lib/ticketing/alertClassification';
+import { resolveTicketReplyContext } from '@/backend/lib/ticketing/ticketReplyContext';
+import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 interface DispatchOptions {
     durableBatch?: boolean;
@@ -24,6 +33,7 @@ interface DispatchOptions {
         extraUserIds?: string[];
     };
     excludeUserIds?: string[];
+    excludePhones?: string[];
 }
 
 const LOCAL_TIMEZONE = 'Asia/Kolkata';
@@ -108,10 +118,17 @@ export const WhatsAppEventProcessor = {
             case 'TICKET_RESOLVED':
                 await this.handleTicketCompleted(payload);
                 break;
+            case 'TICKET_REPLY':
+                await this.handleTicketReply(payload);
+                break;
             case 'TICKET_UPDATED':
                 // Only dispatch reassignment if assigned_to actually changed to a new user
                 if (payload.assigned_to && payload.old_assigned_to !== undefined && payload.assigned_to !== payload.old_assigned_to) {
                     await this.handleTicketAssigned(payload);
+                }
+                // Dispatch critical ticket alert when an existing ticket is escalated to critical priority
+                if (isTicketEscalatedToCritical(payload.priority, payload.old_priority)) {
+                    await this.handleCriticalTicketEscalated(payload);
                 }
                 // Only dispatch completion if status transitioned into resolved/closed
                 if ((payload.status === 'resolved' || payload.status === 'closed') && payload.old_status && payload.status !== payload.old_status) {
@@ -279,12 +296,12 @@ export const WhatsAppEventProcessor = {
     /**
      * Shared dispatch: resolve recipients → read template → map ordered params → enqueue.
      */
-    async dispatch(options: DispatchOptions): Promise<void> {
+    async dispatch(options: DispatchOptions): Promise<ResolvedWhatsAppUser[]> {
         const { featureKey, templateEventKey, organizationId, propertyId, entityId, paramValues, summaryMessage, contextualUserIds } = options;
 
         if (!organizationId) {
             console.warn(`[WhatsAppEventProcessor] ${templateEventKey}: missing organizationId, skipping`);
-            return;
+            return [];
         }
 
         const { enabled, users, config } = await WhatsAppRecipientResolver.resolveRecipients({
@@ -302,7 +319,7 @@ export const WhatsAppEventProcessor = {
 
         if (!enabled) {
             console.log(`[WhatsAppEventProcessor] ${featureKey} WhatsApp disabled for org ${organizationId}`);
-            return;
+            return [];
         }
 
         const userMap = new Map<string, ResolvedWhatsAppUser>(users.map(u => [u.id, u]));
@@ -351,12 +368,13 @@ export const WhatsAppEventProcessor = {
         }
 
         // Strictly deduplicate by cleaned 10+ digit phone number so 1 phone number never receives multiple copies of the same alert
-        const seenPhones = new Set<string>();
+        const seenPhones = new Set<string>(
+            (options.excludePhones || []).map(p => normalizePhoneKey(p)).filter(Boolean)
+        );
         const recipients: ResolvedWhatsAppUser[] = [];
         for (const u of userMap.values()) {
             if (options.excludeUserIds?.includes(u.id)) continue;
-            const rawPhone = u.phone ? String(u.phone).replace(/[^0-9]/g, '') : '';
-            const normalizedPhone = rawPhone.length > 10 && rawPhone.startsWith('91') ? rawPhone.slice(-10) : rawPhone;
+            const normalizedPhone = normalizePhoneKey(u.phone);
             if (normalizedPhone && normalizedPhone.length >= 10 && !seenPhones.has(normalizedPhone)) {
                 seenPhones.add(normalizedPhone);
                 recipients.push(u);
@@ -365,7 +383,7 @@ export const WhatsAppEventProcessor = {
 
         if (recipients.length === 0) {
             console.log(`[WhatsAppEventProcessor] ${templateEventKey}: no recipients for org ${organizationId}`);
-            return;
+            return [];
         }
 
         // Read the org's template map
@@ -396,9 +414,14 @@ export const WhatsAppEventProcessor = {
             crm_lead_assigned: { campaign_name: 'crm_lead_assigned_v1', params: ['user_name', 'company_name', 'contact_person', 'phone', 'property_interest', 'next_followup'] },
             ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
             ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            client_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+            client_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
+            critical_ticket_created: { campaign_name: 'ticket_created_v3', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'] },
+            critical_ticket_created_media: { campaign_name: 'ticket_created_v3_media', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'] },
             ticket_assigned: { campaign_name: 'ticket_assigned_v2', params: ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'] },
             ticket_completed: { campaign_name: 'ticket_completed_v1', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
             ticket_completed_media: { campaign_name: 'ticket_completed_v1_media', params: ['user_name', 'ticket_number', 'title', 'property', 'resolved_by'] },
+            ticket_reply: { campaign_name: 'ticket_reply_v1', params: ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'] },
             daily_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             ai_property_report: { campaign_name: 'ai_property_report_v1', params: ['user_name', 'org_name', 'date', 'critical_count', 'open_count', 'resolved_count', 'electricity_kwh', 'dg_liters', 'ppm_completed', 'ppm_missed', 'sop_compliance', 'property_summary', 'ai_insights'] },
             material_request_created: { campaign_name: 'material_request_created_v4', params: ['user_name', 'ticket_number', 'property', 'requested_by', 'requester_phone', 'items_summary', 'ticket_id'] },
@@ -446,15 +469,25 @@ export const WhatsAppEventProcessor = {
         };
 
         // Intelligent routing: if media exists and org or system default has a media-specific template, use it; otherwise standard template
-        const hasMediaTemplate = Boolean(templatesMap[`${templateEventKey}_media`] || DEFAULT_TEMPLATES[`${templateEventKey}_media`]);
+        const isTicketAlertVariant = templateEventKey === 'client_ticket_created' || templateEventKey === 'critical_ticket_created';
+        const hasMediaTemplate = Boolean(
+            templatesMap[`${templateEventKey}_media`] ||
+            DEFAULT_TEMPLATES[`${templateEventKey}_media`] ||
+            (isTicketAlertVariant && (templatesMap['ticket_created_media'] || DEFAULT_TEMPLATES['ticket_created_media']))
+        );
         const resolvedTemplateKey = (options.mediaUrl && hasMediaTemplate)
             ? `${templateEventKey}_media`
             : templateEventKey;
 
-        const template = templatesMap[resolvedTemplateKey] || templatesMap[templateEventKey] || DEFAULT_TEMPLATES[resolvedTemplateKey] || DEFAULT_TEMPLATES[templateEventKey];
+        const template = templatesMap[resolvedTemplateKey]
+            || templatesMap[templateEventKey]
+            || (isTicketAlertVariant && options.mediaUrl ? templatesMap['ticket_created_media'] : undefined)
+            || (isTicketAlertVariant ? templatesMap['ticket_created'] : undefined)
+            || DEFAULT_TEMPLATES[resolvedTemplateKey]
+            || DEFAULT_TEMPLATES[templateEventKey];
         if (!template?.campaign_name) {
             console.warn(`[WhatsAppEventProcessor] No whatsapp_templates entry for "${resolvedTemplateKey}" in org ${organizationId}, skipping`);
-            return;
+            return [];
         }
 
         // Canonical parameter signatures for Meta / AiSensy approved templates
@@ -493,6 +526,13 @@ export const WhatsAppEventProcessor = {
             'ticket_created_v3_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
             'ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
             'ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'client_ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'client_ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+            'critical_ticket_created': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone', 'ticket_id'],
+            'critical_ticket_created_media': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone', 'assigned_to', 'assigned_to_phone'],
+
+            'ticket_reply_v1': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
+            'ticket_reply': ['user_name', 'replied_by', 'ticket_number', 'title', 'reply_text'],
 
             'ticket_assigned_v2': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
             'ticket_assigned_v1': ['user_name', 'ticket_number', 'title', 'property', 'priority', 'raised_by', 'raised_by_phone'],
@@ -671,10 +711,11 @@ export const WhatsAppEventProcessor = {
                 durableBatch: options.durableBatch
             });
         }
+
+        return recipients;
     },
 
-
-    async handleTicketCreated(payload: any): Promise<void> {
+    async buildTicketCreatedAlertContext(payload: any) {
         const ticketId = payload.ticket_id || payload.id;
         const { data: ticket } = await supabaseAdmin
             .from('tickets')
@@ -685,40 +726,117 @@ export const WhatsAppEventProcessor = {
         const propertyName = ticket?.property?.name || await this.getPropertyName(payload.property_id);
         const orgId = ticket?.property?.organization_id || payload.organization_id;
         const propId = ticket?.property_id || payload.property_id;
+        const raiserId = ticket?.raised_by || payload.raised_by || null;
+        const assigneeId = ticket?.assigned_to || payload.assigned_to || null;
 
-        const raiser = await this.getUserDetails(ticket?.raised_by || payload.raised_by, ticket?.raised_by_user);
-        const assignee = await this.getUserDetails(payload.assigned_to || ticket?.assigned_to, ticket?.assigned_to_user);
-
-        const assigneeId = ticket?.assigned_to || payload.assigned_to;
+        const raiser = await this.getUserDetails(raiserId, ticket?.raised_by_user);
+        const assignee = await this.getUserDetails(assigneeId, ticket?.assigned_to_user);
         const photoBeforeUrl = ticket?.photo_before_url || payload.photo_before_url || null;
+        const ticketNumber = ticket?.ticket_number || payload.ticket_number || 'N/A';
+        const title = ticket?.title || payload.title || 'Support Request';
+        const priority = ticket?.priority || payload.priority || 'Medium';
+
+        return {
+            ticketId,
+            ticket,
+            orgId,
+            propId,
+            raiserId,
+            assigneeId,
+            baseDispatchOptions: {
+                organizationId: orgId,
+                propertyId: propId,
+                entityId: ticketId,
+                mediaUrl: photoBeforeUrl,
+                mediaType: (photoBeforeUrl ? 'image' : undefined) as 'image' | undefined,
+                paramValues: {
+                    user_name: 'Team',
+                    ticket_number: ticketNumber,
+                    title,
+                    property: propertyName,
+                    priority,
+                    raised_by: raiser.name,
+                    raised_by_phone: raiser.phone || 'N/A',
+                    assigned_to: assignee.name || 'Unassigned',
+                    assigned_to_phone: assignee.phone || 'N/A',
+                    ticket_id: ticketId || ''
+                },
+                summaryMessage: `New ticket #${ticketNumber} (${title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
+                contextualUserIds: {
+                    requesterId: raiserId,
+                    assigneeId
+                }
+            }
+        };
+    },
+
+    async handleCriticalTicketEscalated(payload: any): Promise<void> {
+        const ctx = await this.buildTicketCreatedAlertContext(payload);
+        if (!ctx.orgId) return;
+        await this.dispatch({
+            ...ctx.baseDispatchOptions,
+            featureKey: 'critical_ticket_created',
+            templateEventKey: 'critical_ticket_created',
+            summaryMessage: `CRITICAL priority ticket #${ctx.baseDispatchOptions.paramValues.ticket_number} (${ctx.baseDispatchOptions.paramValues.title}) at ${ctx.baseDispatchOptions.paramValues.property}`
+        });
+    },
+
+    async handleTicketCreated(payload: any): Promise<void> {
+        const ctx = await this.buildTicketCreatedAlertContext(payload);
+        const { ticket, orgId, propId, raiserId, assigneeId, baseDispatchOptions } = ctx;
+
+        const dispatchedUserIds = new Set<string>();
+        const dispatchedPhones = new Set<string>();
+        const recordDispatched = (users: ResolvedWhatsAppUser[]) => {
+            users.forEach(u => {
+                if (u.id) dispatchedUserIds.add(u.id);
+                const phoneKey = normalizePhoneKey(u.phone);
+                if (phoneKey) dispatchedPhones.add(phoneKey);
+            });
+        };
 
         // 1. Dispatch "ticket_created" to Admins & Requester (excluding the assigned person)
-        await this.dispatch({
+        const standardSent = await this.dispatch({
+            ...baseDispatchOptions,
             featureKey: 'ticket_created',
             templateEventKey: 'ticket_created',
-            organizationId: orgId,
-            propertyId: propId,
-            entityId: ticketId,
-            mediaUrl: photoBeforeUrl,
-            mediaType: photoBeforeUrl ? 'image' : undefined,
-            paramValues: {
-                user_name: 'Team',
-                ticket_number: ticket?.ticket_number || payload.ticket_number || 'N/A',
-                title: ticket?.title || payload.title || 'Support Request',
-                property: propertyName,
-                priority: ticket?.priority || payload.priority || 'Medium',
-                raised_by: raiser.name,
-                raised_by_phone: raiser.phone || 'N/A',
-                assigned_to: assignee.name || 'Unassigned',
-                assigned_to_phone: assignee.phone || 'N/A',
-                ticket_id: ticketId || ''
-            },
-            summaryMessage: `New ticket #${ticket?.ticket_number || payload.ticket_number || 'N/A'} (${ticket?.title || payload.title}) at ${propertyName} — Raised by ${raiser.name} (${raiser.phone || 'N/A'})`,
-            contextualUserIds: { requesterId: ticket?.raised_by || payload.raised_by },
+            contextualUserIds: { requesterId: raiserId },
             excludeUserIds: assigneeId ? [assigneeId] : []
         });
+        recordDispatched(standardSent);
 
-        // 2. If ticket has an assigned person upon creation, send the dedicated "ticket_assigned_v1" template ONLY to the assigned technician
+        // 2. Dispatch "client_ticket_created" to selected Omnichannel users when raised by a client/tenant
+        const isClientRaised = await isTicketRaisedByClient({
+            supabase: supabaseAdmin,
+            raisedBy: raiserId,
+            propertyId: propId,
+            organizationId: orgId,
+            isInternal: isInternalTicket(ticket, payload)
+        });
+        if (isClientRaised) {
+            const clientSent = await this.dispatch({
+                ...baseDispatchOptions,
+                featureKey: 'client_ticket_created',
+                templateEventKey: 'client_ticket_created',
+                excludeUserIds: Array.from(dispatchedUserIds),
+                excludePhones: Array.from(dispatchedPhones)
+            });
+            recordDispatched(clientSent);
+        }
+
+        // 3. Dispatch "critical_ticket_created" to selected Omnichannel users when priority is critical
+        if (isCriticalPriority(ticket?.priority || payload.priority)) {
+            const criticalSent = await this.dispatch({
+                ...baseDispatchOptions,
+                featureKey: 'critical_ticket_created',
+                templateEventKey: 'critical_ticket_created',
+                excludeUserIds: Array.from(dispatchedUserIds),
+                excludePhones: Array.from(dispatchedPhones)
+            });
+            recordDispatched(criticalSent);
+        }
+
+        // 4. If ticket has an assigned person upon creation, send the dedicated "ticket_assigned_v1" template ONLY to the assigned technician
         if (assigneeId) {
             await this.handleTicketAssigned(payload);
         }
@@ -805,6 +923,53 @@ export const WhatsAppEventProcessor = {
         });
     },
 
+    /**
+     * A reply on a ticket. Who gets it was already decided by the DB trigger on ticket_comments (fn_ticket_comments_outbox),
+     * so the rules live in one place for web, mobile and WhatsApp replies.
+     * entityId is the COMMENT id: with the ticket id a second quick reply would be dropped by the queue's 2-minute dedup.
+     * durableBatch stops a retried outbox event from sending the same comment again, however late the retry runs.
+     */
+    async handleTicketReply(payload: any): Promise<void> {
+        if (!payload.comment_id) return;
+
+        const ctx = await resolveTicketReplyContext(payload);
+        if (!ctx.organizationId) return;
+
+        const { data: sender } = await supabaseAdmin
+            .from('users')
+            .select('full_name')
+            .eq('id', payload.sender_id)
+            .maybeSingle();
+
+        const repliedBy = sender?.full_name || 'Team Member';
+        const ticketNumber = ctx.ticketNumber;
+        const reply = sanitizeWhatsAppParam(payload.message, 'reply_text');
+
+        await this.dispatch({
+            featureKey: 'ticket_reply',
+            templateEventKey: 'ticket_reply',
+            organizationId: ctx.organizationId,
+            propertyId: ctx.propertyId,
+            entityId: payload.comment_id,
+            durableBatch: true,
+            paramValues: {
+                user_name: 'Team',
+                replied_by: repliedBy,
+                ticket_number: ticketNumber,
+                title: ctx.title,
+                reply_text: reply.length > 300 ? `${reply.slice(0, 297)}...` : reply
+            },
+            summaryMessage: `${repliedBy} replied on ticket #${ticketNumber}`,
+            // Who actually receives this is the Omnichannel rule's call (roles, added users,
+            // notify_requester / notify_assignee). The person who wrote the comment never does.
+            contextualUserIds: {
+                ...(ctx.requesterId ? { requesterId: ctx.requesterId } : {}),
+                ...(ctx.assigneeId ? { assigneeId: ctx.assigneeId } : {})
+            },
+            excludeUserIds: ctx.senderId ? [ctx.senderId] : []
+        });
+    },
+
 
     async handleMeetingRoomEvent(payload: any, isCancellation: boolean): Promise<void> {
         let propertyId = payload.property_id;
@@ -837,6 +1002,67 @@ export const WhatsAppEventProcessor = {
         const formattedStartTime = formatTimeString(payload.start_time);
         const formattedEndTime = formatTimeString(payload.end_time);
 
+        // Fetch company name and remaining credits if the booking or user is linked to a client company
+        let companyName = '';
+        let remainingHours: number | null = null;
+        let effectiveCompanyId = payload.company_id || null;
+        if (!effectiveCompanyId && payload.id) {
+            const { data: bookingRow } = await supabaseAdmin
+                .from('meeting_room_bookings')
+                .select('company_id')
+                .eq('id', payload.id)
+                .maybeSingle();
+            effectiveCompanyId = bookingRow?.company_id || null;
+        }
+        if (!effectiveCompanyId && payload.user_id) {
+            const { data: member } = await supabaseAdmin
+                .from('company_members')
+                .select('company_id')
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            effectiveCompanyId = member?.company_id || null;
+        }
+
+        if (effectiveCompanyId) {
+            const { data: comp } = await supabaseAdmin
+                .from('companies')
+                .select('name')
+                .eq('id', effectiveCompanyId)
+                .maybeSingle();
+            if (comp?.name) companyName = comp.name;
+
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('company_id', effectiveCompanyId)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        } else if (payload.user_id) {
+            const { data: creditRow } = await supabaseAdmin
+                .from('meeting_room_credits')
+                .select('remaining_hours')
+                .eq('property_id', propertyId)
+                .eq('user_id', payload.user_id)
+                .maybeSingle();
+            if (creditRow && creditRow.remaining_hours !== null && creditRow.remaining_hours !== undefined) {
+                remainingHours = Number(creditRow.remaining_hours);
+            }
+        }
+
+        const creditsInfo = remainingHours !== null ? `${remainingHours} hrs left` : '';
+        const clientCompanyInfo = companyName
+            ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
+            : (creditsInfo ? `${creditsInfo}` : '');
+
+        // In existing Meta template (v3/v4), {{7}} is `booker`.
+        // Enrich booker string with company name and remaining credits so clients and admins see it without modifying the approved Meta template structure.
+        const bookerDisplay = clientCompanyInfo
+            ? `${booker.name} (${clientCompanyInfo})`
+            : booker.name;
+
         const paramValues: Record<string, string> = {
             user_name: 'Front Desk / Admin',
             room_name: roomName,
@@ -844,14 +1070,16 @@ export const WhatsAppEventProcessor = {
             date: formattedDate,
             start_time: formattedStartTime,
             end_time: formattedEndTime,
-            booker: booker.name,
+            booker: bookerDisplay,
             booker_phone: booker.phone || 'N/A',
-            cancelled_by: booker.name
+            cancelled_by: booker.name,
+            company_name: companyName,
+            credits_left: creditsInfo
         };
 
         const summaryMessage = isCancellation
             ? `Meeting room cancelled: ${roomName} on ${formattedDate} at ${formattedStartTime}`
-            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${booker.name}`;
+            : `Meeting room booked: ${roomName} at ${property.name} on ${formattedDate} (${formattedStartTime} - ${formattedEndTime}) by ${bookerDisplay}`;
 
         // Resolve any attendee emails into user IDs so custom invited users receive the v4 template
         let attendeeEmail = payload.attendee_email;
@@ -1343,10 +1571,15 @@ export const WhatsAppEventProcessor = {
             .select('*,property:properties!property_id(id,name)').eq('organization_id', payload.organization_id)
             .in('id', payload.requisition_ids);
         if (error) throw error;
-        const saved = (records || []).filter(record =>
-            requisitionNotes(record).vendor_quotation?.batch_id === payload.batch_id);
+        // A replaced comparison file reuses the batch id; its revision_id picks out
+        // only the sites saved with that replacement.
+        const saved = (records || []).filter(record => {
+            const quote = requisitionNotes(record).vendor_quotation;
+            if (payload.revision_id) return quote?.revision_id === payload.revision_id;
+            return quote?.batch_id === payload.batch_id;
+        });
         if (!saved.length) return;
-        await this.dispatch(batchWhatsAppOptions(saved, payload));
+        await this.dispatch(payload.revision_id ? reapprovalWhatsAppOptions(saved, payload) : batchWhatsAppOptions(saved, payload));
     },
 
     async handleRequisitionApprovalRequested(payload: any): Promise<void> {
@@ -1580,6 +1813,19 @@ export const WhatsAppEventProcessor = {
         if (!organizationId) return;
 
         const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const sourceName = lead?.source_info?.name || leadData.lead_source || await this.getLeadSourceName(payload.lead_source);
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
@@ -1652,12 +1898,24 @@ export const WhatsAppEventProcessor = {
         const organizationId = lead?.organization_id || payload.organization_id || await this.resolveLeadOrganizationId(payload);
         if (!organizationId) return;
 
+        const leadData = lead || payload;
+
+        // Check if this is a test lead / test campaign
+        const isTestLead =
+            (leadData.campaign || '').toLowerCase().includes('test') ||
+            (leadData.company_name || '').toLowerCase().includes('test sandbox') ||
+            leadData.email === 'test@autopilotoffices.com' ||
+            (leadData.contact_number && String(leadData.contact_number).includes('7028232515'));
+
+        if (isTestLead) {
+            console.info(`[WhatsAppEventProcessor] Suppressing sales team WhatsApp assignment broadcast for test lead ${leadId}`);
+            return;
+        }
+
         const assigneeId = lead?.assigned_to || payload.assigned_to;
         const assignee = lead?.assignee?.full_name 
             ? { name: lead.assignee.full_name, phone: lead.assignee.phone } 
             : await this.getUserDetails(assigneeId);
-
-        const leadData = lead || payload;
         const propName = lead?.property?.name || await this.getPropertyName(payload.property_interest);
         
         // Resolve location, campaign, and market for clear tracking in WhatsApp
@@ -1767,6 +2025,34 @@ export const WhatsAppEventProcessor = {
         const propertyName = await this.getPropertyName(payload.property_id);
         const completedBy = await this.getUserDetails(payload.completed_by);
 
+        // Resolve assigned approver for this property/completion if configured
+        let approverId = payload.approver_id;
+        if (!approverId && payload.property_id) {
+            const { data: propSettings } = await supabaseAdmin
+                .from('checklist_property_settings')
+                .select('approver_user_id')
+                .eq('property_id', payload.property_id)
+                .maybeSingle();
+            if (propSettings?.approver_user_id) {
+                approverId = propSettings.approver_user_id;
+            }
+        }
+
+        // Resolve completion timestamp in local timezone (Asia/Kolkata)
+        let completedAt = payload.completed_at;
+        if (!completedAt && payload.completion_id) {
+            const { data: comp } = await supabaseAdmin
+                .from('sop_completions')
+                .select('completed_at')
+                .eq('id', payload.completion_id)
+                .maybeSingle();
+            if (comp?.completed_at) {
+                completedAt = comp.completed_at;
+            }
+        }
+
+        const completionTime = formatWhatsAppTime(completedAt || new Date());
+
         await this.dispatch({
             featureKey: 'checklist_completed',
             templateEventKey: 'checklist_completed',
@@ -1778,10 +2064,10 @@ export const WhatsAppEventProcessor = {
                 checklist_name: payload.template_title || 'SOP Checklist',
                 property: propertyName,
                 completed_by: completedBy.name,
-                time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
+                time: completionTime
             },
             summaryMessage: `Checklist "${payload.template_title}" completed at ${propertyName} by ${completedBy.name}`,
-            contextualUserIds: { requesterId: payload.completed_by }
+            contextualUserIds: { requesterId: payload.completed_by, approverId }
         });
     },
 
@@ -2221,6 +2507,81 @@ export const WhatsAppEventProcessor = {
     // ============================================================================
     // HR Tickets & Grievances Handlers
     // ============================================================================
+    /**
+     * Resolves every user configured as an owner at a given HR ticket escalation level.
+     * Checks organization_settings hr_escalation_config / flow_assignees and maps them to users.
+     */
+    async resolveHrLevelOwners(ticket: any, level: number): Promise<{ id: string; email: string | null; phone: string | null; full_name: string | null }[]> {
+        const ownersMap = new Map<string, { id: string; email: string | null; phone: string | null; full_name: string | null }>();
+
+        if (ticket.assigned_to_user_id) {
+            ownersMap.set(ticket.assigned_to_user_id, {
+                id: ticket.assigned_to_user_id,
+                email: ticket.assigned_to?.email || null,
+                phone: ticket.assigned_to?.phone || null,
+                full_name: ticket.assigned_to?.full_name || null
+            });
+        }
+
+        try {
+            const orgId = ticket.organization_id;
+            if (!orgId) return Array.from(ownersMap.values());
+
+            const { data: orgSettings } = await supabaseAdmin
+                .from('organization_settings')
+                .select('hr_escalation_config, notification_matrix')
+                .eq('organization_id', orgId)
+                .maybeSingle();
+
+            const configObj = (orgSettings as any)?.notification_matrix?.hr_escalation_config
+                || (orgSettings as any)?.hr_escalation_config
+                || {};
+            // Property-aware: Grievance / HR Query use the ticket property's people when a rule exists
+            const candidateIds: string[] = getTicketLevelAssigneeIds(configObj, ticket, level);
+
+            if (candidateIds.length > 0) {
+                const { data: profiles } = await supabaseAdmin
+                    .from('employee_profiles')
+                    .select('id, user_id, email, phone, first_name, last_name')
+                    .or(`id.in.(${candidateIds.join(',')}),user_id.in.(${candidateIds.join(',')})`);
+
+                const userIdsToFetch = new Set<string>();
+                (profiles || []).forEach((p: any) => {
+                    if (p.user_id) userIdsToFetch.add(p.user_id);
+                });
+                candidateIds.forEach(cid => {
+                    userIdsToFetch.add(cid);
+                });
+
+                if (userIdsToFetch.size > 0) {
+                    const { data: matchedUsers } = await supabaseAdmin
+                        .from('users')
+                        .select('id, email, phone, full_name')
+                        .in('id', Array.from(userIdsToFetch));
+
+                    (matchedUsers || []).forEach((u: any) => {
+                        const prof = (profiles || []).find((p: any) => p.user_id === u.id || p.id === u.id);
+                        ownersMap.set(u.id, {
+                            id: u.id,
+                            email: u.email || prof?.email || null,
+                            phone: u.phone || prof?.phone || null,
+                            full_name: u.full_name || (prof ? `${prof.first_name || ''} ${prof.last_name || ''}`.trim() : null)
+                        });
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('[WhatsAppEventProcessor] resolveHrLevelOwners error:', err);
+        }
+
+        // Submitter should never receive handler assignment notifications for their own ticket
+        if (ticket.raised_by_user_id) {
+            ownersMap.delete(ticket.raised_by_user_id);
+        }
+
+        return Array.from(ownersMap.values());
+    },
+
     async handleHrTicketCreated(payload: any): Promise<void> {
         const ticketId = payload.id;
         const { data: ticket } = await supabaseAdmin
@@ -2229,16 +2590,23 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || payload.employee_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number || 'HR-0000';
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
-        const assignedName = ticket?.assigned_to?.full_name || 'Reporting Manager / HR';
-        const createdDate = formatWhatsAppDate(ticket?.created_at || payload.created_at || new Date());
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || payload.employee_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number || 'HR-0000';
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const createdDate = formatWhatsAppDate(effectiveTicket?.created_at || payload.created_at || new Date());
+
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Reporting Manager / HR';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         // 1. Notify Employee (Confirmation) - ONLY if NOT anonymous
-        if (!isAnonymous && (ticket?.raised_by_user_id || payload.raised_by_user_id)) {
+        if (!isAnonymous && (effectiveTicket?.raised_by_user_id || payload.raised_by_user_id)) {
             await this.dispatch({
                 featureKey: 'hr_ticket_created_submitter_v2',
                 templateEventKey: 'hr_ticket_created_submitter_v2',
@@ -2252,13 +2620,12 @@ export const WhatsAppEventProcessor = {
                     assigned_owner: assignedName
                 },
                 summaryMessage: `HR Ticket #${ticketNo} created by ${empName}`,
-                contextualUserIds: { requesterId: ticket?.raised_by_user_id || payload.raised_by_user_id }
+                contextualUserIds: { requesterId: effectiveTicket?.raised_by_user_id || payload.raised_by_user_id }
             });
         }
 
-        // 2. Notify Assigned Handler (New Ticket Assignment)
-        const assigneeId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
-        if (assigneeId) {
+        // 2. Notify Assigned Handler(s) (New Ticket Assignment) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 templateEventKey: 'hr_ticket_assigned_handler_v2',
@@ -2267,14 +2634,17 @@ export const WhatsAppEventProcessor = {
                 paramValues: {
                     user_name: assignedName,
                     ticket_number: ticketNo,
-                    level: String(ticket?.current_level || 1),
+                    level: String(level),
                     category: categoryName,
                     submitter: empName,
-                    subject: ticket?.subject || payload.subject || 'HR Request',
-                    sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                    subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
                 },
                 summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-                contextualUserIds: { assigneeId }
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
             });
         }
 
@@ -2284,13 +2654,13 @@ export const WhatsAppEventProcessor = {
             const { EmailService } = await import('./EmailService');
 
             // 3a. Submitter Email (Ticket Submitted)
-            if (!isAnonymous && ticket?.raised_by?.email) {
+            if (!isAnonymous && effectiveTicket?.raised_by?.email) {
                 const submitterEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_created_submitter_v2',
                     contextualRecipients: {
-                        requesterEmail: ticket.raised_by.email
+                        requesterEmail: effectiveTicket.raised_by.email
                     }
                 });
 
@@ -2298,7 +2668,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of submitterEmailResult.emails) {
                         EmailService.sendHrTicketCreatedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             submitterName: empName,
                             assignedOwnerName: assignedName,
                             categoryName
@@ -2307,14 +2677,18 @@ export const WhatsAppEventProcessor = {
                 }
             }
 
-            // 3b. Handler Email (New Ticket Assignment)
-            if (ticket?.assigned_to?.email) {
+            // 3b. Handler Email (New Ticket Assignment) - to all level owners & omnichannel recipients
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+            if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
                 const handlerEmailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: ticket.assigned_to.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2322,7 +2696,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of handlerEmailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: empName,
                             categoryName
@@ -2343,12 +2717,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedName = ticket?.assigned_to?.full_name || 'Manager';
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const categoryName = ticket?.category?.category_name || payload.category_name || 'HR Request';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const categoryName = effectiveTicket?.category?.category_name || payload.category_name || 'HR Request';
+        const level = effectiveTicket?.current_level || payload.current_level || 1;
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Manager';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_assigned_handler_v2',
@@ -2358,24 +2739,31 @@ export const WhatsAppEventProcessor = {
             paramValues: {
                 user_name: assignedName,
                 ticket_number: ticketNo,
-                level: String(ticket?.current_level || payload.current_level || 1),
+                level: String(level),
                 category: categoryName,
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at)
             },
             summaryMessage: `HR Ticket #${ticketNo} assigned to ${assignedName}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_assigned_handler_v2',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2384,7 +2772,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketAssignedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: assignedName,
                         submitterName: empName,
                         categoryName
@@ -2404,13 +2792,19 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || payload.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const level = ticket?.current_level || payload.current_level || 2;
-        const ownerName = ticket?.assigned_to?.full_name || 'Escalation Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const empName = isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee');
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || payload.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const level = effectiveTicket?.current_level || payload.current_level || payload.to_level || 2;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
+        const empName = isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee');
         const reason = payload.reason || (payload.is_sla_breach ? 'due to SLA timeout' : 'by handler escalation');
+
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Escalation Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
         await this.dispatch({
             featureKey: 'hr_ticket_escalated_handler',
@@ -2422,23 +2816,30 @@ export const WhatsAppEventProcessor = {
                 ticket_number: ticketNo,
                 level: String(level),
                 reason,
-                category: ticket?.category?.category_name || 'HR Request',
+                category: effectiveTicket?.category?.category_name || 'HR Request',
                 submitter: empName,
-                subject: ticket?.subject || payload.subject || 'HR Request',
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
                 previous_level: String(Math.max(level - 1, 1))
             },
             summaryMessage: `HR Ticket #${ticketNo} escalated to Level ${level} (${ownerName})`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
 
         try {
             const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
+            const primaryHandlerEmail = primaryOwner?.email || effectiveTicket?.assigned_to?.email;
+            const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
             const emailResult = await EmailRecipientResolver.resolveRecipients({
                 organizationId: orgId,
-                propertyId: ticket?.property_id || payload?.property_id,
+                propertyId: effectiveTicket?.property_id || payload?.property_id,
                 featureKey: 'hr_ticket_escalated_handler',
                 contextualRecipients: {
-                    assigneeEmail: ticket?.assigned_to?.email
+                    assigneeEmail: primaryHandlerEmail,
+                    extraEmails: extraHandlerEmails
                 }
             });
 
@@ -2447,7 +2848,7 @@ export const WhatsAppEventProcessor = {
                 for (const email of emailResult.emails) {
                     EmailService.sendHrTicketEscalatedEmail({
                         emailTo: email,
-                        ticket: ticket || payload,
+                        ticket: effectiveTicket,
                         assigneeName: ownerName,
                         level,
                         reason,
@@ -2468,9 +2869,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ownerName = ticket?.assigned_to?.full_name || 'Owner';
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Owner';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2481,12 +2888,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: payload.remaining_hours || '4 hours',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `SLA warning for HR Ticket #${ticketNo}`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2498,9 +2908,15 @@ export const WhatsAppEventProcessor = {
             .eq('id', ticketId)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
-        const ownerName = ticket?.assigned_to?.full_name || 'Unassigned';
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket?.assigned_to;
+        const ownerName = primaryOwner?.full_name || primaryOwner?.email || 'Unassigned';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
 
         await this.dispatch({
             featureKey: 'hr_ticket_sla_warning',
@@ -2511,12 +2927,15 @@ export const WhatsAppEventProcessor = {
                 user_name: ownerName,
                 ticket_number: ticketNo,
                 remaining_time: '0 hours (BREACHED)',
-                subject: ticket?.subject || payload.subject || 'HR Request',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at),
-                next_level: String(Math.min((ticket?.current_level || 1) + 1, 4))
+                subject: effectiveTicket?.subject || payload.subject || 'HR Request',
+                sla_deadline: formatWhatsAppDateTime(effectiveTicket?.sla_due_at || payload.sla_due_at),
+                next_level: String(Math.min(level + 1, 4))
             },
             summaryMessage: `CRITICAL: HR Ticket #${ticketNo} SLA Breached`,
-            contextualUserIds: { assigneeId: ticket?.assigned_to_user_id || payload.assigned_to_user_id }
+            contextualUserIds: {
+                assigneeId: primaryAssigneeId,
+                extraUserIds: extraAssigneeIds
+            }
         });
     },
 
@@ -2528,46 +2947,60 @@ export const WhatsAppEventProcessor = {
         // Fetch full ticket details with assigned handler
         const { data: ticket } = await supabaseAdmin
             .from('hr_tickets')
-            .select('*, assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
+            .select('*, category:hr_ticket_categories(*), assigned_to:users!assigned_to_user_id(id, full_name, email, phone)')
             .eq('id', ticketId)
             .maybeSingle();
 
-        const isAnon = Boolean(payload.is_anonymous || ticket?.is_anonymous) || payload.ticket_type === 'anonymous_feedback' || ticket?.ticket_type === 'anonymous_feedback';
-        const assignedUser = ticket?.assigned_to;
-        const assignedName = assignedUser?.full_name || assignedUser?.email || 'Authority';
-        const assignedId = ticket?.assigned_to_user_id || payload.assigned_to_user_id;
+        const effectiveTicket = ticket || payload;
+        const isAnon = Boolean(effectiveTicket.is_anonymous) || effectiveTicket.ticket_type === 'anonymous_feedback';
         const categoryLabel = isAnon ? 'Anonymous Feedback' : 'Confidential Grievance';
         const submitterLabel = isAnon ? 'Anonymous Employee' : 'Confidential Submitter';
+        const level = effectiveTicket.current_level || 1;
 
-        // 1. WhatsApp Alert to Assigned Handler
-        await this.dispatch({
-            featureKey: 'hr_ticket_assigned_handler_v2',
-            templateEventKey: 'hr_ticket_assigned_handler_v2',
-            organizationId: orgId,
-            entityId: ticketId,
-            paramValues: {
-                user_name: assignedName,
-                ticket_number: ticketNo,
-                level: '1',
-                category: categoryLabel,
-                submitter: submitterLabel,
-                subject: ticket?.subject || payload.subject || 'Confidential Submission',
-                sla_deadline: formatWhatsAppDateTime(ticket?.sla_due_at || payload.sla_due_at)
-            },
-            summaryMessage: `Confidential HR alert received: #${ticketNo}`,
-            contextualUserIds: { assigneeId: assignedId }
-        });
+        const levelOwners = await this.resolveHrLevelOwners(effectiveTicket, level);
+        const primaryOwner = levelOwners[0] || effectiveTicket.assigned_to;
+        const assignedName = primaryOwner?.full_name || primaryOwner?.email || 'Authority';
+        const primaryAssigneeId = primaryOwner?.id || effectiveTicket.assigned_to_user_id || payload.assigned_to_user_id;
+        const extraAssigneeIds = levelOwners.slice(1).map(o => o.id).filter(Boolean);
 
-        // 2. Email Alert to Assigned Handler - strictly respecting Omnichannel Matrix
-        if (assignedUser?.email) {
+        // 1. WhatsApp Alert to Assigned Handler(s) & Omnichannel matrix recipients
+        if (primaryAssigneeId) {
+            await this.dispatch({
+                featureKey: 'hr_ticket_assigned_handler_v2',
+                templateEventKey: 'hr_ticket_assigned_handler_v2',
+                organizationId: orgId,
+                entityId: ticketId,
+                paramValues: {
+                    user_name: assignedName,
+                    ticket_number: ticketNo,
+                    level: String(level),
+                    category: categoryLabel,
+                    submitter: submitterLabel,
+                    subject: effectiveTicket.subject || payload.subject || 'Confidential Submission',
+                    sla_deadline: formatWhatsAppDateTime(effectiveTicket.sla_due_at || payload.sla_due_at)
+                },
+                summaryMessage: `Confidential HR alert received: #${ticketNo}`,
+                contextualUserIds: {
+                    assigneeId: primaryAssigneeId,
+                    extraUserIds: extraAssigneeIds
+                }
+            });
+        }
+
+        // 2. Email Alert to Assigned Handler(s) - strictly respecting Omnichannel Matrix
+        const primaryHandlerEmail = primaryOwner?.email || effectiveTicket.assigned_to?.email;
+        const extraHandlerEmails = levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[];
+
+        if (primaryHandlerEmail || extraHandlerEmails.length > 0) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_assigned_handler_v2',
                     contextualRecipients: {
-                        assigneeEmail: assignedUser.email
+                        assigneeEmail: primaryHandlerEmail,
+                        extraEmails: extraHandlerEmails
                     }
                 });
 
@@ -2576,7 +3009,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketAssignedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             assigneeName: assignedName,
                             submitterName: submitterLabel,
                             categoryName: categoryLabel
@@ -2672,26 +3105,30 @@ export const WhatsAppEventProcessor = {
             .eq('id', payload.sender_user_id)
             .maybeSingle();
 
-        const orgId = payload.organization_id || ticket?.organization_id;
-        const isAnonymous = ticket?.is_anonymous || ticket?.ticket_type === 'anonymous_feedback';
-        const isSenderEmployee = payload.sender_user_id === ticket?.raised_by_user_id;
+        const effectiveTicket = ticket || payload;
+        const orgId = payload.organization_id || effectiveTicket?.organization_id;
+        const isAnonymous = effectiveTicket?.is_anonymous || effectiveTicket?.ticket_type === 'anonymous_feedback';
+        const isSenderEmployee = payload.sender_user_id === effectiveTicket?.raised_by_user_id;
 
         const senderName = (isAnonymous && isSenderEmployee) ? 'Anonymous Employee' : (sender?.full_name || 'Team Member');
-        const ticketNo = ticket?.ticket_number || payload.ticket_number;
+        const ticketNo = effectiveTicket?.ticket_number || payload.ticket_number;
         const msgSnippet = (payload.message || payload.content || '').slice(0, 100);
 
-        const targetUser = isSenderEmployee ? ticket?.assigned_to : ticket?.raised_by;
-        const targetUserId = targetUser?.id || (isSenderEmployee ? ticket?.assigned_to_user_id : ticket?.raised_by_user_id);
+        const level = effectiveTicket?.current_level || 1;
+        const levelOwners = isSenderEmployee ? await this.resolveHrLevelOwners(effectiveTicket, level) : [];
+        const primaryTarget = isSenderEmployee ? (levelOwners[0] || effectiveTicket?.assigned_to) : effectiveTicket?.raised_by;
+        const primaryTargetId = primaryTarget?.id || (isSenderEmployee ? effectiveTicket?.assigned_to_user_id : effectiveTicket?.raised_by_user_id);
+        const extraTargetIds = isSenderEmployee ? levelOwners.slice(1).map(o => o.id).filter(Boolean) : [];
         const targetName = isSenderEmployee
-            ? (ticket?.assigned_to?.full_name || 'Handler')
-            : (isAnonymous ? 'Anonymous Employee' : (ticket?.raised_by?.full_name || 'Employee'));
+            ? (primaryTarget?.full_name || primaryTarget?.email || 'Handler')
+            : (isAnonymous ? 'Anonymous Employee' : (effectiveTicket?.raised_by?.full_name || 'Employee'));
 
         // If target is anonymous submitter, suppress WhatsApp since anonymous submitters have no registered phone
         if (!isSenderEmployee && isAnonymous) {
             return;
         }
 
-        if (targetUserId) {
+        if (primaryTargetId) {
             await this.dispatch({
                 featureKey: 'hr_ticket_comment_added',
                 templateEventKey: 'hr_ticket_comment_added',
@@ -2705,20 +3142,28 @@ export const WhatsAppEventProcessor = {
                     date: formatWhatsAppDate(new Date())
                 },
                 summaryMessage: `New comment on HR Ticket #${ticketNo} from ${senderName}`,
-                contextualUserIds: { assigneeId: targetUserId }
+                contextualUserIds: {
+                    assigneeId: isSenderEmployee ? primaryTargetId : undefined,
+                    requesterId: !isSenderEmployee ? primaryTargetId : undefined,
+                    extraUserIds: extraTargetIds
+                }
             });
         }
 
-        if (targetUser?.email && (!isAnonymous || isSenderEmployee)) {
+        const primaryTargetEmail = primaryTarget?.email;
+        const extraTargetEmails = isSenderEmployee ? levelOwners.slice(1).map(o => o.email).filter(Boolean) as string[] : [];
+
+        if ((primaryTargetEmail || extraTargetEmails.length > 0) && (!isAnonymous || isSenderEmployee)) {
             try {
                 const { EmailRecipientResolver } = await import('./EmailRecipientResolver');
                 const emailResult = await EmailRecipientResolver.resolveRecipients({
                     organizationId: orgId,
-                    propertyId: ticket?.property_id || payload?.property_id,
+                    propertyId: effectiveTicket?.property_id || payload?.property_id,
                     featureKey: 'hr_ticket_comment_added',
                     contextualRecipients: {
-                        assigneeEmail: isSenderEmployee ? targetUser.email : undefined,
-                        requesterEmail: !isSenderEmployee ? targetUser.email : undefined
+                        assigneeEmail: isSenderEmployee ? primaryTargetEmail : undefined,
+                        extraEmails: isSenderEmployee ? extraTargetEmails : undefined,
+                        requesterEmail: !isSenderEmployee ? primaryTargetEmail : undefined
                     }
                 });
 
@@ -2727,7 +3172,7 @@ export const WhatsAppEventProcessor = {
                     for (const email of emailResult.emails) {
                         EmailService.sendHrTicketCommentAddedEmail({
                             emailTo: email,
-                            ticket: ticket || payload,
+                            ticket: effectiveTicket,
                             recipientName: targetName,
                             senderName,
                             commentSnippet: msgSnippet

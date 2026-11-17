@@ -8,6 +8,7 @@ import {
     reliabilityNoticeMessage,
 } from '@/backend/lib/electricity/chaseMessages';
 import { isMissingRelation } from '@/backend/lib/aop/access';
+import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 
 /**
  * Electricity 3-touch chase engine + reliability scoring
@@ -410,9 +411,14 @@ async function raiseStrikeTicket(task: ChaseTaskRow, ctx: ChaseContext, strikes:
         `Latest: electricity meter readings for ${ctx.siteLabel} (${ctx.billingMonth}) were not logged ` +
         `despite 3 chase touches (chase task ${task.id}). Review the reliability profile and decide on action.`;
 
+    const ticketNumber = task.property_id
+        ? await generateNextTicketNumber(supabaseAdmin, task.property_id, task.organization_id)
+        : `AP-GEN-${Date.now()}`;
+
     const { error: tErr } = await supabaseAdmin.from('tickets').insert({
         organization_id: task.organization_id,
         property_id: task.property_id,
+        ticket_number: ticketNumber,
         raised_by: raisedBy,
         title,
         description,

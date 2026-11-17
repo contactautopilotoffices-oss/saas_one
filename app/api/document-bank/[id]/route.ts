@@ -37,8 +37,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     const { allowed } = await checkDocumentBankAccess(user.id, doc.organization_id, doc.property_id);
     if (!allowed) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    const [signedUrl] = await signDocumentBankFiles([doc.file_path]);
-    return NextResponse.json({ document: { ...doc, signed_url: signedUrl } });
+    return NextResponse.json({ document: { ...doc, signed_url: `/api/document-bank/${doc.id}/download` } });
 }
 
 /**
@@ -94,8 +93,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         .single();
     if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
 
-    const [signedUrl] = await signDocumentBankFiles([updated.file_path]);
-    return NextResponse.json({ document: { ...updated, signed_url: signedUrl } });
+    return NextResponse.json({ document: { ...updated, signed_url: `/api/document-bank/${updated.id}/download` } });
 }
 
 /** DELETE /api/document-bank/[id] — admin-only, see the migration's delete policy comment. */

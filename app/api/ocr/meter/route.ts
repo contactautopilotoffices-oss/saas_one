@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withOcrActivity } from '@/backend/lib/ocr/activity';
 import { createClient } from '@/frontend/utils/supabase/server';
+import { runWithModel } from '@/task-manager/ai/modelFor';
+import { fetchWithKeys } from '@/backend/lib/llm/providerKeys';
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // Was qwen/qwen3.8-27b until 2026-09-05, when Groq
 // retired it — every OCR path 404'd with model_not_found. qwen3.8-27b is the
@@ -9,7 +11,7 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 // both free-text transcription and response_format:json_object.
 const MODEL = 'qwen/qwen3.8-27b';
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
     try {
         const { imageUrl, meterId, propertyId } = await req.json();
 
@@ -34,14 +36,16 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Prepare Groq Request
-        const response = await fetch(GROQ_API_URL, {
+        // Owner 2026-11-15: the model can be chosen in the Tech console (Brain → AI models). Nothing chosen = the model below, as before.
+        const readMeter = async (model: string) => {
+        const response = await fetchWithKeys('groq', GROQ_API_URL, key => ({
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Authorization': `Bearer ${key}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: MODEL,
+                model,
                 messages: [
                     {
                         role: 'system',
@@ -72,7 +76,7 @@ CRITICAL INSTRUCTIONS:
                 temperature: 0.1,
                 response_format: { type: 'json_object' }
             })
-        });
+        }));
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -81,7 +85,9 @@ CRITICAL INSTRUCTIONS:
         }
 
         const data = await response.json();
-        const content = JSON.parse(data.choices[0].message.content);
+        return { content: JSON.parse(data.choices[0].message.content), usage: data.usage };
+        };
+        const { content, usage } = await runWithModel('meter_ocr', MODEL, readMeter);
 
 
         // 3. Log Success and Store Results (Shadow Entry)
@@ -146,7 +152,7 @@ CRITICAL INSTRUCTIONS:
                     meter_id: meterId, 
                     content: { ...content, final_reading: finalReading, conversion_applied: conversionApplied, pf_used: pf }, 
                     photo_url: imageUrl,
-                    usage: data.usage 
+                    usage 
                 }
             });
 
@@ -217,4 +223,13 @@ CRITICAL INSTRUCTIONS:
             details: error.message 
         }, { status: 500 });
     }
+}
+
+/** The route, inside an OCR activity record. A response with an error status counts as a failed read. */
+export async function POST(request: NextRequest) {
+    return withOcrActivity(
+        { source: 'meter' },
+        () => handlePost(request),
+        (res) => ({ ok: res.status < 400, error: res.status >= 400 ? `HTTP ${res.status}` : null }),
+    );
 }

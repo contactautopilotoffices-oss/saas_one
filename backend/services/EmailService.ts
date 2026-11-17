@@ -1,10 +1,11 @@
 import * as nodemailer from 'nodemailer';
 
-const resendApiKey = process.env.RESEND_API_KEY;
+const resendApiKey = process.env.RESEND_API_KEY || (process.env.SMTP_USER === 'resend' ? process.env.SMTP_PASS : undefined);
 const smtpUser = process.env.SMTP_USER || process.env.EMAIL_SMTP_USER || (resendApiKey ? 'resend' : undefined);
 const smtpPass = process.env.SMTP_PASS || process.env.EMAIL_SMTP_PASS || resendApiKey;
 const smtpHost = process.env.SMTP_HOST || process.env.EMAIL_SMTP_HOST || (resendApiKey ? 'smtp.resend.com' : 'smtp.gmail.com');
 const smtpPort = parseInt(process.env.SMTP_PORT || process.env.EMAIL_SMTP_PORT || '465');
+const DEFAULT_SENDER_NAME = process.env.SMTP_SENDER_NAME || 'Autopilot Offices';
 
 const transporter = nodemailer.createTransport({
     host: smtpHost,
@@ -25,13 +26,13 @@ export const EmailService = {
         const sender=process.env.RESEND_FROM_EMAIL||process.env.SMTP_SENDER_EMAIL||smtpUser||'onboarding@resend.dev';
         if(resendApiKey){
             try {
-                const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${resendApiKey}`,'Content-Type':'application/json','Idempotency-Key':`petty-cash-${idempotencyKey}`},body:JSON.stringify({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to:[to],subject,html,text}),signal:AbortSignal.timeout(15_000)});
+                const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${resendApiKey}`,'Content-Type':'application/json','Idempotency-Key':`petty-cash-${idempotencyKey}`},body:JSON.stringify({from:sender.includes('<')?sender:`"${DEFAULT_SENDER_NAME}" <${sender}>`,to:[to],subject,html,text}),signal:AbortSignal.timeout(15_000)});
                 const body=await response.json().catch(()=>({}));
                 return response.ok?{success:true,providerReference:typeof body.id==='string'?body.id:undefined}:{success:false,ambiguous:response.status>=500,error:`Email provider HTTP ${response.status}`};
             }catch{return {success:false,ambiguous:true,error:'Email provider outcome unknown; reconcile before retry'};}
         }
         if(!smtpUser||!smtpPass)return {success:false,error:'Email provider credentials are not configured'};
-        try {const result=await transporter.sendMail({from:sender.includes('<')?sender:`"Autopilot FMS" <${sender}>`,to,subject,html,text,messageId:`<petty-cash-${idempotencyKey}@autopilot.local>`});return {success:true,providerReference:result.messageId};}
+        try {const result=await transporter.sendMail({from:sender.includes('<')?sender:`"${DEFAULT_SENDER_NAME}" <${sender}>`,to,subject,html,text,messageId:`<petty-cash-${idempotencyKey}@autopilot.local>`});return {success:true,providerReference:result.messageId};}
         catch(reason:any){return {success:false,ambiguous:!['EAUTH','EENVELOPE','ECONNECTION'].includes(reason?.code),error:'Email provider failed'+(reason?.code?` (${reason.code})`:'')};}
     },
     // Generic sender — supports Resend API (RESEND_API_KEY) and SMTP credentials.
@@ -59,7 +60,7 @@ export const EmailService = {
             });
         }
 
-        const apiKey = process.env.RESEND_API_KEY;
+        const apiKey = resendApiKey;
         const sender = process.env.RESEND_FROM_EMAIL || process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER || 'onboarding@resend.dev';
 
         if (apiKey) {
@@ -71,7 +72,7 @@ export const EmailService = {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
+                        from: sender.includes('<') ? sender : `"${DEFAULT_SENDER_NAME}" <${sender}>`,
                         to: Array.isArray(to) ? to : [to],
                         subject,
                         html
@@ -91,7 +92,7 @@ export const EmailService = {
         }
         try {
             await transporter.sendMail({
-                from: sender.includes('<') ? sender : `"Autopilot FMS" <${sender}>`,
+                from: sender.includes('<') ? sender : `"${DEFAULT_SENDER_NAME}" <${sender}>`,
                 to: Array.isArray(to) ? to.join(',') : to,
                 subject,
                 html,
@@ -111,7 +112,7 @@ export const EmailService = {
         }
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -145,7 +146,7 @@ export const EmailService = {
                 <p style="margin-top:24px; color: #555;">Log in to Autopilot FMS to view the details.</p>
             `;
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -256,6 +257,8 @@ export const EmailService = {
         propertyName,
         requesterName,
         requesterEmail,
+        companyName,
+        remainingCredits,
         isCancellation = false,
         comment,
         customHtml
@@ -268,6 +271,8 @@ export const EmailService = {
         propertyName: string;
         requesterName: string;
         requesterEmail: string;
+        companyName?: string | null;
+        remainingCredits?: string | null;
         isCancellation?: boolean;
         comment?: string | null;
         customHtml?: string | null;
@@ -319,6 +324,8 @@ export const EmailService = {
             '{{propertyName}}': propertyName,
             '{{requesterName}}': requesterName,
             '{{requesterEmail}}': requesterEmail,
+            '{{companyName}}': companyName || '',
+            '{{remainingCredits}}': remainingCredits || '',
             '{{comment}}': comment || '',
         };
 
@@ -344,8 +351,10 @@ export const EmailService = {
                 <div style="background-color: #f8fafc; padding: 20px; border-radius: 12px; margin: 24px 0; border: 1px solid #e2e8f0;">
                     <h3 style="margin-top: 0; color: #0f172a; font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px;">Requester Details</h3>
                     <table style="width: 100%; border-collapse: collapse;">
-                        <tr><td style="padding: 8px 0; font-weight: 600; width: 120px; color: #64748b;">Name:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterName}</td></tr>
+                        <tr><td style="padding: 8px 0; font-weight: 600; width: 140px; color: #64748b;">Name:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterName}</td></tr>
                         <tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Email:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${requesterEmail}</td></tr>
+                        ${companyName ? `<tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Company:</td><td style="padding: 8px 0; color: #0f172a; font-weight: 500;">${companyName}</td></tr>` : ''}
+                        ${remainingCredits ? `<tr><td style="padding: 8px 0; font-weight: 600; color: #64748b;">Credits Remaining:</td><td style="padding: 8px 0; color: #10b981; font-weight: 600;">${remainingCredits}</td></tr>` : ''}
                     </table>
                 </div>
                 
@@ -373,7 +382,7 @@ export const EmailService = {
 
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -621,7 +630,7 @@ export const EmailService = {
 
         try {
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: emailTo,
                 subject,
                 html,
@@ -819,7 +828,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -878,7 +887,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -942,7 +951,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -999,7 +1008,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1060,7 +1069,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1123,7 +1132,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1178,7 +1187,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1233,7 +1242,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1288,7 +1297,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1346,7 +1355,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1400,7 +1409,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1458,7 +1467,7 @@ export const EmailService = {
             `;
 
             await transporter.sendMail({
-                from: `"Autopilot FMS" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
+                from: `"${DEFAULT_SENDER_NAME}" <${process.env.SMTP_SENDER_EMAIL || process.env.SMTP_USER}>`,
                 to: recipients,
                 subject,
                 html,
@@ -1472,7 +1481,7 @@ export const EmailService = {
     },
 
     // ============================================================================
-    // HR Tickets & Grievances Email Templates
+    // Professional Ticket Management & Grievance Email Notifications
     // ============================================================================
     async sendHrTicketCreatedEmail({
         emailTo,
@@ -1488,31 +1497,37 @@ export const EmailService = {
         categoryName: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[HR Ticket #${ticket.ticket_number}] ${ticket.subject || 'Request Submitted'}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #587e85; margin: 0; font-size: 20px;">📋 HR Ticket Created</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Your request has been successfully submitted</p>
-                </div>
-                <div style="background-color: #f8fafc; border-left: 4px solid #587e85; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Category:</b></td><td style="padding: 4px 0; color: #0f172a;">${categoryName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Raised By:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Assigned To:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${assignedOwnerName} (Level ${ticket.current_level || 1})</td></tr>
-                    </table>
-                </div>
-                ${ticket.description ? `
-                <div style="background-color: #f1f5f9; padding: 12px 16px; border-radius: 6px; font-size: 13px; color: #334155; margin-bottom: 20px;">
-                    ${ticket.description}
-                </div>` : ''}
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #587e85; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Ticket in Portal</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Submission Recorded';
+
+        const subject = meta.isConfidential
+            ? `[Confidential] Confirmation: Ticket #${ticketNo} Received — ${subjectTitle}`
+            : `Confirmation: Ticket #${ticketNo} Received — ${subjectTitle}`;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Classification:', value: meta.classification },
+            { label: 'Category:', value: categoryName || 'General' },
+            { label: 'Subject:', value: subjectTitle, isBold: true },
+            { label: 'Assigned Reviewer:', value: `${assignedOwnerName || 'Review Team'} (Level ${ticket?.current_level || 1})` }
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: 'SUBMISSION CONFIRMED',
+            title: 'Ticket Submission Confirmation',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${submitterName || 'Team Member'},`,
+            leadText: 'Your ticket has been received and logged into the system. It has been routed to the designated review team for assessment. You will receive updates as the ticket progresses through the workflow.',
+            tableRows,
+            descriptionBox: ticket?.description ? { title: 'Submitted Summary', content: ticket.description } : undefined,
+            actionButton: {
+                text: 'Track Ticket Status',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     },
 
@@ -1530,27 +1545,45 @@ export const EmailService = {
         categoryName: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[Assigned] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #2563eb; margin: 0; font-size: 20px;">📌 HR Ticket Assigned To You</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Level ${ticket.current_level || 1} Action Required</p>
-                </div>
-                <div style="background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Category:</b></td><td style="padding: 4px 0; color: #0f172a;">${categoryName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Submitter:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Current Level:</b></td><td style="padding: 4px 0; color: #2563eb; font-weight: bold;">Level ${ticket.current_level || 1}</td></tr>
-                    </table>
-                </div>
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #2563eb; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Open & Respond to Ticket</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const level = ticket?.current_level || 1;
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Review Required';
+
+        const subject = (meta.isAnonymous || meta.isConfidential)
+            ? `[Confidential] Ticket Assigned: #${ticketNo} — ${subjectTitle}`
+            : `Action Required: Ticket #${ticketNo} — ${subjectTitle}`;
+
+        const isSubmitterAnon = meta.isAnonymous || submitterName?.toLowerCase().includes('anonymous');
+        const displaySubmitter = isSubmitterAnon
+            ? 'Confidential Submitter (Identity Protected)'
+            : submitterName;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Classification:', value: meta.classification },
+            { label: 'Category:', value: categoryName || 'General' },
+            { label: 'Subject:', value: subjectTitle, isBold: true },
+            { label: 'Submitter:', value: displaySubmitter },
+            { label: 'Review Assignment:', value: `Level ${level} (${assigneeName || 'Assigned Reviewer'})`, highlightColor: '#0f766e', isBold: true },
+            ...(ticket?.sla_due_at ? [{ label: 'SLA Target:', value: formatHrEmailDateTime(ticket.sla_due_at) }] : [])
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: `LEVEL ${level} • ACTION REQUIRED`,
+            title: 'Ticket Assigned for Review',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${assigneeName || 'Colleague'},`,
+            leadText: `A new ${meta.classification.toLowerCase()} has been assigned to you for Level ${level} review and action. Please review the ticket information below and take appropriate action in accordance with designated SLA standards.`,
+            tableRows,
+            descriptionBox: ticket?.description ? { title: 'Ticket Description / Statement', content: ticket.description } : undefined,
+            actionButton: {
+                text: 'Review Ticket Details',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     },
 
@@ -1570,27 +1603,40 @@ export const EmailService = {
         submitterName: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[⚠️ Escalated to Level ${level}] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #dc2626; margin: 0; font-size: 20px;">⚠️ HR Ticket Escalated to Level ${level}</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket escalated ${reason}</p>
-                </div>
-                <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Submitter:</b></td><td style="padding: 4px 0; color: #0f172a;">${submitterName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>New Level:</b></td><td style="padding: 4px 0; color: #dc2626; font-weight: bold;">Level ${level} (${assigneeName})</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Reason:</b></td><td style="padding: 4px 0; color: #0f172a;">${reason}</td></tr>
-                    </table>
-                </div>
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #dc2626; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Review Escalated Ticket</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Escalation Review';
+
+        const subject = `Notice of Escalation: Ticket #${ticketNo} (Level ${level}) — ${subjectTitle}`;
+
+        const isSubmitterAnon = meta.isAnonymous || submitterName?.toLowerCase().includes('anonymous');
+        const displaySubmitter = isSubmitterAnon
+            ? 'Confidential Submitter (Identity Protected)'
+            : submitterName;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Classification:', value: meta.classification },
+            { label: 'Subject:', value: subjectTitle, isBold: true },
+            { label: 'Submitter:', value: displaySubmitter },
+            { label: 'Escalated Level:', value: `Level ${level} (${assigneeName || 'Level Owner'})`, highlightColor: '#b91c1c', isBold: true },
+            { label: 'Escalation Reason:', value: reason || 'SLA timeline exceeded' }
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: `LEVEL ${level} • ESCALATION`,
+            title: 'Ticket Escalated for Higher-Level Review',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${assigneeName || 'Reviewer'},`,
+            leadText: `Ticket #${ticketNo} has been escalated to Level ${level} for your review and intervention. Please examine the ticket history and facilitate prompt resolution.`,
+            tableRows,
+            actionButton: {
+                text: 'Review Escalated Ticket',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     },
 
@@ -1608,26 +1654,34 @@ export const EmailService = {
         resolutionNote: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[Resolved] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #059669; margin: 0; font-size: 20px;">✅ HR Ticket Resolved</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Please review the resolution and acknowledge</p>
-                </div>
-                <div style="background-color: #f0fdf4; border-left: 4px solid #059669; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-                        <tr><td style="padding: 4px 0; color: #64748b; width: 130px;"><b>Ticket #:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: bold;">#${ticket.ticket_number}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Subject:</b></td><td style="padding: 4px 0; color: #0f172a; font-weight: 600;">${ticket.subject}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Resolved By:</b></td><td style="padding: 4px 0; color: #0f172a;">${resolverName}</td></tr>
-                        <tr><td style="padding: 4px 0; color: #64748b;"><b>Resolution Note:</b></td><td style="padding: 4px 0; color: #0f172a;">${resolutionNote}</td></tr>
-                    </table>
-                </div>
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #059669; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Confirm & Acknowledge Resolution</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Ticket Resolved';
+
+        const subject = `Resolution Notice: Ticket #${ticketNo} — ${subjectTitle}`;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Subject:', value: subjectTitle, isBold: true },
+            { label: 'Resolved By:', value: resolverName || 'Review Team' },
+            { label: 'Status:', value: 'Resolved (Pending Confirmation)', highlightColor: '#059669', isBold: true }
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: 'TICKET RESOLVED',
+            title: 'Ticket Marked as Resolved',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${submitterName || 'Team Member'},`,
+            leadText: `The review team has marked Ticket #${ticketNo} as resolved. Please review the resolution summary below and confirm your acknowledgment in the portal.`,
+            tableRows,
+            descriptionBox: resolutionNote ? { title: 'Resolution Summary', content: resolutionNote } : undefined,
+            actionButton: {
+                text: 'Confirm & Acknowledge Resolution',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     },
 
@@ -1645,24 +1699,33 @@ export const EmailService = {
         commentSnippet: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[New Reply] [HR Ticket #${ticket.ticket_number}] ${ticket.subject}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #6366f1; margin: 0; font-size: 20px;">💬 New Reply on HR Ticket</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Ticket #${ticket.ticket_number}</p>
-                </div>
-                <div style="background-color: #eef2ff; border-left: 4px solid #6366f1; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <p style="margin: 0 0 8px 0; font-size: 14px; color: #475569;"><strong>${senderName}</strong> posted a new reply:</p>
-                    <div style="background-color: #ffffff; padding: 12px; border-radius: 6px; border: 1px solid #c7d2fe; font-size: 13.5px; color: #1e293b; font-style: italic;">
-                        "${commentSnippet}"
-                    </div>
-                </div>
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #6366f1; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">Reply in Discussion</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Ticket Update';
+
+        const subject = `Ticket Update: Ticket #${ticketNo} — ${subjectTitle}`;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Subject:', value: subjectTitle },
+            { label: 'Posted By:', value: senderName, isBold: true }
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: 'NEW COMMUNICATION',
+            title: 'New Message on Ticket Discussion',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${recipientName || 'Team Member'},`,
+            leadText: `A new message has been posted by <strong>${senderName}</strong> regarding Ticket #${ticketNo}.`,
+            tableRows,
+            descriptionBox: commentSnippet ? { title: `Message from ${senderName}`, content: commentSnippet } : undefined,
+            actionButton: {
+                text: 'View Discussion in Portal',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     },
 
@@ -1678,26 +1741,327 @@ export const EmailService = {
         submitterName: string;
     }) {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fms.autopilotoffices.com';
-        const subject = `[Closed] [HR Ticket #${ticket.ticket_number}] Acknowledged by ${submitterName}`;
-        const html = `
-            <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b; background-color: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h2 style="color: #0d9488; margin: 0; font-size: 20px;">🎉 HR Ticket Closed & Acknowledged</h2>
-                    <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Resolution confirmed by employee</p>
-                </div>
-                <div style="background-color: #f0fdfa; border-left: 4px solid #0d9488; padding: 16px; border-radius: 6px; margin: 18px 0;">
-                    <p style="margin: 0; font-size: 14px; color: #0f172a;">
-                        <strong>${submitterName}</strong> has acknowledged and confirmed the resolution of HR Ticket <strong>#${ticket.ticket_number}</strong> ("${ticket.subject}").
-                    </p>
-                    <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b;">
-                        The ticket is now officially closed.
-                    </p>
-                </div>
-                <div style="text-align: center; margin-top: 24px;">
-                    <a href="${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}" style="display: inline-block; background-color: #0d9488; color: #ffffff; text-decoration: none; font-weight: bold; padding: 12px 28px; border-radius: 8px; font-size: 14px;">View Closed Ticket</a>
-                </div>
-            </div>
-        `;
+        const meta = getHrCaseMeta(ticket);
+        const ticketNo = ticket?.ticket_number || '';
+        const subjectTitle = ticket?.subject || 'Ticket Closed';
+
+        const subject = `Ticket Closed: Ticket #${ticketNo} — Acknowledged`;
+
+        const isSubmitterAnon = meta.isAnonymous || submitterName?.toLowerCase().includes('anonymous');
+        const displaySubmitter = isSubmitterAnon
+            ? 'Confidential Submitter (Identity Protected)'
+            : submitterName;
+
+        const tableRows = [
+            { label: 'Ticket Reference:', value: `#${ticketNo}`, isBold: true },
+            { label: 'Subject:', value: subjectTitle },
+            { label: 'Acknowledged By:', value: displaySubmitter },
+            { label: 'Final Status:', value: 'Closed & Completed', highlightColor: '#0f766e', isBold: true }
+        ];
+
+        const html = renderCorporateCaseEmailLayout({
+            headerBadge: 'TICKET CLOSED',
+            title: 'Ticket Resolution Acknowledged & Closed',
+            subtitle: `Reference: #${ticketNo}`,
+            recipientGreeting: `Dear ${handlerName || 'Handler'},`,
+            leadText: `The submitter (${displaySubmitter}) has acknowledged and confirmed the resolution of Ticket #${ticketNo}. The ticket has been officially closed and archived in accordance with record-keeping policies.`,
+            tableRows,
+            actionButton: {
+                text: 'View Closed Ticket Record',
+                url: `${appUrl}/hr-tickets?tab=tickets&id=${ticket.id}`
+            },
+            appUrl
+        });
+
         return EmailService.sendEmail({ to: emailTo, subject, html });
     }
 };
+
+// ============================================================================
+// Ticket / Grievance Executive Email Layout & Classification Helpers
+// ============================================================================
+function formatHrEmailDateTime(val?: string | Date | null): string {
+    if (!val) return '';
+    try {
+        const d = new Date(val);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch {
+        return '';
+    }
+}
+
+function getHrCaseMeta(ticket: any) {
+    const isAnonymous = Boolean(ticket?.is_anonymous || ticket?.ticket_type === 'anonymous_feedback');
+    const isConfidential = Boolean(ticket?.is_confidential || ticket?.ticket_type === 'confidential_feedback');
+    const isGrievance = ticket?.ticket_type === 'grievance';
+
+    let classification = 'Workplace Ticket';
+    let badgeText = 'TICKET REVIEW';
+
+    if (isAnonymous) {
+        classification = 'Confidential Anonymous Feedback';
+        badgeText = 'CONFIDENTIAL • ANONYMOUS';
+    } else if (isConfidential) {
+        classification = 'Confidential Grievance';
+        badgeText = 'CONFIDENTIAL';
+    } else if (isGrievance) {
+        classification = 'Formal Workplace Grievance';
+        badgeText = 'GRIEVANCE';
+    } else {
+        classification = 'Employee Request';
+        badgeText = 'TICKET REVIEW';
+    }
+
+    return {
+        isAnonymous,
+        isConfidential,
+        isGrievance,
+        classification,
+        badgeText
+    };
+}
+
+function renderCorporateCaseEmailLayout({
+    headerBadge,
+    title,
+    subtitle,
+    recipientGreeting,
+    leadText,
+    tableRows,
+    descriptionBox,
+    actionButton,
+    appUrl
+}: {
+    headerBadge?: string;
+    title: string;
+    subtitle?: string;
+    recipientGreeting?: string;
+    leadText: string;
+    tableRows: Array<{ label: string; value: string; isBold?: boolean; highlightColor?: string }>;
+    descriptionBox?: { title: string; content: string };
+    actionButton?: { text: string; url: string };
+    appUrl: string;
+}): string {
+    const rowsHtml = tableRows
+        .filter(r => r.value && String(r.value).trim().length > 0)
+        .map((r, i) => {
+            const bg = i % 2 === 0 ? '#f8fafc' : '#ffffff';
+            const valColor = r.highlightColor || '#0f172a';
+            const fontWeight = r.isBold ? '600' : '500';
+            return `
+                <tr style="background-color: ${bg};">
+                    <td class="table-label" style="padding: 10px 14px; font-size: 13px; color: #64748b; font-weight: 600; width: 36%; border-bottom: 1px solid #e2e8f0; vertical-align: top; word-break: normal;">${r.label}</td>
+                    <td class="table-value" style="padding: 10px 14px; font-size: 13.5px; color: ${valColor}; font-weight: ${fontWeight}; border-bottom: 1px solid #e2e8f0; vertical-align: top; word-break: break-word; overflow-wrap: anywhere;">${r.value}</td>
+                </tr>
+            `;
+        }).join('');
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="x-apple-disable-message-reformatting">
+    <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
+    <title>${title}</title>
+    <style>
+        /* Base email resets */
+        body, table, td, p, a, div {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+            box-sizing: border-box;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+
+        /* Responsive Mobile Styles */
+        @media only screen and (max-width: 600px) {
+            .email-outer-body {
+                padding: 12px 6px !important;
+            }
+            .email-card {
+                width: 100% !important;
+                max-width: 100% !important;
+                border-radius: 6px !important;
+            }
+            .header-cell {
+                padding: 16px 16px !important;
+            }
+            .header-stack-cell {
+                display: block !important;
+                width: 100% !important;
+                text-align: left !important;
+            }
+            .header-badge-cell {
+                display: block !important;
+                width: 100% !important;
+                text-align: left !important;
+                margin-top: 10px !important;
+            }
+            .content-cell {
+                padding: 20px 16px 18px 16px !important;
+            }
+            .content-title {
+                font-size: 17px !important;
+                line-height: 1.35 !important;
+            }
+            .content-lead {
+                font-size: 13.5px !important;
+                line-height: 1.55 !important;
+                margin-bottom: 18px !important;
+            }
+            .table-label {
+                width: 38% !important;
+                padding: 9px 10px !important;
+                font-size: 12px !important;
+                line-height: 1.4 !important;
+            }
+            .table-value {
+                padding: 9px 10px !important;
+                font-size: 12.5px !important;
+                line-height: 1.4 !important;
+                word-break: break-word !important;
+                overflow-wrap: anywhere !important;
+            }
+            .description-card {
+                padding: 12px 14px !important;
+                margin-bottom: 18px !important;
+            }
+            .cta-btn-wrap {
+                margin: 20px 0 12px 0 !important;
+            }
+            .cta-btn {
+                display: block !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
+                text-align: center !important;
+                padding: 13px 16px !important;
+                font-size: 14px !important;
+            }
+            .footer-cell {
+                padding: 16px 16px !important;
+            }
+            .footer-col-left,
+            .footer-col-right {
+                display: block !important;
+                width: 100% !important;
+                text-align: left !important;
+            }
+            .footer-col-right {
+                margin-top: 8px !important;
+            }
+        }
+    </style>
+</head>
+<body class="email-outer-body" style="margin: 0; padding: 24px 12px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1e293b; -webkit-font-smoothing: antialiased;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+            <td align="center">
+                <table class="email-card" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+                    
+                    <!-- Executive Header -->
+                    <tr>
+                        <td class="header-cell" style="background-color: #0f172a; padding: 20px 26px; border-bottom: 1px solid #1e293b;">
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td class="header-stack-cell" style="vertical-align: middle;">
+                                        <div style="font-size: 15px; font-weight: 700; letter-spacing: 0.8px; color: #ffffff; text-transform: uppercase;">Autopilot Offices</div>
+                                        <div style="font-size: 12px; color: #94a3b8; margin-top: 3px; letter-spacing: 0.2px;">People Operations & Ticket Management</div>
+                                    </td>
+                                    ${headerBadge ? `
+                                    <td class="header-badge-cell" align="right" style="vertical-align: middle;">
+                                        <span style="display: inline-block; padding: 5px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.6px; color: #e2e8f0; background-color: #1e293b; border: 1px solid #334155; border-radius: 4px; text-transform: uppercase; white-space: nowrap;">
+                                            ${headerBadge}
+                                        </span>
+                                    </td>
+                                    ` : ''}
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                    <!-- Content -->
+                    <tr>
+                        <td class="content-cell" style="padding: 28px 26px 22px 26px;">
+                            ${recipientGreeting ? `<p style="margin: 0 0 16px 0; font-size: 15px; font-weight: 600; color: #0f172a;">${recipientGreeting}</p>` : ''}
+                            
+                            <h1 class="content-title" style="margin: 0 0 6px 0; font-size: 19px; font-weight: 700; color: #0f172a; line-height: 1.35;">${title}</h1>
+                            ${subtitle ? `<p style="margin: 0 0 18px 0; font-size: 13.5px; color: #64748b;">${subtitle}</p>` : '<div style="margin-bottom: 16px;"></div>'}
+                            
+                            <p class="content-lead" style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #334155;">
+                                ${leadText}
+                            </p>
+
+                            <!-- Ticket Overview Table -->
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; margin-bottom: 22px; table-layout: fixed;">
+                                ${rowsHtml}
+                            </table>
+
+                            ${descriptionBox && descriptionBox.content ? `
+                            <!-- Details Block -->
+                            <div class="description-card" style="margin: 0 0 22px 0; padding: 14px 18px; background-color: #f8fafc; border-left: 3px solid #0f172a; border-radius: 4px; word-break: break-word; overflow-wrap: anywhere;">
+                                <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #475569; margin-bottom: 6px;">${descriptionBox.title}</div>
+                                <div style="font-size: 13.5px; line-height: 1.6; color: #1e293b; white-space: pre-wrap;">${descriptionBox.content}</div>
+                            </div>
+                            ` : ''}
+
+                            ${actionButton ? `
+                            <!-- CTA Button -->
+                            <table class="cta-btn-wrap" role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin: 24px 0 12px 0;">
+                                <tr>
+                                    <td align="center">
+                                        <a class="cta-btn" href="${actionButton.url}" target="_blank" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 6px; letter-spacing: 0.3px; max-width: 100%; box-sizing: border-box;">
+                                            ${actionButton.text}
+                                        </a>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td align="center" style="padding-top: 10px;">
+                                        <span style="font-size: 12px; color: #64748b;">Or access securely through the <a href="${appUrl}" style="color: #0f766e; text-decoration: underline;">Autopilot Offices Portal</a></span>
+                                    </td>
+                                </tr>
+                            </table>
+                            ` : ''}
+                        </td>
+                    </tr>
+
+                    <!-- Legal & Confidentiality Notice -->
+                    <tr>
+                        <td class="footer-cell" style="padding: 20px 26px; background-color: #f8fafc; border-top: 1px solid #e2e8f0;">
+                            <p style="margin: 0 0 10px 0; font-size: 11px; line-height: 1.55; color: #94a3b8;">
+                                <strong>CONFIDENTIALITY NOTICE:</strong> This communication and any associated materials are intended solely for the designated recipient and may contain proprietary, sensitive, or legally privileged information. Any unauthorized review, dissemination, copying, or reliance on this information is strictly prohibited. If you have received this transmission in error, please immediately notify the sender and delete all copies from your system.
+                            </p>
+                            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                                <tr>
+                                    <td class="footer-col-left" style="font-size: 11px; color: #94a3b8;">
+                                        &copy; ${new Date().getFullYear()} Autopilot Offices. All rights reserved.
+                                    </td>
+                                    <td class="footer-col-right" align="right" style="font-size: 11px; color: #94a3b8;">
+                                        Ticket Operations Workflow
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>
+    `;
+}
+
+

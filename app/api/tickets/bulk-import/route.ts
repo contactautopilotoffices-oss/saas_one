@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { classifyTicket } from '@/backend/lib/ticketing';
+import { resolveImportRows } from '@/backend/lib/ticketing/resolver';
 import { processIntelligentAssignment } from '@/backend/lib/ticketing/assignment';
+import { deriveOrgInitials, derivePropertyInitials, formatTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 
@@ -12,6 +14,12 @@ interface SnagRow {
     skill_group?: string;
     issue_code?: string | null;
     confidence?: string;
+    // Owner 2026-11-15: filled when the AI sorted the row (null when the keyword rules did)
+    priority?: string | null;
+    risk_flag?: string | null;
+    llm_reasoning?: string | null;
+    confidence_score?: number | null;
+    classification_source?: string;
     isValid?: boolean;
     validationErrors?: string[];
 }
@@ -208,6 +216,24 @@ export async function POST(request: NextRequest) {
         }
 
         const { rows, errors } = parsedData;
+
+        // Owner 2026-11-15: the AI sorts the rows (several per call) from this property's categories. A row it gives no
+        // usable answer for keeps the keyword rules' sorting made while reading the file. Rows with errors are not
+        // imported, so they are not sent to the AI either.
+        const sortable = rows.filter(r => r.isValid && r.issue_description);
+        const sorted = await resolveImportRows(sortable.map(r => r.issue_description), { propertyId, organizationId });
+        sortable.forEach((row, i) => {
+            const s = sorted[i];
+            row.skill_group = s.skill_group;
+            row.issue_code = s.issue_code;
+            row.confidence = s.confidence;
+            row.priority = s.priority;
+            row.risk_flag = s.risk_flag;
+            row.llm_reasoning = s.reasoning;
+            row.confidence_score = s.confidenceScore;
+            row.classification_source = s.source;
+        });
+
         const validRows = rows.filter(r => r.isValid);
         const invalidRows = rows.filter(r => !r.isValid);
 
@@ -261,31 +287,67 @@ export async function POST(request: NextRequest) {
         // Resolve all categories and skill groups for lookup
         const { data: allCategories } = await supabase
             .from('issue_categories')
-            .select('id, code, skill_group_id, priority, sla_hours');
+            .select('id, code, skill_group_id, priority, sla_hours, property_id');
 
         const { data: allSkillGroups } = await supabase
             .from('skill_groups')
             .select('id, code');
 
-        const categoryMap = new Map(allCategories?.map(c => [c.code, c]) || []);
+        // One row per code: this property's own first, then the shared one, then any other (as before).
+        const categoryRank = (c: { property_id: string | null }) => (c.property_id === propertyId ? 2 : !c.property_id ? 1 : 0);
+        const categoryMap = new Map([...(allCategories ?? [])].sort((a, b) => categoryRank(a) - categoryRank(b)).map(c => [c.code, c]));
+        const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
         const skillGroupMap = new Map(allSkillGroups?.map(sg => [sg.code, sg.id]) || []);
+
+        // Resolve org and property initials for ticket numbering
+        const { data: propData } = await supabase.from('properties').select('name').eq('id', propertyId).maybeSingle();
+        const { data: orgData } = await supabase.from('organizations').select('name').eq('id', organizationId).maybeSingle();
+        const orgInit = deriveOrgInitials(orgData?.name);
+        const propInit = derivePropertyInitials(propData?.name);
+
+        const { data: recentT } = await supabase
+            .from('tickets')
+            .select('ticket_number')
+            .eq('property_id', propertyId)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        let maxSeq = 0;
+        const prefix = `${orgInit}-${propInit}-`;
+        if (recentT) {
+            for (const t of recentT) {
+                if (t.ticket_number?.startsWith(prefix)) {
+                    const s = parseInt(t.ticket_number.substring(prefix.length), 10);
+                    if (!isNaN(s) && s > maxSeq) maxSeq = s;
+                }
+            }
+        }
+        if (maxSeq === 0) {
+            const { count } = await supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('property_id', propertyId);
+            maxSeq = count || 0;
+        }
 
         // Prepare tickets for insert
         const ticketsToInsert = validRows.map((row, index) => {
-            // 1. Rule-based Classification
-            const classification = classifyTicket(row.issue_description);
-            const { issue_code, skill_group, confidence } = classification;
+            // 1. The sorting done above (AI, or the keyword rules for a row the AI could not answer)
+            const issue_code = row.issue_code ?? null;
+            const skill_group = row.skill_group || 'technical';
+            const confidence = row.confidence || 'low';
 
             // 2. Resolve IDs
             const cat = issue_code ? categoryMap.get(issue_code) : null;
             const skillGroupId = cat?.skill_group_id || skillGroupMap.get(skill_group);
+            // The AI may only raise the category's usual priority.
+            const catPriority = cat?.priority || 'medium';
+            const aiPriority = row.priority || '';
+            const finalPriority = (priorityRank[aiPriority] ?? -1) > (priorityRank[catPriority] ?? -1) ? aiPriority : catPriority;
 
             // 3. Extract Floor and Location
             const floorNumber = extractFloorNumber(row.issue_description);
             const location = extractLocation(row.issue_description);
 
-            // 4. Generate unique ticket number
-            const ticketNumber = `TKT-${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+            // 4. Generate sequential ticket number
+            const ticketNumber = formatTicketNumber(orgInit, propInit, maxSeq + index + 1);
 
             return {
                 property_id: propertyId,
@@ -296,13 +358,17 @@ export async function POST(request: NextRequest) {
                 category: issue_code || 'general',
                 category_id: cat?.id || null,
                 skill_group_id: skillGroupId || null,
-                priority: cat?.priority || 'medium',
+                priority: finalPriority,
                 status: 'open', // Trigger will auto-assign if possible
                 raised_by: user.id,
                 import_batch_id: importBatchId,
                 issue_code: issue_code,
                 skill_group_code: skill_group,
                 confidence: confidence,
+                risk_flag: row.risk_flag ?? null,
+                llm_reasoning: row.llm_reasoning ?? null,
+                classification_source: row.classification_source || 'rule',
+                ...(row.confidence_score != null ? { confidence_score: row.confidence_score } : {}),
                 sla_hours: cat?.sla_hours || 24,
                 floor_number: floorNumber,
                 location: location,

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/frontend/utils/supabase/client';
-import { ArrowLeft, MapPin, Clock, AlertTriangle, User, CheckCircle2, Activity, Camera, Video, Upload, Loader2, Play, Sparkles, Pencil, Image as ImageIcon, History, Package, XCircle, UserCog, GitBranch, Share2, Trash2, ClipboardCheck } from 'lucide-react';
+import { ArrowLeft, MapPin, Clock, AlertTriangle, User, CheckCircle2, Activity, Camera, Video, Upload, Loader2, Play, Sparkles, Pencil, Image as ImageIcon, History, Package, XCircle, UserCog, GitBranch, Share2, Trash2, ClipboardCheck, Lock } from 'lucide-react';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
 
 function formatTimeAgo(dateString: string) {
@@ -239,6 +239,12 @@ export default function RequestDetailsPage() {
                     {ticket.priority && (
                         <span className={`px-3 py-1 rounded text-[10px] font-semibold uppercase tracking-wider border ${priorityColors[ticket.priority as string] || priorityColors.medium}`}>
                             {ticket.priority} Priority
+                        </span>
+                    )}
+                    {ticket.internal && (
+                        <span className="inline-flex items-center gap-1 px-3 py-1 bg-slate-800 text-white rounded text-[10px] font-semibold uppercase tracking-wider border border-slate-800">
+                            <Lock className="w-3 h-3" />
+                            Internal
                         </span>
                     )}
                     {ticket.enhanced_classification && (
