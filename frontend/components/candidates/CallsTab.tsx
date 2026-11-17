@@ -190,7 +190,6 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
     const [transcript, setTranscript] = useState('');
     const [positionId, setPositionId] = useState('');
     const [calledOn, setCalledOn] = useState(todayIso);
-    const [consent, setConsent] = useState(false);
     const [busy, setBusy] = useState<Phase | null>(null);
     const [dragging, setDragging] = useState(false);
     const xhrRef = useRef<XMLHttpRequest | null>(null);
@@ -222,10 +221,10 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
     const round = roundPick ?? suggested;
 
     const problem = file ? (!callFileType(file.name) ? 'Use mp3, m4a, wav, ogg or webm.' : file.size > MAX_CALL_BYTES ? `Larger than ${MAX_CALL_BYTES / 1024 / 1024} MB. Export it at a lower quality.` : null) : null;
-    const canSubmit = !busy && (mode === 'file' ? !!file && !problem && consent : transcript.trim().length >= 40);
+    const canSubmit = !busy && (mode === 'file' ? !!file && !problem : transcript.trim().length >= 40);
 
     const pick = (f: File | null) => { setFile(f); };
-    const reset = () => { setFile(null); setTranscript(''); setConsent(false); setRoundPick(null); if (inputRef.current) inputRef.current.value = ''; };
+    const reset = () => { setFile(null); setTranscript(''); setRoundPick(null); if (inputRef.current) inputRef.current.value = ''; };
 
     const submit = async () => {
         if (!canSubmit) return;
@@ -242,7 +241,7 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
         }
         if (!file) return;
         setBusy({ phase: 'preparing', fraction: 0 });
-        const prep = await api<PreparedCall>('/api/candidates/calls', { json: { ...common, consent, file: { name: file.name, size: file.size } } });
+        const prep = await api<PreparedCall>('/api/candidates/calls', { json: { ...common, file: { name: file.name, size: file.size } } });
         if (!prep.ok || !prep.data.upload) { setBusy(null); if (!prep.ok) { notify(prep.error, 'error'); if (prep.noAccess) reportError(prep); } return; }
         const id = prep.data.call.id;
         setBusy({ phase: 'sending', fraction: 0 });
@@ -273,8 +272,9 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
             </div>
 
             {mode === 'file' ? (
-                <label
+                <div
                     onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}
+                    onClick={() => { if (!busy) inputRef.current?.click(); }}
                     className={`mt-3 flex cursor-pointer items-center gap-x-3 rounded-xl border border-dashed bg-surface px-4 py-3.5 transition-colors ${dragging ? 'border-primary bg-surface-elevated' : 'border-border hover:border-primary'}`}
                 >
                     <span className={`${WELL} inline-flex h-10 w-10 shrink-0 items-center justify-center`}>{file ? <FileAudio className="h-5 w-5 text-primary-dark" aria-hidden /> : <Upload className="h-5 w-5 text-text-tertiary" aria-hidden />}</span>
@@ -287,12 +287,14 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
                         ) : (
                             <>
                                 <span className="block text-sm font-semibold text-text-primary">Drop the recording here, or choose a file</span>
-                                <span className="block text-xs text-text-tertiary">mp3, m4a, wav, ogg or webm · up to {MAX_CALL_BYTES / 1024 / 1024} MB · or <button type="button" onClick={e => { e.preventDefault(); setMode('transcript'); }} className="font-semibold text-primary-dark hover:underline">paste a transcript</button> instead</span>
+                                <span className="block text-xs text-text-tertiary">mp3, m4a, wav, ogg or webm · up to {MAX_CALL_BYTES / 1024 / 1024} MB · or <button type="button" onClick={e => { e.stopPropagation(); setMode('transcript'); }} className="font-semibold text-primary-dark hover:underline">paste a transcript</button> instead</span>
                             </>
                         )}
                     </span>
-                    <input ref={inputRef} type="file" accept={CALL_AUDIO_ACCEPT} className="sr-only" aria-label="Choose the recording" onChange={e => pick(e.target.files?.[0] ?? null)} disabled={!!busy} />
-                </label>
+                    {/* Owner 2026-11-17: a real button, not only the drop zone. The input's own click must not bubble back to the zone (it would open the picker twice). */}
+                    <button type="button" onClick={e => { e.stopPropagation(); inputRef.current?.click(); }} disabled={!!busy} className={`${BTN_SECONDARY} shrink-0`}><Upload className="h-4 w-4" />{file ? 'Choose another' : 'Choose a file'}</button>
+                    <input ref={inputRef} type="file" accept={CALL_AUDIO_ACCEPT} className="sr-only" aria-label="Choose the recording" onClick={e => e.stopPropagation()} onChange={e => pick(e.target.files?.[0] ?? null)} disabled={!!busy} />
+                </div>
             ) : (
                 <div className="mt-3">
                     <label htmlFor="cand-call-transcript" className={LABEL}>Transcript <span className="text-text-tertiary">· as spoken, any language · <button type="button" onClick={() => setMode('file')} className="font-semibold text-primary-dark hover:underline">upload a recording</button> instead</span></label>
@@ -319,13 +321,6 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
                     <input id="cand-call-date" type="date" value={calledOn} max={todayIso()} onChange={e => setCalledOn(e.target.value)} disabled={!!busy} className={`${INPUT} mt-1.5`} />
                 </div>
             </div>
-
-            {mode === 'file' && (
-                <label className="mt-3 flex cursor-pointer items-center gap-x-2.5 text-sm text-text-primary">
-                    <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={!!busy} className="h-4 w-4 rounded border-border text-primary focus:ring-primary/40" />
-                    The candidate was told the call is recorded
-                </label>
-            )}
 
             {busy && (
                 <div className="mt-3" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(busy.fraction * 100)} aria-label={busy.phase === 'sending' ? 'Sending the recording' : busy.phase === 'preparing' ? 'Preparing' : 'Checking the upload'}>

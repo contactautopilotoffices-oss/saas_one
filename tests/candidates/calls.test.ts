@@ -13,7 +13,8 @@ import { analyseCandidateCall } from "../../backend/lib/callInsights/analyse";
 import { CANDIDATE_INTERVIEW_SCHEMA, CANDIDATE_INTERVIEW_SYSTEM } from "../../backend/lib/callInsights/contexts/candidateInterview";
 import { CANDIDATE_SCREENING_SCHEMA, CANDIDATE_SCREENING_SYSTEM, looksLikeScreening, parseCandidateScreening } from "../../backend/lib/callInsights/contexts/candidateScreening";
 import { runCallAnalysis, type PipelineDeps } from "../../backend/lib/callInsights/pipeline";
-import { stampedTranscript } from "../../backend/lib/callInsights/transcribe";
+import { stampedTranscript, transcribeCall } from "../../backend/lib/callInsights/transcribe";
+import { CALL_TRANSCRIBE_MODELS } from "../../backend/lib/candidates/config";
 import { listActions, resetHistoryCheck } from "../../backend/lib/candidates/actions";
 import { applyCallFacts, confirmCall, deleteCall, getCall, listCalls, prepareCall, retryCall, setCallRound, type CallStorage } from "../../backend/lib/candidates/calls";
 import { createPosition } from "../../backend/lib/candidates/positions";
@@ -106,11 +107,10 @@ describe("calls: upload, pipeline, facts, history", () => {
     await assert.rejects(q("insert into public.call_analyses (organization_id, input_kind) values ($1, 'audio')", [ORG]), /candidate_subject/);
   });
 
-  it("refuses a recording of the wrong type, over the limit, or without the consent tick", async () => {
-    const base = { applicationId: asha.id, consent: true };
+  it("refuses a recording of the wrong type or over the limit; no consent tick is needed (owner 2026-11-17)", async () => {
+    const base = { applicationId: asha.id };
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, file: { name: "call.txt", size: 10 } }), /mp3, m4a/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, file: { name: "call.m4a", size: 26 * 1024 * 1024 } }), /larger than 25 MB/);
-    await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id, consent: false, file: { name: "call.m4a", size: 10 } }), /told the call is recorded/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id }), /recording or paste/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, positionId: "00000000-0000-0000-0000-0000000000ff", file: { name: "call.m4a", size: 10 } }), /position no longer exists/);
     assert.equal((await q<{ n: number }>("select count(*)::int as n from public.call_analyses")).at(0)?.n, 0);
@@ -353,5 +353,74 @@ describe("calls: upload, pipeline, facts, history", () => {
     assert.deepEqual(await listCalls(client, ORG, asha.candidateId), []);
     assert.equal(objects.has(`${ORG}/${audioId}.m4a`), false);
     await assert.rejects(getCall(client, ORG, audioId), /no longer exists/);
+  });
+});
+
+/** Owner 2026-11-17: Sarvam is the calls' default speech-to-text, Whisper the backup (Brain → AI models). */
+describe("calls: speech to text, Sarvam first", () => {
+  const audio = { name: "Call with Asha (1).m4a", mimeType: "audio/mp4", bytes: Buffer.from("fake") };
+  const line = (text: string, start = 0, end = 4) => ({ speaker: "Speaker 1", start, end, text });
+  const quiet = { sleep: async () => {}, pollMs: 1 };
+
+  it("is the default chain, with the Whisper models behind it", () => {
+    assert.deepEqual([...CALL_TRANSCRIBE_MODELS], ["sarvam:saaras:v4", "whisper-large-v3", "whisper-large-v3-turbo"]);
+  });
+
+  it("uses Sarvam's batch job, with the chosen model, a plain file name, and waits until it is done", async () => {
+    const started: Array<{ model?: string; name: string }> = [];
+    let checks = 0;
+    let whisperCalled = false;
+    const t = await transcribeCall(audio, {
+      models: CALL_TRANSCRIBE_MODELS,
+      transcribe: async () => { whisperCalled = true; throw new Error("not expected"); },
+      sarvam: {
+        ...quiet,
+        start: async (input) => { started.push({ model: input.model, name: input.files[0].name }); return { ok: true, jobId: "j1", files: [input.files[0].name] }; },
+        check: async () => (++checks < 3 ? { state: "running" } : { state: "done", lines: [line("Namaste, main Asha bol rahi hoon"), line("notice 30 din ka hai", 4, 9)], offsets: [0] }),
+      },
+    });
+    assert.ok(t.ok);
+    assert.equal(t.model, "sarvam:saaras:v4");
+    assert.equal(t.durationSeconds, 9);
+    assert.deepEqual(t.segments.map((s) => s.text), ["Namaste, main Asha bol rahi hoon", "notice 30 din ka hai"]);
+    assert.deepEqual(started, [{ model: "saaras:v4", name: "call.m4a" }]);
+    assert.equal(checks, 3);
+    assert.equal(whisperCalled, false);
+  });
+
+  it("moves on to Whisper (with both Whisper models) when Sarvam has no key, fails, or is too slow", async () => {
+    const whisperOk = async (_files: unknown, deps?: { models?: readonly string[] }) => ({ ok: true as const, lines: [line("hello")], model: deps?.models?.[0] ?? "", failures: [] });
+    const cases: Array<[string, NonNullable<Parameters<typeof transcribeCall>[1]>["sarvam"]]> = [
+      ["no key", { ...quiet, start: async () => ({ ok: false, reason: "no_key", detail: "SARVAM_API_KEY is not configured", failures: [] }) }],
+      ["job failed", { ...quiet, start: async () => ({ ok: true, jobId: "j", files: ["call.m4a"] }), check: async () => ({ state: "failed", detail: "job failed: bad audio" }) }],
+      ["too slow", { ...quiet, waitMs: 0, start: async () => ({ ok: true, jobId: "j", files: ["call.m4a"] }), check: async () => ({ state: "running" }) }],
+    ];
+    for (const [why, sarvam] of cases) {
+      let models: readonly string[] | undefined;
+      const t = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam, transcribe: async (f, d) => { models = d?.models; return whisperOk(f, d); } });
+      assert.ok(t.ok, why);
+      assert.equal(t.model, "whisper-large-v3", why);
+      assert.deepEqual(models, ["whisper-large-v3", "whisper-large-v3-turbo"], why);
+    }
+  });
+
+  it("runs Whisper only, untouched, when Whisper is the saved choice", async () => {
+    let sarvamCalled = false;
+    const t = await transcribeCall(audio, {
+      models: ["whisper-large-v3-turbo", "whisper-large-v3"],
+      sarvam: { ...quiet, start: async () => { sarvamCalled = true; return { ok: true, jobId: "j", files: [] }; } },
+      transcribe: async (_f, d) => ({ ok: true, lines: [line("hi")], model: d?.models?.[0] ?? "", failures: [] }),
+    });
+    assert.ok(t.ok);
+    assert.equal(t.model, "whisper-large-v3-turbo");
+    assert.equal(sarvamCalled, false);
+  });
+
+  it("says why when every service fails: the real failure, and 'not set up' only when no service had a key", async () => {
+    const noSarvam = { ...quiet, start: async () => ({ ok: false as const, reason: "no_key" as const, detail: "no key", failures: [] }) };
+    const busy = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam: noSarvam, transcribe: async () => ({ ok: false, reason: "rate_limited", detail: "429", failures: [] }) });
+    assert.deepEqual(busy, { ok: false, error: "The transcription service is busy. Retry in a minute." });
+    const none = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam: noSarvam, transcribe: async () => ({ ok: false, reason: "no_key", detail: "no Groq key", failures: [] }) });
+    assert.ok(!none.ok && /SARVAM_API_KEY or a Groq key/.test(none.error));
   });
 });

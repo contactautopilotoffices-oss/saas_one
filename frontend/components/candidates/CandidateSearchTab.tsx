@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CircleAlert, FileSpreadsheet, FileText, FolderKanban, Layers, Lock, Search, Upload, Users, UserSearch } from 'lucide-react';
+import { CircleAlert, ClipboardList, FileSpreadsheet, FileText, FolderKanban, Layers, Lock, Search, Upload, Users, UserSearch } from 'lucide-react';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import type { PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
 import { Toast } from '@/frontend/components/ui/Toast';
@@ -10,6 +10,7 @@ import type { CandidateListResponse, Position, ResumeFilesResponse, ResumeSummar
 import type { ApiFailure } from './api';
 import { api, NO_ACCESS_MESSAGE, qs } from './api';
 import { formatCount } from './format';
+import RequisitionsView from '@/frontend/components/recruitment/RequisitionsView';
 import PipelineView from './PipelineView';
 import PositionsView from './PositionsView';
 import RecordsView from './RecordsView';
@@ -37,9 +38,12 @@ const STATUS_POLL_MS = 10_000;
 interface Counts { candidates: number | null; sheets: number | null; resumes: number | null; positions: number | null; reading: number; attention: number }
 const NO_COUNTS: Counts = { candidates: null, sheets: null, resumes: null, positions: null, reading: 0, attention: 0 };
 
-type View = 'search' | 'positions' | 'pipeline' | 'candidates' | 'resumes' | 'sheets';
+type View = 'search' | 'requisitions' | 'positions' | 'pipeline' | 'candidates' | 'resumes' | 'sheets';
 const VIEWS: Array<{ id: View; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'search', label: 'Search', icon: Search },
+    // Owner 2026-11-17: hiring requests (Stages 1 and 2 of the spec) sit before the positions they become. The tracker
+    // lies with the HR team (the HR page's Recruitment tab) and the Tech dashboard; managers have no screen of their own yet.
+    { id: 'requisitions', label: 'Requisitions', icon: ClipboardList },
     { id: 'positions', label: 'Positions', icon: FolderKanban },
     { id: 'pipeline', label: 'Pipeline', icon: Layers },
     { id: 'candidates', label: 'Candidates', icon: Users },
@@ -53,7 +57,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
     collapseStyle?: PanelToggleVariant;
 }) {
     const [view, setView] = useState<View>('search');
-    const [visited, setVisited] = useState<Record<View, boolean>>({ search: true, positions: false, pipeline: false, candidates: false, sheets: false, resumes: false });
+    const [visited, setVisited] = useState<Record<View, boolean>>({ search: true, requisitions: false, positions: false, pipeline: false, candidates: false, sheets: false, resumes: false });
     const [noAccess, setNoAccess] = useState(false);
     // The last toast is kept after it hides so its exit animation has content; a new id remounts it (restarts the timer).
     const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; id: number } | null>(null);
@@ -115,7 +119,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
         const t = setInterval(() => setTick(n => n + 1), STATUS_POLL_MS);
         return () => clearInterval(t);
     }, [reading]);
-    const countOf: Record<View, number | null> = { search: null, positions: counts.positions, pipeline: null, candidates: counts.candidates, sheets: counts.sheets, resumes: counts.resumes };
+    const countOf: Record<View, number | null> = { search: null, requisitions: null, positions: counts.positions, pipeline: null, candidates: counts.candidates, sheets: counts.sheets, resumes: counts.resumes };
 
     const open = (v: View) => {
         setView(v);
@@ -148,7 +152,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
                         <span className="inline-flex h-[22px] items-center rounded-full bg-amber-100 px-2.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/60" title="New module: in use by the HR team, still being refined">Beta</span>
                     </div>
                     {/* Segmented control: L1 recessed track, active segment lifted to L2 (Linear: adjacent steps only). */}
-                    <div role="tablist" aria-label="Recruitment views" className="grid w-full grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle sm:inline-grid sm:w-auto sm:grid-cols-6">
+                    <div role="tablist" aria-label="Recruitment views" className={`grid w-full grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle sm:inline-grid sm:w-auto sm:grid-cols-7`}>
                         {VIEWS.map(({ id, label, icon: Icon }) => {
                             const on = view === id;
                             return (
@@ -195,6 +199,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
                 {VIEWS.map(({ id }) => visited[id] && (
                     <div key={id} role="tabpanel" id={`cand-panel-${id}`} aria-labelledby={`cand-tab-${id}`} hidden={view !== id} className="min-w-0">
                         {id === 'search' && <SearchView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} collapseStyle={collapseStyle} loadPosition={searchRequest} />}
+                        {id === 'requisitions' && <RequisitionsView orgId={orgId} mode="hr" />}
                         {id === 'positions' && <PositionsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} onSearch={openSearch} onPipeline={openPipeline} />}
                         {id === 'pipeline' && <PipelineView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} selectPosition={pipelineRequest} onSearch={openSearch} />}
                         {id === 'candidates' && <RecordsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}

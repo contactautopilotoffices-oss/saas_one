@@ -212,7 +212,8 @@ const PrepareInput = z.object({
 
 /**
  * Starts a call: with `file`, a row at 'uploading' and the one-time link the browser sends the bytes to (then
- * confirmCall); with `transcript`, a row at 'uploaded' ready for the pipeline. A recording needs the consent tick.
+ * confirmCall); with `transcript`, a row at 'uploaded' ready for the pipeline. Owner 2026-11-17: no consent tick is
+ * asked for any more ("its not needed"); `consent` is kept as an optional flag on the row.
  */
 export async function prepareCall(client: SupabaseClient, storage: CallStorage, orgId: string, by: Actor, input: unknown): Promise<PreparedCall> {
   const parsed = PrepareInput.safeParse(input ?? {});
@@ -262,7 +263,6 @@ export async function prepareCall(client: SupabaseClient, storage: CallStorage, 
     const contentType = callFileType(file.name);
     if (!contentType) throw new CandidateActionError(400, "That is not a recording we can read. Use mp3, m4a, wav, ogg or webm.");
     if (file.size > MAX_CALL_BYTES) throw new CandidateActionError(400, `The recording is larger than ${MAX_CALL_BYTES / 1024 / 1024} MB. Export it at a lower quality and try again.`);
-    if (consent !== true) throw new CandidateActionError(400, "Confirm the candidate was told the call is recorded.");
     const path = `${orgId}/${id}${callFileExtension(file.name)}`;
     const { error } = await insert({ ...base, input_kind: "audio", file_name: file.name, file_type: contentType, file_size: file.size, storage_path: path, status: "uploading" });
     if (error) fail("start the upload", error);

@@ -1009,3 +1009,110 @@ export interface OutreachRecord {
   byName: string | null;
   at: string;
 }
+
+// Manpower requisitions (owner 2026-11-17; migration 20261117000003). Stages 1 and 2 of the Recruitment Module spec. ---
+
+export const REQUISITION_STATUSES = ["draft", "submitted", "on_hold", "sent_back", "approved", "rejected", "withdrawn"] as const;
+export type RequisitionStatus = (typeof REQUISITION_STATUSES)[number];
+export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
+  draft: "Draft",
+  submitted: "Awaiting approval",
+  on_hold: "On hold",
+  sent_back: "Sent back for changes",
+  approved: "Approved",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+};
+export const APPROVAL_LEVELS = ["hr_head", "director"] as const;
+export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
+export const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = { hr_head: "HR Head", director: "Director" };
+export const REQUEST_TYPES = ["new", "replacement"] as const;
+export type RequestType = (typeof REQUEST_TYPES)[number];
+/** Stage 2: Approve, Reject with reason, Send back for change, Put on hold (and Resume from hold). */
+export const REQUISITION_DECISIONS = ["approve", "reject", "send_back", "hold", "resume"] as const;
+export type RequisitionDecision = (typeof REQUISITION_DECISIONS)[number];
+
+/** Settings -> Notifications -> Recruitment in the Tech dashboard (organization_settings.recruitment_config). */
+export interface RecruitmentConfig {
+  hrHead: { userId: string | null; backupUserId: string | null };
+  director: { userId: string | null; backupUserId: string | null };
+  /** Rupees per year (CTC). A request whose top budget is above this also needs the Director. null = never on pay alone. */
+  directorCtcLevel: number | null;
+  /** Days to fill a role opened from an approved request. */
+  targetDays: number;
+}
+
+export interface Requisition {
+  id: string;
+  requisitionNo: string | null;
+  status: RequisitionStatus;
+  currentLevel: ApprovalLevel | null;
+  currentApproverId: string | null;
+  currentApproverName: string | null;
+  levelEnteredAt: string | null;
+  roleTitle: string;
+  department: string | null;
+  location: string | null;
+  positions: number;
+  requestType: RequestType;
+  replacingName: string | null;
+  /** Rupees per year (CTC). */
+  budgetMinCtc: number | null;
+  budgetMaxCtc: number | null;
+  requiredSkills: string[];
+  minExperienceYears: number | null;
+  qualification: string | null;
+  targetJoiningDate: string | null;
+  justification: string | null;
+  reportingManager: string | null;
+  inPlan: boolean | null;
+  needsDirector: boolean;
+  holdSince: string | null;
+  holdReason: string | null;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  positionId: string | null;
+  raisedBy: string | null;
+  raisedByName: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Days since it was submitted (until decided). */
+  ageDays: number;
+  /** Stage 1: the last requisition for the same role title, when there was one. */
+  previous?: { id: string; requisitionNo: string | null; status: RequisitionStatus; createdAt: string } | null;
+}
+
+export interface RequisitionApproval {
+  id: string;
+  level: ApprovalLevel | null;
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened";
+  inPlan: boolean | null;
+  reason: string | null;
+  byName: string | null;
+  via: "app" | "link";
+  at: string;
+}
+
+/** What the signed-in person may do with requisitions. */
+export interface RequisitionAccess {
+  /** HR roles and admins: see every request. */
+  seesAll: boolean;
+  /** The levels this person approves at (primary or backup). */
+  approverLevels: ApprovalLevel[];
+  /** The approvers are set in Settings (a request cannot be submitted until they are). */
+  configured: boolean;
+}
+
+export interface RequisitionListResponse {
+  requisitions: Requisition[];
+  access: RequisitionAccess;
+}
+export interface RequisitionResponse {
+  requisition: Requisition;
+  approvals: RequisitionApproval[];
+  access: RequisitionAccess;
+  /** The signed-in person may decide on it now (it waits at their level, and they did not raise it). */
+  canDecide: boolean;
+  canEdit: boolean;
+}
