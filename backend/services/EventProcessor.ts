@@ -91,6 +91,8 @@ export const EventProcessor = {
             await this.handleUserApproved(payload);
         } else if (event_type === 'FACILITY_REQUEST_CREATED') {
             await this.handleFacilityRequestCreated(payload);
+        } else if (event_type === 'FACILITY_REQUEST_RESOLVED') {
+            await this.handleFacilityRequestResolved(payload);
         } else if (event_type === 'TICKET_REPLY') {
             await this.handleTicketReply(payload);
         } else {
@@ -1718,5 +1720,13 @@ export const EventProcessor = {
         console.log(`[EventProcessor] Processing FACILITY_REQUEST_CREATED for request ${requestId}`);
         const { NotificationService } = await import('@/backend/services/NotificationService');
         await NotificationService.afterFacilityRequestCreated(requestId);
+    },
+
+    async handleFacilityRequestResolved(payload: any) {
+        const requestId = payload.request_id || payload.id;
+        if (!requestId) return;
+        console.log(`[EventProcessor] Processing FACILITY_REQUEST_RESOLVED for request ${requestId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterFacilityRequestResolved(requestId);
     }
 };

@@ -131,13 +131,38 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     user_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
     visitor_approval_requested: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     visitor_approved: { enabled: true, roles: [], user_ids: [], notify_requester: true },
-    visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true }
+    visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    facility_request_created: { enabled: true, roles: ['property_admin', 'mst', 'staff', 'soft_service_staff'], user_ids: [] },
+    facility_request_resolved: { enabled: true, roles: ['property_admin'], user_ids: [] }
 };
 
 export const ORG_SCOPED_ROLES = new Set([
     'org_super_admin', 'master_admin', 'procurement', 'procurement_user', 'org_admin', 'owner', 'admin',
     'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'accounts'
 ]);
+
+const VALID_APP_ROLES = new Set([
+    'master_admin', 'org_super_admin', 'property_admin', 'staff', 'tenant',
+    'food_vendor', 'mst', 'security', 'vendor', 'soft_service_staff',
+    'soft_service_supervisor', 'soft_service_manager', 'super_tenant',
+    'maintenance_vendor', 'procurement', 'bd_rep', 'bd_admin', 'org_admin',
+    'accounts', 'ops_super_admin', 'hr', 'hr_head', 'tech', 'it', 'design'
+]);
+
+export function normalizeAndFilterRoles(roles: string[]): string[] {
+    const out = new Set<string>();
+    for (const r of roles) {
+        const lower = (r || '').trim().toLowerCase();
+        if (lower === 'soft_services' || lower === 'staff_soft_services') {
+            out.add('soft_service_staff');
+            out.add('soft_service_manager');
+            out.add('soft_service_supervisor');
+        } else if (VALID_APP_ROLES.has(lower)) {
+            out.add(lower);
+        }
+    }
+    return Array.from(out);
+}
 
 export interface ResolveRecipientsOptions {
     organizationId: string;
@@ -253,7 +278,7 @@ export const EmailRecipientResolver = {
             return { enabled: false, emails: [], config: featureConfig };
         }
 
-        const targetRoles = featureConfig.roles || [];
+        const targetRoles = normalizeAndFilterRoles(featureConfig.roles || []);
         const targetUserIds = featureConfig.user_ids || [];
         const customEmails = featureConfig.custom_emails || [];
 
