@@ -108,7 +108,8 @@ export default function DashboardSidebar({
                 // Owner 2026-11-07: Candidate Search (sourcing sheets, filters, resumes) for every HR login, marked beta
                 // The badge (phase 3) reminds this laptop when its resumes have not been uploaded for a week.
                 // Owner 2026-11-15: Candidate Search grew into the Recruitment module (search, pipeline, candidates, resumes).
-                { label: 'Recruitment', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, badge: 'resumes' },
+                // Owner 2026-11-16: marked beta while HR starts using it.
+                { label: 'Recruitment', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, badge: 'resumes', beta: true },
             ];
         }
 
@@ -455,7 +456,8 @@ export default function DashboardSidebar({
                                         <span className="truncate">{item.label}</span>
                                         {item.badge === 'resumes' && orgId && <ResumeReminderBadge orgId={orgId} />}
                                         {item.beta && (
-                                            <span className={`ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${isActive ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'}`}>Beta</span>
+                                            // Owner 2026-11-16: a soft yellow pill, the same as the Recruitment header's; it stays yellow on the active row.
+                                            <span className="ml-auto inline-flex h-5 shrink-0 items-center rounded-full bg-amber-100 px-2 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/60">Beta</span>
                                         )}
                                     </Link>
                                 );

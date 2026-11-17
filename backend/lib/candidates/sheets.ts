@@ -31,6 +31,8 @@ function toSheet(row: SheetRowDb, stats: Map<string | null, { live: number; pend
     liveRecordCount: s?.live ?? 0,
     pendingIndexCount: s?.pending ?? 0,
     uploadedByEmail: row.uploaded_by_email,
+    sourceKind: row.source_kind ?? null,
+    sourceName: row.source_name ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,

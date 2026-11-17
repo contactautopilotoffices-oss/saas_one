@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Ban, CircleHelp, FileUp, Plus, Search, Sparkles } from 'lucide-react';
 import { looksBoolean, parseBooleanQuery } from '@/backend/lib/candidates/boolean';
 import { MAX_JD_LENGTH } from '@/backend/lib/candidates/config';
-import type { KeywordSuggestion, KeywordToken, SearchFilters } from '@/backend/lib/candidates/filters';
+import { keywordLabel, keywordTerms, type KeywordSuggestion, type KeywordToken, type SearchFilters } from '@/backend/lib/candidates/filters';
 import { api } from './api';
 import { TokenField } from './FieldPickers';
 import { BTN_PRIMARY, BTN_GHOST, CARD, INPUT, OVERLAY, Reveal, Spinner, useUi, WELL } from './ui';
@@ -15,6 +15,7 @@ import { BTN_PRIMARY, BTN_GHOST, CARD, INPUT, OVERLAY, Reveal, Spinner, useUi, W
  */
 const HOW_TO: [string, string][] = [
     ['MEP / HVAC / VRF', 'one chip; a candidate needs any one of them'],
+    ['+ or on a chip', 'add another word to that chip (pick it or type it)'],
     ['★ on a chip', 'compulsory: every starred chip must match'],
     ['facility AND bms', 'both compulsory'],
     ['facility AND (MEP OR HVAC)', 'facility, and one of MEP or HVAC'],
@@ -132,7 +133,11 @@ export default function KeywordBar({
     const jobFileRef = useRef<HTMLInputElement | null>(null);
     const [keywordFocus, setKeywordFocus] = useState(false);
     const [typing, setTyping] = useState('');
-    const { suggestions, loading, counting } = useAiKeywords(orgId, filters.keywords.map(k => k.text), typing, keywordFocus);
+    // Owner 2026-11-17: "+ or" on a chip. While it is on, every pick (the list, a typed word, an AI suggestion) is
+    // added to that chip as another "/" word, and the AI suggests words for that chip only.
+    const [orFor, setOrFor] = useState<string | null>(null);
+    const orChip = orFor ? filters.keywords.find(k => k.text === orFor) ?? null : null;
+    const { suggestions, loading, counting } = useAiKeywords(orgId, orChip ? keywordTerms(orChip) : filters.keywords.map(k => k.text), typing, keywordFocus);
 
     // A job description can fill in exclusions: open the row so HR sees them.
     const [excludeCount, setExcludeCount] = useState(0);
@@ -144,12 +149,42 @@ export default function KeywordBar({
     useEffect(() => { if (jobOpen) jobRef.current?.focus({ preventScroll: true }); }, [jobOpen]);
 
     const { notify } = useUi();
-    const addKeywords = (texts: string[], required: boolean) => update({ keywords: [...filters.keywords, ...texts.map(text => ({ text, required }))] });
+    /** Words added to the chip "+ or" is on, each once (a word already in any chip is left where it is). */
+    const addToChip = (chip: KeywordToken, texts: string[]) => {
+        const have = new Set(filters.keywords.flatMap(keywordTerms).map(w => w.toLowerCase()));
+        const fresh = texts.map(t => t.trim()).filter((t, i, all) => t && !have.has(t.toLowerCase()) && all.findIndex(x => x.toLowerCase() === t.toLowerCase()) === i);
+        if (!fresh.length) return;
+        update({ keywords: filters.keywords.map(k => (k.text === chip.text ? { ...k, alts: [...(k.alts ?? []), ...fresh] } : k)) });
+    };
+    const addKeywords = (texts: string[], required: boolean) => {
+        if (orChip) { addToChip(orChip, texts); return; }
+        update({ keywords: [...filters.keywords, ...texts.map(text => ({ text, required }))] });
+    };
+    /** One word out of a chip; the first "/" word takes the lead when the lead goes, and the last word takes the chip. */
+    const removeTerm = (chipText: string, term: string) => {
+        let lead: string | null = null;
+        const keywords = filters.keywords.flatMap(k => {
+            if (k.text !== chipText) return [k];
+            const rest = keywordTerms(k).filter(w => w.toLowerCase() !== term.toLowerCase());
+            if (!rest.length) return [];
+            const [text, ...alts] = rest;
+            lead = text;
+            return [alts.length ? { ...k, text, alts } : { text, required: k.required }];
+        });
+        // "+ or" stays on the same chip, under its new lead word.
+        if (orFor === chipText) setOrFor(lead);
+        update({ keywords });
+    };
     /**
      * Owner 2026-11-15: "MEP / HVAC", "a AND (b OR c) NOT d" and quoted phrases become chips and excludes. A plain
      * word is left to the box. Something that cannot be read is refused with its reason, and nothing is added.
      */
     const readTyped = (typed: string): boolean => {
+        // "+ or" on: "HVAC / VRF" or "HVAC OR VRF" typed in adds each word to the chip.
+        if (orChip && /\s\/\s|\/(?=\S)|\sOR\s/.test(typed) && !/(^|\s)(AND|NOT)(\s|$)|[()"]/.test(typed)) {
+            addToChip(orChip, typed.split(/\s*\/\s*|\s+OR\s+/));
+            return true;
+        }
         if (!looksBoolean(typed)) return false;
         const parsed = parseBooleanQuery(typed);
         if (!parsed.ok) { notify(parsed.reason, 'error'); return true; }
@@ -160,14 +195,14 @@ export default function KeywordBar({
         update({ keywords, excludes });
         return true;
     };
-    const taken = new Set([...filters.keywords.map(k => k.text.toLowerCase()), ...filters.excludes.map(e => e.toLowerCase())]);
+    const taken = new Set([...filters.keywords.flatMap(keywordTerms).map(w => w.toLowerCase()), ...filters.excludes.map(e => e.toLowerCase())]);
     const offered = suggestions.filter(s => !taken.has(s.text.toLowerCase()));
 
     const aiPanel = filters.keywords.length > 0 && (loading || offered.length > 0) ? (
         <div onMouseDown={e => e.preventDefault()} className={`${OVERLAY} absolute inset-x-0 top-full z-40 mt-1 rounded-xl px-3.5 pb-3.5 pt-3`}>
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-primary-dark"><Sparkles className="h-3.5 w-3.5" aria-hidden />AI suggested keywords</span>
-                {offered.length > 0 && <span className="text-xs text-text-secondary">The number is how many candidates have the word; 0 means none yet. Hold Ctrl while clicking to star it.</span>}
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-bold text-primary-dark"><Sparkles className="h-3.5 w-3.5" aria-hidden />{orChip ? `AI suggested words for ${keywordLabel(orChip)}` : 'AI suggested keywords'}</span>
+                {offered.length > 0 && <span className="text-xs text-text-secondary">{orChip ? 'Click one to add it to the chip. The number is how many candidates have the word.' : 'The number is how many candidates have the word; 0 means none yet. Hold Ctrl while clicking to star it.'}</span>}
             </div>
             {loading && !offered.length ? (
                 <p className="mt-2.5 flex items-center gap-x-2 gap-y-2 text-sm text-text-secondary"><Spinner className="h-3.5 w-3.5" />Finding related keywords…</p>
@@ -209,8 +244,12 @@ export default function KeywordBar({
                         field="keyword"
                         tokens={filters.keywords}
                         onAdd={addKeywords}
-                        onRemove={text => update({ keywords: filters.keywords.filter(k => k.text !== text) })}
+                        onRemove={text => { if (orFor === text) setOrFor(null); update({ keywords: filters.keywords.filter(k => k.text !== text) }); }}
                         onToggle={text => update({ keywords: filters.keywords.map(k => (k.text === text ? { ...k, required: !k.required } : k)) })}
+                        onOr={setOrFor}
+                        orTarget={orChip?.text ?? null}
+                        onOrDone={() => setOrFor(null)}
+                        onRemoveTerm={removeTerm}
                         placeholder={filters.keywords.length ? 'Type another keyword' : 'Start typing a keyword, company or designation'}
                         icon={<Search className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />}
                         panel={aiPanel}

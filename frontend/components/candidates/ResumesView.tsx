@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Search, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
 import {
-    MATCH_REASON_LABELS, TEXT_STATUS_LABELS,
-    type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeSummary,
+    MATCH_REASON_LABELS, SOURCE_KIND_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
+    type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeRepeat, type ResumeSummary, type SourceKind,
 } from '@/backend/lib/candidates/types';
 import { daysSince, PICK_LABELS, pickVerdict, RESUME_BATCH, RESUME_LINK_BATCH, RESUME_REMIND_AFTER_DAYS, sinceLastUpload, thisYearRange, type PickVerdict } from '@/backend/lib/candidates/resume-pick';
 import Skeleton from '@/frontend/components/ui/Skeleton';
@@ -61,18 +61,151 @@ type Run = {
     done: number;
     uploaded: number;
     duplicates: number;
+    /** Owner 2026-11-16: whose copies the skipped files were, so "already there" names people, not only a count. */
+    known: { name: string; by: string | null }[];
     failed: Failure[];
     bytesTotal: number;
     bytesDone: number;
     current: string;
 };
 type Preset = 'year' | 'all' | 'custom';
+
+/**
+ * "Already in the database" (owner 2026-11-16: its own section under Team uploads, not tags in the list). A second CV
+ * for a person who already had one: HR updates the CV (this file becomes the CV, the earlier one is kept as an older
+ * version) or deletes the copy. A CV that only meets its own sheet row never shows here. Below those, the SAME file
+ * uploaded again by someone else (not stored twice): who uploaded it first and who again, with Dismiss only.
+ */
+function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloadKey: number; onChanged: () => void }) {
+    const { notify, reportError } = useUi();
+    const [state, setState] = useState<{ files: ResumeFile[]; total: number } | null>(null);
+    const [nonce, setNonce] = useState(0);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [confirm, setConfirm] = useState<string | null>(null);
+    const [repeats, setRepeats] = useState<{ repeats: ResumeRepeat[]; total: number }>({ repeats: [], total: 0 });
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void Promise.all([
+            api<ResumeFilesResponse>(`/api/candidates/resumes${qs({ orgId, link: 'duplicate', pageSize: 20 })}`, { signal: ctrl.signal }),
+            api<{ repeats: ResumeRepeat[]; total: number }>(`/api/candidates/resumes/repeats${qs({ orgId })}`, { signal: ctrl.signal }),
+        ]).then(([res, rep]) => {
+            if (ctrl.signal.aborted) return;
+            setState(res.ok ? { files: res.data.files, total: res.data.total } : { files: [], total: 0 });
+            setRepeats(rep.ok ? rep.data : { repeats: [], total: 0 });
+        });
+        return () => ctrl.abort();
+    }, [orgId, reloadKey, nonce]);
+    const dismiss = async (r: ResumeRepeat) => {
+        setBusy(r.id);
+        const res = await api<{ ok: true }>('/api/candidates/resumes/repeats', { json: { orgId, id: r.id } });
+        setBusy(null);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        setRepeats(cur => ({ repeats: cur.repeats.filter(x => x.id !== r.id), total: Math.max(0, cur.total - 1) }));
+    };
+    const count = (state?.total ?? 0) + repeats.total;
+    const open = (id: string) => window.open(`/api/candidates/resumes/${encodeURIComponent(id)}${qs({ orgId, inline: true })}`, '_blank', 'noopener');
+    const act = async (f: ResumeFile, action: 'update' | 'delete') => {
+        setBusy(f.id);
+        const res = await api<{ ok: true }>(`/api/candidates/resumes/${encodeURIComponent(f.id)}/duplicate`, { json: { orgId, action } });
+        setBusy(null);
+        setConfirm(null);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        notify(action === 'update' ? `${f.candidateName ?? 'The candidate'}'s CV updated to ${f.fileName}` : `${f.fileName} deleted; the CV on file was kept`, 'success');
+        setNonce(n => n + 1);
+        onChanged();
+    };
+    return (
+        <section className={`${CARD} px-4 py-4`} aria-labelledby="resume-dupes-heading">
+            <div className="flex items-center justify-between gap-x-2">
+                <h2 id="resume-dupes-heading" className="flex items-center gap-x-2 text-sm font-semibold text-text-primary">
+                    Already in the database
+                    {state && count > 0 && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-amber-800">{formatCount(count)}</span>}
+                </h2>
+            </div>
+            {!state ? (
+                <div className="mt-3 space-y-2">{[0, 1].map(i => <Skeleton key={i} className="h-12 w-full rounded-lg" />)}</div>
+            ) : state.files.length === 0 && repeats.repeats.length === 0 ? (
+                <p className="mt-2 text-sm text-text-secondary">Nothing here. When someone uploads a CV for a person who already has one, or a CV a teammate already uploaded, it shows here.</p>
+            ) : state.files.length === 0 ? null : (
+                <ul className="mt-2 max-h-[420px] divide-y divide-border-subtle overflow-y-auto">
+                    {state.files.map(f => {
+                        const k = f.alreadyKnown;
+                        return (
+                            <li key={f.id} className="space-y-1.5 py-2.5">
+                                <div className="flex items-center gap-x-2">
+                                    <Avatar name={f.candidateName ?? f.fileName} size="sm" />
+                                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={f.candidateName ?? ''}>{f.candidateName ?? 'Candidate'}</span>
+                                </div>
+                                <p className="text-xs text-text-secondary">
+                                    New CV <button type="button" onClick={() => open(f.id)} className="font-semibold text-primary-dark underline-offset-2 hover:underline">{f.fileName}</button>
+                                    {' · '}{f.deviceLabel ?? f.uploadedByEmail ?? 'someone'}, {formatDate(f.createdAt)}
+                                </p>
+                                {k?.previous && (
+                                    <p className="text-xs text-text-secondary">
+                                        CV on file <button type="button" onClick={() => open(k.previous!.id)} className="font-semibold text-text-primary underline-offset-2 hover:underline">{k.previous.fileName}</button>
+                                        {' · '}{k.previous.uploadedBy ?? 'someone'}{k.previous.uploadedAt ? `, ${formatDate(k.previous.uploadedAt)}` : ''}
+                                    </p>
+                                )}
+                                {k?.sourcedAt && <p className="text-xs text-text-tertiary">First sourced {formatDate(k.sourcedAt)}{k.sourcedFrom ? ` from ${k.sourcedFrom}` : ''}{k.sourcedBy ? ` by ${k.sourcedBy}` : ''}</p>}
+                                <div className="flex flex-wrap items-center gap-x-1 gap-y-1 pt-0.5">
+                                    {confirm === f.id ? (
+                                        <>
+                                            <span className="text-xs text-text-secondary">Delete this copy?</span>
+                                            <button type="button" onClick={() => void act(f, 'delete')} disabled={busy === f.id} className={`${BTN_DANGER_GHOST} h-8 px-2`}>{busy === f.id ? <Spinner /> : 'Delete'}</button>
+                                            <button type="button" onClick={() => setConfirm(null)} className={`${BTN_GHOST} h-8 px-2`}>Keep</button>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <button type="button" onClick={() => void act(f, 'update')} disabled={busy === f.id} className={`${BTN_SECONDARY} h-8 px-3 text-xs`} title="Use this file as the CV from now on; the earlier one stays as an older version">{busy === f.id ? <Spinner /> : 'Update the CV'}</button>
+                                            <button type="button" onClick={() => setConfirm(f.id)} disabled={busy === f.id} className={`${BTN_DANGER_GHOST} h-8 px-2 text-xs`}>Delete this copy</button>
+                                        </>
+                                    )}
+                                </div>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+            {state && state.total > state.files.length && <p className="mt-2 text-xs text-text-tertiary">Showing {formatCount(state.files.length)} of {formatCount(state.total)}. Deal with these and the rest move up.</p>}
+            {state && repeats.repeats.length > 0 && (
+                <div className={state.files.length ? 'mt-3 border-t border-border-subtle pt-3' : 'mt-2'}>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Same CV uploaded again</h3>
+                    <ul className="mt-1 max-h-[320px] divide-y divide-border-subtle overflow-y-auto">
+                        {repeats.repeats.map(r => (
+                            <li key={r.id} className="py-3">
+                                {/* Owner 2026-11-17: who uploaded it again and who first, each on its own row. */}
+                                <div className="flex items-center gap-x-2.5">
+                                    <Avatar name={r.candidateName ?? r.fileName} size="sm" />
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm font-semibold text-text-primary" title={r.candidateName ?? r.fileName}>{r.candidateName ?? 'Not linked to a candidate'}</span>
+                                        <button type="button" onClick={() => open(r.fileId)} title={`Open ${r.fileName}`} className="block max-w-full truncate text-left text-xs font-medium text-primary-dark underline-offset-2 hover:underline">{r.fileName}</button>
+                                    </span>
+                                    <button type="button" onClick={() => void dismiss(r)} disabled={busy === r.id} className={`${BTN_GHOST} h-8 shrink-0 px-2 text-xs`} title="Seen: take it off this list (the note in the person's history stays)">{busy === r.id ? <Spinner /> : 'Dismiss'}</button>
+                                </div>
+                                <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 text-xs">
+                                    <dt className="text-text-secondary">Uploaded again</dt>
+                                    <dd className="truncate font-semibold text-text-primary">{r.againBy ?? 'Someone'}</dd>
+                                    <dd className="tabular-nums text-text-secondary">{formatDate(r.againAt)}</dd>
+                                    <dt className="text-text-secondary">First uploaded</dt>
+                                    <dd className="truncate font-semibold text-text-primary">{r.firstBy ?? 'Someone'}</dd>
+                                    <dd className="tabular-nums text-text-secondary">{r.firstAt ? formatDate(r.firstAt) : ''}</dd>
+                                </dl>
+                                <p className="mt-1.5 text-xs text-text-tertiary">Same file, so it was not saved a second time.</p>
+                            </li>
+                        ))}
+                    </ul>
+                    {repeats.total > repeats.repeats.length && <p className="mt-2 text-xs text-text-tertiary">Showing {formatCount(repeats.repeats.length)} of {formatCount(repeats.total)}.</p>}
+                </div>
+            )}
+        </section>
+    );
+}
 /**
  * The folder "Upload new resumes" reads (owner 2026-11-11: chosen once, shown by name, changeable). `allowed`: the
  * browser will read it without asking. `unsupported`: this browser cannot keep a folder (Firefox, Safari, Brave as shipped).
  */
 type Source = { state: 'unknown' | 'none' | 'unsupported' } | { state: 'remembered'; name: string; allowed: boolean };
-type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention';
+type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate';
 type Loaded = { key: string; data: ResumeFilesResponse | null; error: string };
 
 /** Phase 2 / 4: has the file's text been read, and have its details been read into the candidate. Reasons sit in the tooltip. */
@@ -240,6 +373,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const [overrides, setOverrides] = useState<Record<string, boolean>>({});
     const [showAll, setShowAll] = useState(false);
     const folderInput = useRef<HTMLInputElement | null>(null);
+    // Owner 2026-11-16: where these resumes came from (optional): own search, a job portal, a vendor and its name.
+    const [uploadSource, setUploadSource] = useState<{ kind: '' | SourceKind; name: string }>({ kind: '', name: '' });
     const filesInput = useRef<HTMLInputElement | null>(null);
 
     const picked = useMemo(() => (raw ?? []).map(p => {
@@ -365,8 +500,9 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         if (!files.length || uploading) return;
         stopRef.current = false;
         const bytesTotal = files.reduce((n, p) => n + p.file.size, 0);
-        setRun({ phase: 'running', total: files.length, done: 0, uploaded: 0, duplicates: 0, failed: [], bytesTotal, bytesDone: 0, current: '' });
+        setRun({ phase: 'running', total: files.length, done: 0, uploaded: 0, duplicates: 0, known: [], failed: [], bytesTotal, bytesDone: 0, current: '' });
         const failed: Failure[] = [];
+        const known: Run['known'] = [];
         const inFlight = new Map<string, number>();
         let done = 0, uploaded = 0, duplicates = 0, bytesDone = 0;
         // Sent to storage, waiting for the batch to be confirmed: counted as uploaded on screen at once (owner
@@ -379,7 +515,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             if (current) lastName = current;
             let sending = 0;
             for (const n of inFlight.values()) sending += n;
-            patchRun({ done, uploaded: uploaded + awaiting, duplicates, failed: [...failed], bytesDone: bytesDone + sending, current: lastName });
+            patchRun({ done, uploaded: uploaded + awaiting, duplicates, known: [...known], failed: [...failed], bytesDone: bytesDone + sending, current: lastName });
         };
         const giveUp = (p: Picked, reason: string) => { failed.push({ key: p.key, name: p.file.name, reason }); done += 1; bytesDone += p.file.size; };
 
@@ -398,6 +534,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             const prepared = await api<{ files: PreparedUpload[] }>('/api/candidates/resumes', {
                 json: {
                     orgId,
+                    source: uploadSource.kind ? { kind: uploadSource.kind, name: uploadSource.name.trim() || null } : null,
                     files: toSend.map((p, index) => ({
                         index, name: p.file.name, size: p.file.size, sha256: hashes.get(p.key),
                         modifiedAt: new Date(p.file.lastModified).toISOString(), folder: p.folder,
@@ -416,7 +553,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             for (const slot of prepared.data.files) {
                 const p = toSend[slot.index];
                 if (!p) continue;
-                if (slot.outcome === 'duplicate') { duplicates += 1; done += 1; bytesDone += p.file.size; }
+                if (slot.outcome === 'duplicate') {
+                    duplicates += 1; done += 1; bytesDone += p.file.size;
+                    if (slot.existing) known.push({ name: slot.existing.candidateName ?? slot.existing.fileName, by: slot.existing.uploadedBy });
+                }
                 else if (slot.outcome === 'rejected' || !slot.signedUrl || !slot.id) giveUp(p, slot.reason ?? 'Rejected');
                 else uploads.push({ p, slot });
             }
@@ -856,6 +996,20 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     <input ref={filesInput} type="file" multiple accept=".pdf,.doc,.docx" className="sr-only" tabIndex={-1} aria-hidden onChange={e => takeFiles(fromFileList(e.target.files), false)} />
                 </div>
 
+                {/* Owner 2026-11-16: where these resumes came from. Optional; it is kept on every file of the upload, so a
+                    vendor's copy of someone the team already had can be told apart later. */}
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
+                    <label htmlFor="resume-source-kind">These resumes are from</label>
+                    <select id="resume-source-kind" value={uploadSource.kind} onChange={e => setUploadSource(s => ({ ...s, kind: e.target.value as '' | SourceKind }))} disabled={uploading} className={FIELD}>
+                        <option value="">Not said (optional)</option>
+                        {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
+                    </select>
+                    {(uploadSource.kind === 'vendor' || uploadSource.kind === 'portal') && (
+                        <input value={uploadSource.name} onChange={e => setUploadSource(s => ({ ...s, name: e.target.value }))} disabled={uploading} maxLength={120}
+                            placeholder={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name (LinkedIn, Indeed…)'} aria-label={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name'} className={`${FIELD} w-56`} />
+                    )}
+                </div>
+
                 {raw && (
                     <div className="mt-5 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
@@ -926,6 +1080,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                     <div><dt className={LABEL}>Already there</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(run.duplicates)}</dd></div>
                                     <div><dt className={LABEL}>Failed</dt><dd className={`${NUM_SM} ${run.failed.length ? 'text-error' : 'text-text-primary'}`}>{formatCount(run.failed.length)}</dd></div>
                                 </dl>
+                                {run.known.length > 0 && (
+                                    <p className="text-xs text-text-secondary">
+                                        Already there: {run.known.slice(0, 8).map(k => `${k.name}${k.by ? ` (uploaded by ${k.by})` : ''}`).join(', ')}{run.known.length > 8 ? ` and ${formatCount(run.known.length - 8)} more` : ''}.
+                                    </p>
+                                )}
                                 {/* Always there while it runs, at one fixed height: the panel must not change size as files go by. */}
                                 {run.phase === 'running' && <p className="h-4 truncate text-xs leading-4 text-text-secondary" title={run.current || undefined}>{run.current || 'Getting the files ready'}</p>}
                                 {run.phase === 'stopped' && run.total > run.done && <p className="text-xs text-text-secondary">{formatCount(run.total - run.done)} files were not sent. Click Upload to continue; files already sent are skipped.</p>}
@@ -958,6 +1117,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 )}
             </section>
 
+            <div className="space-y-4">
             {/* Who uploaded last */}
             <section className={`${CARD} px-4 py-4`} aria-labelledby="resume-team-heading">
                 <h2 id="resume-team-heading" className="text-sm font-semibold text-text-primary">Team uploads</h2>
@@ -983,6 +1143,9 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </ul>
                 )}
             </section>
+            {/* Owner 2026-11-16: second CVs wait here, not as tags in the list below. */}
+            <DuplicatesPanel orgId={orgId} reloadKey={nonce} onChanged={reloadLibrary} />
+            </div>
             </div>
 
             {/* How far the background reading is */}

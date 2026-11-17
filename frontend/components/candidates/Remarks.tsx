@@ -143,6 +143,7 @@ const ACTION_LABEL: Record<CandidateAction['action'], string> = {
     status_change: 'Status', stage_change: 'Stage', remark: 'Remark', blacklist: 'Blacklisted', unblacklist: 'Blacklist removed',
     resume_attached: 'Resume attached', resume_marked: 'Marked as a resume', added_to_position: 'Added to position',
     removed_from_position: 'Removed from position', call_logged: 'Call', field_edit: 'Details edited', outreach_sent: 'WhatsApp sent',
+    duplicate_flagged: 'Already in the database',
 };
 
 const statusLabel = (value: string | null) => (value && value in STATUS_LABELS ? STATUS_LABELS[value as RecordStatus] : value ?? '');
@@ -159,6 +160,19 @@ function describe(a: CandidateAction): React.ReactNode {
             const named = fields.map(f => (f in CALL_FACT_LABELS ? CALL_FACT_LABELS[f as CallFactKey] : f));
             return <>{named.join(', ')}{a.meta.source === 'call' ? <span className="text-text-secondary"> · from the call</span> : null}</>;
         }
+        case 'duplicate_flagged': {
+            // Owner 2026-11-16: a second CV, or a row in another sheet: which copy, and how the person was first sourced.
+            const m = a.meta as { source?: string; fileName?: string | null; sheetName?: string | null; firstAt?: string | null; firstBy?: string | null; previous?: { fileName?: string; uploadedAt?: string | null } | null; first?: { at?: string | null; from?: string | null; byName?: string | null } | null };
+            if (m.source === 'same_file') {
+                // The same file uploaded again by someone else; it was not stored twice.
+                const firstUp = [m.firstBy ? `first uploaded by ${m.firstBy}` : 'already on file', m.firstAt ? formatDate(m.firstAt) : null].filter(Boolean).join(', ');
+                return <>{`Same CV uploaded again ${m.fileName ?? ''}`.trim()}<span className="text-text-secondary"> · {firstUp}</span></>;
+            }
+            const copy = m.source === 'sheet' ? `Sheet ${m.sheetName ?? ''}`.trim() : `Second CV ${m.fileName ?? ''}`.trim();
+            const had = m.source !== 'sheet' && m.previous?.fileName ? `already had ${m.previous.fileName}${m.previous.uploadedAt ? ` (${formatDate(m.previous.uploadedAt)})` : ''}` : '';
+            const first = m.first ? [m.first.at ? `first sourced ${formatDate(m.first.at)}` : null, m.first.from ? `from ${m.first.from}` : null, m.first.byName ? `by ${m.first.byName}` : null].filter(Boolean).join(' ') : '';
+            return <>{copy}{had ? ` · ${had}` : ''}{first ? <span className="text-text-secondary"> · {first}</span> : null}</>;
+        }
         case 'outreach_sent': {
             const position = typeof a.meta.position === 'string' ? a.meta.position : null;
             const phone = typeof a.meta.phone === 'string' ? a.meta.phone : null;
@@ -169,17 +183,41 @@ function describe(a: CandidateAction): React.ReactNode {
             const calledOn = typeof a.meta.calledOn === 'string' ? a.meta.calledOn : null;
             return <>{a.toValue ?? 'Call'}{position ? ` · ${position}` : ''}{calledOn ? ` · ${formatDate(calledOn)}` : ''}</>;
         }
+        case 'remark': {
+            // Owner 2026-11-17: an interview scheduled, or a round's feedback, from the pipeline.
+            const m = a.meta as { kind?: string; at?: string; mode?: string | null; interviewer?: string | null; round?: string; rating?: number; recommendation?: string };
+            if (m.kind === 'interview') {
+                const when = m.at ? new Date(m.at).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+                return <>{when}{m.mode ? ` · ${MODE_LABEL[m.mode] ?? m.mode}` : ''}{m.interviewer ? ` · with ${m.interviewer}` : ''}</>;
+            }
+            if (m.kind === 'feedback') {
+                const stars = typeof m.rating === 'number' ? `${'★'.repeat(m.rating)}${'☆'.repeat(5 - m.rating)}` : '';
+                return <>{m.round ?? ''}{stars ? <span className="text-amber-600"> · {stars}</span> : null}{m.recommendation ? <strong> · {RECOMMENDATION_LABEL[m.recommendation] ?? m.recommendation}</strong> : null}</>;
+            }
+            return null;
+        }
         default: return <>{a.toValue ?? ''}</>;
     }
 }
+
+const MODE_LABEL: Record<string, string> = { in_person: 'In person', video: 'Video call', phone: 'Phone' };
+const RECOMMENDATION_LABEL: Record<string, string> = { move_ahead: 'Move ahead', hold: 'Hold', reject: 'Reject' };
+const NOTE_LABEL: Record<string, string> = { interview: 'Interview scheduled', feedback: 'Interview feedback' };
+/** The entry's heading: an interview or feedback note reads as such, not as "Remark". */
+const labelOf = (a: CandidateAction) => (a.action === 'remark' && typeof a.meta.kind === 'string' && a.meta.kind in NOTE_LABEL ? NOTE_LABEL[a.meta.kind] : ACTION_LABEL[a.action] ?? a.action);
 
 /**
  * The candidate's history with an "Add remark" box (owner 2026-11-15). Reads /api/candidates/[id]/actions; shows a
  * short note when the database update is not applied yet (the list comes back empty then).
  */
-export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0 }: { orgId: string; record: CandidateRecord; nonce?: number; focusNonce?: number }) {
+export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0, position = null }: {
+    orgId: string; record: CandidateRecord; nonce?: number; focusNonce?: number;
+    /** Opened from the pipeline (owner 2026-11-17): this position's entries first, "Everything" shows the rest. */
+    position?: { id: string; title: string } | null;
+}) {
     const { notify, reportError } = useUi();
     const [state, setState] = useState<{ id: string; actions: CandidateAction[] } | null>(null);
+    const [scope, setScope] = useState<'position' | 'all'>('position');
     const [text, setText] = useState('');
     const [busy, setBusy] = useState(false);
     const box = useRef<HTMLTextAreaElement | null>(null);
@@ -196,13 +234,16 @@ export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0 }: {
         return () => ctrl.abort();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key]);
-    const actions = state?.id === record.id ? state.actions : null;
+    const every = state?.id === record.id ? state.actions : null;
+    const onlyPosition = !!position && scope === 'position';
+    const actions = every && position && onlyPosition ? every.filter(a => a.positionId === position.id) : every;
 
     const add = async () => {
         const remark = text.trim();
         if (!remark || busy) return;
         setBusy(true);
-        const res = await api<{ actions: CandidateAction[] }>(`/api/candidates/${encodeURIComponent(record.id)}/actions`, { json: { orgId, remark } });
+        // In this position's view, the remark is filed under the position, so it shows where it was typed.
+        const res = await api<{ actions: CandidateAction[] }>(`/api/candidates/${encodeURIComponent(record.id)}/actions`, { json: { orgId, remark, ...(position && onlyPosition ? { positionId: position.id } : {}) } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setText('');
@@ -215,6 +256,16 @@ export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0 }: {
                 <p className={LABEL}>Activity</p>
                 {actions && actions.length > 0 && <span className="text-xs text-text-tertiary">{actions.length} {actions.length === 1 ? 'entry' : 'entries'} · nothing here is ever edited</span>}
             </div>
+            {position && (
+                <div role="group" aria-label="Which history" className="mt-2 inline-grid grid-cols-2 gap-x-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
+                    {([['position', position.title], ['all', 'Everything']] as const).map(([id, label]) => (
+                        <button key={id} type="button" onClick={() => setScope(id)} aria-pressed={scope === id}
+                            className={`h-8 max-w-[260px] truncate rounded-lg px-3 text-sm font-semibold transition-colors ${scope === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>
+                            {label}{every ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{id === 'all' ? every.length : every.filter(a => a.positionId === position.id).length}</span> : null}
+                        </button>
+                    ))}
+                </div>
+            )}
             <div className={`${WELL} mt-2 flex items-end gap-x-2 gap-y-2 px-3 py-2.5`}>
                 <label htmlFor="cand-add-remark" className="sr-only">Add a remark</label>
                 <textarea ref={box} id="cand-add-remark" rows={1} maxLength={REMARK_MAX} value={text} onChange={e => setText(e.target.value)} placeholder="Add a remark"
@@ -225,13 +276,13 @@ export function ActivityTimeline({ orgId, record, nonce = 0, focusNonce = 0 }: {
             {!actions ? (
                 <p className="mt-3 flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
             ) : actions.length === 0 ? (
-                <p className="mt-3 text-sm text-text-tertiary">No history yet. Status changes, remarks and blacklisting appear here from now on.</p>
+                <p className="mt-3 text-sm text-text-tertiary">{position && onlyPosition ? `Nothing filed under ${position.title} yet. Stage moves, interviews, feedback and remarks typed here show here; Everything shows the rest.` : 'No history yet. Status changes, remarks and blacklisting appear here from now on.'}</p>
             ) : (
                 <ol className="mt-3 space-y-3 border-l-2 border-border-subtle pl-3.5">
                     {actions.map(a => (
                         <li key={a.id} className="text-sm">
                             <p className="flex flex-wrap items-baseline gap-x-2">
-                                <span className="font-semibold text-text-primary">{ACTION_LABEL[a.action] ?? a.action}</span>
+                                <span className="font-semibold text-text-primary">{labelOf(a)}</span>
                                 <span className="text-xs text-text-tertiary">{formatDate(a.at)}{a.byName ? ` · ${a.byName}` : ''}</span>
                             </p>
                             <p className="text-text-primary">{describe(a)}</p>

@@ -22,6 +22,7 @@ import {
   RESUME_LINK_PAGE, RESUME_TEXT_BATCH, RESUME_TEXT_BUDGET_MS, RESUME_TEXT_MAX_ATTEMPTS, RESUME_TEXT_MAX_CHARS, RESUME_TEXT_MAX_INFLIGHT,
   RESUME_TEXT_PARALLEL, RESUME_TEXT_STALE_MINUTES,
 } from "./config";
+import { firstSourcing, flagKnownPeople, sourceColumnsMissing } from "./known";
 import { parsePhone } from "./normalize";
 import { CandidateActionError } from "./records";
 import { resumeStorage, type ResumeStorage } from "./resumes";
@@ -400,22 +401,27 @@ function chunks<T>(items: T[], size: number): T[][] {
 export async function linkUnmatched(client: SupabaseClient, orgId: string): Promise<number> {
   let linked = 0;
   let cursor: string | null = null;
+  type UnlinkedRow = { id: string; emails: string[] | null; phones: string[] | null; file_name?: string; device_label?: string | null; uploaded_by?: string | null; created_at?: string | Date };
+  const BASE = "id, emails, phones, file_name, device_label, uploaded_by, created_at";
   try {
     for (let pass = 0; pass < 20; pass += 1) {
-      let query = client
-        .from(TABLE)
-        .select("id, emails, phones")
-        .eq("organization_id", orgId)
-        .eq("status", "ready")
-        .eq("text_status", "ready")
-        .is("candidate_id", null)
-        .or("match_reason.is.null,match_reason.neq.detached")
-        .order("id")
-        .limit(RESUME_LINK_PAGE);
-      if (cursor) query = query.gt("id", cursor);
-      const { data, error } = await query;
+      const page = (columns: string) => {
+        let query = client
+          .from(TABLE)
+          .select(columns)
+          .eq("organization_id", orgId)
+          .eq("status", "ready")
+          .eq("text_status", "ready")
+          .is("candidate_id", null)
+          .or("match_reason.is.null,match_reason.neq.detached")
+          .order("id")
+          .limit(RESUME_LINK_PAGE);
+        if (cursor) query = query.gt("id", cursor);
+        return query;
+      };
+      const { data, error } = await page(BASE);
       if (error) throw error;
-      const rows = (data ?? []) as { id: string; emails: string[] | null; phones: string[] | null }[];
+      const rows = (data ?? []) as unknown as UnlinkedRow[];
       if (!rows.length) break;
       cursor = rows[rows.length - 1].id;
 
@@ -424,6 +430,7 @@ export async function linkUnmatched(client: SupabaseClient, orgId: string): Prom
       const byEmail = await candidatesByKey(client, orgId, "email_key", emails);
       const byPhone = await candidatesByKey(client, orgId, "phone_key", phones);
       const at = new Date().toISOString();
+      const flagged: { row: UnlinkedRow; candidateId: string; reason: ResumeMatchReason }[] = [];
       for (const row of rows) {
         const byMail = (row.emails ?? []).map((e) => byEmail.get(e)).find((id): id is string => Boolean(id)) ?? null;
         const byTel = (row.phones ?? []).map((p) => byPhone.get(p)).find((id): id is string => Boolean(id)) ?? null;
@@ -438,7 +445,9 @@ export async function linkUnmatched(client: SupabaseClient, orgId: string): Prom
           .is("candidate_id", null);
         if (linkErr) throw linkErr;
         linked += 1;
+        flagged.push({ row, candidateId, reason });
       }
+      if (flagged.length) await flagSecondCvs(client, orgId, flagged);
       if (rows.length < RESUME_LINK_PAGE) break;
     }
   } catch (error) {
@@ -446,6 +455,65 @@ export async function linkUnmatched(client: SupabaseClient, orgId: string): Prom
     else console.error("[candidates] resume matching failed", message(error));
   }
   return linked;
+}
+
+const iso = (v: unknown): string | null => (v instanceof Date ? v.toISOString() : typeof v === "string" && v ? v : null);
+
+/**
+ * Owner 2026-11-16: of the files just linked, the ones whose person ALREADY HAD a CV on file. A CV meeting its own
+ * sheet row (the person had no CV yet) is the normal pairing and is left alone. Each second CV is set to
+ * duplicate_state 'pending' (HR updates the CV or deletes the copy) and noted in the person's history. Two CVs of the
+ * same person linked in one go: the later upload is the second. Never fails the matching that called it.
+ */
+async function flagSecondCvs(
+  client: SupabaseClient,
+  orgId: string,
+  linked: { row: { id: string; file_name?: string; device_label?: string | null; uploaded_by?: string | null; created_at?: string | Date }; candidateId: string; reason: ResumeMatchReason }[],
+): Promise<void> {
+  try {
+    const ids = [...new Set(linked.map((l) => l.candidateId))];
+    const { data, error } = await client
+      .from(TABLE)
+      .select("id, candidate_id, file_name, device_label, created_at")
+      .eq("organization_id", orgId)
+      .eq("status", "ready")
+      .in("candidate_id", ids)
+      .order("created_at");
+    if (error) throw error;
+    const files = (data ?? []) as unknown as { id: string; candidate_id: string; file_name: string; device_label: string | null; created_at: unknown }[];
+    const second: { l: (typeof linked)[number]; previous: (typeof files)[number] }[] = [];
+    for (const l of linked) {
+      const mine = iso(l.row.created_at) ?? "";
+      // The CV on file before this one: the latest upload of this person made before it (ties broken by id).
+      const before = files.filter((f) => f.candidate_id === l.candidateId && f.id !== l.row.id && ((iso(f.created_at) ?? "") < mine || ((iso(f.created_at) ?? "") === mine && f.id < l.row.id)));
+      if (before.length) second.push({ l, previous: before[before.length - 1] });
+    }
+    if (!second.length) return;
+    const { error: markErr } = await client
+      .from(TABLE)
+      .update({ duplicate_state: "pending" })
+      .eq("organization_id", orgId)
+      .in("id", second.map((s) => s.l.row.id));
+    if (markErr) {
+      if (sourceColumnsMissing(markErr)) return; // migration 20261116000004 not applied: nothing to flag with
+      throw markErr;
+    }
+    const first = await firstSourcing(client, orgId, second.map((s) => s.l.candidateId));
+    await flagKnownPeople(client, orgId, second.map(({ l, previous }) => ({
+      candidateId: l.candidateId,
+      by: { id: l.row.uploaded_by ?? null, name: l.row.device_label ?? null },
+      meta: {
+        source: "resume",
+        fileId: l.row.id,
+        fileName: l.row.file_name ?? null,
+        uploadedAt: iso(l.row.created_at),
+        previous: { id: previous.id, fileName: previous.file_name, uploadedAt: iso(previous.created_at), uploadedBy: previous.device_label },
+        first: first.get(l.candidateId) ?? null,
+      },
+    })));
+  } catch (error) {
+    console.error("[candidates] second-CV check failed", message(error));
+  }
 }
 
 /** key -> the oldest candidate of the organisation with that key (people are de-duplicated on these keys anyway). */

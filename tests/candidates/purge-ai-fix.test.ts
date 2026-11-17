@@ -240,7 +240,8 @@ describe("permanent delete, clear all, bulk delete, AI fix", () => {
     const rows = await sheetIssues(client, ORG, f.sheetId);
     const row2 = rows.find((r) => r.rowNumber === 2)!;
     assert.deepEqual(row2.issues, [], "nothing left to review on the deleted row");
-    assert.ok(row2.fixed.every((note) => /\(record deleted by HR\)$/.test(note)));
+    // Owner 2026-11-16: "Already in the database" is a note about the person, not an issue; it stays as it is.
+    assert.ok(row2.fixed.filter((note) => !note.includes("Already in the database")).every((note) => /\(record deleted by HR\)$/.test(note)));
     assert.ok(rows.find((r) => r.rowNumber === 3)!.issues.length > 0, "the other row is untouched");
     const [gone] = await q<{ deleted_by: string | null; n: number }>(
       "select max(deleted_by::text) as deleted_by, count(*)::int as n from public.candidate_applications where sheet_id = $1 and deleted_at is not null", [f.sheetId],

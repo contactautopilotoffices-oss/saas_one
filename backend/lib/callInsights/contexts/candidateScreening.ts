@@ -29,7 +29,7 @@ Follow these steps in order. Do not skip any.
    - notice_period_days: as days. One month = 30, 15 days = 15, immediate or already serving and free = 0. null when not said.
    - location: where they live or will work from, as said. null when not said.
    - reason_for_change: why they are looking, in their own words, shortened. null when not said.
-   Every fact carries the exact quote it came from and at_seconds when stamped. A number only the RECRUITER said is not a fact: leave it null.
+   Every fact carries the exact quote it came from (an empty string "" when the fact was not said) and at_seconds when stamped. A number only the RECRUITER said is not a fact: leave it null.
 8. summary: 2 to 3 plain sentences a recruiter can read in ten seconds: who they are, how keen they are, and the one thing that stood out.
 9. suggested_next_step: one line of advice, for example "Shortlist for round 1", "Call back after they have spoken to their family", "Close: the salary gap is too wide". This is advice only. A person decides.
 10. language: the language or languages of the call, for example "Hindi + English".
@@ -46,11 +46,11 @@ Return ONLY a JSON object with exactly these keys:
   "concerns": [ { "topic": string, "note": string, "quote": string, "at_seconds": number | null } ],
   "red_flags": [ { "note": string, "quote": string, "at_seconds": number | null } ],
   "facts": {
-    "current_inhand": { "value": number | null, "quote": string | null, "at_seconds": number | null },
-    "expected_inhand": { "value": number | null, "quote": string | null, "at_seconds": number | null },
-    "notice_period_days": { "value": number | null, "quote": string | null, "at_seconds": number | null },
-    "location": { "value": string | null, "quote": string | null, "at_seconds": number | null },
-    "reason_for_change": { "value": string | null, "quote": string | null, "at_seconds": number | null }
+    "current_inhand": { "value": number | null, "quote": string, "at_seconds": number | null },
+    "expected_inhand": { "value": number | null, "quote": string, "at_seconds": number | null },
+    "notice_period_days": { "value": number | null, "quote": string, "at_seconds": number | null },
+    "location": { "value": string | null, "quote": string, "at_seconds": number | null },
+    "reason_for_change": { "value": string | null, "quote": string, "at_seconds": number | null }
   },
   "language": string
 }
@@ -65,7 +65,7 @@ TRANSCRIPT:
 [5:10] Sir, ninety is a bit less for me, I was hoping for ninety-five at least.
 [6:02] If the team is good I'm fine, growth matters more to me.
 ANSWER:
-{"overall_sentiment":"positive","sentiment_confidence":"high","interest_level":"high","summary":"Prakash is keen on the Noida AM role and can join in 30 days. The only hesitation was salary: he wants 95,000 in hand against the 90,000 band, but said growth matters more.","suggested_next_step":"Shortlist for round 1; confirm whether the band can stretch to 95,000.","sentiment_timeline":[{"sentiment":"neutral","note":"Greeting and confirming the role","start_seconds":0,"end_seconds":60,"share":2},{"sentiment":"positive","note":"Location and notice both fine","start_seconds":60,"end_seconds":300,"share":5},{"sentiment":"negative","note":"Pushed back on the salary band","start_seconds":300,"end_seconds":355,"share":1},{"sentiment":"positive","note":"Growth matters more; still keen","start_seconds":355,"end_seconds":400,"share":2}],"concerns":[{"topic":"salary","note":"Wants 95,000 in hand against a 90,000 band","quote":"I was hoping for ninety-five at least","at_seconds":310}],"red_flags":[],"facts":{"current_inhand":{"value":null,"quote":null,"at_seconds":null},"expected_inhand":{"value":95000,"quote":"I was hoping for ninety-five at least","at_seconds":310},"notice_period_days":{"value":30,"quote":"Notice one month hai, serving from Monday","at_seconds":135},"location":{"value":"Noida, Sector 62","quote":"I stay in Sector 62","at_seconds":65},"reason_for_change":{"value":"Growth","quote":"growth matters more to me","at_seconds":362}},"language":"Hindi + English"}
+{"overall_sentiment":"positive","sentiment_confidence":"high","interest_level":"high","summary":"Prakash is keen on the Noida AM role and can join in 30 days. The only hesitation was salary: he wants 95,000 in hand against the 90,000 band, but said growth matters more.","suggested_next_step":"Shortlist for round 1; confirm whether the band can stretch to 95,000.","sentiment_timeline":[{"sentiment":"neutral","note":"Greeting and confirming the role","start_seconds":0,"end_seconds":60,"share":2},{"sentiment":"positive","note":"Location and notice both fine","start_seconds":60,"end_seconds":300,"share":5},{"sentiment":"negative","note":"Pushed back on the salary band","start_seconds":300,"end_seconds":355,"share":1},{"sentiment":"positive","note":"Growth matters more; still keen","start_seconds":355,"end_seconds":400,"share":2}],"concerns":[{"topic":"salary","note":"Wants 95,000 in hand against a 90,000 band","quote":"I was hoping for ninety-five at least","at_seconds":310}],"red_flags":[],"facts":{"current_inhand":{"value":null,"quote":"","at_seconds":null},"expected_inhand":{"value":95000,"quote":"I was hoping for ninety-five at least","at_seconds":310},"notice_period_days":{"value":30,"quote":"Notice one month hai, serving from Monday","at_seconds":135},"location":{"value":"Noida, Sector 62","quote":"I stay in Sector 62","at_seconds":65},"reason_for_change":{"value":"Growth","quote":"growth matters more to me","at_seconds":362}},"language":"Hindi + English"}
 `.trim();
 
 /** What the model is told about the person and the position, so it can compare and so it does not invent them. */
@@ -113,12 +113,14 @@ export function candidateScreeningUser(ctx: ScreeningContext): string {
 }
 
 // The answer's shape for Claude's structured output (every object closed; the checks below enforce the ranges).
+// Claude allows at most 16 nullable keys in one schema: the five facts' values and times, the timeline's two times,
+// and one time each on a concern and a red flag make 14. A fact's quote is therefore a plain string, "" = none.
 const nullableNumber = { type: ["number", "null"] };
 const nullableString = { type: ["string", "null"] };
 const sentiment = { type: "string", enum: ["positive", "neutral", "negative"] };
 const evidenceFact = (value: Record<string, unknown>) => ({
   type: "object",
-  properties: { value, quote: nullableString, at_seconds: nullableNumber },
+  properties: { value, quote: { type: "string" }, at_seconds: nullableNumber },
   required: ["value", "quote", "at_seconds"],
   additionalProperties: false,
 });
@@ -178,7 +180,8 @@ export const CANDIDATE_SCREENING_SCHEMA: Record<string, unknown> = {
 // What is accepted from any model (the other providers answer in plain JSON mode): tolerant, ranges enforced.
 const QUOTE_MAX = 300;
 const text = (max: number) => z.string().trim().max(max).catch("");
-const quote = z.string().trim().min(1).max(QUOTE_MAX).nullable().catch(null);
+/** A fact's quote: "" or null both mean none (the schema asks for "" so the key is not nullable). */
+const quote = z.string().trim().max(QUOTE_MAX).nullable().catch(null).transform((q) => q || null);
 const seconds = z.number().min(0).max(24 * 3600).nullable().catch(null);
 const sentimentSchema = z.enum(["positive", "neutral", "negative"]);
 const NOT_SAID = { value: null, quote: null, at_seconds: null };

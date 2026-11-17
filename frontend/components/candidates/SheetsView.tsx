@@ -3,8 +3,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CircleAlert, CircleCheck, FileSpreadsheet, ListChecks, RotateCcw, Trash2, Upload, X } from 'lucide-react';
-import type {
-    CandidateSheet, ImportSummary, PurgeResponse, ReindexResponse, SheetsResponse, UploadConflict, UploadMode,
+import { sourceLabel } from '@/backend/lib/candidates/known';
+import {
+    SOURCE_KIND_LABELS, SOURCE_KINDS,
+    type CandidateSheet, type ImportSummary, type PurgeResponse, type ReindexResponse, type SheetsResponse, type SourceKind, type UploadConflict, type UploadMode,
 } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, apiUpload, qs } from './api';
@@ -13,7 +15,7 @@ import { formatCount, formatDate } from './format';
 import IssuesModal, { IssueJobChip } from './IssuesModal';
 import UploadConflictModal from './UploadConflictModal';
 import {
-    BTN_DANGER_GHOST, BTN_GHOST, BTN_SECONDARY, CARD, EASE_PATIENT, EmptyState, LABEL, NUM_LG, NUM_SM, Spinner, Toggle, useUi, WELL,
+    BTN_DANGER_GHOST, BTN_GHOST, BTN_SECONDARY, CARD, EASE_PATIENT, EmptyState, FIELD, LABEL, NUM_LG, NUM_SM, Spinner, Toggle, useUi, WELL,
 } from './ui';
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -63,6 +65,8 @@ function summaryTiles(s: ImportSummary): [string, number][] {
         ['Rows skipped', s.rowsSkipped],
         ['New candidates', s.newCandidates],
         ['Matched existing', s.matchedCandidates],
+        // Owner 2026-11-16: rows for people the team already had before this upload (kept, noted on the row).
+        ['Already in the database', s.alreadyKnownRows ?? 0],
     ];
     if (s.candidatesWithResume !== null) tiles.push(['With resume', s.candidatesWithResume]);
     return tiles;
@@ -173,6 +177,8 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
     }, [preparing, orgId]);
 
     const reload = () => setNonce(n => n + 1);
+    // Owner 2026-11-16: where the sheet came from (optional): own search, a job portal, a vendor and its name.
+    const [uploadSource, setUploadSource] = useState<{ kind: '' | SourceKind; name: string }>({ kind: '', name: '' });
 
     const upload = async (file: File, mode?: UploadMode) => {
         setUploadError('');
@@ -186,6 +192,8 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
         form.set('orgId', orgId);
         form.set('file', file);
         if (mode) form.set('mode', mode);
+        // Owner 2026-11-16: where the sheet came from (optional).
+        if (uploadSource.kind) { form.set('sourceKind', uploadSource.kind); if (uploadSource.name.trim()) form.set('sourceName', uploadSource.name.trim()); }
         const res = await apiUpload<ImportSummary>(
             '/api/candidates/sheets', form,
             fraction => { if (mounted.current) setProgress(p => (p && p.phase === 'sending' ? { ...p, fraction } : p)); },
@@ -333,6 +341,19 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                 <input ref={inputRef} type="file" accept={ACCEPT} className="sr-only" tabIndex={-1} aria-hidden onChange={e => pickFile(e.target.files)} />
             </div>
 
+            {/* Owner 2026-11-16: where the sheet came from. Optional; a vendor's rows for people the team already had are noted. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
+                <label htmlFor="sheet-source-kind">This sheet is from</label>
+                <select id="sheet-source-kind" value={uploadSource.kind} onChange={e => setUploadSource(s => ({ ...s, kind: e.target.value as '' | SourceKind }))} disabled={!!progress} className={FIELD}>
+                    <option value="">Not said (optional)</option>
+                    {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
+                </select>
+                {(uploadSource.kind === 'vendor' || uploadSource.kind === 'portal') && (
+                    <input value={uploadSource.name} onChange={e => setUploadSource(s => ({ ...s, name: e.target.value }))} disabled={!!progress} maxLength={120}
+                        placeholder={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name (LinkedIn, Indeed…)'} aria-label={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name'} className={`${FIELD} w-56`} />
+                )}
+            </div>
+
             {uploadError && (
                 <p role="alert" className={`${WELL} flex gap-2.5 border-l-2 border-error px-4 py-3 text-sm text-text-primary`}>
                     <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{uploadError}
@@ -426,7 +447,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                                             <div><dt className={LABEL}>Uploads</dt><dd className={`${NUM_SM} text-text-primary`}><Uploads n={s.uploadCount} /></dd></div>
                                         </dl>
                                         <p className="break-words text-xs text-text-tertiary">
-                                            {s.uploadedByEmail ?? 'Unknown'} · <span className="tabular-nums">{formatDate(deleted ? s.deletedAt : s.updatedAt)}</span>
+                                            {s.uploadedByEmail ?? 'Unknown'}{s.sourceKind ? ` · ${sourceLabel({ kind: s.sourceKind, name: s.sourceName })}` : ''} · <span className="tabular-nums">{formatDate(deleted ? s.deletedAt : s.updatedAt)}</span>
                                         </p>
                                         <div className="flex justify-end gap-x-1 gap-y-1">{actions(s, true)}</div>
                                     </li>

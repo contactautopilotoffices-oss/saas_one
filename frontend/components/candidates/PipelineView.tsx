@@ -2,16 +2,17 @@
 
 import React, { useEffect, useState } from 'react';
 import { Download, FileText, Plus, X } from 'lucide-react';
-import type { SearchFilters } from '@/backend/lib/candidates/filters';
-import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import { FLOW_STAGES, recordOrigin, SIDE_STAGES, STAGE_LABELS, STAGE_REMARK_REQUIRED, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CandidateDetails from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate } from './format';
 import { OutreachDialog, outreachKindFor } from './OutreachPanel';
+import type { PipelineContext } from './PipelineContext';
+import PositionForm, { type PositionSeed } from './PositionForm';
+import RecordForm from './RecordForm';
 import { RemarkDialog } from './Remarks';
-import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The pipeline per position (owner 2026-11-15, to the mockup). One position at a time: the numbers a recruiter acts
@@ -27,46 +28,16 @@ const COLUMN_SHOWN = 3;
 
 const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
-/** New position: a title and where, plus whatever the search already knows (a JD, the filters). */
+/**
+ * New position from Search ("Save as a position"): the full Create position form (owner 2026-11-16), seeded with
+ * the search as it stands (its JD, starred keywords, filters).
+ */
 export function PositionDialog({ open, orgId, seed, onClose, onSaved }: {
     open: boolean; orgId: string;
-    seed?: { title?: string; location?: string; jdText?: string; jdFileName?: string; filters?: SearchFilters; prefer?: Preferences };
+    seed?: PositionSeed;
     onClose: () => void; onSaved: (position: Position) => void;
 }) {
-    const { notify, reportError } = useUi();
-    const [title, setTitle] = useState('');
-    const [location, setLocation] = useState('');
-    const [department, setDepartment] = useState('');
-    const [busy, setBusy] = useState(false);
-    const [seenOpen, setSeenOpen] = useState(open);
-    if (open !== seenOpen) { setSeenOpen(open); if (open) { setTitle(seed?.title ?? ''); setLocation(seed?.location ?? ''); setDepartment(''); } }
-    const save = async () => {
-        if (!title.trim() || busy) return;
-        setBusy(true);
-        const res = await api<{ position: Position }>('/api/candidates/positions', {
-            json: { orgId, title: title.trim(), location: location.trim() || undefined, department: department.trim() || undefined, jdText: seed?.jdText || undefined, jdFileName: seed?.jdFileName || undefined, filters: seed?.filters, prefer: seed?.prefer },
-        });
-        setBusy(false);
-        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
-        notify(`Position saved: ${res.data.position.title}`, 'success');
-        onSaved(res.data.position);
-    };
-    return (
-        <Dialog
-            open={open} onClose={() => { if (!busy) onClose(); }} labelId="cand-position-title" title="New position"
-            description={seed?.jdText ? 'The job description and the filters as they stand now are saved with it, so anyone can re-run this search.' : 'Candidates are added to a position from the search results.'}
-            footer={<><button type="button" onClick={onClose} disabled={busy} className={BTN_SECONDARY}>Cancel</button><button type="button" onClick={() => void save()} disabled={busy || !title.trim()} className={BTN_PRIMARY}>{busy && <Spinner />}Save position</button></>}
-        >
-            <div className="space-y-3">
-                <div><label htmlFor="pos-title" className="block text-sm font-semibold text-text-primary">Title</label><input id="pos-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Sr Technical Executive" className={`${INPUT} mt-1.5`} autoFocus /></div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <div><label htmlFor="pos-location" className="block text-sm font-semibold text-text-primary">Location</label><input id="pos-location" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. SS Plaza, Bengaluru" className={`${INPUT} mt-1.5`} /></div>
-                    <div><label htmlFor="pos-department" className="block text-sm font-semibold text-text-primary">Department</label><input id="pos-department" value={department} onChange={e => setDepartment(e.target.value)} placeholder="e.g. Operations" className={`${INPUT} mt-1.5`} /></div>
-                </div>
-                {seed?.jdFileName && <p className="text-xs text-text-secondary">Job description: {seed.jdFileName}</p>}
-            </div>
-        </Dialog>
-    );
+    return <PositionForm open={open} orgId={orgId} seed={seed} onClose={onClose} onSaved={onSaved} />;
 }
 
 /** The open positions, for "Add to position" on a list of ticked records. */
@@ -107,7 +78,7 @@ export function AddToPositionSelect({ orgId, applicationIds, disabled, onAdded, 
 }
 
 function MemberCard({ member, busy, onRemove, onOpen, onDragStart }: {
-    member: PositionMember; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (record: CandidateRecord) => void; onDragStart: (member: PositionMember) => void;
+    member: PositionMember; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
 }) {
     const r = member.record;
     const name = r?.fullName ?? 'Record removed';
@@ -119,7 +90,7 @@ function MemberCard({ member, busy, onRemove, onOpen, onDragStart }: {
             className={`${CARD} group cursor-grab px-3 py-2.5 active:cursor-grabbing ${late ? 'ring-1 ring-inset ring-error/60' : ''}`}>
             <div className="flex items-center gap-x-2">
                 <Avatar name={name} size="sm" />
-                <button type="button" disabled={!r} onClick={() => r && onOpen(r)} className="min-w-0 flex-1 truncate text-left font-display text-[15px] font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{name}</button>
+                <button type="button" disabled={!r} onClick={() => r && onOpen(member)} className="min-w-0 flex-1 truncate text-left font-display text-[15px] font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{name}</button>
                 <button type="button" onClick={() => onRemove(member)} disabled={busy} aria-label={`Remove ${name} from this position`} title="Remove from this position" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-tertiary opacity-0 hover:bg-muted hover:text-text-primary group-hover:opacity-100 focus-visible:opacity-100"><X className="h-3.5 w-3.5" /></button>
             </div>
             {where && <p className="mt-1.5 text-[13px] leading-snug text-text-secondary">{where}</p>}
@@ -160,7 +131,13 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: Stage } | null>(null);
     // Owner 2026-11-16: right after a drop on Shortlisted or Rejected, offer to tell the candidate on WhatsApp.
     const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; kind: 'shortlisted' | 'not_shortlisted'; remark: string | null; open: boolean } | null>(null);
-    const [details, setDetails] = useState<{ record: CandidateRecord; open: boolean } | null>(null);
+    // Owner 2026-11-17: the panel knows which person of the pipeline it shows and the people it walks through (the
+    // stage the card was opened in, or the whole table), so the arrows step through them; `record` is kept for when
+    // the person leaves the position while the panel is open.
+    const [details, setDetails] = useState<{ memberId: string; record: CandidateRecord; ids: string[]; scopeLabel: string; open: boolean } | null>(null);
+    // Edit from the panel opens the record's form here; saving or closing it returns to the panel.
+    const [editor, setEditor] = useState<{ record: CandidateRecord; key: number; open: boolean } | null>(null);
+    const [panelKey, setPanelKey] = useState(0);
     const [view, setView] = useState<'board' | 'table'>('board');
     const [dragging, setDragging] = useState<PositionMember | null>(null);
     const [over, setOver] = useState<Stage | null>(null);
@@ -238,7 +215,29 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         onDragLeave: () => { if (over === stage) setOver(null); },
         onDrop: (e: React.DragEvent) => { e.preventDefault(); setOver(null); const m = dragging; setDragging(null); if (m) void move(m, stage); },
     });
-    const cardProps = { busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (record: CandidateRecord) => setDetails({ record, open: true }), onDragStart: setDragging };
+    const openMember = (m: PositionMember, ids: string[], scopeLabel: string) => { if (m.record) setDetails({ memberId: m.id, record: m.record, ids, scopeLabel, open: true }); };
+    const cardProps = { busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (m: PositionMember) => openMember(m, inStage(m.stage).map(x => x.id), STAGE_LABELS[m.stage]), onDragStart: setDragging };
+
+    // The panel's place in the pipeline: the person as the board has them now, and the neighbours still there.
+    const shownMember = details ? (list ?? []).find(m => m.id === details.memberId) ?? null : null;
+    const walk = details ? details.ids.filter(id => id === details.memberId || (list ?? []).some(m => m.id === id && m.record)) : [];
+    const at = details ? walk.indexOf(details.memberId) : -1;
+    const step = (to: number) => {
+        const m = (list ?? []).find(x => x.id === walk[to]);
+        if (m?.record) setDetails(d => (d ? { ...d, memberId: m.id, record: m.record as CandidateRecord } : d));
+    };
+    const pipelineCtx: PipelineContext | null = details && position && shownMember ? {
+        position, member: shownMember, index: at + 1, total: walk.length, scopeLabel: details.scopeLabel,
+        onPrev: at > 0 ? () => step(at - 1) : null,
+        onNext: at >= 0 && at < walk.length - 1 ? () => step(at + 1) : null,
+        onMoved: refresh,
+        onRemoved: () => {
+            refresh();
+            // Straight on to the next person, as a recruiter working down the column expects.
+            if (at >= 0 && at < walk.length - 1) step(at + 1);
+            else if (at > 0) step(at - 1);
+        },
+    } : null;
 
     return (
         <div className="space-y-4">
@@ -364,7 +363,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                         const r = m.record;
                                         return (
                                             <tr key={m.id} className="hover:bg-surface-elevated">
-                                                <td className="px-4 py-2"><button type="button" disabled={!r} onClick={() => r && setDetails({ record: r, open: true })} className="font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{r?.fullName ?? 'Record removed'}</button></td>
+                                                <td className="px-4 py-2"><button type="button" disabled={!r} onClick={() => openMember(m, (list ?? []).map(x => x.id), 'this position')} className="font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{r?.fullName ?? 'Record removed'}</button></td>
                                                 <td className="max-w-[260px] truncate px-3 py-2 text-text-secondary">{r ? [r.currentDesignation, r.currentOrganization, r.location].filter(Boolean).join(' · ') : ''}</td>
                                                 <td className="px-3 py-2">
                                                     <select aria-label={`Stage of ${r?.fullName ?? 'candidate'}`} value={m.stage} disabled={busy} onChange={e => void move(m, e.target.value as Stage)} className="h-8 cursor-pointer rounded-lg border border-border bg-surface px-1.5 text-sm font-semibold text-text-primary outline-none focus:border-primary disabled:opacity-60">
@@ -389,12 +388,35 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
 
             {details && (
                 <CandidateDetails
+                    key={panelKey}
                     orgId={orgId}
-                    record={details.record}
+                    record={shownMember?.record ?? details.record}
                     open={details.open}
                     onClose={() => setDetails(d => (d ? { ...d, open: false } : d))}
-                    onEdit={() => notify('Edit the record from the Candidates tab.', 'info')}
+                    onEdit={() => {
+                        const record = shownMember?.record ?? details.record;
+                        setDetails(d => (d ? { ...d, open: false } : d));
+                        setEditor(e => ({ record, key: (e?.key ?? 0) + 1, open: true }));
+                    }}
                     onChanged={refresh}
+                    pipeline={pipelineCtx}
+                />
+            )}
+            {editor && (
+                <RecordForm
+                    key={editor.key}
+                    orgId={orgId}
+                    record={editor.record}
+                    open={editor.open}
+                    onClose={() => { setEditor(e => (e ? { ...e, open: false } : e)); setDetails(d => (d ? { ...d, open: true } : d)); }}
+                    onSaved={saved => {
+                        setEditor(e => (e ? { ...e, open: false } : e));
+                        // A fresh panel, so it reads the saved record instead of the one it had loaded.
+                        setPanelKey(k => k + 1);
+                        setDetails(d => (d ? { ...d, record: saved, open: true } : d));
+                        refresh();
+                        notify(`${saved.fullName} saved`, 'success');
+                    }}
                 />
             )}
         </div>
