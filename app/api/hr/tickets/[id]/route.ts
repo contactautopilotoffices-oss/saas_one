@@ -213,8 +213,58 @@ export async function GET(
             }
         }
 
+        // Resolve past level assignees from audit logs & assigned_history so historical steps show the actual handlers
+        const pastLevelAssigneeIds: Record<number, string> = {};
+        const createdLog = (ticket.audit_logs || []).find((l: any) => l.action === 'CREATED');
+        if (createdLog?.new_values?.assigned_to) {
+            pastLevelAssigneeIds[1] = createdLog.new_values.assigned_to;
+        } else if (Array.isArray(ticket.assigned_history) && ticket.assigned_history.length > 0) {
+            pastLevelAssigneeIds[1] = ticket.assigned_history[0];
+        }
+
+        for (const log of (ticket.audit_logs || [])) {
+            const act = (log.action || '').toUpperCase();
+            if (act.includes('ESCALAT')) {
+                const lvl = Number(log.new_values?.level || log.new_values?.current_level || act.match(/L(\d+)/)?.[1]);
+                const assignedId = log.new_values?.assigned_to || log.new_values?.assigned_to_user_id;
+                if (lvl && assignedId) {
+                    pastLevelAssigneeIds[lvl] = assignedId;
+                }
+                const oldLvl = Number(log.old_values?.level || log.old_values?.current_level);
+                const oldAssigned = log.old_values?.assigned_to || log.old_values?.assigned_to_user_id;
+                if (oldLvl && oldAssigned && !pastLevelAssigneeIds[oldLvl]) {
+                    pastLevelAssigneeIds[oldLvl] = oldAssigned;
+                }
+            }
+        }
+
+        if (ticket.current_level && ticket.assigned_to_user_id) {
+            pastLevelAssigneeIds[ticket.current_level] = ticket.assigned_to_user_id;
+        }
+
+        const historyUserMap = new Map<string, string>();
+        const neededUserIds = Array.from(new Set(Object.values(pastLevelAssigneeIds).filter(Boolean)));
+        if (neededUserIds.length > 0) {
+            try {
+                const { data: histUsers } = await supabaseAdmin
+                    .from('users')
+                    .select('id, full_name, email')
+                    .in('id', neededUserIds);
+                (histUsers || []).forEach(u => {
+                    historyUserMap.set(u.id, u.full_name || u.email || 'Handler');
+                });
+            } catch (err) {
+                console.warn('Error fetching history users for escalation flow:', err);
+            }
+        }
+
         // Resolve names for each escalation level authority
-        let l1Name = ticket.assigned_to?.full_name || ticket.assigned_to?.email || 'L1 Manager';
+        let l1Name = 'L1 Manager';
+        if (ticket.current_level === 1 && ticket.assigned_to) {
+            l1Name = ticket.assigned_to.full_name || ticket.assigned_to.email || l1Name;
+        } else if (pastLevelAssigneeIds[1] && historyUserMap.has(pastLevelAssigneeIds[1])) {
+            l1Name = historyUserMap.get(pastLevelAssigneeIds[1])!;
+        }
         let l2Name = 'HR Ops';
         let l3Name = 'HR Head';
         let l4Name = 'Director';
@@ -342,10 +392,22 @@ export async function GET(
         const escalationFlow: Array<{ level: number; label: string; assignee: string }> = [];
         for (let i = 1; i <= totalLevelsCount; i++) {
             let assigneeName = '';
+            // A. If this is the active level currently being handled:
+            if (i === ticket.current_level && ticket.assigned_to?.full_name) {
+                assigneeName = ticket.assigned_to.full_name;
+            }
+
+            // B. If this is a past completed level, retrieve the actual handler from audit history:
+            if (!assigneeName && i < ticket.current_level) {
+                const pastUid = pastLevelAssigneeIds[i];
+                if (pastUid && historyUserMap.has(pastUid)) {
+                    assigneeName = historyUserMap.get(pastUid)!;
+                }
+            }
+
+            // C. Dynamic check: Are specific user(s) assigned in Admin Config for this level?
             const stepAssignees = getLevelAssigneeIds(escalationConfig, tType, i, getTicketPropertyId(ticket));
-            
-            // 1. Dynamic check: Are specific user(s) assigned in Admin Config for this level?
-            if (Array.isArray(stepAssignees) && stepAssignees.length > 0) {
+            if (!assigneeName && Array.isArray(stepAssignees) && stepAssignees.length > 0) {
                 const filterOr = stepAssignees.map((id: string) => `id.eq.${id},user_id.eq.${id}`).join(',');
                 const { data: targetProfs } = await supabaseAdmin
                     .from('employee_profiles')
@@ -362,7 +424,7 @@ export async function GET(
                 }
             }
 
-            // 2. If not explicitly assigned, check the designated ownerType from Admin Config
+            // D. If not explicitly assigned, check the designated ownerType from Admin Config / default role
             if (!assigneeName) {
                 const currentLevelMeta = (customFlowLevels || []).find((l: any) => l.level === i);
                 const ownerType = currentLevelMeta?.ownerType;
@@ -380,7 +442,7 @@ export async function GET(
                 }
             }
 
-            // 3. Fallback to ticket.assigned_to ONLY if no assignee was resolved from admin config
+            // E. Fallback to ticket.assigned_to ONLY if this is the active current level
             if (!assigneeName && ticket.current_level === i && ticket.assigned_to?.full_name) {
                 assigneeName = ticket.assigned_to.full_name;
             }
