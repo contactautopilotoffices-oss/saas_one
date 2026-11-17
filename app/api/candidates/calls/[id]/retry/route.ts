@@ -7,7 +7,8 @@ import { CALL_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../../_lib/auth";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+/** Same work as confirm: Sarvam waits up to 2 minutes, then Whisper, then the reading. */
+export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 

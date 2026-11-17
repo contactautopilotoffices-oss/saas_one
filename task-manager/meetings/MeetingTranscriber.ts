@@ -88,6 +88,8 @@ export interface SarvamStartInput {
     files: AudioFile[];
     /** People present (attendees + typed names). Used as the speaker count hint and as key terms for spelling. */
     names: string[];
+    /** Sarvam's model id (no 'sarvam:' prefix). Meetings leave it out and get SARVAM_MODEL; recruitment calls pass their job's choice. */
+    model?: string;
 }
 
 export async function startSarvamJob(input: SarvamStartInput, deps: SttDeps = {}): Promise<SarvamStart> {
@@ -106,7 +108,7 @@ export async function startSarvamJob(input: SarvamStartInput, deps: SttDeps = {}
         const names = [...new Set(input.names.map(clean).filter(n => n.length > 0 && n.length <= 64))].slice(0, SARVAM_MAX_KEYTERMS);
         const speakers = Math.min(20, input.names.length);
         const jobParameters: Record<string, unknown> = {
-            model: SARVAM_MODEL, mode: SARVAM_MODE, language_code: SARVAM_LANGUAGE, with_timestamps: true, with_diarization: true,
+            model: input.model || SARVAM_MODEL, mode: SARVAM_MODE, language_code: SARVAM_LANGUAGE, with_timestamps: true, with_diarization: true,
             ...(speakers >= 2 ? { num_speakers: speakers } : {}),
             ...(names.length ? { keyterms: names } : {}),
         };
