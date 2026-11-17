@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { Toast } from '@/frontend/components/ui/Toast';
-import { ClipboardCheck, LayoutGrid, History, FileBarChart, Settings, FlaskConical } from 'lucide-react';
+import { ClipboardCheck, LayoutGrid, History, FileBarChart, Settings, FlaskConical, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import SOPTemplateManager from './SOPTemplateManager';
 import SOPCompletionHistory from './SOPCompletionHistory';
@@ -13,6 +13,7 @@ import SOPCompletionDetail from './SOPCompletionDetail';
 import SOPReportSection from './SOPReportSection';
 import { SOPChecklistSettingsSection } from './SOPChecklistSettingsSection';
 import { SOPVisionTestingModal } from './SOPVisionTestingModal';
+import SOPAiLearningLoop from './SOPAiLearningLoop';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
 
 interface SOPDashboardProps {
@@ -33,7 +34,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
             const urlParams = new URLSearchParams(window.location.search);
             const explicitView = urlParams.get('view') || urlParams.get('sop_view') || (urlParams.get('tab') !== 'checklist' ? urlParams.get('tab') : null);
             const savedView = sessionStorage.getItem(`sop_active_view_${propertyId || 'global'}`);
-            const validViews = ['list', 'runner', 'history', 'detail', 'reports', 'settings'];
+            const validViews = ['list', 'runner', 'history', 'detail', 'reports', 'settings', 'learning'];
 
             const active = (explicitView && validViews.includes(explicitView))
                 ? explicitView
@@ -66,7 +67,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         }
     })();
 
-    const [activeView, setActiveView] = useState<'list' | 'runner' | 'history' | 'detail' | 'reports' | 'settings'>(initialParams.view as any);
+    const [activeView, setActiveView] = useState<'list' | 'runner' | 'history' | 'detail' | 'reports' | 'settings' | 'learning'>(initialParams.view as any);
     const [returnView, setReturnView] = useState<'list' | 'history' | null>(null);
     const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(initialParams.templateId);
     const [selectedCompletionId, setSelectedCompletionId] = useState<string | null>(initialParams.completionId);
@@ -273,7 +274,7 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
 
                     {/* Right side: headerRight (notification bell etc) */}
                     <div className="flex items-center gap-2">
-                        {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings') && (
+                        {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings' || activeView === 'learning') && (
                             <div className="hidden md:flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
                                 <button
                                     onClick={() => setActiveView('list')}
@@ -303,6 +304,14 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     <Settings size={12} />
                                     Settings
                                 </button>
+                                <button
+                                    onClick={() => setActiveView('learning')}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'learning' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 hover:text-violet-900'}`}
+                                    title="SOP Checklist AI Learning Loop & Standing Prompt Memory"
+                                >
+                                    <Brain size={12} />
+                                    AI Learning Loop
+                                </button>
                                 {isOrgSuperAdmin && (
                                     <button
                                         onClick={() => setShowVisionLab(true)}
@@ -320,44 +329,51 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                 </div>
 
                 {/* Mobile View Toggle - Separate Row for accessibility */}
-                {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings') && (
+                {isAdmin && (activeView === 'list' || activeView === 'history' || activeView === 'reports' || activeView === 'settings' || activeView === 'learning') && (
                     <div className="md:hidden px-3 pb-1">
-                        <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 w-full">
+                        <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 w-full overflow-x-auto">
                             <button
                                 onClick={() => setActiveView('list')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                                className={`flex-1 min-w-[65px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeView === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
                             >
-                                <LayoutGrid size={12} />
+                                <LayoutGrid size={11} />
                                 Templates
                             </button>
                             <button
                                 onClick={() => setActiveView('history')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'history' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                                className={`flex-1 min-w-[60px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeView === 'history' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
                             >
-                                <History size={12} />
+                                <History size={11} />
                                 History
                             </button>
                             <button
                                 onClick={() => setActiveView('reports')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'reports' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                                className={`flex-1 min-w-[60px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeView === 'reports' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
                             >
-                                <FileBarChart size={12} />
+                                <FileBarChart size={11} />
                                 Reports
                             </button>
                             <button
                                 onClick={() => setActiveView('settings')}
-                                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeView === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
+                                className={`flex-1 min-w-[60px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeView === 'settings' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}
                             >
-                                <Settings size={12} />
+                                <Settings size={11} />
                                 Settings
+                            </button>
+                            <button
+                                onClick={() => setActiveView('learning')}
+                                className={`flex-1 min-w-[70px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${activeView === 'learning' ? 'bg-violet-600 text-white shadow-sm' : 'text-violet-700 bg-violet-50/70'}`}
+                            >
+                                <Brain size={11} />
+                                Learning
                             </button>
                             {isOrgSuperAdmin && (
                                 <button
                                     onClick={() => setShowVisionLab(true)}
-                                    className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest text-violet-700 bg-violet-50 transition-all border border-violet-200"
+                                    className="flex-1 min-w-[65px] flex items-center justify-center gap-1 py-2 rounded-lg text-[9px] font-black uppercase tracking-widest text-violet-700 bg-violet-50 transition-all border border-violet-200"
                                 >
-                                    <FlaskConical size={12} />
-                                    Vision Lab
+                                    <FlaskConical size={11} />
+                                    Vision
                                 </button>
                             )}
                         </div>
@@ -415,6 +431,13 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                     <SOPChecklistSettingsSection 
                                         propertyId={propertyId}
                                         isAdmin={isAdmin}
+                                        isOrgSuperAdmin={isOrgSuperAdmin}
+                                    />
+                                )}
+
+                                {activeView === 'learning' && (
+                                    <SOPAiLearningLoop
+                                        propertyId={propertyId}
                                         isOrgSuperAdmin={isOrgSuperAdmin}
                                     />
                                 )}

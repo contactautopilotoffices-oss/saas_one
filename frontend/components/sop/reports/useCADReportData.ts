@@ -213,6 +213,53 @@ export function useCADReportData(propertyId: string, isAdmin: boolean) {
         fetchCompletions();
     }, [fetchCompletions]);
 
+    // 3b. Self-healing auto-trigger: if any completed checklist has items with photos that are missing AI scores, evaluate them in background
+    useEffect(() => {
+        if (!propertyId || propertyId === 'all' || completions.length === 0) return;
+        const unscoredComps = completions.filter(c =>
+            c.status === 'completed' &&
+            Array.isArray(c.items) &&
+            c.items.some((it: any) =>
+                (it.photo_url || (Array.isArray(it.photos) && it.photos.length > 0)) &&
+                (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined) &&
+                !it.ai_cleanliness_reason?.startsWith('Skipped')
+            )
+        );
+
+        if (unscoredComps.length === 0) return;
+
+        let isCancelled = false;
+        const autoHeal = async () => {
+            for (const comp of unscoredComps) {
+                if (isCancelled) break;
+                const unscored = (comp.items || []).filter(
+                    (it: any) =>
+                        (it.photo_url || (Array.isArray(it.photos) && it.photos.length > 0)) &&
+                        (it.ai_cleanliness_score === null || it.ai_cleanliness_score === undefined) &&
+                        !it.ai_cleanliness_reason?.startsWith('Skipped')
+                );
+                for (const it of unscored) {
+                    if (isCancelled) break;
+                    try {
+                        const res = await fetch(`/api/properties/${comp.property_id || propertyId}/sop/completions/${comp.id}/score-photo`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ completionItemId: it.id }),
+                        });
+                        if (res.ok && !isCancelled) {
+                            fetchCompletions();
+                        }
+                    } catch {
+                        // Ignore background failures
+                    }
+                }
+            }
+        };
+
+        autoHeal();
+        return () => { isCancelled = true; };
+    }, [completions, propertyId, fetchCompletions]);
+
     // 4. Map and Aggregate Areas with Scores
     const areaAudits: AreaAuditScore[] = useMemo(() => {
         if (!cadTemplate?.areas) return [];
