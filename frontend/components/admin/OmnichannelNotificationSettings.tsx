@@ -92,6 +92,11 @@ const getRoleStyle = (roleId: string) => {
         case 'property_admin':
         case 'org_admin':
             return 'bg-purple-50 text-purple-700 border-purple-200';
+        case 'soft_service_staff':
+        case 'soft_service_manager':
+        case 'soft_service_supervisor':
+        case 'soft_services':
+            return 'bg-teal-50 text-teal-700 border-teal-200';
         case 'staff':
         case 'mst':
         case 'security':
@@ -112,6 +117,10 @@ const formatRoleLabel = (roleId: string) => {
     if (r === 'master_admin') return 'Master Admin';
     if (r === 'staff') return 'Staff';
     if (r === 'mst') return 'MST';
+    if (r === 'soft_service_staff') return 'Soft Service Staff';
+    if (r === 'soft_service_manager') return 'Soft Service Manager';
+    if (r === 'soft_service_supervisor') return 'Soft Service Supervisor';
+    if (r === 'soft_services') return 'Soft Services';
     if (r === 'sales') return 'Sales Executive';
     if (r === 'hr') return 'HR Admin';
     if (r === 'hr_head') return 'HR Head';
@@ -641,20 +650,20 @@ const MODULES_META: ModuleMeta[] = [
     },
     {
         id: 'facility_requests',
-        name: 'Facility QR Requests',
-        description: 'Instant multi-channel alerts sent to internal maintenance staff and managers when an issue is reported via facility QR code.',
+        name: 'Client Support (QR Requests)',
+        description: 'Instant multi-channel alerts sent to property admins, MST, and soft services staff when an issue is reported via client support QR code.',
         icon: QrCode,
         color: 'text-sky-600 bg-sky-50 border-sky-100',
         events: [
             {
                 key: 'facility_request_created',
-                name: 'New Facility Request (QR Scanned)',
-                description: 'Sent immediately to designated maintenance staff, MST, and property admins to dispatch resolution.',
+                name: 'New Client Support Ticket (QR Scanned)',
+                description: 'Sent immediately to designated property admins, MST, and soft services staff to dispatch resolution.',
             },
             {
                 key: 'facility_request_resolved',
-                name: 'Facility Request Resolved',
-                description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
+                name: 'Client Support Ticket Resolved',
+                description: 'Sent to designated property managers when an on-ground staff member marks the client support request as resolved.',
             }
         ]
     },
@@ -761,7 +770,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
     facility_requests: {
-        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
+        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'mst', 'staff', 'soft_service_staff'], user_ids: [], notify_assignee: true },
         facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
     },
     visitor_management: {
@@ -999,7 +1008,10 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 }
             }
 
-            const baseRoles = ['org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales'];
+            const baseRoles = [
+                'org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales',
+                'soft_service_staff', 'soft_service_manager', 'soft_service_supervisor', 'soft_services'
+            ];
             baseRoles.forEach(r => rolesSet.add(r));
 
             setAvailableRoles(
