@@ -15,7 +15,7 @@ interface BookableProperty {
 const LAST_PROPERTY_KEY = 'book_room_last_property';
 
 /**
- * Meeting room booking for HR, CRM, IT and Design users.
+ * Meeting room booking for HR, CRM, IT, Design and Tech users.
  * Step 1: choose a property. Step 2: choose a room and slot (no credits needed).
  */
 export default function BookMeetingRoomPage() {
@@ -38,7 +38,7 @@ export default function BookMeetingRoomPage() {
                 const data = await res.json();
                 if (!res.ok) {
                     setError(res.status === 403
-                        ? 'Meeting room booking is available for HR, CRM, IT and Design teams only.'
+                        ? 'Meeting room booking is available for HR, CRM, IT, Design and Tech teams only.'
                         : (data.error || 'Failed to load properties'));
                     return;
                 }
