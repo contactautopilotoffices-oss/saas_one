@@ -19,8 +19,11 @@ export async function POST(
         const body = await request.json();
         const { file_url, total_cost, vendor_details, notes, approver_uid } = body;
 
-        if (!file_url) {
-            return NextResponse.json({ error: 'Missing file URL' }, { status: 400 });
+        const trimmedNotes = typeof notes === 'string' ? notes.trim() : '';
+
+        // Allow sending for approval with either an attachment OR notes
+        if (!file_url && !trimmedNotes) {
+            return NextResponse.json({ error: 'Please attach a file or provide a note explaining the request' }, { status: 400 });
         }
 
         const adminSupabase = createAdminClient();
@@ -55,10 +58,10 @@ export async function POST(
             .from('material_request_comparatives')
             .insert({
                 request_id: requestId,
-                file_url,
+                file_url: file_url || null,
                 total_cost: parsedCost,
                 vendor_details,
-                notes,
+                notes: trimmedNotes || null,
                 approver_uid: approver_uid || null,
                 status: 'pending_approval',
                 created_by: user.id

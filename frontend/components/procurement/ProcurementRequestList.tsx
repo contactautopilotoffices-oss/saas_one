@@ -323,37 +323,41 @@ export default function ProcurementRequestList({
     };
 
     const handleUploadComparative = async () => {
-        if (!selectedRequest || !comparativeFile || !comparativePrice) {
-            showToast('File and total cost are required', 'error');
+        if (!selectedRequest || (!comparativeFile && !comparativeNotes.trim())) {
+            showToast('Please attach a file or add a note to send for approval', 'error');
             return;
         }
         setIsSubmitting(true);
         try {
-            // 1. Upload File
-            const formData = new FormData();
-            formData.append('file', comparativeFile);
-            const uploadRes = await fetch(`/api/procurement/requests/${selectedRequest.id}/upload`, {
-                method: 'POST',
-                body: formData
-            });
-            if (!uploadRes.ok) throw new Error('Failed to upload comparative file');
-            const uploadData = await uploadRes.json();
+            let uploadedUrl: string | null = null;
+            if (comparativeFile) {
+                // 1. Upload File
+                const formData = new FormData();
+                formData.append('file', comparativeFile);
+                const uploadRes = await fetch(`/api/procurement/requests/${selectedRequest.id}/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!uploadRes.ok) throw new Error('Failed to upload comparative file');
+                const uploadData = await uploadRes.json();
+                uploadedUrl = uploadData.url;
+            }
 
             // 2. Submit Comparative
             const res = await fetch(`/api/procurement/requests/${selectedRequest.id}/comparatives`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    file_url: uploadData.url,
-                    total_cost: parseFloat(comparativePrice),
-                    notes: comparativeNotes
+                    file_url: uploadedUrl,
+                    total_cost: comparativePrice ? parseFloat(comparativePrice) : null,
+                    notes: comparativeNotes.trim() || null
                 })
             });
             if (res.ok) {
                 setComparativeFile(null);
                 setComparativePrice('');
                 setComparativeNotes('');
-                showToast('Comparative uploaded for approval', 'success');
+                showToast('Comparative sent for approval', 'success');
                 if (onAction) onAction();
                 fetchRequests(); // refresh local data
             } else {
@@ -925,9 +929,15 @@ export default function ProcurementRequestList({
                                                             {comp.total_cost != null ? `Total Cost: ₹${Number(comp.total_cost).toLocaleString()}` : 'Total Cost: Not specified'}
                                                         </p>
                                                     </div>
-                                                    <a href={maskStorageUrl(comp.file_url) || comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
-                                                        <FileText className="w-3 h-3" /> View File
-                                                    </a>
+                                                    {comp.file_url ? (
+                                                        <a href={maskStorageUrl(comp.file_url) || comp.file_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] font-bold text-primary hover:underline bg-primary/10 px-2 py-1 rounded-md">
+                                                            <FileText className="w-3 h-3" /> View File
+                                                        </a>
+                                                    ) : (
+                                                        <span className="flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-md">
+                                                            <FileText className="w-3 h-3 text-slate-400" /> Note Only
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 {comp.notes && <p className="text-[10px] text-slate-500 mt-2">{comp.notes}</p>}
                                                 <div className="flex flex-col gap-1 mt-3 pt-3 border-t border-slate-100">
@@ -989,35 +999,52 @@ export default function ProcurementRequestList({
                                     return (
                                         <div className="mt-4 p-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 space-y-4">
                                             <p className="text-[10px] font-black text-primary uppercase tracking-widest flex items-center gap-2">
-                                                <Plus className="w-3.5 h-3.5" /> Upload New Comparative
+                                                <Plus className="w-3.5 h-3.5" /> Send for Approval / Add Comparative
                                             </p>
-                                        <input
-                                            type="file"
-                                            accept="application/pdf,image/*,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                                            onChange={(e) => setComparativeFile(e.target.files?.[0] || null)}
-                                            className="w-full text-xs text-slate-600 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
-                                        />
-                                        <input
-                                            type="number"
-                                            placeholder="Total Comparative Cost ₹"
-                                            value={comparativePrice}
-                                            onChange={(e) => setComparativePrice(e.target.value)}
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
-                                        />
-                                        <textarea
-                                            placeholder="Notes / Vendor info (optional)"
-                                            value={comparativeNotes}
-                                            onChange={(e) => setComparativeNotes(e.target.value)}
-                                            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
-                                            rows={2}
-                                        />
-                                        <button
-                                            onClick={handleUploadComparative}
-                                            disabled={isSubmitting || !comparativeFile || !comparativePrice}
-                                            className="w-full py-2.5 rounded-xl bg-slate-900 text-white hover:bg-primary transition-all font-black text-[10px] uppercase tracking-widest shadow-md disabled:opacity-50"
-                                        >
-                                        </button>
-                                    </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                                                    Upload File / Image (Optional)
+                                                </label>
+                                                <div className="flex items-center gap-2">
+                                                    <input
+                                                        type="file"
+                                                        accept="application/pdf,image/*,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                                                        onChange={(e) => setComparativeFile(e.target.files?.[0] || null)}
+                                                        className="w-full text-xs text-slate-600 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                                                    />
+                                                    {comparativeFile && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setComparativeFile(null)}
+                                                            className="text-[10px] font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg border border-rose-200 shrink-0 transition-colors"
+                                                        >
+                                                            Clear
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <input
+                                                type="number"
+                                                placeholder="Total Comparative Cost ₹ (Optional)"
+                                                value={comparativePrice}
+                                                onChange={(e) => setComparativePrice(e.target.value)}
+                                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                            />
+                                            <textarea
+                                                placeholder="Notes / Vendor info / Reason (Required if no file attached)"
+                                                value={comparativeNotes}
+                                                onChange={(e) => setComparativeNotes(e.target.value)}
+                                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-primary/20"
+                                                rows={2}
+                                            />
+                                            <button
+                                                onClick={handleUploadComparative}
+                                                disabled={isSubmitting || (!comparativeFile && !comparativeNotes.trim())}
+                                                className="w-full py-2.5 rounded-xl bg-slate-900 text-white hover:bg-primary transition-all font-black text-[10px] uppercase tracking-widest shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                            >
+                                                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Send for Approval'}
+                                            </button>
+                                        </div>
                                 );
                             })()}
                             </div>
