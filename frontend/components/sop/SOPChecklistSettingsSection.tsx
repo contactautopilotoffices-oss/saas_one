@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Sparkles, CheckSquare, ShieldCheck, UserCheck, Bell, Save, Loader2, Info, MapPin, Camera, Search, ChevronDown, Check, X, MessageSquare, FlaskConical } from 'lucide-react';
+import { Sparkles, CheckSquare, ShieldCheck, UserCheck, Bell, Save, Loader2, Info, MapPin, Camera, Search, ChevronDown, Check, X, MessageSquare, FlaskConical, Brain } from 'lucide-react';
 import { Toast } from '@/frontend/components/ui/Toast';
 import { SOPVisionTestingModal } from './SOPVisionTestingModal';
 
@@ -334,6 +334,38 @@ export const SOPChecklistSettingsSection: React.FC<SOPChecklistSettingsSectionPr
                         >
                             <Sparkles size={13} />
                             <span>Open Vision Lab</span>
+                        </button>
+                    </div>
+                )}
+
+                {/* AI Learning Loop Launcher - Org Super Admin & Admins */}
+                {isOrgSuperAdmin && (
+                    <div className="p-4 bg-gradient-to-r from-emerald-50 to-teal-50/70 rounded-2xl border border-emerald-200/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center flex-shrink-0 shadow-xs">
+                                <Brain size={18} />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <p className="text-xs font-black text-emerald-950">AI Learning Loop & Standing Memory</p>
+                                    <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase bg-emerald-200 text-emerald-800">Continuous AI</span>
+                                </div>
+                                <p className="text-[11px] text-emerald-700/80 font-medium">
+                                    See checker corrections & comments, how the vision model compiles them into standing prompt rules, and simulate adherence.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const url = new URL(window.location.href);
+                                url.searchParams.set('view', 'learning');
+                                window.location.href = url.toString();
+                            }}
+                            className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-sm transition-all flex-shrink-0"
+                        >
+                            <Sparkles size={13} />
+                            <span>Open Learning Loop</span>
                         </button>
                     </div>
                 )}
