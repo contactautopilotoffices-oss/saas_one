@@ -36,7 +36,8 @@ export async function PATCH(
         if (isCallerError(caller)) return caller;
 
         const body = await request.json().catch(() => null);
-        const nextStatus = (body as { status?: unknown } | null)?.status;
+        const rawStatus = (body as { status?: unknown } | null)?.status;
+        const nextStatus = typeof rawStatus === 'string' ? rawStatus.trim().toUpperCase() : rawStatus;
         if (!isValidStatus(nextStatus)) {
             return NextResponse.json(
                 { error: `status must be one of ${VALID_STATUSES.join(', ')}` },
