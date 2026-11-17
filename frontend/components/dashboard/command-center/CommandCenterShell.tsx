@@ -12,6 +12,8 @@ import {
   Plus,
   LogOut,
   SlidersHorizontal,
+  Search,
+  X,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -47,10 +49,16 @@ function PropertySelector({
   onChange: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setSearch('');
+      return;
+    }
+    setTimeout(() => searchInputRef.current?.focus(), 50);
     const close = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -64,6 +72,12 @@ function PropertySelector({
       : properties.find((p) => p.id === selectedId)?.name ?? 'All properties';
 
   const options: PropertyOption[] = [{ id: 'all', name: 'All properties' }, ...properties];
+
+  const filteredOptions = useMemo(() => {
+    if (!search.trim()) return options;
+    const q = search.toLowerCase().trim();
+    return options.filter((p) => p.name?.toLowerCase().includes(q));
+  }, [options, search]);
 
   return (
     <div ref={ref} className="relative" data-org={orgId}>
@@ -80,9 +94,33 @@ function PropertySelector({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-xl border border-white/10 bg-[#15181f]/95 shadow-2xl backdrop-blur-xl">
-          <div className="max-h-64 overflow-y-auto py-1.5">
-            {options.map((p) => {
+        <div className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-[#15181f]/95 shadow-2xl backdrop-blur-xl">
+          {options.length > 5 && (
+            <div className="p-2 border-b border-white/10">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="Search properties..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-8 pr-7 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/30"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="max-h-64 overflow-y-auto py-1.5 custom-scrollbar">
+            {filteredOptions.map((p) => {
               const selected = p.id === selectedId;
               return (
                 <button
@@ -104,8 +142,8 @@ function PropertySelector({
                 </button>
               );
             })}
-            {properties.length === 0 && (
-              <div className="px-3.5 py-2 text-[11.5px] text-white/40">No properties found</div>
+            {filteredOptions.length === 0 && (
+              <div className="px-3.5 py-4 text-center text-[11.5px] text-white/40">No properties match &quot;{search}&quot;</div>
             )}
           </div>
         </div>
