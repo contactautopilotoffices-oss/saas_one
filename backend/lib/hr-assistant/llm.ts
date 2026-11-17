@@ -9,6 +9,7 @@
  */
 import { resolveProvider } from "@/backend/lib/council/llm";
 
+import { withProviderKeys } from "@/backend/lib/llm/providerKeys";
 import { getGroq, isRateLimitError } from "./clients";
 
 export interface ModelStep {
@@ -38,7 +39,8 @@ export function engyConfig(env: NodeJS.ProcessEnv = process.env): { baseUrl: str
 }
 
 async function callGroq(step: ModelStep, req: ChatRequest): Promise<string> {
-  const response = await getGroq().chat.completions.create({
+  // Owner 2026-11-15: the shared Groq keys, in turn; a used-up key moves the call to the next one.
+  const response = await withProviderKeys("groq", key => getGroq(key).chat.completions.create({
     model: step.model,
     temperature: req.temperature ?? 0,
     ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
@@ -48,7 +50,7 @@ async function callGroq(step: ModelStep, req: ChatRequest): Promise<string> {
       { role: "system", content: req.system },
       { role: "user", content: req.user },
     ],
-  });
+  }));
   return response.choices[0]?.message?.content?.trim() ?? "";
 }
 

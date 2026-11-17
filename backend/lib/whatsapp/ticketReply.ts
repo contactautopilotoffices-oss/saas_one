@@ -3,11 +3,12 @@ import { canonicalPhone, normalizeInbound } from './assistant/protocol.mjs';
 /**
  * Ticket replies on WhatsApp (owner 2026-11-04).
  *
- * OUT: the ticket_reply_v1 notification comes from the DB trigger on ticket_comments. After it is sent, its WhatsApp
- *      message id is saved here against the comment it carried.
+ * OUT: the ticket_reply_v1 notification comes from the DB trigger on ticket_comments; who receives it is the
+ *      Omnichannel rule's call (Settings -> Notifications -> Tickets -> "Ticket Reply"). After it is sent, its
+ *      WhatsApp message id is saved here against the comment it carried.
  * IN:  when someone swipes right on that message, WhatsApp tells us which message they answered, so the ticket is known
- *      exactly. Their text becomes their comment, and the same DB trigger then notifies the other person, so there is no
- *      second hook and no loop (the person who wrote a comment is never its recipient).
+ *      exactly. Their text becomes their comment, and the same DB trigger then notifies that rule's recipients, so there
+ *      is no second hook and no loop (the person who wrote a comment is never its recipient).
  *
  * No LLM on purpose (doctrine L1, [BAA p.104]): the path is known. A message that is not a swipe on a ticket notification
  * is never guessed at; it carries on to the bots exactly as before. A wrong guess would show it to the wrong person.
@@ -23,7 +24,7 @@ const FILE_KINDS = new Set(['image', 'video', 'audio', 'voice', 'ptt', 'document
 export const replies = {
     added: (ticket: string) => `✅ Your reply was added to ticket #${ticket}.`,
     fileNotAdded: (ticket: string) => `Files and voice notes can't be added from WhatsApp yet. Please attach it on ticket #${ticket} in FMS, or type your reply here.`,
-    notOnTicket: (ticket: string) => `You are no longer on ticket #${ticket}, so this reply was not added. Please open the ticket in FMS.`,
+    notOnTicket: (ticket: string) => `This number does not have access to ticket #${ticket}, so the reply was not added. Please open the ticket in FMS.`,
     gone: 'That ticket is no longer available, so this reply was not added.',
     failed: 'Sorry, I could not add that reply. Please try again in a minute, or reply on the ticket in FMS.',
 };
@@ -31,6 +32,7 @@ export const replies = {
 export interface TicketReplyTicket {
     id: string;
     ticket_number: string | null;
+    property_id: string | null;
     raised_by: string | null;
     assigned_to: string | null;
 }
@@ -39,6 +41,8 @@ export interface TicketReplyDeps {
     quote(phone: string, quotedIds: string[]): Promise<{ workflow: string; conversation_id: string } | null>;
     ticketOfComment(commentId: string): Promise<TicketReplyTicket | null>;
     findUser(phone: string): Promise<{ id: string } | null>;
+    /** Anyone who may comment on the ticket in FMS may reply to it on WhatsApp; the two principals always may. */
+    canComment(userId: string, ticket: TicketReplyTicket): Promise<boolean>;
     /** 'duplicate' = this WhatsApp message already added its comment. */
     addComment(input: { ticketId: string; userId: string; text: string; messageId: string; repliedToCommentId: string }): Promise<'added' | 'duplicate'>;
     send(phone: string, text: string, inboundAt: string): Promise<void>;
@@ -111,7 +115,14 @@ export async function claimTicketReply(body: unknown, deps?: TicketReplyDeps): P
         const number = ticket.ticket_number || 'N/A';
 
         const user = await io.findUser(inbound.phone);
-        if (!user || (user.id !== ticket.raised_by && user.id !== ticket.assigned_to)) {
+        if (!user) {
+            await answer(replies.notOnTicket(number));
+            return { handled: true };
+        }
+        // The comment box in FMS is open to everyone who can open the ticket, so WhatsApp follows it:
+        // the requester and the assignee always, and anyone else who works that property.
+        const isPrincipal = user.id === ticket.raised_by || user.id === ticket.assigned_to;
+        if (!isPrincipal && !(await io.canComment(user.id, ticket))) {
             await answer(replies.notOnTicket(number));
             return { handled: true };
         }
@@ -143,11 +154,19 @@ async function liveDeps(): Promise<TicketReplyDeps> {
         findUser: findWhatsAppUser,
         async ticketOfComment(commentId) {
             const { data, error } = await supabaseAdmin.from('ticket_comments')
-                .select('ticket:tickets(id, ticket_number, raised_by, assigned_to)')
+                .select('ticket:tickets(id, ticket_number, property_id, raised_by, assigned_to)')
                 .eq('id', commentId)
                 .maybeSingle();
             if (error) throw error;
             return (data?.ticket as unknown as TicketReplyTicket | null) || null;
+        },
+        async canComment(userId, ticket) {
+            if (!ticket.property_id) return false;
+            // The same property list the WhatsApp assistant works from, so one answer to "may this
+            // number act on this site" serves every WhatsApp path.
+            const { getWhatsAppProperties } = await import('./assistant/access');
+            const properties = await getWhatsAppProperties(userId, true);
+            return (properties || []).some(property => String(property.id) === String(ticket.property_id));
         },
         async addComment({ ticketId, userId, text: comment, messageId, repliedToCommentId }) {
             const { error } = await supabaseAdmin.from('ticket_comments').insert({

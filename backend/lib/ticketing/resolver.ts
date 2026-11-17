@@ -1,17 +1,17 @@
 /**
  * Ticket Classifier Resolver
- * 
- * Orchestrates the hybrid classification flow:
- * 1. Rule Engine (classifyTicketEnhanced)
- * 2. Confidence Analyzer (determine zone)
- * 3. LLM Gateway (if Zone B/C)
- * 4. Final Decision
- * 5. Log to database
+ *
+ * Owner 2026-11-15: "i want everything to go to the llm model ... and it must be configurable from the brain".
+ * 1. The AI sorts every ticket (aiClassifier.ts): category from the real category list, team, priority, risk, reason.
+ *    The model is the "Sorting new tickets" job in Brain → AI models; backups are tried in order.
+ * 2. Only when every model fails do the old keyword rules (classifyTicketEnhanced) decide, so no ticket is stuck.
+ * 3. Log to database (ticket_classification_logs), naming the model that answered.
+ * The keyword scores and the confidence zone are still worked out, but only for that fallback and for the log.
  */
 
-import { classifyTicketEnhanced, EnhancedClassificationResult, SkillGroup } from './classifyTicket';
-import { analyzeConfidence, getTopCandidates, ConfidenceAnalysis, ClassificationZone } from './confidence';
-import { classifyWithGroq, LLMInput } from '../llm/groq';
+import { classifyTicketEnhanced, classifyTicket, EnhancedClassificationResult, SkillGroup } from './classifyTicket';
+import { analyzeConfidence, ConfidenceAnalysis, ClassificationZone } from './confidence';
+import { classifyWithAi, classifyManyWithAi, loadCategoryOptions, loadCorrections, type AiDeps, type AiVerdict, type CategoryOption, type Correction } from './aiClassifier';
 import { createClient } from '@supabase/supabase-js';
 import { emitWebhook } from './webhooks';
 
@@ -35,6 +35,11 @@ export interface ResolvedClassification {
     risk_flag?: string | null;
     llm_reasoning?: string | null;
     priority?: string | null;
+    /**
+     * Owner 2026-11-15: the AI's own rating of how sure it is, 0–100, saved as the ticket's confidence_score and shown as
+     * "72% (Medium)". Not set when the keyword rules sorted the ticket (the caller then keeps its old value).
+     */
+    confidenceScore?: number;
 
     // Original rule result (for logging)
     ruleResult: EnhancedClassificationResult;
@@ -42,6 +47,8 @@ export interface ResolvedClassification {
 
     // LLM details (if used)
     llmResult?: {
+        /** The model that answered (catalog id, e.g. 'anthropic:claude-haiku-5-5'). */
+        model?: string;
         selectedBucket: string;
         secondaryBucket?: string | null;
         priority?: string;
@@ -76,19 +83,32 @@ export interface ClassificationLogEntry {
     zone: ClassificationZone;
 }
 
-/**
- * Main resolver function
- * Orchestrates the entire hybrid classification flow
- */
-export async function resolveClassification(ticketText: string, dbPriority?: string): Promise<ResolvedClassification> {
-    // Step 1: Run rule engine
-    const ruleResult = classifyTicketEnhanced(ticketText);
+export interface ResolveOptions {
+    /** The ticket's property: the AI then chooses from that property's categories plus the shared ones. */
+    propertyId?: string | null;
+    /** The ticket's organisation: the AI is shown that organisation's past corrections (Brain → Review → Tickets). */
+    organizationId?: string | null;
+    /** For tests: the model transport, the model list, the category list and the corrections. */
+    deps?: AiDeps;
+    categories?: CategoryOption[];
+    corrections?: Correction[];
+}
 
-    // Step 2: Analyze confidence (including semantic signals)
+const TITLE_PRIORITY: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
+
+/**
+ * Main resolver function. The second argument used to be the category's priority as a hint for the model; that is no
+ * longer needed (the model sees every category's usual priority), so a string there is accepted and ignored.
+ */
+export async function resolveClassification(ticketText: string, options?: string | ResolveOptions): Promise<ResolvedClassification> {
+    const opts: ResolveOptions = typeof options === 'object' && options ? options : {};
+
+    // The keyword rules: only the fallback now, and the scores for the log.
+    const ruleResult = classifyTicketEnhanced(ticketText);
     const confidenceAnalysis = analyzeConfidence(ruleResult, ticketText);
 
     // Default response (rule-based)
-    let finalResult: ResolvedClassification = {
+    const finalResult: ResolvedClassification = {
         issue_code: ruleResult.issue_code,
         skill_group: ruleResult.skill_group,
         confidence: ruleResult.confidence,
@@ -101,81 +121,93 @@ export async function resolveClassification(ticketText: string, dbPriority?: str
         confidenceAnalysis,
     };
 
-    // Step 3: Force LLM classification for ALL tickets (AI Assisted for all properties)
-    // We override the confidence check to ensure every ticket gets AI enrichment (risk, priority, reasoning)
-    const forceLlm = true;
-
-    if (forceLlm || confidenceAnalysis.needsLlm) {
-        // Only emit low confidence webhook if it was ACTUALLY low confidence
-        if (confidenceAnalysis.needsLlm) {
-            emitWebhook('rule.low_confidence', 'pending', {
-                text: ticketText,
-                reason: confidenceAnalysis.reason,
-                margin: ruleResult.margin,
-                top_category: ruleResult.skill_group
-            });
-        }
-
-        const topCandidates = getTopCandidates(ruleResult, 3); // Provide top 3 candidates for more context
-
-        const llmInput: LLMInput = {
-            ticket_text: ticketText,
-            candidate_buckets: ['technical', 'plumbing', 'vendor', 'soft_services'],
-            rule_scores: ruleResult.scores,
-            db_priority: dbPriority,
+    // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
+    try {
+        const [categories, corrections] = await Promise.all([
+            opts.categories ?? loadCategoryOptions(opts.propertyId),
+            opts.corrections ?? loadCorrections(opts.organizationId),
+        ]);
+        const sorted = await classifyWithAi(ticketText, categories, opts.deps, corrections);
+        applyVerdict(finalResult, sorted.verdict);
+        finalResult.llmResult = {
+            model: sorted.model,
+            selectedBucket: sorted.verdict.team,
+            secondaryBucket: null,
+            priority: TITLE_PRIORITY[sorted.verdict.priority],
+            riskFlag: sorted.verdict.risk,
+            reason: sorted.verdict.reason,
+            latencyMs: sorted.latencyMs,
+            usage: { prompt_tokens: sorted.tokensIn, completion_tokens: sorted.tokensOut, total_tokens: sorted.tokensIn + sorted.tokensOut },
         };
-
-        const llmResponse = await classifyWithGroq(llmInput);
-
-        if (llmResponse.success && llmResponse.result) {
-            const llmResult = llmResponse.result;
-
-            finalResult.llmUsed = true;
-            finalResult.llmResult = {
-                selectedBucket: llmResult.primary_category,
-                secondaryBucket: llmResult.secondary_category,
-                priority: llmResult.priority,
-                riskFlag: llmResult.risk_flag,
-                reason: llmResult.reasoning,
-                latencyMs: llmResponse.latencyMs,
-                usage: llmResponse.usage,
-            };
-
-            // Hybrid decision: Accept LLM if it returned a valid primary category
-            // (We trust the LLM's situational reasoning over rules in Zone B/C)
-            finalResult.skill_group = llmResult.primary_category as SkillGroup;
-
-            // Map primary category back to an issue_code (LLM explicit issue_code preferred, or rule candidate with positive match score)
-            if (llmResult.primary_issue_code) {
-                finalResult.issue_code = llmResult.primary_issue_code;
-            } else {
-                const matchedCandidate = topCandidates.find(c => c.skill_group === llmResult.primary_category && c.score > 0);
-                finalResult.issue_code = matchedCandidate ? matchedCandidate.issue_code : null;
-            }
-
-            finalResult.confidence = 'high';
-            finalResult.decisionSource = 'llm';
-            finalResult.llmEnhanced = true;
-            finalResult.enhancedClassification = true;
-
-            // Enrich result with extra AI metadata
-            finalResult.secondary_category_code = llmResult.secondary_category;
-            finalResult.risk_flag = llmResult.risk_flag;
-            finalResult.llm_reasoning = llmResult.reasoning;
-            finalResult.priority = llmResult.priority;
-
-            // Emit LLM invoked webhook
-            emitWebhook('llm.invoked', 'pending', {
-                ticket_id: 'pending',
-                source: 'resolver',
-                latency_ms: llmResponse.latencyMs,
-                reason: confidenceAnalysis.needsLlm ? confidenceAnalysis.reason : 'Forced AI Policy',
-                result: llmResult
-            });
-        }
+        if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
+        emitWebhook('llm.invoked', 'pending', {
+            ticket_id: 'pending',
+            source: 'resolver',
+            model: sorted.model,
+            latency_ms: sorted.latencyMs,
+            result: sorted.verdict,
+        });
+    } catch (err) {
+        console.warn('[Resolver] AI sorting failed; the keyword rules decide this ticket:', err instanceof Error ? err.message.slice(0, 500) : err);
     }
 
     return finalResult;
+}
+
+/** Writes an AI verdict onto a resolution (shared by single tickets and bulk import). */
+function applyVerdict(r: ResolvedClassification, v: AiVerdict): void {
+    r.issue_code = v.code;
+    r.skill_group = v.team;
+    r.confidence = v.vague ? 'low' : 'high';
+    r.decisionSource = 'llm';
+    r.llmUsed = true;
+    r.llmEnhanced = true;
+    r.enhancedClassification = true;
+    r.secondary_category_code = null;
+    r.risk_flag = v.risk;
+    r.llm_reasoning = v.reason;
+    r.priority = TITLE_PRIORITY[v.priority];
+    r.confidenceScore = v.confidence;
+}
+
+/** One bulk-import row, sorted. `priority` is the AI's (lowercase), null when the keyword rules decided. */
+export interface ImportSorting {
+    issue_code: string | null;
+    skill_group: SkillGroup;
+    confidence: 'high' | 'low';
+    priority: string | null;
+    risk_flag: string | null;
+    reasoning: string | null;
+    /** The AI's own 0–100 rating; null when the keyword rules sorted the row. */
+    confidenceScore: number | null;
+    source: DecisionSource;
+}
+
+/**
+ * Bulk import (Snags upload): the AI sorts the rows several at a time; a row it gave no usable answer for is sorted by
+ * the keyword rules, as every row was before. Never throws.
+ */
+export async function resolveImportRows(texts: readonly string[], options: ResolveOptions = {}): Promise<ImportSorting[]> {
+    let categories: CategoryOption[] = [];
+    let corrections: Correction[] = [];
+    try {
+        [categories, corrections] = await Promise.all([
+            options.categories ?? loadCategoryOptions(options.propertyId),
+            options.corrections ?? loadCorrections(options.organizationId),
+        ]);
+    } catch (err) {
+        console.warn('[Resolver] category list unavailable for bulk import:', err instanceof Error ? err.message : err);
+    }
+    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections);
+    return texts.map((text, i) => {
+        const hit = ai[i];
+        if (hit) {
+            const v = hit.verdict;
+            return { issue_code: v.code, skill_group: v.team, confidence: v.vague ? 'low' : 'high', priority: v.priority, risk_flag: v.risk, reasoning: v.reason, confidenceScore: v.confidence, source: 'llm' as const };
+        }
+        const rules = classifyTicket(text);
+        return { issue_code: rules.issue_code, skill_group: rules.skill_group, confidence: rules.confidence, priority: null, risk_flag: null, reasoning: null, confidenceScore: null, source: 'rule' as const };
+    });
 }
 
 /**
@@ -205,7 +237,8 @@ export async function logClassification(
         llm_bucket: resolution.llmResult?.selectedBucket,
         llm_secondary_bucket: resolution.llmResult?.secondaryBucket,
         llm_risk_flag: resolution.llmResult?.riskFlag,
-        llm_reason: resolution.llmResult?.reason,
+        // The table has no model column (no migration for this): the model that answered is named after the reason.
+        llm_reason: resolution.llmResult ? `${resolution.llmResult.reason}${resolution.llmResult.model ? ` [${resolution.llmResult.model}]` : ''}` : undefined,
         llm_latency_ms: resolution.llmResult?.latencyMs,
         prompt_tokens: resolution.llmResult?.usage?.prompt_tokens,
         completion_tokens: resolution.llmResult?.usage?.completion_tokens,

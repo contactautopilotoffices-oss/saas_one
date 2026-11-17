@@ -1,4 +1,5 @@
 import { grounded } from '@/backend/lib/whatsapp/interpreter/contracts.mjs';
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 import type { InsightDecision, InsightKind } from './TaskGateway';
 
 /**
@@ -29,7 +30,8 @@ interface Options {
 export class SuperuserAIInterpreter {
     static async interpret(text: string, context: { departments: string[] }, options: Options = {}): Promise<AIDecision | null> {
         const env = options.env || process.env;
-        const key = env.GROQ_TASK_CHAT_API_KEY;
+        // Owner 2026-11-15: the shared Groq keys, in turn (no key of its own any more).
+        const hasGroq = hasProviderKey('groq', env);
         const message = (text || '').trim();
         if (!message || message.length > 300) return null;
 
@@ -57,8 +59,8 @@ export class SuperuserAIInterpreter {
             try {
                 let content: unknown;
                 if (model.startsWith('groq:')) {
-                    if (!key) continue;   // this job's own Groq key
-                    const response = await (options.fetch || globalThis.fetch)('https://api.groq.com/openai/v1/chat/completions', {
+                    if (!hasGroq) continue;
+                    const response = await fetchWithKeys('groq', 'https://api.groq.com/openai/v1/chat/completions', key => ({
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
                         signal: AbortSignal.timeout(8000),
@@ -69,7 +71,7 @@ export class SuperuserAIInterpreter {
                             response_format: { type: 'json_object' },
                             messages: [{ role: 'system', content: system }, { role: 'user', content: JSON.stringify({ message }) }],
                         }),
-                    });
+                    }), env, options.fetch || globalThis.fetch);
                     if (!response.ok) continue;
                     const body = await response.json();
                     const raw = body?.choices?.[0]?.message?.content;

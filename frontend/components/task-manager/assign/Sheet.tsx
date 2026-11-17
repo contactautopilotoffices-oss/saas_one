@@ -21,8 +21,10 @@ export function useIsDesktop(): boolean {
  * A panel that slides up from the bottom of a phone screen. Rendered into <body> so a transformed parent (the console's
  * tab animation) cannot pin it to the wrong place.
  */
-export function BottomSheet({ open, onClose, title, children, footer }: {
+export function BottomSheet({ open, onClose, title, children, footer, headerAction }: {
     open: boolean; onClose: () => void; title: string; children: React.ReactNode; footer?: React.ReactNode;
+    /** Optional control shown before the close button (e.g. "Clear all" on the Requests filters). */
+    headerAction?: React.ReactNode;
 }) {
     useEffect(() => {
         if (!open) return;
@@ -44,7 +46,8 @@ export function BottomSheet({ open, onClose, title, children, footer }: {
                 className="absolute inset-x-0 bottom-0 flex max-h-[88dvh] flex-col rounded-t-3xl bg-white text-zinc-900 shadow-2xl dark:bg-zinc-900 dark:text-zinc-100">
                 <span aria-hidden="true" className="mx-auto mt-2.5 h-1.5 w-10 shrink-0 rounded-full bg-zinc-300 dark:bg-zinc-700" />
                 <div className="flex shrink-0 items-center justify-between px-5 pb-2 pt-3">
-                    <h2 className="text-lg font-bold">{title}</h2>
+                    <h2 className="flex-1 text-lg font-bold">{title}</h2>
+                    {headerAction}
                     <button type="button" onClick={onClose} aria-label="Close"
                         className="flex h-10 w-10 items-center justify-center rounded-full bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
                         <X className="h-4 w-4" />

@@ -62,6 +62,25 @@ describe('the TICKET_REPLY event', () => {
         assert.deepEqual(sent[0].excludeUserIds, ['lohit']);
     });
 
+    it('carries both sides when a third person replies, so the Omnichannel rule can choose', async () => {
+        await WhatsAppEventProcessor.processEvent({
+            event_type: 'TICKET_REPLY',
+            payload: { ...payload, sender_id: 'admin-1', recipient_id: undefined, recipient_role: undefined, requester_id: 'lohit', assignee_id: 'rahul' }
+        });
+        assert.equal(sent.length, 1);
+        assert.deepEqual(sent[0].contextualUserIds, { requesterId: 'lohit', assigneeId: 'rahul' });
+        assert.deepEqual(sent[0].excludeUserIds, ['admin-1']);
+    });
+
+    it('still reports a reply on a ticket nobody is assigned to', async () => {
+        await WhatsAppEventProcessor.processEvent({
+            event_type: 'TICKET_REPLY',
+            payload: { ...payload, sender_id: 'admin-1', recipient_id: undefined, recipient_role: undefined, requester_id: 'lohit', assignee_id: null }
+        });
+        assert.equal(sent.length, 1);
+        assert.deepEqual(sent[0].contextualUserIds, { requesterId: 'lohit' });
+    });
+
     it('removes line breaks, which Meta rejects inside a template value', async () => {
         await WhatsAppEventProcessor.processEvent({ event_type: 'TICKET_REPLY', payload });
         assert.equal(sent[0].paramValues.reply_text, 'I need the email approval attachment first.');

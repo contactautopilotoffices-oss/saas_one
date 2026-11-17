@@ -5,7 +5,7 @@ import { claimTicketReply, replies, type TicketReplyDeps } from '../../backend/l
 
 const PHONE = '919876543210';
 const LOHIT = 'user-lohit', RAHUL = 'user-rahul';
-const ticket = { id: 'ticket-1', ticket_number: 'TICK-1042', raised_by: LOHIT, assigned_to: RAHUL };
+const ticket = { id: 'ticket-1', ticket_number: 'TICK-1042', property_id: 'property-1', raised_by: LOHIT, assigned_to: RAHUL };
 
 /** A swipe-reply in the shape normalizeInbound reads. */
 const swipe = (fields: Record<string, unknown> = {}) => ({
@@ -20,6 +20,7 @@ function fake(overrides: Partial<TicketReplyDeps> = {}) {
         quote: async () => { calls.quote++; return { workflow: 'ticket_reply', conversation_id: 'comment-1' }; },
         ticketOfComment: async () => ticket,
         findUser: async () => ({ id: LOHIT }),
+        canComment: async () => false,
         addComment: async input => { added.push(input); return 'added'; },
         send: async (_phone, text) => { sent.push(text); },
         ...overrides,
@@ -76,7 +77,24 @@ describe('a swipe-reply to a ticket notification', () => {
         assert.equal(f.sent.length, 0);
     });
 
-    it('someone no longer on the ticket cannot post to it', async () => {
+    it('works for anyone else who may comment on that ticket, such as the property admin', async () => {
+        const f = fake({ findUser: async () => ({ id: 'user-admin' }), canComment: async () => true });
+        assert.equal((await claimTicketReply(swipe(), f.deps)).handled, true);
+        assert.equal((f.added[0] as { userId: string }).userId, 'user-admin');
+        assert.deepEqual(f.sent, [replies.added('TICK-1042')]);
+    });
+
+    it('asks for the two principals without asking whether they may comment', async () => {
+        for (const id of [LOHIT, RAHUL]) {
+            const asked = { canComment: 0 };
+            const f = fake({ findUser: async () => ({ id }), canComment: async () => { asked.canComment++; return false; } });
+            await claimTicketReply(swipe(), f.deps);
+            assert.equal(f.added.length, 1);
+            assert.equal(asked.canComment, 0);
+        }
+    });
+
+    it('someone with no access to the ticket cannot post to it', async () => {
         for (const findUser of [async () => ({ id: 'someone-else' }), async () => null]) {
             const f = fake({ findUser });
             assert.equal((await claimTicketReply(swipe(), f.deps)).handled, true);

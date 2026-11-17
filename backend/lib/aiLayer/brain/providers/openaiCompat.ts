@@ -81,12 +81,12 @@ export function openAiCompatBrainModel(deps: OpenAiCompatDeps): BrainModel {
     };
 }
 
-/** The live endpoints: Groq with the WhatsApp bot's own keys, everything else through the council provider (Engy). */
+/** The live endpoints: Groq with the shared Groq keys (the first that is not resting), everything else through the council provider (Engy). */
 export async function liveEndpoint(model: string): Promise<Endpoint> {
     if (model.startsWith(GROQ_PREFIX)) {
-        const { botGroqKeys } = await import('@/task-manager/brain/llm');
-        const [apiKey] = botGroqKeys();
-        if (!apiKey) throw new Error('no WhatsApp bot Groq key is configured');
+        const { groqKeys } = await import('@/backend/lib/llm/providerKeys');
+        const [apiKey] = groqKeys();
+        if (!apiKey) throw new Error('no Groq key is configured (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)');
         const id = model.slice(GROQ_PREFIX.length);
         return { url: GROQ_URL, apiKey, model: id, ...(/gpt-oss/.test(id) ? { extra: { reasoning_effort: 'low' } } : {}) };
     }

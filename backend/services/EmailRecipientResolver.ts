@@ -91,6 +91,10 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     critical_ticket_created: { enabled: false, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
     ticket_assigned: { enabled: true, roles: [], user_ids: [], notify_assignee: true },
     ticket_completed: { enabled: true, roles: [], user_ids: [], notify_requester: true },
+    ticket_reply: { enabled: true, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
+    ticket_waitlisted: { enabled: false, roles: [], user_ids: [], notify_requester: true, notify_assignee: true },
+    ticket_pending_validation: { enabled: false, roles: [], user_ids: [], notify_requester: true },
+    ticket_validated: { enabled: false, roles: [], user_ids: [], notify_assignee: true },
     reminder_ticket_sla: { enabled: false, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true },
     checklist_slot_reminder: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
     checklist_started: { enabled: false, roles: ['mst', 'staff'], user_ids: [], notify_assignee: true },
@@ -130,7 +134,7 @@ export const DEFAULT_EMAIL_SERVICE_CONFIG: Record<string, FeatureEmailConfig> = 
     visitor_rejected: { enabled: true, roles: [], user_ids: [], notify_requester: true }
 };
 
-const ORG_SCOPED_ROLES = new Set([
+export const ORG_SCOPED_ROLES = new Set([
     'org_super_admin', 'master_admin', 'procurement', 'procurement_user', 'org_admin', 'owner', 'admin',
     'bd_admin', 'bd_super_admin', 'bd_rep', 'sales', 'sales_executive', 'accounts'
 ]);

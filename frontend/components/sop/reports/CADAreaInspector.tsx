@@ -15,53 +15,57 @@ import {
     ShieldCheck,
     AlertCircle,
     Check,
-    Layers
+    Layers,
+    Crosshair
 } from 'lucide-react';
 import { AreaAuditScore } from './useCADReportData';
-import ImagePreviewModal from '@/frontend/components/shared/ImagePreviewModal';
+import ImagePreviewModal, { DefectBox } from '@/frontend/components/shared/ImagePreviewModal';
 import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 interface CADAreaInspectorProps {
     area: AreaAuditScore | null;
     floorName: string;
+    propertyId?: string;
+    /** The property's pass mark, the same one the scorer used at submit time. */
+    passThreshold?: number;
     onClose?: () => void;
 }
 
 export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
     area,
     floorName,
+    propertyId,
+    passThreshold = 70,
     onClose,
 }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'photos' | 'ai_analysis' | 'history' | 'checklist'>('overview');
     const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
     const [previewImageTitle, setPreviewImageTitle] = useState('');
+    const [defectBoxes, setDefectBoxes] = useState<DefectBox[]>([]);
+    const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
+    const [activeBoxLabel, setActiveBoxLabel] = useState<string | undefined>(undefined);
+    const [defectCache, setDefectCache] = useState<Record<string, DefectBox[]>>({});
     const [activeRefIndex, setActiveRefIndex] = useState(0);
     const [activeProofIndex, setActiveProofIndex] = useState(0);
+    /** The set the open photo belongs to, so ← / → step through it instead of closing and re-opening. */
+    const [gallery, setGallery] = useState<Array<{ url: string; title: string }>>([]);
+    const [galleryIndex, setGalleryIndex] = useState(0);
 
-    const displayArea = area || {
-        areaId: 'default',
-        label: 'Meeting Room 1',
-        category: 'Meeting Room',
-        score: 92,
-        status: 'excellent',
-        previewPhoto: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=600&q=80',
-        benchmarkPhoto: 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=600&q=80',
-        parameters: [
-            { name: 'Tables', score: 95, status: 'pass' },
-            { name: 'Floor', score: 90, status: 'pass' },
-            { name: 'Glass', score: 88, status: 'pass' },
-            { name: 'Dustbin', score: 70, status: 'warning', reason: 'Waste visible at top' },
-            { name: 'AC Vents', score: 85, status: 'pass' },
-        ],
+    // No area selected: an empty shell, not a stock-photo "Meeting Room 1" scoring 92. A demo area
+    // here was indistinguishable from a real audited one.
+    const displayArea = area || ({
+        areaId: 'none',
+        label: 'No area selected',
+        category: '—',
+        score: null,
+        status: 'uninspected',
+        parameters: [],
         linkedItemIds: [],
         linkedTitles: [],
-        allProofs: [
-            { url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=600&q=80', label: 'Angle 1', captured_at: '2026-09-12T10:24:00Z' }
-        ],
-        allBenchmarks: [
-            { id: 'ref_1', url: 'https://images.unsplash.com/photo-1497366811353-6870744d04b2?auto=format&fit=crop&w=600&q=80', label: 'Angle 1' }
-        ],
-    } as unknown as AreaAuditScore;
+        allProofs: [],
+        allBenchmarks: [],
+        notEvaluated: true,
+    } as unknown as AreaAuditScore);
 
     // Reset angle indexes on area change
     useEffect(() => {
@@ -69,15 +73,24 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
         setActiveProofIndex(0);
     }, [displayArea.areaId]);
 
-    const score = displayArea.score !== null ? displayArea.score : 92;
-    const scoreBorder = score >= 90 ? 'border-emerald-500 text-emerald-600 bg-emerald-50/50' :
-                        score >= 70 ? 'border-yellow-500 text-yellow-600 bg-yellow-50/50' :
-                        score >= 50 ? 'border-amber-500 text-amber-600 bg-amber-50/50' :
+    // An area the AI has not scored has no score. It used to render as 92 / Excellent.
+    const hasScore = typeof displayArea.score === 'number';
+    const score = hasScore ? (displayArea.score as number) : null;
+    const needsReview = Boolean(displayArea.needsReview);
+
+    const scoreBorder = !hasScore ? 'border-slate-300 text-slate-400 bg-slate-50' :
+                        (score as number) >= 85 ? 'border-emerald-500 text-emerald-600 bg-emerald-50/50' :
+                        (score as number) >= passThreshold ? 'border-yellow-500 text-yellow-600 bg-yellow-50/50' :
+                        (score as number) >= 50 ? 'border-amber-500 text-amber-600 bg-amber-50/50' :
                         'border-rose-500 text-rose-600 bg-rose-50/50';
 
-    const statusBadge = score >= 90 ? { bg: 'bg-emerald-100 text-emerald-800', label: 'Excellent' } :
-                        score >= 70 ? { bg: 'bg-yellow-100 text-yellow-800', label: 'Good' } :
-                        score >= 50 ? { bg: 'bg-amber-100 text-amber-800', label: 'Needs Attention' } :
+    // The headline badge reports the scorer's verdict, not just a score band: a step the AI sent to a
+    // checker is never shown as a clean pass, however high the number is.
+    const statusBadge = !hasScore ? { bg: 'bg-slate-100 text-slate-600', label: 'Not Evaluated' } :
+                        needsReview ? { bg: 'bg-violet-100 text-violet-800', label: 'Needs Review' } :
+                        (score as number) >= 85 ? { bg: 'bg-emerald-100 text-emerald-800', label: 'Excellent' } :
+                        (score as number) >= passThreshold ? { bg: 'bg-yellow-100 text-yellow-800', label: 'Good' } :
+                        (score as number) >= 50 ? { bg: 'bg-amber-100 text-amber-800', label: 'Needs Attention' } :
                         { bg: 'bg-rose-100 text-rose-800', label: 'Poor' };
 
     const benchmarks = displayArea.allBenchmarks || [];
@@ -91,14 +104,90 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
 
     const totalPhotos = benchmarks.length + proofs.length;
 
+    /** Open one photo as part of a set. Defect marks belong to a single photo, so they are cleared. */
+    const openGallery = (items: Array<{ url: string; title: string }>, index: number) => {
+        const safeItems = items.filter(i => Boolean(i.url));
+        if (safeItems.length === 0) return;
+        const i = Math.max(0, Math.min(index, safeItems.length - 1));
+        setGallery(safeItems);
+        setGalleryIndex(i);
+        setPreviewImageUrl(safeItems[i].url);
+        setPreviewImageTitle(safeItems[i].title);
+        setDefectBoxes([]);
+        setActiveBoxLabel(undefined);
+        setIsLoadingBoxes(false);
+    };
+
+    const stepGallery = (delta: number) => {
+        if (gallery.length < 2) return;
+        const next = (galleryIndex + delta + gallery.length) % gallery.length;
+        setGalleryIndex(next);
+        setPreviewImageUrl(gallery[next].url);
+        setPreviewImageTitle(gallery[next].title);
+        setDefectBoxes([]);
+        setActiveBoxLabel(undefined);
+        setIsLoadingBoxes(false);
+    };
+
+    /** Every photo attached to this area: references first, then what the staff submitted. */
+    const allAreaPhotos = [
+        ...benchmarks.map((b, i) => ({ url: maskStorageUrl(b.url) || b.url, title: `${displayArea.label} — ${b.label || `Reference angle ${i + 1}`}` })),
+        ...proofs.map((p, i) => ({ url: maskStorageUrl(p.url) || p.url, title: `${displayArea.label} — ${p.label || `Submitted photo ${i + 1}`}` })),
+    ].filter(p => Boolean(p.url));
+
+    const handleLocateDefect = async (param: any) => {
+        const rawPhoto = param.photo_url || currentProof?.url || proofs[0]?.url || displayArea.previewPhoto;
+        if (!rawPhoto) return;
+
+        const safePhoto = maskStorageUrl(rawPhoto) || rawPhoto;
+        setPreviewImageUrl(safePhoto);
+        setPreviewImageTitle(`${displayArea.label} — ${param.name}`);
+        setActiveBoxLabel(`${param.name} (${String(param.status || '').toUpperCase()})`);
+
+        const cacheKey = `${safePhoto}:${param.name}`;
+        if (defectCache[cacheKey]) {
+            setDefectBoxes(defectCache[cacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+
+        try {
+            const propId = propertyId || displayArea.propertyId || 'current';
+            const compId = displayArea.completionId || 'current';
+            const res = await fetch(`/api/properties/${propId}/sop/completions/${compId}/locate-defect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    imageUrl: rawPhoto,
+                    parameterName: param.name,
+                    defectDescription: param.reason || param.name,
+                }),
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const boxes: DefectBox[] = data.boxes || [];
+                setDefectBoxes(boxes);
+                setDefectCache(prev => ({ ...prev, [cacheKey]: boxes }));
+            }
+        } catch (err) {
+            console.error('[Locate Defect] Failed:', err);
+        } finally {
+            setIsLoadingBoxes(false);
+        }
+    };
+
     return (
         <div className="bg-white rounded-2xl border border-slate-200/80 p-4 sm:p-5 shadow-xs flex flex-col h-full min-h-[620px] lg:h-[660px] space-y-3.5 overflow-y-auto">
             {/* Header matching Image 4 */}
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100 flex-shrink-0">
                 <div className="flex items-center gap-3">
                     {/* Big Circular Green Score Badge */}
-                    <div className={`w-12 h-12 rounded-full border-3 flex items-center justify-center font-black text-xl ${scoreBorder} shadow-2xs`}>
-                        {score}
+                    <div className={`w-12 h-12 rounded-full border-3 flex items-center justify-center font-black ${hasScore ? 'text-xl' : 'text-lg'} ${scoreBorder} shadow-2xs`}>
+                        {hasScore ? score : '—'}
                     </div>
                     <div>
                         <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
@@ -159,8 +248,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         <div
                             onClick={() => {
                                 if (refPhoto) {
-                                    setPreviewImageUrl(refPhoto);
-                                    setPreviewImageTitle(`${displayArea.label} — ${currentBenchmark?.label || 'Clean Reference'}`);
+                                    openGallery(allAreaPhotos, activeRefIndex);
                                 }
                             }}
                             className="group relative h-44 rounded-xl overflow-hidden border border-slate-200 bg-slate-900 cursor-pointer shadow-2xs"
@@ -222,8 +310,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         <div
                             onClick={() => {
                                 if (proofPhoto) {
-                                    setPreviewImageUrl(proofPhoto);
-                                    setPreviewImageTitle(`${displayArea.label} — ${currentProof?.label || 'Submitted Photo'}`);
+                                    openGallery(allAreaPhotos, benchmarks.length + activeProofIndex);
                                 }
                             }}
                             className="group relative h-44 rounded-xl overflow-hidden border border-slate-200 bg-slate-900 cursor-pointer shadow-2xs"
@@ -286,11 +373,13 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         {/* 3. Detected Issues Card from Real Data */}
                         {(() => {
                             const failedParams = (displayArea.parameters || []).filter(
-                                p => p.status === 'fail' || p.status === 'warning' || (p.score !== null && p.score < 75)
+                                p => p.status === 'fail' || p.status === 'warning'
+                                    || (p.score !== null && p.score !== undefined && p.score < passThreshold)
                             );
-                            const hasIssues = failedParams.length > 0 || (score !== null && score < 75);
+                            const hasIssues = failedParams.length > 0 || (score !== null && score < passThreshold);
                             const issueParam = failedParams[0];
-                            const issueTitle = issueParam?.name || (score <= 30 ? 'Anti-Spoofing & Live Capture' : 'Cleanliness Deficiency');
+                            const issueTitle = issueParam?.name
+                                || (displayArea.antiSpoofing?.status === 'fail' ? 'Photo integrity' : 'Cleanliness Deficiency');
                             const isCritical = (issueParam?.status === 'fail' || (score !== null && score < 50));
                             const issueSeverity = isCritical ? 'Critical' : 'Minor';
                             const issueReason = issueParam?.reason || displayArea.reason || (hasIssues ? 'Parameter score below standard threshold' : 'All parameters clean');
@@ -377,9 +466,11 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         {displayArea.parameters.length > 0 ? (
                             <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2">
                                 {displayArea.parameters.map((param, pIdx) => {
-                                    const pScore = param.score !== null ? param.score : score;
-                                    const pColor = pScore >= 85 ? 'bg-emerald-500' :
-                                                   pScore >= 70 ? 'bg-yellow-400' :
+                                    // The parameter's own number only; no borrowing the area score.
+                                    const pScore = param.score ?? null;
+                                    const pColor = pScore === null ? 'bg-slate-300' :
+                                                   pScore >= 85 ? 'bg-emerald-500' :
+                                                   pScore >= passThreshold ? 'bg-yellow-400' :
                                                    pScore >= 50 ? 'bg-amber-500' : 'bg-rose-500';
 
                                     return (
@@ -395,7 +486,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                                                 <div
                                                     className={`h-full rounded-full transition-all duration-500 ${pColor}`}
-                                                    style={{ width: `${Math.min(100, Math.max(10, pScore || 80))}%` }}
+                                                    style={{ width: pScore === null ? '100%' : `${Math.min(100, Math.max(10, pScore))}%` }}
                                                 />
                                             </div>
                                         </div>
@@ -418,7 +509,10 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                 <span className="font-black text-[11px] uppercase tracking-wider">AI Summary</span>
                             </div>
                             <p className="text-[11px] text-blue-950 font-medium leading-relaxed">
-                                {displayArea.reason || `${displayArea.label} was inspected against standard cleanliness criteria with an overall compliance score of ${score}/100.`}
+                                {displayArea.reason
+                                    || (hasScore
+                                        ? `${displayArea.label} scored ${score}/100 against the clean-standard references for this step.`
+                                        : `${displayArea.label} has not been scored by the AI in this period, so there is no summary to show.`)}
                             </p>
                         </div>
 
@@ -429,10 +523,14 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                 <span className="font-black text-[11px] uppercase tracking-wider">Recommended Action</span>
                             </div>
                             <p className="text-[11px] text-amber-950 font-medium leading-relaxed">
-                                {score <= 30
-                                    ? 'Enforce live camera captures in the runner; recheck space and upload verified timestamped proof.'
-                                    : score < 75
-                                    ? 'Schedule a targeted wipe-down and restock round to address flagged checklist items.'
+                                {!hasScore
+                                    ? 'Submit a photo for this area so the AI can score it.'
+                                    : displayArea.antiSpoofing?.status === 'fail'
+                                    ? 'The capture check failed. Ask for a fresh live photo taken on the inspection date before accepting this step.'
+                                    : needsReview
+                                    ? 'A checker needs to confirm this step: the AI could not see every parameter, or an angle is missing.'
+                                    : (score as number) < passThreshold
+                                    ? 'Schedule a targeted wipe-down and restock round to address the flagged parameters.'
                                     : 'Space complies with cleanliness standards. Maintain regular daily scheduled maintenance rounds.'}
                             </p>
                         </div>
@@ -458,8 +556,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                     <div
                                         key={idx}
                                         onClick={() => {
-                                            setPreviewImageUrl(bm.url);
-                                            setPreviewImageTitle(`${displayArea.label} — ${bm.label || `Angle ${idx + 1}`}`);
+                                            openGallery(allAreaPhotos, idx);
                                         }}
                                         className="h-28 rounded-xl overflow-hidden bg-slate-900 border border-slate-200 relative group cursor-pointer shadow-2xs"
                                     >
@@ -495,8 +592,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                     <div
                                         key={idx}
                                         onClick={() => {
-                                            setPreviewImageUrl(p.url);
-                                            setPreviewImageTitle(`${displayArea.label} — ${p.label || `Proof #${idx + 1}`}`);
+                                            openGallery(allAreaPhotos, benchmarks.length + idx);
                                         }}
                                         className="h-28 rounded-xl overflow-hidden bg-slate-900 border border-slate-200 relative group cursor-pointer shadow-2xs"
                                     >
@@ -535,7 +631,9 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                 Multi-Angle Vision Audit ({benchmarks.length} Standard Angles)
                             </p>
                             <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                                Vision AI Verified
+                                {displayArea.referenceUsed === 'cad'
+                                    ? 'Compared to CAD area'
+                                    : `${benchmarks.length} reference ${benchmarks.length === 1 ? 'angle' : 'angles'}`}
                             </span>
                         </div>
 
@@ -549,11 +647,12 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
 
                                 const execUrl = match?.matched_photo_url || proofs[bIdx]?.url || proofs[0]?.url || null;
                                 const isMissing = match?.status === 'missing' || !execUrl;
-                                const angleScore = typeof match?.cleanliness_score === 'number'
+                                // The AI's own per-angle score, or nothing. Falling back to 85 handed
+                                // an angle a passing grade the model never gave it.
+                                const angleScore: number | null = typeof match?.cleanliness_score === 'number'
                                     ? match.cleanliness_score
-                                    : (isMissing ? 0 : (score || 85));
-                                const isClean = !isMissing && angleScore >= 70;
-                                const isNeedsAttention = !isMissing && angleScore < 70;
+                                    : (isMissing ? 0 : (hasScore ? (score as number) : null));
+                                const isClean = !isMissing && angleScore !== null && angleScore >= passThreshold;
                                 const angleReason = match?.reason || (isMissing ? `Missing execution photo for ${bm.label || 'this angle'}` : displayArea.reason || 'Cleanliness verified against standard reference.');
                                 const capturedAt = proofs[bIdx]?.captured_at || displayArea.capturedAt;
 
@@ -575,6 +674,14 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                                 {isMissing ? (
                                                     <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-500 text-white flex items-center gap-1 shadow-2xs">
                                                         <AlertCircle size={10} /> Missing Photo
+                                                    </span>
+                                                ) : match?.status === 'angle_mismatch' ? (
+                                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-violet-500 text-white flex items-center gap-1 shadow-2xs">
+                                                        <AlertCircle size={10} /> Wrong Angle
+                                                    </span>
+                                                ) : angleScore === null ? (
+                                                    <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-slate-200 text-slate-600 flex items-center gap-1 shadow-2xs">
+                                                        Not Scored
                                                     </span>
                                                 ) : (
                                                     <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider text-white flex items-center gap-1 shadow-2xs ${
@@ -599,8 +706,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                                     <div
                                                         className="relative aspect-video rounded-xl overflow-hidden shadow-2xs border border-blue-200 cursor-pointer group bg-slate-900"
                                                         onClick={() => {
-                                                            setPreviewImageUrl(bm.url);
-                                                            setPreviewImageTitle(`${displayArea.label} — ${bm.label || 'Clean Benchmark'}`);
+                                                            openGallery(allAreaPhotos, bIdx);
                                                         }}
                                                     >
                                                         <img src={bm.url} alt="Clean Reference" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
@@ -629,8 +735,10 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                                     <div
                                                         className="relative aspect-video rounded-xl overflow-hidden shadow-2xs border border-emerald-200 cursor-pointer group bg-slate-900"
                                                         onClick={() => {
-                                                            setPreviewImageUrl(execUrl);
-                                                            setPreviewImageTitle(`${displayArea.label} — ${bm.label || 'Execution Proof'}`);
+                                                            openGallery(
+                                                                [{ url: execUrl, title: `${displayArea.label} — ${bm.label || 'Execution proof'}` }, ...allAreaPhotos],
+                                                                0,
+                                                            );
                                                         }}
                                                     >
                                                         <img src={execUrl} alt="Execution Proof" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
@@ -679,8 +787,7 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                         <div
                                             key={idx}
                                             onClick={() => {
-                                                setPreviewImageUrl(p.url);
-                                                setPreviewImageTitle(`${displayArea.label} — Proof #${idx + 1}`);
+                                                openGallery(allAreaPhotos, benchmarks.length + idx);
                                             }}
                                             className="relative aspect-video rounded-xl overflow-hidden shadow-2xs border border-slate-200 cursor-pointer group bg-slate-900"
                                         >
@@ -695,38 +802,46 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                         ) : null}
                     </div>
 
-                    {/* 2. Anti-Spoofing & Live Integrity Verification Card */}
-                    <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-2xl space-y-2 shadow-2xs">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5 text-emerald-900">
-                                <ShieldCheck size={16} className="text-emerald-600" />
-                                <span className="font-black text-[11px] uppercase tracking-wider">
-                                    Anti-Spoofing & Integrity Verification
-                                </span>
+                    {/* 2. Photo integrity — the scorer's own Timestamp & Anti-Spoofing verdict.
+                        This card used to be hardcoded: it read "100/100 Verified · Hardware Sensor ✓ ·
+                        UTC Monotonic ✓ · None (0.0%) ✓ · Genuine Device ✓" for every area, including
+                        ones the scorer had failed for an outdated or re-used photo. None of those four
+                        checks exist in the pipeline; what does exist is the single verdict below. */}
+                    {(() => {
+                        const spoof = displayArea.antiSpoofing;
+                        const state = spoof?.status ?? 'unknown';
+                        const tone = state === 'pass'
+                            ? { wrap: 'bg-emerald-50/60 border-emerald-200', text: 'text-emerald-900', icon: 'text-emerald-600', chip: 'bg-emerald-500 text-white', label: 'Verified' }
+                            : state === 'fail'
+                            ? { wrap: 'bg-rose-50/60 border-rose-200', text: 'text-rose-900', icon: 'text-rose-600', chip: 'bg-rose-500 text-white', label: 'Failed' }
+                            : { wrap: 'bg-slate-50 border-slate-200', text: 'text-slate-700', icon: 'text-slate-400', chip: 'bg-slate-300 text-slate-700', label: 'Not Checked' };
+
+                        return (
+                            <div className={`p-3 border rounded-2xl space-y-1.5 shadow-2xs ${tone.wrap}`}>
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className={`flex items-center gap-1.5 ${tone.text}`}>
+                                        {state === 'fail'
+                                            ? <AlertCircle size={16} className={tone.icon} />
+                                            : <ShieldCheck size={16} className={tone.icon} />}
+                                        <span className="font-black text-[11px] uppercase tracking-wider">
+                                            Photo Integrity Check
+                                        </span>
+                                    </div>
+                                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider shadow-2xs whitespace-nowrap ${tone.chip}`}>
+                                        {spoof?.score !== null && spoof?.score !== undefined
+                                            ? `${spoof.score}/100 ${tone.label}`
+                                            : tone.label}
+                                    </span>
+                                </div>
+                                <p className={`text-[10px] font-semibold leading-snug ${state === 'fail' ? 'text-rose-800' : 'text-slate-600'}`}>
+                                    {spoof?.reason
+                                        || (state === 'unknown'
+                                            ? 'This area has not been through AI scoring, so no capture check has run on its photos.'
+                                            : 'No detail recorded for this check.')}
+                                </p>
                             </div>
-                            <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white shadow-2xs">
-                                100/100 Verified
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                            <div className="bg-white/80 p-2 rounded-xl border border-emerald-100 text-[10px]">
-                                <p className="font-bold text-slate-500">Live Camera</p>
-                                <p className="font-black text-emerald-700">Hardware Sensor ✓</p>
-                            </div>
-                            <div className="bg-white/80 p-2 rounded-xl border border-emerald-100 text-[10px]">
-                                <p className="font-bold text-slate-500">Timestamp</p>
-                                <p className="font-black text-emerald-700">UTC Monotonic ✓</p>
-                            </div>
-                            <div className="bg-white/80 p-2 rounded-xl border border-emerald-100 text-[10px]">
-                                <p className="font-bold text-slate-500">Screen Reflection</p>
-                                <p className="font-black text-emerald-700">None (0.0%) ✓</p>
-                            </div>
-                            <div className="bg-white/80 p-2 rounded-xl border border-emerald-100 text-[10px]">
-                                <p className="font-bold text-slate-500">EXIF Integrity</p>
-                                <p className="font-black text-emerald-700">Genuine Device ✓</p>
-                            </div>
-                        </div>
-                    </div>
+                        );
+                    })()}
 
                     {/* 3. Parameter-by-Parameter Breakdown */}
                     {displayArea.parameters && displayArea.parameters.length > 0 && (
@@ -736,7 +851,14 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                     <Layers size={13} className="text-primary" />
                                     Parameter Inspection Breakdown ({displayArea.parameters.length})
                                 </p>
-                                <span className="text-[9px] font-bold text-slate-400">qwen-vision verified</span>
+                                {displayArea.analyzedAt && (
+                                    <span
+                                        className="text-[9px] font-bold text-slate-400"
+                                        title={new Date(displayArea.analyzedAt).toLocaleString()}
+                                    >
+                                        AI-scored {new Date(displayArea.analyzedAt).toLocaleDateString()}
+                                    </span>
+                                )}
                             </div>
 
                             <div className="space-y-1.5">
@@ -744,22 +866,43 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                     const isPass = param.status === 'pass';
                                     const isNotVisible = param.status === 'not_visible' || param.status === 'not_in_frame';
                                     const isAttention = param.status === 'needs_attention' || param.status === 'warning';
-                                    const pScore = isNotVisible || param.reviewed_by_checker ? null : (param.score !== null ? param.score : score);
+                                    const isNotEvaluated = param.status === 'not_evaluated';
+                                    // Only the parameter's own score. Borrowing the area score for a
+                                    // parameter the AI gave no number to invented a per-parameter result.
+                                    const pScore = isNotVisible || isNotEvaluated || param.reviewed_by_checker
+                                        ? null
+                                        : (param.score !== null && param.score !== undefined ? param.score : null);
+                                    // Nothing to locate on a photo for a parameter the AI never looked at.
+                                    const hasPhoto = !isNotEvaluated && Boolean(
+                                        param.photo_url || currentProof?.url || proofs[0]?.url || displayArea.previewPhoto
+                                    );
 
                                     return (
                                         <div
                                             key={pIdx}
-                                            className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5"
+                                            className="p-2.5 rounded-xl bg-slate-50/80 border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-slate-100/50 transition-all"
                                         >
                                             <div className="flex items-center gap-2 min-w-0">
                                                 <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                                    isPass ? 'bg-emerald-500' : isAttention ? 'bg-amber-500' : 'bg-rose-500'
+                                                    isNotEvaluated ? 'bg-slate-300'
+                                                        : isPass ? 'bg-emerald-500'
+                                                        : isNotVisible ? 'bg-violet-500'
+                                                        : isAttention ? 'bg-amber-500'
+                                                        : 'bg-rose-500'
                                                 }`} />
                                                 <span className="text-xs font-bold text-slate-800">{param.name}</span>
                                                 <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                                                    isPass ? 'bg-emerald-100 text-emerald-800' : isAttention ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                                                    isNotEvaluated ? 'bg-slate-100 text-slate-500'
+                                                        : isPass ? 'bg-emerald-100 text-emerald-800'
+                                                        : isNotVisible ? 'bg-violet-100 text-violet-800'
+                                                        : isAttention ? 'bg-amber-100 text-amber-800'
+                                                        : 'bg-rose-100 text-rose-800'
                                                 }`}>
-                                                    {isPass ? 'Pass' : isNotVisible ? 'Not visible · Flagged' : isAttention ? 'Needs Attention' : 'Fail'}
+                                                    {isNotEvaluated ? 'Not Evaluated'
+                                                        : isPass ? 'Pass'
+                                                        : isNotVisible ? 'Not visible · Flagged'
+                                                        : isAttention ? 'Needs Attention'
+                                                        : 'Fail'}
                                                 </span>
                                                 {pScore !== null && (
                                                     <span className="text-[10px] font-black text-slate-600">
@@ -767,11 +910,29 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                                     </span>
                                                 )}
                                             </div>
-                                            {param.reason && (
-                                                <p className="text-[10px] text-slate-500 font-medium sm:text-right sm:max-w-[50%] leading-tight">
-                                                    {param.reason}
-                                                </p>
-                                            )}
+
+                                            <div className="flex items-center gap-2 flex-wrap sm:justify-end">
+                                                {param.reason && (
+                                                    <p className="text-[10px] text-slate-500 font-medium sm:text-right leading-tight max-w-full sm:max-w-[260px]">
+                                                        {param.reason}
+                                                    </p>
+                                                )}
+                                                {hasPhoto && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleLocateDefect(param)}
+                                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-2xs border ${
+                                                            !isPass
+                                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                                        }`}
+                                                        title="Locate and show visual AI marks on photo"
+                                                    >
+                                                        <Crosshair size={10} className={!isPass ? 'text-rose-500' : 'text-slate-400'} />
+                                                        <span>Show Marks</span>
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -787,7 +948,10 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                 <span className="font-black text-[10px] uppercase tracking-wider">Vision Model Diagnosis</span>
                             </div>
                             <p className="text-[11px] text-blue-950 font-medium leading-relaxed">
-                                {displayArea.reason || `${displayArea.label} was evaluated across multi-angle photographs with an overall score of ${score}/100.`}
+                                {displayArea.reason
+                                    || (hasScore
+                                        ? `${displayArea.label} was evaluated across ${benchmarks.length || 1} reference angle${benchmarks.length === 1 ? '' : 's'} and scored ${score}/100.`
+                                        : `${displayArea.label} has not been through AI scoring in this period.`)}
                             </p>
                         </div>
 
@@ -797,10 +961,14 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                                 <span className="font-black text-[10px] uppercase tracking-wider">Action Plan</span>
                             </div>
                             <p className="text-[11px] text-amber-950 font-medium leading-relaxed">
-                                {score <= 30
-                                    ? 'Enforce live camera captures in the runner; recheck space and upload verified timestamped proof.'
-                                    : score < 75
-                                    ? 'Schedule a targeted wipe-down and restock round to address flagged checklist items.'
+                                {!hasScore
+                                    ? 'Submit a photo for this area so the AI can score it.'
+                                    : displayArea.antiSpoofing?.status === 'fail'
+                                    ? 'The capture check failed. Ask for a fresh live photo taken on the inspection date before accepting this step.'
+                                    : needsReview
+                                    ? 'A checker needs to confirm this step: the AI could not see every parameter, or an angle is missing.'
+                                    : (score as number) < passThreshold
+                                    ? 'Schedule a targeted wipe-down and restock round to address the flagged parameters.'
                                     : 'Space complies with cleanliness standards. Maintain regular daily scheduled maintenance rounds.'}
                             </p>
                         </div>
@@ -845,12 +1013,25 @@ export const CADAreaInspector: React.FC<CADAreaInspectorProps> = ({
                 </div>
             )}
 
-            {/* Image Preview Modal */}
+            {/* Image Preview Modal with AI Defect Marks */}
             <ImagePreviewModal
                 isOpen={Boolean(previewImageUrl)}
-                onClose={() => setPreviewImageUrl(null)}
+                onClose={() => {
+                    setPreviewImageUrl(null);
+                    setDefectBoxes([]);
+                    setIsLoadingBoxes(false);
+                    setActiveBoxLabel(undefined);
+                    setGallery([]);
+                    setGalleryIndex(0);
+                }}
                 imageUrl={maskStorageUrl(previewImageUrl) || ''}
                 title={previewImageTitle}
+                boxes={defectBoxes}
+                isLoadingBoxes={isLoadingBoxes}
+                activeBoxLabel={activeBoxLabel}
+                onPrev={gallery.length > 1 ? () => stepGallery(-1) : undefined}
+                onNext={gallery.length > 1 ? () => stepGallery(1) : undefined}
+                positionLabel={gallery.length > 1 ? `${galleryIndex + 1} of ${gallery.length}` : undefined}
             />
         </div>
     );

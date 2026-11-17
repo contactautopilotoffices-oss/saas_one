@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { hasProviderKey, withProviderKeys } from '@/backend/lib/llm/providerKeys';
 import { TaskDatabaseService } from './TaskDatabaseService';
 import { TaskAssignment, Employee } from './types';
 
@@ -84,11 +85,10 @@ export class TaskNaturalLanguageService {
         }
 
         // ── LLM Extraction via Google Gemini ─────────────────────────────────
-        const geminiKey = process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY;
-        if (geminiKey) {
+        // Owner 2026-11-15: the shared Gemini keys, in turn (backend/lib/llm/providerKeys.ts).
+        if (hasProviderKey('gemini')) {
             try {
-                const genAI = new GoogleGenerativeAI(geminiKey);
-                const model = genAI.getGenerativeModel({
+                const modelFor = (key: string) => new GoogleGenerativeAI(key).getGenerativeModel({
                     model: 'gemini-2.5-flash',
                     generationConfig: { responseMimeType: 'application/json' }
                 });
@@ -121,7 +121,7 @@ Return JSON in this format:
   "reasoning": "brief explanation"
 }
 `;
-                const response = await model.generateContent(prompt);
+                const response = await withProviderKeys('gemini', key => modelFor(key).generateContent(prompt));
                 const resultText = response.response.text();
                 const parsed = JSON.parse(resultText);
 

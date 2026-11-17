@@ -26,7 +26,8 @@ let openFor: string | null = null;
 // The greeting bubble pops up once per browser session.
 const GREETED_KEY = 'hr-assistant-greeted';
 const GREETING_DELAY_MS = 1500;
-const GREETING_VISIBLE_MS = 8000;
+// Owner 2026-11-16: the greeting closes by itself after 2.5 seconds (it was 8).
+const GREETING_VISIBLE_MS = 2500;
 let greetedThisLoad = false;
 
 function alreadyGreeted(): boolean {

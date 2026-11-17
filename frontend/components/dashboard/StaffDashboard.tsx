@@ -22,7 +22,7 @@ import { useTheme } from '@/frontend/context/ThemeContext';
 import { ShiftToast } from '@/frontend/components/mst/ShiftStatus';
 import { checkInResolver } from '@/frontend/utils/resolver';
 import NavbarShiftStatus from '@/frontend/components/mst/NavbarShiftStatus';
-import TicketCard from '@/frontend/components/shared/TicketCard';
+import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
 import NotificationBell from './NotificationBell';
 import PendingActionsBell from './PendingActionsBell';
 import StockMovementModal from '@/frontend/components/stock/StockMovementModal';
@@ -1159,7 +1159,7 @@ const DashboardTab = ({ tickets, completedTickets, ticketStats, onTicketClick, u
                     <p className="text-xs text-text-tertiary">All requests for this property</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                <div className={`${TICKET_GRID_CLASS} gap-6`}>
                     {isLoading ? (
                         [1, 2, 3].map(i => (
                             <div key={i} className="h-48 bg-surface-elevated border border-border rounded-2xl animate-pulse" />
@@ -1331,7 +1331,7 @@ const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick,
                         <p className="text-text-tertiary text-xs mt-1">Try switching the filter to see more data.</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                    <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6`}>
                         {filtered
                             .sort((a, b) => {
                                 if (a.assigned_to === userId && b.assigned_to !== userId) return -1;
@@ -1402,7 +1402,7 @@ const TasksTab = ({ tickets = [], onTicketClick, onEditClick }: { tickets: any[]
                         <p className="text-text-tertiary text-xs mt-1">You're all caught up!</p>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                    <div className={`${TICKET_GRID_CLASS} gap-4 sm:gap-6`}>
                         {[...tickets]
                             .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) // Oldest first for tasks
                             .map((ticket) => (

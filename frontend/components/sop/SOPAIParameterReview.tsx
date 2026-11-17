@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { AlertCircle, Check, Loader2, ThumbsUp, ThumbsDown, Eye, GraduationCap } from 'lucide-react';
+import { AlertCircle, Check, Loader2, ThumbsUp, ThumbsDown, Eye, GraduationCap, Crosshair } from 'lucide-react';
+import ImagePreviewModal, { DefectBox } from '@/frontend/components/shared/ImagePreviewModal';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 /**
  * Per-parameter AI verdicts for one checklist step, with checker correction controls.
@@ -50,6 +52,12 @@ const SOPAIParameterReview: React.FC<Props> = ({
     const [draftStatus, setDraftStatus] = useState<ParamStatus | null>(null);
     const [draftNote, setDraftNote] = useState('');
     const [saving, setSaving] = useState<string | null>(null);
+    const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+    const [previewTitle, setPreviewTitle] = useState('');
+    const [defectBoxes, setDefectBoxes] = useState<DefectBox[]>([]);
+    const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
+    const [activeBoxLabel, setActiveBoxLabel] = useState<string | undefined>(undefined);
+    const [defectCache, setDefectCache] = useState<Record<string, DefectBox[]>>({});
 
     const paramScores: any[] = Array.isArray(item.ai_parameter_scores)
         ? item.ai_parameter_scores
@@ -87,6 +95,52 @@ const SOPAIParameterReview: React.FC<Props> = ({
             onToast?.(err.message || 'Could not save correction', 'error');
         } finally {
             setSaving(null);
+        }
+    };
+
+    const handleLocateDefect = async (param: any) => {
+        const rawPhoto = param.found_in_photo_url || (Array.isArray(item.photos) && item.photos[0]?.url) || (typeof item.photos?.[0] === 'string' ? item.photos[0] : null) || item.photo_url;
+        if (!rawPhoto) {
+            onToast?.('No photo available for this parameter', 'error');
+            return;
+        }
+
+        const safePhoto = maskStorageUrl(rawPhoto) || rawPhoto;
+        setPreviewPhotoUrl(safePhoto);
+        setPreviewTitle(`${item.checklist_item?.title || 'Checklist Step'} — ${param.name}`);
+        setActiveBoxLabel(`${param.name} (${normalizeStatus(param).toUpperCase()})`);
+
+        const cacheKey = `${safePhoto}:${param.name}`;
+        if (defectCache[cacheKey]) {
+            setDefectBoxes(defectCache[cacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/locate-defect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    imageUrl: rawPhoto,
+                    parameterName: param.name,
+                    defectDescription: param.reason || param.name,
+                }),
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const boxes: DefectBox[] = data.boxes || [];
+                setDefectBoxes(boxes);
+                setDefectCache(prev => ({ ...prev, [cacheKey]: boxes }));
+            }
+        } catch (err) {
+            console.error('[Locate Defect] Failed:', err);
+        } finally {
+            setIsLoadingBoxes(false);
         }
     };
 
@@ -135,7 +189,7 @@ const SOPAIParameterReview: React.FC<Props> = ({
                                 )}
                             </div>
 
-                            {(param.expected_angle || param.found_in_photo_url) && (
+                            {(param.expected_angle || param.found_in_photo_url || (Array.isArray(item.photos) && item.photos.length > 0) || item.photo_url) && (
                                 <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px] text-slate-500 font-semibold">
                                     {param.expected_angle && <span>Expected angle: <span className="text-slate-700">{param.expected_angle}</span></span>}
                                     {param.found_in_photo_url && (
@@ -147,6 +201,19 @@ const SOPAIParameterReview: React.FC<Props> = ({
                                             <Eye size={10} /> Seen in photo
                                         </button>
                                     )}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleLocateDefect(param)}
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-2xs border ${
+                                            status !== 'pass'
+                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                        }`}
+                                        title="Locate defect and view AI bounding box marks on photo"
+                                    >
+                                        <Crosshair size={10} className={status !== 'pass' ? 'text-rose-500' : 'text-slate-400'} />
+                                        <span>Show Marks</span>
+                                    </button>
                                 </div>
                             )}
 
@@ -229,6 +296,22 @@ const SOPAIParameterReview: React.FC<Props> = ({
                     );
                 })}
             </div>
+
+            {/* AI Defect Marks Photo Preview Modal */}
+            <ImagePreviewModal
+                isOpen={Boolean(previewPhotoUrl)}
+                onClose={() => {
+                    setPreviewPhotoUrl(null);
+                    setDefectBoxes([]);
+                    setIsLoadingBoxes(false);
+                    setActiveBoxLabel(undefined);
+                }}
+                imageUrl={maskStorageUrl(previewPhotoUrl) || ''}
+                title={previewTitle}
+                boxes={defectBoxes}
+                isLoadingBoxes={isLoadingBoxes}
+                activeBoxLabel={activeBoxLabel}
+            />
         </div>
     );
 };

@@ -1,17 +1,31 @@
 /**
- * Voice Note Intake — step 2: speech to text (Groq Whisper).
+ * Voice Note Intake — step 2: speech to text (Sarvam first, then Groq Whisper).
+ *
+ * Owner 2026-11-15: "sarvam goes first". Sarvam (saaras:v4, built for Indian languages) is tried first, with the same
+ * settings Meeting Notes use (task-manager/meetings/MeetingTranscriber.ts: Roman letters, language detected). Its quick
+ * (synchronous) call takes at most 30 seconds of audio, so a longer note goes straight to Groq Whisper, as do notes
+ * whose length cannot be read; Sarvam failing for any reason also falls through to Whisper. Key: SARVAM_API_KEY. Without
+ * it Sarvam is skipped. The order is the "Speech to text" job in Brain → AI models.
  *
  * Takes audio BYTES (downloading is the caller's job) and returns text or a typed failure. Never throws.
  * Raw fetch + FormData, the same pattern as backend/lib/coaching/whisper.ts, so no SDK and no new library.
- * Dedicated key GROQ_VOICE_API_KEY: the shared GROQ_API_KEY's free quota is already used by other features.
+ * Keys: the shared Groq keys GROQ_API_KEY → _2 → _3, used in turn (owner 2026-11-15: nothing dedicated to any job;
+ * backend/lib/llm/providerKeys.ts). GROQ_VOICE_API_KEY is no longer read.
  * Never logs what was said — only model names, status codes and reasons.
  * Plan + Agent Spec Block: docs/VOICE_NOTE_INTAKE_PLAN.md
  */
+import { fetchWithKeys, hasProviderKey } from '@/backend/lib/llm/providerKeys';
 
 export const GROQ_TRANSCRIBE_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
+/** Sarvam's quick speech-to-text call (docs.sarvam.ai, read 2026-11-15): multipart, header api-subscription-key. */
+export const SARVAM_TRANSCRIBE_URL = 'https://api.sarvam.ai/speech-to-text';
+/** Models written 'sarvam:<model>' in the catalog are Sarvam's; the rest are Groq Whisper models. */
+export const SARVAM_PREFIX = 'sarvam:';
+/** The longest audio Sarvam's quick call accepts. Longer notes go to Whisper (cutting audio would need a new library). */
+export const SARVAM_MAX_SECONDS = 30;
 
 /** large-v3 first (better on Hindi / Hinglish), turbo if it errors or is rate-limited (Groq limits are per model). */
-export const VOICE_TRANSCRIBE_MODELS: readonly string[] = ['whisper-large-v3', 'whisper-large-v3-turbo'];
+export const VOICE_TRANSCRIBE_MODELS: readonly string[] = ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'];
 
 export const MAX_AUDIO_SECONDS = 120;
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
@@ -84,8 +98,9 @@ export async function transcribeVoiceNote(input: TranscribeInput, deps: Transcri
     try {
         const env = deps.env ?? process.env;
         const doFetch = deps.fetch ?? fetch;
-        const apiKey = env.GROQ_VOICE_API_KEY;
-        if (!apiKey) return fail('no_key', 'GROQ_VOICE_API_KEY is not configured');
+        const sarvamKey = String(env.SARVAM_API_KEY ?? '').trim();
+        const hasGroq = hasProviderKey('groq', env);
+        if (!sarvamKey && !hasGroq) return fail('no_key', 'no speech-to-text key is set (SARVAM_API_KEY, or GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)');
 
         const ext = audioExtension(input.mimeType);
         if (!ext) return fail('unsupported_format', `unsupported audio type "${String(input.mimeType || 'none').slice(0, 60)}"`);
@@ -97,6 +112,21 @@ export async function transcribeVoiceNote(input: TranscribeInput, deps: Transcri
         let lastStatus = 0;
         for (const model of deps.models ?? VOICE_TRANSCRIBE_MODELS) {
             lastStatus = 0;
+            if (model.startsWith(SARVAM_PREFIX)) {
+                // Not a failure, just not this one: no key, a note longer than 30 s, or a note whose length cannot be read.
+                if (!sarvamKey || known === null || known > SARVAM_MAX_SECONDS) continue;
+                try {
+                    const heard = await sarvamTranscribe(model.slice(SARVAM_PREFIX.length), input.audio, String(input.mimeType), ext, sarvamKey, doFetch);
+                    if (heard === null) return fail('silent', 'no speech detected');
+                    return { ok: true, text: heard.text, language: heard.language, durationSec: known, model, failures };
+                } catch (err) {
+                    const error = err instanceof Error ? (err.name === 'TimeoutError' || err.name === 'AbortError' ? 'timed out' : err.message) : String(err);
+                    failures.push({ model, error });
+                    console.warn(`[VoiceTranscriber] ${model} failed: ${error}`);
+                }
+                continue;
+            }
+            if (!hasGroq) continue;
             try {
                 const form = new FormData();
                 form.append('file', new Blob([input.audio as BlobPart], { type: String(input.mimeType) }), `voice.${ext}`);
@@ -104,9 +134,9 @@ export async function transcribeVoiceNote(input: TranscribeInput, deps: Transcri
                 form.append('response_format', 'verbose_json');
                 form.append('temperature', '0');
                 form.append('prompt', STYLE_PROMPT);
-                const res = await doFetch(GROQ_TRANSCRIBE_URL, {
-                    method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(TIMEOUT_MS),
-                });
+                const res = await fetchWithKeys('groq', GROQ_TRANSCRIBE_URL, key => ({
+                    method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(TIMEOUT_MS),
+                }), env, doFetch);
                 if (!res.ok) { lastStatus = res.status; throw new Error(`HTTP ${res.status}`); }
                 const j = (await res.json()) as GroqVerboseJson | null;
                 const segments: Array<{ no_speech_prob?: unknown }> = Array.isArray(j?.segments) ? j.segments : [];
@@ -123,8 +153,31 @@ export async function transcribeVoiceNote(input: TranscribeInput, deps: Transcri
                 console.warn(`[VoiceTranscriber] ${model} failed: ${error}`);
             }
         }
+        // Nothing was even tried: only Sarvam's key is set and this note is longer than Sarvam takes (or of unknown length).
+        if (!failures.length) return fail('no_key', `no key can take this note: Sarvam takes up to ${SARVAM_MAX_SECONDS} s and no Groq key is set`);
         return fail(lastStatus === 429 ? 'rate_limited' : 'failed', failures.map(f => `${f.model}: ${f.error}`).join('; '));
     } catch (err) {
         return fail('failed', err instanceof Error ? err.message : 'transcription failed');
     }
+}
+
+/**
+ * One call to Sarvam's quick speech-to-text, with Meeting Notes' settings (Roman letters, language detected).
+ * Returns the words and the detected language, or null when nothing was said. Throws on any failure (the caller then
+ * tries Whisper). Never logs what was said.
+ */
+async function sarvamTranscribe(model: string, audio: Buffer, mimeType: string, ext: string, key: string, doFetch: typeof fetch): Promise<{ text: string; language: string | null } | null> {
+    const { SARVAM_LANGUAGE, SARVAM_MODE } = await import('../meetings/MeetingTranscriber');
+    const form = new FormData();
+    form.append('file', new Blob([audio as BlobPart], { type: mimeType.split(';')[0].trim() || 'application/octet-stream' }), `voice.${ext}`);
+    form.append('model', model);
+    form.append('mode', SARVAM_MODE);
+    form.append('language_code', SARVAM_LANGUAGE);
+    const res = await doFetch(SARVAM_TRANSCRIBE_URL, { method: 'POST', headers: { 'api-subscription-key': key }, body: form, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = (await res.json()) as { transcript?: unknown; language_code?: unknown } | null;
+    const text = String(j?.transcript ?? '').replace(/\s+/g, ' ').trim();
+    const bare = text.toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text || SILENCE_PHRASES.has(bare)) return null;
+    return { text, language: typeof j?.language_code === 'string' ? j.language_code : null };
 }

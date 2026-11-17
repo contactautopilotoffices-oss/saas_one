@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { NotificationService } from '@/backend/services/NotificationService';
 
 /**
  * POST /api/tickets/batch-assign
@@ -86,12 +85,8 @@ export async function POST(request: NextRequest) {
                 new_value: assigned_to || 'waitlist'
             });
 
-            // 3. Trigger Notification if assigned
-            if (assigned_to) {
-                // Use the centralized NotificationService which handles DB insert + Push Notification
-                // This replaces the previous incorrect manual insert
-                await NotificationService.afterTicketAssigned(ticket_id);
-            }
+            // 3. Notifications: each assignment above fires trg_tickets_outbox, and the Omnichannel
+            //    matrix decides who is told and on which channel.
         }
 
         // Batch insert audit logs

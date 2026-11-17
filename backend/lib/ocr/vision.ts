@@ -23,11 +23,11 @@ import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
 import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
-export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'qwen3.8-27b'] as const;
+export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'deepseek-v4.1-flash'] as const;
 
 /** Default: best extraction quality per rupee in testing. */
 export const DEFAULT_VISION_MODEL =
-    process.env.OCR_VISION_MODEL || 'qwen3.8-27b';
+    process.env.OCR_VISION_MODEL || 'glm-5.3-flash';
 
 const TIMEOUT_MS = Number(process.env.OCR_VISION_TIMEOUT_MS || 60_000);
 
@@ -62,7 +62,11 @@ export interface VisionExtractResult {
  * convention in documentBank/ocr.ts so a caller's control flow is unchanged.
  */
 async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtractResult> {
-    const model = input.model || DEFAULT_VISION_MODEL;
+    let model = input.model || DEFAULT_VISION_MODEL;
+    // qwen3.8-27b on Engy is text-only; automatically switch to multimodal glm-5.3-flash
+    if (model.includes('qwen3.8-27b')) {
+        model = 'glm-5.3-flash';
+    }
 
     // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
     const engyKey = (process.env.ENGY_API_KEY || process.env.engy || '').trim();
@@ -113,6 +117,9 @@ async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtrac
 
         if (!res.ok) {
             const detail = (await res.text().catch(() => '')).slice(0, 400);
+            if (/does not support image input/i.test(detail) && model !== 'glm-5.3-flash') {
+                return visionExtractRaw({ ...input, model: 'glm-5.3-flash' });
+            }
             return { ...base, ok: false, error: `${provider} ${res.status}: ${detail}` };
         }
 

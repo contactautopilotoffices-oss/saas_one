@@ -19,13 +19,18 @@ Do every step in the same change as the model call itself.
      - `providers`: only the providers this code can really call.
      - `defaults`: today's model or chain, exactly as the code has it.
    - Set `single: true` when the code calls one model with no backups.
-   - Set `keys` when the call reads its own API key (not the shared one).
    - Set `defaultEnv` / `defaultPrefix` when an environment variable can already change the model.
+   - **No key of its own** (owner rule, 2026-11-15): every job uses the provider's shared keys. Groq:
+     `GROQ_API_KEY` → `_2` → `_3`. Gemini: `GEMINI_API_KEY` → `_2` → `_3`. Read them only through
+     [backend/lib/llm/providerKeys.ts](../backend/lib/llm/providerKeys.ts): `fetchWithKeys` for a plain fetch,
+     `withProviderKeys` for an SDK call. These move on to the next key when one is used up or rejected. Never read a
+     provider key straight from `process.env` at the call site.
    - If the model id is not in `AI_MODELS` yet, add it there with the provider and what it can do. Only add `vision`
      where reading images has been proven in this repo.
 
-2. **Defaults and keys**: if the job's default or key does not follow the general rule, handle it in
-   `defaultsFor` / `keyNames` in [task-manager/ai/AiModelSettings.ts](../task-manager/ai/AiModelSettings.ts).
+2. **Defaults**: if the job's default does not follow the general rule, handle it in `defaultsFor` in
+   [task-manager/ai/AiModelSettings.ts](../task-manager/ai/AiModelSettings.ts). A new provider gets its key names
+   in `keyNames` there, one shared set for the whole application.
 
 3. **Allow the job in the database.** The `task_manager_ai_models.job` column only accepts known job names.
    - Write a NEW migration that replaces `task_manager_ai_models_job_check` with the full list: every name the latest

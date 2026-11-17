@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
     Sparkles, Package, ClipboardCheck, LogOut, Menu, X, LayoutDashboard, Settings, UserCircle, Bell, ScanLine, Smartphone,
-  MessageSquarePlus, ShieldCheck, Plus
+  MessageSquarePlus, ShieldCheck, Plus, Ticket
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import dynamic from 'next/dynamic';
@@ -28,6 +28,18 @@ const SOPDashboard = dynamic(
     { ssr: false, loading: () => <div className="p-8"><Skeleton className="h-96" /></div> }
 );
 
+// Owner 2026-11-16: the Requests tab — the same ticket list and "raise a request" form the other property
+// consoles use (SecurityDashboard, TechDashboard), so a supervisor raises and tracks requests here.
+const TicketsView = dynamic(
+    () => import('@/frontend/components/dashboard/TicketsView'),
+    { ssr: false, loading: () => <div className="p-8"><Skeleton className="h-96" /></div> }
+);
+
+const TicketCreateModal = dynamic(
+    () => import('@/frontend/components/tickets/TicketCreateModal'),
+    { ssr: false, loading: () => null }
+);
+
 import GuestExperienceDashboard from '@/frontend/components/guest-experience/GuestExperienceDashboard';
 
 const StockMovementModal = dynamic(
@@ -41,7 +53,9 @@ const UniversalQRScannerModal = dynamic(
     { ssr: false }
 );
 import type { QRScanResult } from '@/frontend/components/shared/UniversalQRScannerModal';
-type Tab = 'stock' | 'scanner' | 'checklist' | 'guest_experience' | 'settings' | 'profile' | 'grievance';
+type Tab = 'stock' | 'scanner' | 'requests' | 'checklist' | 'guest_experience' | 'settings' | 'profile' | 'grievance';
+
+const TABS: Tab[] = ['stock', 'scanner', 'requests', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'];
 
 interface SoftServiceManagerDashboardProps {
     propertyId: string;
@@ -58,7 +72,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
     const isManager = userRole === 'soft_service_manager' || userRole === 'soft_service_supervisor';
     const [dashboardTab, setActiveTab] = useState<Tab>(() => {
         const tab = searchParams?.get('tab') as Tab;
-        if (tab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'].includes(tab)) return tab;
+        if (tab && TABS.includes(tab)) return tab;
         return isManager ? 'stock' : 'checklist';
     });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
@@ -69,11 +83,23 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
     const [showScannerModal, setShowScannerModal] = useState(false);
     const [showUniversalScanner, setShowUniversalScanner] = useState(false);
     const [preSelectedStockItemId, setPreSelectedStockItemId] = useState<string | undefined>();
+    // `?tab=requests&action=create` opens the raise-a-request form straight away. Read once at mount, like the
+    // tab above, rather than in an effect (react-hooks/set-state-in-effect).
+    const [showTicketCreateModal, setShowTicketCreateModal] = useState<boolean>(
+        () => searchParams?.get('tab') === 'requests' && searchParams?.get('action') === 'create'
+    );
+
+    // The organisation the property belongs to — TicketCreateModal needs it to raise a request.
+    const organizationId: string = property?.organization_id
+        || membership?.org_id
+        || membership?.organization_id
+        || user?.user_metadata?.organization_id
+        || '';
 
     // Sync tab with URL
     useEffect(() => {
         const tab = searchParams?.get('tab') as Tab;
-        if (tab && tab !== activeTab && ['stock', 'scanner', 'checklist', 'guest_experience', 'settings', 'profile', 'grievance'].includes(tab)) {
+        if (tab && tab !== activeTab && TABS.includes(tab)) {
             setActiveTab(tab);
         }
     }, [searchParams]);
@@ -173,6 +199,25 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                                         <ScanLine className="w-4 h-4" />
                                         Scanner
                                     </button>
+                                    {/* Owner 2026-11-16: Requests — the property's support tickets, and the button that
+                                        raises one. Supervisors and managers only, like Stock and Scanner above. */}
+                                    <button
+                                        onClick={() => handleTabChange('requests')}
+                                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'requests'
+                                            ? 'bg-primary text-text-inverse shadow-sm'
+                                            : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                            }`}
+                                    >
+                                        <Ticket className="w-4 h-4" />
+                                        Requests
+                                    </button>
+                                    <button
+                                        onClick={() => { handleTabChange('requests'); setShowTicketCreateModal(true); }}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        New Request
+                                    </button>
                                 </>
                             )}
                             <button
@@ -259,6 +304,17 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                 onConfirm={signOut}
             />
 
+            {/* Raise a request. `showInternalToggle` matches the other internal consoles (not a tenant/client form).
+                No `onSuccess`: the modal shows its own confirmation and then closes, and TicketsView refreshes
+                itself from the `ticket-created` event the modal dispatches. */}
+            <TicketCreateModal
+                isOpen={showTicketCreateModal}
+                onClose={() => setShowTicketCreateModal(false)}
+                propertyId={propertyId}
+                organizationId={organizationId}
+                showInternalToggle={true}
+            />
+
             <StockMovementModal
                 isOpen={showScannerModal}
                 onClose={() => { setShowScannerModal(false); setPreSelectedStockItemId(undefined); }}
@@ -332,6 +388,13 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
 
                             {activeTab === 'scanner' && (
                                 <StockDashboard propertyId={propertyId} hideReports={true} hideInventory={true} />
+                            )}
+
+                            {activeTab === 'requests' && (
+                                <TicketsView
+                                    propertyId={propertyId}
+                                    onNewRequest={() => setShowTicketCreateModal(true)}
+                                />
                             )}
 
                             {activeTab === 'checklist' && (

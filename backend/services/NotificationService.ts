@@ -4,7 +4,7 @@ import { WhatsAppService } from './WhatsAppService';
 import { WhatsAppQueueService } from './WhatsAppQueueService';
 import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
-import { EmailRecipientResolver } from './EmailRecipientResolver';
+import { EmailRecipientResolver, ORG_SCOPED_ROLES } from './EmailRecipientResolver';
 import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
@@ -34,6 +34,14 @@ export interface Recipient {
 }
 
 export class NotificationService {
+    /**
+     * The afterTicket* methods below are no longer called (owner 2026-11-16). Ticket notifications now
+     * start from trg_tickets_outbox and trg_ticket_comments_outbox, and EventProcessor /
+     * WhatsAppEventProcessor resolve the recipients and the channels from the Omnichannel matrix, so
+     * Settings -> Notifications -> Tickets is the only place that decides who is told and how.
+     * They are kept for reference only: notifying from an API route again would put a second,
+     * ungoverned path next to the matrix, which is exactly what this change removed.
+     */
     static async afterTicketCreated(ticketId: string) {
         try {
             const { data: ticket, error: ticketError } = await supabaseAdmin
@@ -2077,6 +2085,50 @@ export class NotificationService {
         } catch (err) {
             console.error('[NS] afterFacilityRequestCreated error:', err);
         }
+    }
+
+    /**
+     * Turns an Omnichannel rule's roles and added users into user ids for the in-app / push channel,
+     * the way EmailRecipientResolver and WhatsAppRecipientResolver turn the same rule into addresses
+     * and phone numbers. Only active memberships count, exactly as those two resolvers require, so one
+     * role chosen in the matrix means the same set of people on all three channels.
+     */
+    static async resolveMatrixRecipientIds(params: {
+        organizationId: string;
+        propertyId?: string | null;
+        roles?: string[];
+        userIds?: string[];
+    }): Promise<string[]> {
+        const ids = new Set<string>((params.userIds || []).map(id => String(id).trim()).filter(Boolean));
+        const roles = (params.roles || []).map(r => String(r).trim()).filter(Boolean);
+        const orgRoles = roles.filter(r => ORG_SCOPED_ROLES.has(r.toLowerCase()));
+        const propertyRoles = roles.filter(r => !ORG_SCOPED_ROLES.has(r.toLowerCase()));
+
+        try {
+            if (orgRoles.length > 0 && params.organizationId) {
+                const { data } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('user_id')
+                    .eq('organization_id', params.organizationId)
+                    .eq('is_active', true)
+                    .in('role', orgRoles);
+                (data || []).forEach((m: { user_id: string }) => { if (m?.user_id) ids.add(String(m.user_id)); });
+            }
+
+            if (propertyRoles.length > 0 && params.propertyId) {
+                const { data } = await supabaseAdmin
+                    .from('property_memberships')
+                    .select('user_id')
+                    .eq('property_id', params.propertyId)
+                    .eq('is_active', true)
+                    .in('role', propertyRoles);
+                (data || []).forEach((m: { user_id: string }) => { if (m?.user_id) ids.add(String(m.user_id)); });
+            }
+        } catch (err) {
+            console.error('[NotificationService] resolveMatrixRecipientIds error:', err);
+        }
+
+        return Array.from(ids);
     }
 
     static async getOmnichannelRule(organizationId: string, propertyId: string | null | undefined, eventKey: string) {

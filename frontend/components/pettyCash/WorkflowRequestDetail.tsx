@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useState, useMemo } from 'react';
 import { inr, PC_STATUS_META, PC_PAYMENT_MODES } from '@/frontend/lib/pettyCash/roles';
 import { Button } from '@/frontend/components/ui/button';
-import WorkflowModal from './WorkflowModal';
 import ProofUpload from './ProofUpload';
 import ExpenseForm from './ExpenseForm';
 import ExpenseTable from './ExpenseTable';
@@ -12,6 +11,7 @@ import {
     CheckCircle2,
     Clock,
     CreditCard,
+    ArrowLeft,
     ArrowRight,
     AlertCircle,
     AlertTriangle,
@@ -25,6 +25,7 @@ import {
     FileText,
     Coins,
     RotateCcw,
+    X,
     XCircle,
     PlusCircle,
     Info,
@@ -35,7 +36,8 @@ import {
     Download,
     FileSpreadsheet,
     Users,
-    Wallet
+    Wallet,
+    RefreshCw
 } from 'lucide-react';
 import { exportExpensesToCsv, exportExpensesToExcel } from '@/frontend/lib/pettyCash/exportExpenses';
 
@@ -87,7 +89,7 @@ export default function WorkflowRequestDetail({
         const totalTokens = visionScans.reduce((s, a) => s + Number((a.metadata as any)?.total_tokens || 0), 0);
         const promptTokens = visionScans.reduce((s, a) => s + Number((a.metadata as any)?.prompt_tokens || 0), 0);
         const completionTokens = visionScans.reduce((s, a) => s + Number((a.metadata as any)?.completion_tokens || 0), 0);
-        const model = (visionScans[0]?.metadata as any)?.model || 'qwen3.8-27b';
+        const model = (visionScans[0]?.metadata as any)?.model || 'glm-5.3-flash';
         return {
             count: visionScans.length,
             totalTokens,
@@ -101,6 +103,16 @@ export default function WorkflowRequestDetail({
     useEffect(() => {
         void refresh();
     }, [refresh]);
+
+    useEffect(() => {
+        const handler = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !busy && !uploading) {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handler);
+        return () => window.removeEventListener('keydown', handler);
+    }, [onClose, busy, uploading]);
 
     const changed = async () => {
         setAction('');
@@ -215,7 +227,84 @@ export default function WorkflowRequestDetail({
     ];
 
     return (
-        <WorkflowModal title={r?.request_no || 'Petty cash request'} onClose={onClose} busy={busy || uploading}>
+        <div className="space-y-6">
+            {/* Top Navigation & Request Header Card */}
+            <div className="pc-panel flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm">
+                <div className="flex items-center gap-3.5">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Back to petty cash list"
+                        className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-[#30363d] bg-white dark:bg-[#21262d] text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#30363d] font-bold text-xs shadow-xs transition-all cursor-pointer"
+                    >
+                        <ArrowLeft size={16} />
+                        <span>Back</span>
+                    </button>
+                    <div className="h-7 w-px bg-slate-200 dark:bg-slate-800" />
+                    <div className="pc-icon-tile w-11 h-11 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-sm shrink-0">
+                        <Building2 size={20} />
+                    </div>
+                    <div>
+                        <div className="flex flex-wrap items-center gap-2.5">
+                            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                                {r?.request_no || 'Petty cash request'}
+                            </h1>
+                            {r?.status && (
+                                <span className="pc-status" data-status={r.status}>
+                                    {PC_STATUS_META[r.status]?.label || r.status}
+                                </span>
+                            )}
+                            {r?.workflow_version === 1 && (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                    Legacy v1
+                                </span>
+                            )}
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-1.5 mt-1">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">{r?.property?.name || 'Assigned Property'}</span>
+                            {r?.property?.code && (
+                                <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                    {r.property.code}
+                                </span>
+                            )}
+                            <span>•</span>
+                            <User size={13} className="text-slate-400" />
+                            <span>Requested by <strong>{r?.requester?.full_name || r?.requester?.email || 'Requester'}</strong></span>
+                            {r?.created_at && (
+                                <>
+                                    <span>•</span>
+                                    <Calendar size={13} className="text-slate-400" />
+                                    <span>{pettyCashDate(r.created_at)}</span>
+                                </>
+                            )}
+                        </p>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="solid"
+                        size="icon"
+                        aria-label="Refresh request"
+                        title="Refresh request"
+                        disabled={busy || uploading}
+                        onClick={() => { void refresh(); }}
+                        className="rounded-xl border border-slate-200 dark:border-[#30363d] hover:bg-slate-100 dark:hover:bg-[#21262d]"
+                    >
+                        <RefreshCw size={15} className={busy ? 'animate-spin' : ''} />
+                    </Button>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Close request view"
+                        title="Close and return to requests list"
+                        className="flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 dark:border-[#30363d] text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#21262d] transition-colors cursor-pointer"
+                    >
+                        <X size={18} />
+                    </button>
+                </div>
+            </div>
+
             {error && (
                 <div role="alert" className="p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs font-semibold flex items-center gap-2">
                     <AlertCircle size={16} className="shrink-0 text-red-500" />
@@ -225,51 +314,13 @@ export default function WorkflowRequestDetail({
 
             {!detail ? (
                 !error && (
-                    <div role="status" className="p-8 text-center text-sm text-slate-500 flex flex-col items-center justify-center gap-2">
-                        <Clock className="animate-spin text-primary" size={24} />
-                        <span>Loading request lifecycle…</span>
+                    <div role="status" className="p-12 text-center text-sm text-slate-500 flex flex-col items-center justify-center gap-3 bg-white dark:bg-[#161b22] rounded-3xl border border-slate-100 dark:border-[#30363d] shadow-sm">
+                        <Clock className="animate-spin text-primary" size={28} />
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Loading request lifecycle…</span>
                     </div>
                 )
             ) : (
                 <div className="space-y-6">
-                    {/* Header Summary & Property info */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-[#161b22] border border-slate-200/80 dark:border-[#30363d]">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-black">
-                                <Building2 size={20} />
-                            </div>
-                            <div>
-                                <div className="flex items-center gap-2">
-                                    <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                                        {r?.property?.name || 'Assigned Property'}
-                                    </h3>
-                                    {r?.property?.code && (
-                                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                            {r.property.code}
-                                        </span>
-                                    )}
-                                </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5">
-                                    <User size={13} />
-                                    <span>Requested by <strong>{r?.requester?.full_name || r?.requester?.email}</strong></span>
-                                    <span>•</span>
-                                    <Calendar size={13} />
-                                    <span>{pettyCashDate(r?.created_at)}</span>
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <span className="pc-status" data-status={r!.status}>
-                                {PC_STATUS_META[r!.status]?.label || r!.status}
-                            </span>
-                            {r?.workflow_version === 1 && (
-                                <span className="text-[10px] font-black uppercase px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                                    Legacy v1
-                                </span>
-                            )}
-                        </div>
-                    </div>
 
                     {/* Milestone Pipeline Stepper */}
                     <div className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-[#161b22] border border-slate-200/80 dark:border-[#30363d] shadow-sm space-y-4">
@@ -1173,7 +1224,7 @@ export default function WorkflowRequestDetail({
                     </div>
                 </div>
             )}
-        </WorkflowModal>
+        </div>
     );
 }
 

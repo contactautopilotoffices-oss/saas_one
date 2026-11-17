@@ -349,9 +349,27 @@ const MODULES_META: ModuleMeta[] = [
                 hasContextual: { requester: true }
             },
             {
+                key: 'ticket_waitlisted',
+                name: 'Ticket Waitlisted',
+                description: 'Sent when a ticket is parked on the waitlist. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { requester: true, assignee: true }
+            },
+            {
+                key: 'ticket_pending_validation',
+                name: 'Client Approval Needed',
+                description: 'Sent when the technician finishes and the client has to confirm the work. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { requester: true }
+            },
+            {
+                key: 'ticket_validated',
+                name: 'Client Approved or Rejected the Work',
+                description: 'Sent when the client confirms or rejects completed work. Email and in-app only — there is no WhatsApp template for this event.',
+                hasContextual: { assignee: true }
+            },
+            {
                 key: 'ticket_reply',
                 name: 'Ticket Reply',
-                description: 'WhatsApp only. Sent to the requester when the assignee replies on a ticket, and to the assignee when the requester replies.',
+                description: 'Sent when someone posts a reply on a ticket. Pick the channels and who hears about it below — the requester, the assigned technician, and any roles or users you add. Whoever wrote the reply is never notified. Internal notes are never sent.',
                 hasContextual: { assignee: true, requester: true }
             },
             {
@@ -690,7 +708,10 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         critical_ticket_created: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: false, notify_requester: false },
         ticket_assigned: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true },
         ticket_completed: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true },
-        ticket_reply: { channels: { email: false, whatsapp: true, push: false }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
+        ticket_reply: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_assignee: true, notify_requester: true },
+        ticket_waitlisted: { channels: { email: false, whatsapp: false, push: true }, roles: ['property_admin', 'staff'], user_ids: [], notify_assignee: true, notify_requester: true },
+        ticket_pending_validation: { channels: { email: false, whatsapp: false, push: true }, roles: [], user_ids: [], notify_requester: true, notify_assignee: false },
+        ticket_validated: { channels: { email: false, whatsapp: false, push: true }, roles: ['property_admin'], user_ids: [], notify_assignee: true, notify_requester: false },
         reminder_ticket_sla: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin', 'org_super_admin'], user_ids: [], notify_assignee: true, reminder_minutes: 30 }
     },
     checklists: {
