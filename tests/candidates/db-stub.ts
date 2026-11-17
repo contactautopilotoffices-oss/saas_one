@@ -66,6 +66,8 @@ export const OUTREACH_MIGRATION = readFileSync(path.join("supabase", "migrations
 export const SOURCING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000004_sourcing_duplicates.sql"), "utf8");
 /** A position as a job record (owner 2026-11-16): designation, employment type, openings, hiring manager, priority, education, budget, summary. */
 export const POSITION_DETAILS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000005_position_details.sql"), "utf8");
+/** Which round a call was for (owner 2026-11-17): call_analyses.call_round. */
+export const CALL_ROUNDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000001_call_rounds.sql"), "utf8");
 
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
@@ -87,6 +89,7 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(OUTREACH_MIGRATION);
   if (options.resumeFields !== false) await db.exec(SOURCING_MIGRATION);
   if (options.resumeFields !== false) await db.exec(POSITION_DETAILS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(CALL_ROUNDS_MIGRATION);
   return db;
 }
 

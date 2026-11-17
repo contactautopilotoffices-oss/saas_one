@@ -6,8 +6,9 @@
  */
 import { CALL_ANALYSE_CALL } from "@/backend/lib/candidates/config";
 import { jobCaller, type JsonCaller } from "@/backend/lib/candidates/models";
-import type { CallInsights } from "@/backend/lib/candidates/types";
+import { isInterviewRound, type CallInsights } from "@/backend/lib/candidates/types";
 
+import { CANDIDATE_INTERVIEW_SCHEMA, CANDIDATE_INTERVIEW_SYSTEM, parseCandidateInterview } from "./contexts/candidateInterview";
 import { CANDIDATE_SCREENING_SCHEMA, CANDIDATE_SCREENING_SYSTEM, candidateScreeningUser, looksLikeScreening, parseCandidateScreening, type ScreeningContext } from "./contexts/candidateScreening";
 
 export interface Analysed {
@@ -17,14 +18,19 @@ export interface Analysed {
   usage: { input: number; output: number } | null;
 }
 
-/** Reads one candidate screening call. Throws when no model answered (the pipeline records that as a failure). */
+/**
+ * Reads one candidate call. Throws when no model answered (the pipeline records that as a failure). An interview round
+ * (owner 2026-11-17) uses its own prompt and shape (candidateInterview.ts); a screening call, an HR / offer discussion
+ * and a call with no round use the screening prompt. Same job, same model chain.
+ */
 export async function analyseCandidateCall(ctx: ScreeningContext, deps: { caller?: JsonCaller } = {}): Promise<Analysed> {
   const call = deps.caller ?? jobCaller("call_analyse");
+  const interview = isInterviewRound(ctx.round);
   const reply = await call({
-    label: "call analyse",
-    system: CANDIDATE_SCREENING_SYSTEM,
+    label: interview ? "call analyse (interview)" : "call analyse",
+    system: interview ? CANDIDATE_INTERVIEW_SYSTEM : CANDIDATE_SCREENING_SYSTEM,
     user: candidateScreeningUser(ctx),
-    schema: CANDIDATE_SCREENING_SCHEMA,
+    schema: interview ? CANDIDATE_INTERVIEW_SCHEMA : CANDIDATE_SCREENING_SCHEMA,
     effort: CALL_ANALYSE_CALL.effort,
     maxTokens: CALL_ANALYSE_CALL.maxTokens,
     otherMaxTokens: CALL_ANALYSE_CALL.otherMaxTokens,
@@ -32,5 +38,5 @@ export async function analyseCandidateCall(ctx: ScreeningContext, deps: { caller
     budgetMs: CALL_ANALYSE_CALL.budgetMs,
     accept: looksLikeScreening,
   });
-  return { result: parseCandidateScreening(reply.text), model: reply.model, usage: reply.usage ?? null };
+  return { result: interview ? parseCandidateInterview(reply.text) : parseCandidateScreening(reply.text), model: reply.model, usage: reply.usage ?? null };
 }

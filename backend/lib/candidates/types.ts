@@ -747,6 +747,35 @@ export interface CallFact<T> extends CallEvidence {
   value: T | null;
 }
 
+/**
+ * How a pay figure was said (owner 2026-11-17, the CTC fix): "in_hand" = take-home per month; "ctc" = cost to
+ * company (LPA, package), so `value` is the yearly figure / 12, NOT take-home; "unclear" = the call does not say.
+ * Only an in-hand figure is a straight fit for the record's in-hand fields.
+ */
+export const PAY_BASES = ["in_hand", "ctc", "unclear"] as const;
+export type PayBasis = (typeof PAY_BASES)[number];
+export interface PayFact extends CallFact<number> {
+  /** Absent on calls read before 2026-11-17 (they were all read as in-hand). */
+  basis?: PayBasis;
+}
+
+/** Which round a call was for (owner 2026-11-17; migration 20261117000001). Interview rounds are read for answers too. */
+export const CALL_ROUNDS = ["screening", "round_1", "round_2", "round_3", "hr_offer"] as const;
+export type CallRound = (typeof CALL_ROUNDS)[number];
+export const CALL_ROUND_LABELS: Record<CallRound, string> = {
+  screening: "Screening",
+  round_1: "Interview round 1",
+  round_2: "Interview round 2",
+  round_3: "Interview round 3",
+  hr_offer: "HR / offer discussion",
+};
+export const isInterviewRound = (round: CallRound | null | undefined): boolean => round === "round_1" || round === "round_2" || round === "round_3";
+
+/** How one answer covered a topic the round asked about (interview rounds): judged on what was said, never on delivery. */
+export const ANSWER_VERDICTS = ["clear", "partial", "weak"] as const;
+export type AnswerVerdict = (typeof ANSWER_VERDICTS)[number];
+export const ANSWER_VERDICT_LABELS: Record<AnswerVerdict, string> = { clear: "Shown clearly", partial: "Partly shown", weak: "Weak" };
+
 /** The facts the model listens for, and the record fields "Apply" writes them to. */
 export const CALL_FACT_KEYS = ["currentInhand", "expectedInhand", "noticePeriodDays", "location", "reasonForChange"] as const;
 export type CallFactKey = (typeof CALL_FACT_KEYS)[number];
@@ -770,13 +799,20 @@ export interface CallInsights {
   concerns: ({ topic: CallConcernTopic; note: string } & CallEvidence)[];
   redFlags: ({ note: string } & CallEvidence)[];
   facts: {
-    currentInhand: CallFact<number>;
-    expectedInhand: CallFact<number>;
+    currentInhand: PayFact;
+    expectedInhand: PayFact;
     noticePeriodDays: CallFact<number>;
     location: CallFact<string>;
     reasonForChange: CallFact<string>;
   };
   language: string;
+  /**
+   * Interview rounds only (owner 2026-11-17): each topic asked about, how the answer covered it, with the quote; the
+   * position's must-haves that never came up; questions for the next round. Empty on a screening call.
+   */
+  answers?: ({ topic: string; verdict: AnswerVerdict; note: string } & CallEvidence)[];
+  notCovered?: string[];
+  nextRoundQuestions?: string[];
 }
 
 export interface CallSegment {
@@ -792,6 +828,8 @@ export interface CallAnalysis {
   applicationId: string | null;
   positionId: string | null;
   positionTitle: string | null;
+  /** Which round the call was for; null = added before 20261117000001 (shown as Screening). */
+  round: CallRound | null;
   inputKind: CallInputKind;
   fileName: string | null;
   fileSize: number | null;
