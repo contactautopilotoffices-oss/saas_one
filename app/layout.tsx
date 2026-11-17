@@ -65,27 +65,33 @@ export default function RootLayout({
                                 if (!('serviceWorker' in navigator)) return;
 
                                 // ── CHUNK LOAD ERROR RECOVERY ───────────────────────────────────
-                                // Detects failed Next.js chunks and reloads once to recover.
+                                // After a new deploy, an open page can ask for JS files that no longer exist;
+                                // one reload fetches the new version. Capped at 2 reloads per tab per minute
+                                // (the old 5-second gap let a page that keeps failing reload forever). Past the
+                                // cap the error is left to show, with its Reload button. If storage is
+                                // unavailable we do not reload at all, so this can never loop.
+                                function recoverFromChunkError() {
+                                    try {
+                                        var now = Date.now();
+                                        var recent = JSON.parse(sessionStorage.getItem('chunk_reload_times') || '[]')
+                                            .filter(function(t) { return now - t < 60000; });
+                                        if (recent.length >= 2) return;
+                                        recent.push(now);
+                                        sessionStorage.setItem('chunk_reload_times', JSON.stringify(recent));
+                                        window.location.reload();
+                                    } catch (err) {}
+                                }
+
                                 window.addEventListener('error', function(e) {
                                     if (e.message && (e.message.includes('ChunkLoadError') || e.message.includes('Loading chunk'))) {
-                                        const lastReload = localStorage.getItem('last_chunk_reload');
-                                        const now = Date.now();
-                                        if (!lastReload || (now - parseInt(lastReload)) > 5000) {
-                                            localStorage.setItem('last_chunk_reload', now.toString());
-                                            window.location.reload();
-                                        }
+                                        recoverFromChunkError();
                                     }
                                 }, true);
 
                                 // Also handle async promise rejections for chunks
                                 window.addEventListener('unhandledrejection', function(e) {
                                     if (e.reason && e.reason.name === 'ChunkLoadError') {
-                                        const lastReload = localStorage.getItem('last_chunk_reload');
-                                        const now = Date.now();
-                                        if (!lastReload || (now - parseInt(lastReload)) > 5000) {
-                                            localStorage.setItem('last_chunk_reload', now.toString());
-                                            window.location.reload();
-                                        }
+                                        recoverFromChunkError();
                                     }
                                 });
 
@@ -124,10 +130,11 @@ export default function RootLayout({
                                     return;
                                 }
 
-                                // ── Minimal Registration for Push Notifications ───────────────────
-                                window.addEventListener('load', function() {
-                                    navigator.serviceWorker.register('/sw.js').catch(function() {});
-                                });
+                                // ── No /sw.js registration ──────────────────────────────────────
+                                // /sw.js and /firebase-messaging-sw.js both claimed scope '/', so each page
+                                // load swapped one for the other. /sw.js does nothing now (push lives in
+                                // firebase-messaging-sw.js, registered by useFCM), so only Firebase registers.
+                                // public/sw.js stays so browsers that still have it can update it cleanly.
                             })();
                         `,
                     }}

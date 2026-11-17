@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { FileUp, FolderPlus, Layers, PencilLine, Search, Trash2 } from 'lucide-react';
+import { BookOpen, FileUp, FolderPlus, Layers, PencilLine, Search, Trash2 } from 'lucide-react';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import { EMPLOYMENT_TYPE_LABELS, FLOW_STAGES, PRIORITY_LABELS, STAGE_LABELS, type Position, type PositionReadResponse, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatCount, formatDate, formatInr } from './format';
-import PositionForm, { type PositionSeed } from './PositionForm';
+import JdLibrary, { type JdPick } from './JdLibrary';
+import PositionForm, { type PositionJdLink, type PositionSeed } from './PositionForm';
 import { BTN_DANGER_FILLED } from './Remarks';
 import { BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
@@ -74,6 +75,9 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     // The form: a new position (optionally seeded by a JD read), or one being edited (with its JD text fetched first).
     const [form, setForm] = useState<{ open: boolean; seed?: PositionSeed; position?: Position | null }>({ open: false });
     const [pasteOpen, setPasteOpen] = useState(false);
+    // Owner 2026-11-17: the JD library sits beside the positions; a position opened from it remembers the JD and version.
+    const [view, setView] = useState<'positions' | 'library'>('positions');
+    const [jdLink, setJdLink] = useState<PositionJdLink | null>(null);
     const [pasteText, setPasteText] = useState('');
     const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -89,7 +93,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     const refresh = () => { setNonce(n => n + 1); onDataChanged(); };
 
     /** A JD (file or text) is read by the two readers, then the form opens with every field it could fill. */
-    const readJd = async (job: string | File) => {
+    const readJd = async (job: string | File, link: PositionJdLink | null = null) => {
         setBusy(true);
         let res;
         if (typeof job === 'string') res = await api<PositionReadResponse>('/api/candidates/positions/read', { json: { orgId, text: job } });
@@ -111,6 +115,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
         });
         // The seed only carries the basics; the full draft is applied once the form is open.
         setDraft(d);
+        setJdLink(link);
         setPasteOpen(false);
         setPasteText('');
     };
@@ -122,6 +127,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setDraft(null);
+        setJdLink(null);
         setForm({ open: true, position: res.data.position });
     };
     // Delete (owner 2026-11-16): asked first, with how many people it takes out of the pipeline.
@@ -150,9 +156,9 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     return (
         <div className="space-y-4">
             <PositionForm
-                open={form.open} orgId={orgId} seed={form.seed} position={form.position} draft={draft}
+                open={form.open} orgId={orgId} seed={form.seed} position={form.position} draft={draft} jdLink={jdLink}
                 onClose={() => setForm(s => ({ ...s, open: false }))}
-                onSaved={() => { setForm({ open: false }); setDraft(null); refresh(); }}
+                onSaved={() => { setForm({ open: false }); setDraft(null); setJdLink(null); refresh(); }}
             />
             <Dialog
                 open={!!deleting} onClose={() => { if (!busy) setDeleting(null); }} labelId="cand-position-delete" size="sm"
@@ -177,7 +183,8 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                     <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" className="sr-only" aria-label="Upload a job description" onChange={e => { const f = e.target.files?.[0]; if (f) void readJd(f); }} />
                     <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} className={BTN_PRIMARY}>{busy ? <Spinner /> : <FileUp className="h-4 w-4" />}Upload a JD</button>
                     <button type="button" onClick={() => setPasteOpen(o => !o)} disabled={busy} className={BTN_SECONDARY}>Paste a JD</button>
-                    <button type="button" onClick={() => { setDraft(null); setForm({ open: true, seed: undefined, position: null }); }} disabled={busy} className={BTN_GHOST}><FolderPlus className="h-4 w-4" />Blank form</button>
+                    <button type="button" onClick={() => setView('library')} disabled={busy} className={BTN_SECONDARY}><BookOpen className="h-4 w-4" />From the JD library</button>
+                    <button type="button" onClick={() => { setDraft(null); setJdLink(null); setForm({ open: true, seed: undefined, position: null }); }} disabled={busy} className={BTN_GHOST}><FolderPlus className="h-4 w-4" />Blank form</button>
                 </div>
                 {pasteOpen && (
                     <div className={`${WELL} basis-full space-y-2 px-3 py-3`}>
@@ -188,6 +195,20 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                 )}
             </section>
 
+            <div role="group" aria-label="Positions or JD library" className="inline-grid grid-cols-2 gap-x-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
+                {([['positions', 'Positions'], ['library', 'JD library']] as const).map(([id, label]) => (
+                    <button key={id} type="button" onClick={() => setView(id)} aria-pressed={view === id}
+                        className={`h-9 rounded-lg px-4 text-sm font-semibold transition-colors ${view === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>{label}</button>
+                ))}
+            </div>
+
+            {view === 'library' ? (
+                <JdLibrary orgId={orgId} onUse={(pick: JdPick) => {
+                    setView('positions');
+                    notify(`Reading ${pick.title} v${pick.version} into the form…`, 'info');
+                    void readJd(pick.content, { jdId: pick.jdId, version: pick.version, title: pick.title, content: pick.content });
+                }} />
+            ) : (
             <section className={`${CARD} overflow-hidden`} aria-label="Positions">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
                     <h2 className="font-display text-base font-semibold text-text-primary">Positions</h2>
@@ -222,6 +243,12 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                                         </div>
                                         <p className="truncate text-xs text-text-secondary" title={detailLine(p)}>{detailLine(p) || <span className="text-text-tertiary">No details yet · Edit to add them</span>}</p>
                                         {p.summary && <p className="mt-0.5 line-clamp-1 text-xs text-text-tertiary" title={p.summary}>{p.summary}</p>}
+                                        {p.jd && (
+                                            <p className="mt-0.5 text-xs text-text-tertiary">
+                                                <BookOpen className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden />JD: {p.jd.title} v{p.jd.version}
+                                                {p.jd.currentVersion > p.jd.version && <span className="text-amber-800"> · the library now has v{p.jd.currentVersion}</span>}
+                                            </p>
+                                        )}
                                     </div>
                                     <Tag tone={p.status === 'closed' ? 'neutral' : ageing ? 'warn' : 'success'}>{p.status === 'closed' ? `Closed${p.closedAt ? ` ${formatDate(p.closedAt)}` : ''}` : ageing ? 'Ageing' : 'Open'}</Tag>
                                     <Funnel counts={p.counts} />
@@ -252,6 +279,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                     </ul>
                 )}
             </section>
+            )}
         </div>
     );
 }

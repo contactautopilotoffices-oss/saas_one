@@ -68,6 +68,19 @@ export const SOURCING_MIGRATION = readFileSync(path.join("supabase", "migrations
 export const POSITION_DETAILS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261116000005_position_details.sql"), "utf8");
 /** Which round a call was for (owner 2026-11-17): call_analyses.call_round. */
 export const CALL_ROUNDS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000001_call_rounds.sql"), "utf8");
+/** The JD library (owner 2026-11-17): JDs, their versions, and the version each position was opened from. */
+export const JD_LIBRARY_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000002_jd_library.sql"), "utf8");
+/**
+ * Manpower requisitions (owner 2026-11-17). The tables it needs that no candidate migration creates (the app has them
+ * from older migrations): users, organization_memberships, organization_settings, email_action_tokens.
+ */
+export const REQUISITIONS_STUBS = `
+  create table if not exists public.users (id uuid primary key references auth.users (id), full_name text, email text, phone text, is_master_admin boolean default false);
+  create table if not exists public.organization_memberships (id uuid primary key default gen_random_uuid(), user_id uuid, organization_id uuid, role text, is_active boolean default true);
+  create table if not exists public.organization_settings (organization_id uuid primary key references public.organizations (id), notification_matrix jsonb, created_at timestamptz default now(), updated_at timestamptz default now());
+  create table if not exists public.email_action_tokens (id uuid primary key default gen_random_uuid(), token_hash text not null unique, organization_id uuid not null, user_id uuid not null, entity_type text not null, entity_id uuid not null, action text not null, payload jsonb not null default '{}'::jsonb, expires_at timestamptz not null, consumed_at timestamptz, consumed_ip text, result text, created_at timestamptz not null default now());
+`;
+export const REQUISITIONS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000003_recruitment_requisitions.sql"), "utf8");
 
 export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
@@ -90,6 +103,8 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(SOURCING_MIGRATION);
   if (options.resumeFields !== false) await db.exec(POSITION_DETAILS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(CALL_ROUNDS_MIGRATION);
+  if (options.resumeFields !== false) await db.exec(JD_LIBRARY_MIGRATION);
+  if (options.resumeFields !== false) { await db.exec(REQUISITIONS_STUBS); await db.exec(REQUISITIONS_MIGRATION); }
   return db;
 }
 

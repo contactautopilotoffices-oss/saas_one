@@ -19,7 +19,7 @@ about employees' pay.
 High: a wrong "negative / not interested" read sits next to a decision about a real person. → Model tier: **larger**,
 job `call_analyse`, default Claude Opus 5.5 with Sonnet 5.5 as the backup (Brain → AI models). Mitigations: every
 judgement carries an exact quote; facts not said are null; a person applies each fact by a click; no status ever
-changes from a call. Transcription is job `call_transcribe` (Groq Whisper large-v3 → turbo, the voice notes' chain).
+changes from a call. Transcription is job `call_transcribe` (owner 2026-11-17: Sarvam saaras:v4 through its batch job first, built for Hinglish; Groq Whisper large-v3 → turbo as the backups).
 
 **4. Tools**
 | tool | description reviewed for when-not-to-use? `[BAA p.107]` | returns errors as text? `[BAA p.94]` | args validated? `[BAA p.93]` | MCP? `[BAA p.106]` |

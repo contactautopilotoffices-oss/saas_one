@@ -16,6 +16,7 @@ import { z } from "zod";
 import { cleanRemark, namesOf, recordAction, type Actor } from "./actions";
 import { MAX_JD_LENGTH } from "./config";
 import { parseFilters } from "./filter-search";
+import { jdLinksFor } from "./jd-library";
 import type { SearchFilters } from "./filters";
 import { PreferSchema, type Preferences } from "./query-spec";
 import { CandidateActionError, getRecordRows, markResumes, toRecord } from "./records";
@@ -107,8 +108,10 @@ export async function listPositions(client: SupabaseClient, orgId: string, statu
   if (error && detailsMissing(error)) ({ data, error } = await run(POSITION_COLUMNS));
   if (error) fail("load the positions", error);
   const rows = (data ?? []) as unknown as Record<string, unknown>[];
-  const [counts, names] = await Promise.all([countsFor(client, orgId, rows.map((r) => r.id as string)), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean))]);
-  return rows.map((row) => toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names));
+  const ids = rows.map((r) => r.id as string);
+  const [counts, names, jds] = await Promise.all([countsFor(client, orgId, ids), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean)), jdLinksFor(client, orgId, ids)]);
+  // Owner 2026-11-17: the library JD each came from (none before migration 20261117000002).
+  return rows.map((row) => ({ ...toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names), jd: jds.get(row.id as string) ?? null }));
 }
 
 export async function getPosition(client: SupabaseClient, orgId: string, id: string): Promise<Position> {
@@ -118,8 +121,8 @@ export async function getPosition(client: SupabaseClient, orgId: string, id: str
   if (error) fail("load the position", error);
   if (!data) throw new CandidateActionError(404, "That position no longer exists.");
   const row = data as unknown as Record<string, unknown>;
-  const [counts, names] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean))]);
-  return toPosition(row, counts.get(id) ?? emptyCounts(), true, names);
+  const [counts, names, jds] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean)), jdLinksFor(client, orgId, [id])]);
+  return { ...toPosition(row, counts.get(id) ?? emptyCounts(), true, names), jd: jds.get(id) ?? null };
 }
 
 const text = (max: number) => z.string().trim().max(max);

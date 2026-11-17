@@ -255,6 +255,46 @@ Sent from the Recruitment module (the pipeline's Shortlisted / Rejected prompt, 
 
 ---
 
+### 1c. Hiring requests (manpower requisitions) — owner 2026-11-17
+
+Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only (the approver, the manager who raised the request, the escalation recipients). The AiSensy campaign names come from `AISENSY_REQUISITION_AWAITING_CAMPAIGN`, `AISENSY_REQUISITION_REMINDER_CAMPAIGN`, `AISENSY_REQUISITION_ESCALATED_CAMPAIGN` and `AISENSY_REQUISITION_DECIDED_CAMPAIGN`; unset, that event goes by email only. Email never waits for these.
+
+#### Template: Hiring request awaiting approval
+* **Template Name**: `requisition_awaiting_v1`
+* **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+  Hiring request *{{2}}* for *{{3}}*, raised by {{4}}, awaits your approval.
+  Review and decide here: {{5}}
+  The link works once, for 7 days. You can also decide from the app under Hiring requests.
+  ```
+* `{{1}}` approver's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` raised by · `{{5}}` the one-time decision link (or the app link)
+
+#### Template: Hiring request reminder
+* **Template Name**: `requisition_reminder_v1` · same parameters as above; body starts "Reminder: hiring request *{{2}}* for *{{3}}* has waited for your decision."
+
+#### Template: Hiring request escalated
+* **Template Name**: `requisition_escalated_v1`
+* **Body Text**:
+  ```text
+  Hiring request *{{1}}* for *{{2}}* has waited over 72 hours for {{3}}'s decision. Raised by {{4}}. Open the app under Hiring requests.
+  ```
+* `{{1}}` request number · `{{2}}` role title · `{{3}}` the approver it waits on · `{{4}}` raised by
+
+#### Template: Hiring request decided
+* **Template Name**: `requisition_decided_v1`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+  Your hiring request *{{2}}* for *{{3}}* was {{4}}.
+  {{5}}
+  Open the app under Hiring requests for the details.
+  ```
+* `{{1}}` manager's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` approved / rejected / sent back for changes / put on hold / taken off hold / approved in plan by the HR Head · `{{5}}` the reason, or "-"
+
+---
+
 ## 2. HTML Email Templates
 
 Below are clean, responsive HTML email templates for all notification triggers.
