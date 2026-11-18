@@ -160,7 +160,7 @@ describe('console: lists and totals', () => {
     it('skills show which kind of login gets them and the mode in force for this organisation', () => {
         const skills = skillViews(parseBrainSettings({ skillModes: { 'ticket.create': 'live', 'tickets.count': 'off' } }), [turn()]);
         const by = (id: string) => skills.find(s => s.id === id)!;
-        assert.equal(skills.length, 23);   // 17 + the six task skills (owner 2026-11-15)
+        assert.equal(skills.length, 24);   // 17 + the six task skills (owner 2026-11-15) + properties.mine (2026-11-18)
         assert.equal(by('ticket.create').mode, 'live'); assert.equal(by('room.book').mode, 'shadow'); assert.equal(by('tickets.count').mode, 'off');
         assert.deepEqual(by('ticket.create').roles, { staff: true, client: true, vendor: false });
         assert.deepEqual(by('tickets.list').roles, { staff: true, client: true, vendor: true });

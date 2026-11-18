@@ -26,9 +26,10 @@ describe('reading before answering', () => {
 
     it('a number the tools never returned is not sent: the answer code built is sent instead', async () => {
         const data = new FakeBrainData(); data.tickets = [ticket()];
-        const model = new ScriptedModel([call('tickets_list', { period: 'any', status: 'open', priority: null, property: null, raised_by_me: false }), 'You have 57 open tickets, including TKT-999.']);
+        // Asked once to fix it (2026-11-18 repair), the model invents again: code's own answer is sent.
+        const model = new ScriptedModel([call('tickets_list', { period: 'any', status: 'open', priority: null, property: null, raised_by_me: false }), 'You have 57 open tickets, including TKT-999.', 'You have 57 open tickets.']);
         const out = await runTurn(turnDeps(data, model), turnInput('show open tickets'));
-        assert.equal(out.trace.grounded, false);
+        assert.equal(out.trace.grounded, false); assert.equal(out.trace.repaired, true);
         assert.doesNotMatch(out.reply!.text, /57|TKT-999/);
         assert.match(out.reply!.text, /TKT-101/);
     });

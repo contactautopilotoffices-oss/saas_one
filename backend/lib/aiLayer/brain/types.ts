@@ -261,4 +261,6 @@ export interface TurnTrace {
     lessons: string[];
     /** The guidance version in force for this message, or null. */
     guidance: number | null;
+    /** 2026-11-18: the first answer failed the fact check and the model was asked once to fix it. */
+    repaired?: boolean;
 }

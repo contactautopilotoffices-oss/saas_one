@@ -172,6 +172,12 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
         good: 'A confirmation card to attach the photo to the task "Paint the lobby wall".',
     }, { photo: true }),
 
+    // 2026-11-18, the owner's chat: "Which properties access i have" / "Show those 22 propertie" failed the fact check.
+    staff('p-my-properties', 'conversation', 'Show all the properties i have access to', [], {
+        outcome: ['answer'], mustCall: ['properties.mine'], maxReads: 2, replyHas: ['Work Square Andheri'],
+        good: 'Lists the property the person can access (Work Square Andheri), taken from the property list, with nothing added.',
+    }),
+
     // ── Meeting rooms ─────────────────────────────────────────────────────────────────────────────────────────────
     staff('r-free-at-four', 'rooms', 'is any meeting room free at 4 today?', [], {
         outcome: ['answer', 'ask'], mustCall: ['rooms.availability'], maxReads: 2, args: [{ skill: 'rooms.availability', has: { date: '2026-11-04', start_time: '16:00' } }], replyHas: ['Board Room'],

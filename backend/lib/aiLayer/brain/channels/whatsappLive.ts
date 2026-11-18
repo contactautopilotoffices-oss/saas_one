@@ -9,7 +9,7 @@ import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from '../../scope';
 import { liveTurnDeps, loadAliases, loadBrainSettings, recordTurn, supabaseAttachmentStore, supabaseThreadStore, sweepBrain } from '../server';
 import { stageInbound } from './media';
-import { sendBrainReply } from './send';
+import { sendBrainReply, sendBrainReplyTracked } from './send';
 import { claimBrain, type BrainClaim, type BrainInbound, type BrainPerson, type BrainWhatsAppDeps } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
@@ -117,6 +117,7 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         }),
         record: r => recordTurn(supabaseAdmin, { ...r, channel: 'whatsapp' }),
         sendReply: (phone, text) => sendBrainReply(phone, text),
+        sendReplyTracked: (phone, text) => sendBrainReplyTracked(phone, text),
         sweep: (orgId, settings) => sweepBrain(supabaseAdmin, orgId, settings),
         seenBefore: id => { const at = taken.get(id); return at !== undefined && Date.now() - at < TAKEN_MS; },
         markSeen: id => { if (taken.size > 5000) taken.clear(); taken.set(id, Date.now()); },

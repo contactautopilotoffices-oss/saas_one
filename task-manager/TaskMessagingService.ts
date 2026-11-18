@@ -161,13 +161,18 @@ export class TaskMessagingService {
      */
     /** `auto` (2026-11-02): a scheduled / automatic message (digest, reminder, alert) — remembered as one short line. */
     private static async postFreeform(phone: string, text: string, auto = false): Promise<boolean> {
+        return (await this.postFreeformDetailed(phone, text, auto)).ok;
+    }
+
+    /** postFreeform, also returning the provider's ids of the sent message (2026-11-18: the brain matches swipe-replies to them). */
+    private static async postFreeformDetailed(phone: string, text: string, auto = false): Promise<{ ok: boolean; messageIds: string[] }> {
         const destination = this.formatPhone(phone);
         const projectId = process.env.AISENSY_PROJECT_ID;
         const password = process.env.AISENSY_PROJECT_API_KEY;
 
         if (!projectId || !password) {
             console.warn('[TaskMessagingService] AISENSY_PROJECT_ID or AISENSY_PROJECT_API_KEY not configured. Falling back to template send.');
-            return false;
+            return { ok: false, messageIds: [] };
         }
 
         try {
@@ -190,21 +195,22 @@ export class TaskMessagingService {
             if (!res.ok) {
                 const body = await res.text().catch(() => '');
                 console.error(`[TaskMessagingService] Freeform send failed with status ${res.status}:`, body);
-                return false;
+                return { ok: false, messageIds: [] };
             }
             void markReplied(phone); // "never silent" ledger: this person got an answer (no-op while the switch is OFF)
             void clearAnsweredObservations(phone);
             void appendTurn(phone, 'bot', text, undefined, { auto }); // conversation memory (no-op while the switch is OFF)
 
+            const sentBody = await res.json().catch(() => null);
+            const messageIds = providerIds(sentBody);
             if (process.env.WHATSAPP_LLM_INTERPRETER_ENABLED === 'true') {
-                const body = await res.json().catch(() => null);
-                await recordOutgoingContext(destination, providerIds(body), { workflow:'task', conversationId:randomUUID() })
+                await recordOutgoingContext(destination, messageIds, { workflow:'task', conversationId:randomUUID() })
                     .catch(() => console.warn('[TaskMessagingService] Reply context could not be saved'));
             }
-            return true;
+            return { ok: true, messageIds };
         } catch (error) {
             console.error('[TaskMessagingService] Freeform send network error:', error);
-            return false;
+            return { ok: false, messageIds: [] };
         }
     }
 
@@ -241,6 +247,24 @@ export class TaskMessagingService {
             return true;
         }
         return this.postFreeform(phone, text);
+    }
+
+    /**
+     * sendFreeformReply, also returning the ids of the sent message (2026-11-18). Same gate: blocked → not sent;
+     * Pretend Mode → "sent" with no ids. Used by the brain so a later swipe-reply can be matched to what it quotes.
+     */
+    static async sendFreeformReplyTracked(phone: string, text: string): Promise<{ sent: boolean; messageIds: string[] }> {
+        const gate = await this.resolveSendMode();
+        if (gate.mode === 'blocked') {
+            await this.logBlocked(phone, gate.reason);
+            return { sent: false, messageIds: [] };
+        }
+        if (gate.mode === 'pretend') {
+            await this.logPretend({ phone, preview: text });
+            return { sent: true, messageIds: [] };
+        }
+        const out = await this.postFreeformDetailed(phone, text);
+        return { sent: out.ok, messageIds: out.messageIds };
     }
 
     /**

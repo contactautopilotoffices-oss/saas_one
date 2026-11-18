@@ -10,6 +10,7 @@ import { brainLevelFor, skillModeFor, type BrainSettings } from '../config';
 import type { Skill, SkillMode, ToolDef } from '../types';
 import { MEMORY_SKILLS } from './memory';
 import { OTHER_SKILLS } from './other';
+import { PROPERTY_SKILLS } from './properties';
 import { ROOM_SKILLS } from './rooms';
 import { IN_BRAIN_DESCRIPTIONS, TASK_ACTION_IDS, TASK_HELPER_IDS, TASK_SKILLS } from './tasks';
 import { TICKET_SKILLS } from './tickets';
@@ -19,7 +20,7 @@ import { schema, str } from './common';
  * Fixed order (never sorted by anything that changes), so the tool list is byte-identical between calls and caches.
  * The task skills (owner 2026-11-15) come last: while they are off the list is exactly what it was before them.
  */
-export const SKILLS: readonly Skill[] = [...TICKET_SKILLS, ...ROOM_SKILLS, ...OTHER_SKILLS, ...MEMORY_SKILLS, ...TASK_SKILLS];
+export const SKILLS: readonly Skill[] = [...TICKET_SKILLS, ...ROOM_SKILLS, ...OTHER_SKILLS, ...MEMORY_SKILLS, ...PROPERTY_SKILLS, ...TASK_SKILLS];
 
 /** Tool names may not contain dots: 'tickets.list' is shown to the model as 'tickets_list'. */
 export const toolName = (skillId: string): string => skillId.replace(/\./g, '_');
@@ -37,7 +38,9 @@ export function skillsFor(actor: ActorContext, settings: BrainSettings): Availab
     const out: AvailableSkill[] = [];
     for (const skill of SKILLS) {
         if (!skill.allowed(actor)) continue;
-        const level = brainLevelFor(actor, settings, skill.module);
+        // The property list (2026-11-18) is needed for tickets AND rooms: it is on when either of them is.
+        const tickets = brainLevelFor(actor, settings, skill.module);
+        const level = skill.id === 'properties.mine' && tickets === 'off' ? brainLevelFor(actor, settings, 'rooms') : tickets;
         if (level === 'off') continue;
         if (skill.kind === 'write' && level !== 'questions_actions') continue;
         if (skill.module === 'memory' && !settings.memory.enabled) continue;

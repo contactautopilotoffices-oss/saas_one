@@ -525,3 +525,27 @@ describe('WhatsApp: two turns saving at once never lose an exchange (2026-11-18)
         assert.equal(w.sent.length, 1);
     });
 });
+
+describe('WhatsApp: swipe-replies (2026-11-18)', () => {
+    it('a sent reply keeps its WhatsApp id, and a later swipe on it reaches the model with the quoted words', async () => {
+        const model = new ScriptedModel(['Your AC ticket is assigned to Suresh.', 'Okay, noted.']);
+        const { w, deps } = world({ model });
+        deps.sendReplyTracked = async (phone, text) => { w.sent.push({ phone, text }); return { sent: true, messageIds: ['wamid.OUT1'] }; };
+        const first = await claimBrain(deps, msg('status of my ac ticket'));
+        assert.ok(first.handled); await first.background();
+        const saved = w.threads.get(`${ORG}:${USER}:false`) as { history: Array<{ role: string; ids?: string[] }> };
+        assert.deepEqual(saved.history.find(h => h.role === 'assistant')!.ids, ['wamid.OUT1']);
+        const swipe = await claimBrain(deps, msg('who is suresh?', { quotedIds: ['wamid.OUT1'] }));
+        assert.ok(swipe.handled); await swipe.background();
+        assert.match(model.lastUserText(), /replying_to: the person swiped to reply to your message[\s\S]*Your AC ticket is assigned to Suresh\./);
+    });
+
+    it('a swipe-reply is answered on its own, never folded into a batch', async () => {
+        const { deps } = world({ model: new ScriptedModel(['Okay.']) });
+        let asked = 0;
+        deps.batch = async () => { asked++; return { kind: 'unavailable' }; };
+        const claim = await claimBrain(deps, msg('this one', { quotedIds: ['wamid.X'] }));
+        assert.ok(claim.handled);
+        assert.equal(asked, 0);
+    });
+});

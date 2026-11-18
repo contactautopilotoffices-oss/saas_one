@@ -33,7 +33,8 @@ export const threadStateSchema = z.object({
     pending: z.union([pendingAsk, pendingConfirm]).nullable().default(null),
     /** Questions asked in a row without the request moving forward. */
     askStreak: z.number().int().min(0).max(20).default(0),
-    history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000), at: z.string().max(40) }).strict()).max(40).default([]),
+    /** `ids` (2026-11-18): the WhatsApp ids of that message, so a swipe-reply to it can be matched. */
+    history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000), at: z.string().max(40), ids: z.array(z.string().max(512)).max(10).optional() }).strict()).max(40).default([]),
     lastActiveAt: z.string().max(40).optional(),
     /**
      * 2026-11-18: a confirmation card that is still waiting while the brain asks about something else. Only ever set
@@ -70,6 +71,32 @@ export function openThread(raw: unknown, now: Date): ThreadState {
     const stale = s.pending?.kind === 'confirm' && t - Date.parse(s.pending.at) > CONFIRM_MS;
     const parkedStale = !!s.parked && t - Date.parse(s.parked.at) > CONFIRM_MS;
     return { ...s, history, closed, pending: stale ? null : s.pending, parked: parkedStale ? null : s.parked, ...(stale ? { cardLast: false } : {}) };
+}
+
+export type HistoryEntry = ThreadState['history'][number];
+
+/** The message a swipe-reply quotes, if it is still in the thread (2026-11-18). */
+export function findQuoted(s: ThreadState, quotedIds: readonly string[]): HistoryEntry | null {
+    if (!quotedIds.length) return null;
+    const want = new Set(quotedIds);
+    for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].ids?.some(id => want.has(id))) return s.history[i];
+    return null;
+}
+
+/**
+ * The stored thread with the WhatsApp ids of a reply that has just gone out, put on that reply's entry (the assistant
+ * entry written at `turnAt`). null = the entry is not there any more, or it already has those ids: nothing to save.
+ */
+export function withSentIds(raw: unknown, turnAt: string, ids: readonly string[]): ThreadState | null {
+    const parsed = threadStateSchema.safeParse(raw ?? {});
+    if (!parsed.success || !ids.length) return null;
+    const s = parsed.data;
+    const i = s.history.findIndex(h => h.role === 'assistant' && h.at === turnAt);
+    if (i < 0) return null;
+    const merged = [...new Set([...(s.history[i].ids ?? []), ...ids])].slice(0, 10);
+    if (merged.length === (s.history[i].ids ?? []).length) return null;
+    const history = s.history.map((h, n) => (n === i ? { ...h, ids: merged } : h));
+    return { ...s, history };
 }
 
 /** The confirmation card waiting for the person's Yes or Cancel, whether it is in front or behind a question. */

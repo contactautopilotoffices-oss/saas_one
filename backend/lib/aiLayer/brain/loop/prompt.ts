@@ -63,6 +63,8 @@ export interface ContextInput {
     parked?: ThreadState['parked'];
     /** Topics the person closed (2026-11-18). */
     closed?: ThreadState['closed'];
+    /** The message a swipe-reply quotes (2026-11-18): the entry, 'gone' (older than what is kept), or null (not a swipe). */
+    quoted?: ThreadState['history'][number] | 'gone' | null;
     memory: MemoryFact[];
     handles: Record<string, HandleRef>;
     /** Files of this turn the model can actually see as images. */
@@ -85,6 +87,10 @@ export function buildContext(c: ContextInput): string {
         : `a confirmation card (${c.pending.skillId.replace(/\./g, '_')}) is waiting for the person's Yes or Cancel. ${cardRules}`;
     const parked = c.parked ? `a confirmation card (${c.parked.skillId.replace(/\./g, '_')}) is also still waiting behind your question. ${cardRules}` : 'none';
     const closed = (c.closed ?? []).map(x => `"${x.label}"`);
+    const q = c.quoted;
+    const replyingTo = !q ? null
+        : q === 'gone' ? 'the person swiped to reply to an older message that is no longer in view. If the message is unclear without it, ask what they mean; do not guess.'
+        : `the person swiped to reply to ${q.role === 'assistant' ? 'your' : 'their own'} message from ${q.at.slice(11, 16)} UTC: "${q.text.replace(/\s+/g, ' ').slice(0, 300)}". Read the message below as being about that one.`;
     return [
         '<context>',
         `now: ${indiaNow(c.now)}`,
@@ -94,6 +100,7 @@ export function buildContext(c: ContextInput): string {
         `open_files: ${c.attachments.length ? c.attachments.map(a => attachmentLine(a) + (c.visibleImages.includes(a.handle) ? ' (shown to you below)' : '')).join(' ; ') : 'none'}`,
         `pending: ${pending}`,
         ...(c.parked ? [`waiting_card: ${parked}`] : []),
+        ...(replyingTo ? [`replying_to: ${replyingTo}`] : []),
         `closed_by_person: ${closed.length ? `${closed.join(' ; ')}. Do not offer or bring these up again.` : 'none'}`,
         `remembered: ${c.memory.length ? c.memory.map(m => `${m.key} = ${m.label}`).join(' ; ') : 'nothing'}`,
         `handles_so_far: ${handles.length ? handles.join(' ; ') : 'none'}`,

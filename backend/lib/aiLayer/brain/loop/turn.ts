@@ -77,6 +77,27 @@
  *    card_shown_again, pick_out_of_range.
  * **10. Laws knowingly violated:** as above, plus L2 for this change [BAA pp.94–95, 99] (no head-to-head before
  *    shipping; the fixes target concrete failures and keep every older test green).
+ *
+ * ### Amendment 2026-11-18 (b): the property list, one repair, swipe-replies
+ * **1.** Still hybrid [BAA p.121]. A swiped Yes / Cancel on a card is decided by code; a swipe on an old card runs
+ *    nothing [BAA p.112].
+ * **2. Context** [BAA p.112]: adds `replying_to` (the quoted message, from the thread only; never fetched elsewhere).
+ * **3. False positive** [BAA p.112]: unchanged. A failed fact check now gets one repair call on the same model before
+ *    code's own answer is used; the check itself is unchanged and still decides.
+ * **4. Tools**: new read skill properties.mine (the person's own property list, from the access already loaded; no
+ *    query), description with when-not-to-use [BAA p.107], returns text and never throws [BAA p.94], args re-parsed
+ *    with zod [BAA p.93]; not MCP [BAA p.106].
+ * **5. Prompt** [BAA pp.105, 114]: unchanged steps; the repair note is a fixed text (repairNote) sent only after a
+ *    failed check, never in the cached prefix.
+ * **6. Memory** [BAA pp.100–103]: history entries keep the WhatsApp ids of the message, so a swipe can be matched;
+ *    kept as long as the history (24 hours, 16 entries).
+ * **8. Evaluation** [BAA pp.118–119]: eval case p-my-properties added (every skill has a case); tests in
+ *    brain-answers.test.ts and brain-swipe.test.ts. Not re-run with real models or the rubric [BAA pp.96–98].
+ *    Efficiency [BAA p.119]: the repair adds at most one model call, only on turns that failed the check
+ *    (TurnTrace.repaired marks them, so their share and cost can be read on the console).
+ * **9. Trace** [BAA pp.119–120]: TurnTrace.repaired; a failed repair is in hops as "repair: …"; new reason
+ *    quoted_old_card.
+ * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99].
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { buildAuditRow, type AuditInput, type AuditStore } from '../../audit';
@@ -86,7 +107,7 @@ import { NO, YES, detectLang, t } from '../../language';
 import type { ActorContext, Lang } from '../../types';
 import { effectiveBrainLimits, roleClass, scopeFingerprint, type BrainSettings } from '../config';
 import { NO_LEARNING, cleanGuidance, echoesLesson, guidanceBlock, lessonsBlock, selectLessons, type Learned } from '../learning/lessons';
-import { handleBook, openThread, waitingCard, HISTORY_TURNS, type PendingConfirm, type ThreadState } from '../memory/thread';
+import { findQuoted, handleBook, openThread, waitingCard, HISTORY_TURNS, type PendingConfirm, type ThreadState } from '../memory/thread';
 import { ASK_USER, CLOSE_TOPIC, HANDOFF, skillByTool, skillsFor, tasksInBrain, toolDefs, toolName, type AvailableSkill } from '../skills/registry';
 import { bt } from '../text';
 import type { AttachmentRef, Block, BrainChannel, BrainData, BrainModel, BrainReply, MemoryFact, Msg, Outcome, SkillContext, TurnTrace, WriteSkill } from '../types';
@@ -128,6 +149,10 @@ export interface TurnInput {
     state: unknown;
     /** Shadow: think and record, never run a write, never write the audit log. */
     dryRun?: boolean;
+    /** 2026-11-18: the WhatsApp ids of the message(s) this turn answers, kept on the person's history entry. */
+    messageIds?: string[];
+    /** 2026-11-18: the person swiped to reply to a message: the WhatsApp ids of the message they quoted. */
+    quotedIds?: string[];
 }
 
 export interface TurnOutput {
@@ -144,6 +169,17 @@ const MAX_MODELS = 3;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 32);
 const clipArg = (v: unknown): unknown => (typeof v === 'string' ? v.slice(0, 200) : Array.isArray(v) ? v.slice(0, 10).map(clipArg) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, clipArg(x)])) : v);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200);
+
+/** What the model is told when its answer failed the fact check (2026-11-18). Frozen wording; only the parts vary. */
+export function repairNote(bad: string[]): string {
+    const parts = bad.slice(0, 6).map(b => `"${b.slice(0, 40)}"`).join(', ');
+    return [
+        `<system_check>Your answer was NOT sent. It contains ${parts}, which is not in any tool result, the context or the person's words.`,
+        'Do not guess. Either call a read tool that returns it, or write the answer again without it.',
+        'If the answer is a list, show the list a tool returned instead of counting, shortening or adding to it yourself.',
+        'Reply to the person directly; do not mention this check.</system_check>',
+    ].join('\n');
+}
 
 type LoopEnd =
     | { kind: 'text'; text: string }
@@ -166,6 +202,16 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     const book = handleBook(state.handles);
     /** The confirmation card waiting for Yes or Cancel (in front, or parked behind a question). 2026-11-18. */
     const card = waitingCard(state);
+    /**
+     * The message a swipe-reply quotes (2026-11-18): found = still in the thread; 'gone' = older than what is kept.
+     * `quotesCard` = it quotes the card that is waiting now; `quotesOldCard` = it quotes a card that is no longer open.
+     */
+    const quotedIds = (input.quotedIds ?? []).filter(id => typeof id === 'string' && id.length > 0 && id.length <= 512).slice(0, 5);
+    const quoted = quotedIds.length ? findQuoted(state, quotedIds) ?? 'gone' as const : null;
+    const quotedText = quoted && quoted !== 'gone' && quoted.role === 'assistant' ? quoted.text : '';
+    const looksLikeCard = (t: string) => (['en', 'hi', 'hinglish'] as const).some(l => t.includes(bt('confirm_tail', l)));
+    const quotesCard = !!card && !!quotedText && quotedText.includes(card.card);
+    const quotesOldCard = !!quotedText && !quotesCard && looksLikeCard(quotedText);
     /** Topics the person closed in THIS turn, and whether the waiting card was cancelled by it. */
     const closedNow: Array<{ label: string; at: string }> = [];
     let cardClosed = false;
@@ -198,7 +244,7 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
         const at = now.toISOString();
         const history = next.keepThread ? state.history : [
             ...state.history,
-            ...(storedUserText ? [{ role: 'user' as const, text: storedUserText.slice(0, 2000), at }] : []),
+            ...(storedUserText ? [{ role: 'user' as const, text: storedUserText.slice(0, 2000), at, ...(input.messageIds?.length ? { ids: input.messageIds.slice(0, 10) } : {}) }] : []),
             ...(reply ? [{ role: 'assistant' as const, text: reply.text.slice(0, 2000), at }] : []),
         ].slice(-HISTORY_TURNS);
         trace.outcome = outcome;
@@ -254,6 +300,15 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     const ctx: SkillContext = { actor, lang, now, channel, data: deps.data, aliases, userWords, attachments, handle: book.issue, resolve: book.resolve, memory };
 
     // ── 3. Fast path: an answer to something pending needs no model ──
+    // A swipe-reply on the waiting card is an answer to THAT card, even behind a question (2026-11-18).
+    if (quotesCard && card && raw) {
+        if (YES.test(raw)) return confirm(card);
+        if (NO.test(raw) || isCancelPhrase(raw, card.skillId)) return cancelCard(card);
+    }
+    // A swipe-reply "Yes" on a card that is no longer open (done, cancelled, expired): nothing runs on it.
+    if (quotesOldCard && raw && (YES.test(raw) || NO.test(raw))) {
+        return finish('not_executed', { text: bt('expired', lang) }, { pending: state.pending, askStreak: state.askStreak, cardLast: state.cardLast, reason: 'quoted_old_card' });
+    }
     // A short cancel phrase ("cancel it", "cancel the lan ticket", "rehne do") cancels the waiting card, wherever it is
     // (2026-11-18: only the bare word "cancel" used to count). A phrase naming something else goes to the model.
     // Only for a card in FRONT: behind a question, "leave it" may be the answer to that question, so the model decides.
@@ -273,7 +328,7 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
         const n = state.pending.options.length;
         return finish('ask', { text: n === 1 ? bt('pick_one', lang) : bt('pick_range', lang, { n }), options: state.pending.options }, { pending: state.pending, askStreak: state.askStreak, reason: 'pick_out_of_range' });
     }
-    if (!state.pending && !images.length && (!raw || shortReply)) {
+    if (!state.pending && !images.length && !quotedText && (!raw || shortReply)) {
         // "yes", "2", "ok" with nothing of ours waiting: it answers another assistant's question, or nothing at all.
         if (raw || !attachments.length) return finish('unsupported', null, { keepThread: true, reason: 'not_ours' });
     }
@@ -293,7 +348,7 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     // Tasks in the brain (owner 2026-11-15): only when one of the person's task actions is on; otherwise the same prompt as before.
     const system = tasksInBrain(available) ? SYSTEM_PROMPT_TASKS : SYSTEM_PROMPT;
     const visible = images.filter(i => attachments.some(a => a.handle === i.handle));
-    const context = buildContext({ actor, lang, now, aliases, attachments, pending: state.pending, parked: state.parked, closed: state.closed, memory, handles: book.all(), visibleImages: visible.map(i => i.handle) });
+    const context = buildContext({ actor, lang, now, aliases, attachments, pending: state.pending, parked: state.parked, closed: state.closed, quoted, memory, handles: book.all(), visibleImages: visible.map(i => i.handle) });
     // What the Tech team taught (lessons) and wrote (guidance). It sits AFTER the frozen prompt and the context, so the
     // cached prefix is untouched, and it is kept apart from `context`: a lesson is another person's message and must
     // never count as a source of facts for the grounding check.
@@ -323,9 +378,12 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     /** What close_topic asked for in this model run (2026-11-18). Applied by code after the loop, once. */
     const closing: { ask: { what: string; handles: string[]; card: boolean } | null } = { ask: null };
 
-    const runLoop = async (model: string): Promise<LoopEnd> => {
-        sources = []; displays = []; lastRead = null; closing.ask = null;
-        const messages: Msg[] = [...history, { role: 'user', blocks: userBlocks }];
+    /** The conversation of the model run that answered, so a repair can carry on from it with its tool results. */
+    let convo: Msg[] = [];
+
+    const runLoop = async (model: string, resume = false): Promise<LoopEnd> => {
+        if (!resume) { sources = []; displays = []; lastRead = null; closing.ask = null; convo = [...history, { role: 'user', blocks: userBlocks }]; }
+        const messages: Msg[] = convo;
         let reads = 0; let problems = 0;
         for (let round = 0; round < limits.maxToolCalls + 4; round++) {
             const t0 = Date.now();
@@ -439,10 +497,11 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     };
 
     let end: LoopEnd | null = null;
+    let usedModel: string | null = null;
     let models: string[] = [];
     try { models = (await deps.chain()).slice(0, MAX_MODELS); } catch (err) { trace.hops.push({ model: 'chain', error: errText(err) }); }
     for (const model of models) {
-        try { end = await runLoop(model); break; }
+        try { end = await runLoop(model); usedModel = model; break; }
         catch (err) {
             trace.hops.push({ model, error: errText(err) });
             console.warn(`[Brain] ${model} failed, trying the next model: ${errText(err)}`);
@@ -453,13 +512,27 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
         // Nothing is lost: an open question or proposal stays exactly as it was.
         return finish('error', { text: bt('down', lang) }, { keepThread: true, reason: 'ai_unavailable' });
     }
+    // Guidance is written and tested by the Tech team, so a fact in it (a helpdesk name, a number) may be said. Lessons are not here.
+    const sourcesNow = () => [context, guidance ? cleanGuidance(guidance.text) : '', userWords, text, ...sources, ...state.history.map(h => h.text)].join('\n');
+    // Repair (2026-11-18): an answer that fails the fact check gets ONE more try, on the same model and with its tool
+    // results, told exactly what could not be traced. Before, the person got "I couldn't put that answer together
+    // reliably" at once, and asking again failed the same way ("Show those 22 properties", twice).
+    if (end.kind === 'text' && end.text.trim() && usedModel) {
+        const bad = ungroundedParts(end.text, sourcesNow(), istDate(now));
+        if (bad.length) {
+            convo.push({ role: 'assistant', blocks: [{ type: 'text', text: end.text }] });
+            convo.push({ role: 'user', blocks: [{ type: 'text', text: repairNote(bad) }] });
+            trace.repaired = true;
+            try { end = await runLoop(usedModel, true); }
+            catch (err) { trace.hops.push({ model: usedModel, error: `repair: ${errText(err)}` }); }
+        }
+    }
     const usage = { model: trace.modelCalls.at(-1)?.model ?? null, tokensIn: trace.modelCalls.reduce((n, c) => n + c.tokensIn, 0), tokensOut: trace.modelCalls.reduce((n, c) => n + c.tokensOut, 0) };
     // close_topic (2026-11-18): code does what it means, once, after the model run that asked for it succeeded.
     const closeLine = closing.ask ? await applyClose(closing.ask) : null;
     /** The reply with the close line in front of it, when something was closed this turn. */
     const withClose = (text: string) => (closeLine ? (text.trim() ? `${closeLine}\n\n${text}` : closeLine) : text);
-    // Guidance is written and tested by the Tech team, so a fact in it (a helpdesk name, a number) may be said. Lessons are not here.
-    const allSources = [context, guidance ? cleanGuidance(guidance.text) : '', userWords, text, ...sources, ...state.history.map(h => h.text)].join('\n');
+    const allSources = sourcesNow();
     /** The reply repeats another person's judged message: treated like an invented fact. */
     const echoes = (reply: string) => echoesLesson(reply, lessons, allSources);
 

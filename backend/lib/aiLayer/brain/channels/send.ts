@@ -19,3 +19,13 @@ export async function sendBrainReply(phone: string, text: string, env: Record<st
     const { TaskMessagingService } = await import('@/task-manager/TaskMessagingService');
     return TaskMessagingService.sendFreeformReply(phone, text);
 }
+
+/** sendBrainReply, also returning the ids of the sent message so a later swipe-reply can be matched (2026-11-18). */
+export async function sendBrainReplyTracked(phone: string, text: string, env: Record<string, string | undefined> = process.env): Promise<{ sent: boolean; messageIds: string[] }> {
+    if (inTestRun(env)) {
+        console.warn('[Brain] refusing to send a WhatsApp message during a test run');
+        return { sent: false, messageIds: [] };
+    }
+    const { TaskMessagingService } = await import('@/task-manager/TaskMessagingService');
+    return TaskMessagingService.sendFreeformReplyTracked(phone, text);
+}

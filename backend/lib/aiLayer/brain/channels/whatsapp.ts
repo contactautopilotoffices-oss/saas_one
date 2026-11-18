@@ -20,7 +20,7 @@ import type { ActorContext } from '../../types';
 import { brainGate, roleClass, type BrainSettings, type RoleClass } from '../config';
 import { NO, YES } from '../../language';
 import { brainHandled, runTurn, type TurnDeps, type TurnImage, type TurnOutput } from '../loop/turn';
-import { mergeThreads, openThread, type ThreadState } from '../memory/thread';
+import { mergeThreads, openThread, withSentIds, type ThreadState } from '../memory/thread';
 import { skillsFor, tasksInBrain } from '../skills/registry';
 import type { AttachmentRef } from '../types';
 import type { Staged } from './media';
@@ -33,6 +33,8 @@ export interface BrainInbound {
      * own card), not two (owner 2026-11-14).
      */
     replyPrefix?: string | null;
+    /** 2026-11-18: the person swiped to reply: the WhatsApp ids of the message they quoted (from the webhook payload). */
+    quotedIds?: string[];
 }
 
 export interface BrainPerson { userId: string; orgId: string }
@@ -60,6 +62,8 @@ export interface BrainWhatsAppDeps {
     turnDeps(ctx: { orgId: string; userId: string; phone: string; settings: BrainSettings }): TurnDeps;
     record(r: { orgId: string; userId: string; shadow: boolean; messageId: string | null; userText: string | null; hadFile: boolean; out: TurnOutput; roleClass: RoleClass }): Promise<void>;
     sendReply(phone: string, text: string): Promise<boolean>;
+    /** 2026-11-18: send and return the sent message's ids, so a later swipe-reply to it can be matched. Optional: absent = sendReply. */
+    sendReplyTracked?(phone: string, text: string): Promise<{ sent: boolean; messageIds: string[] }>;
     /** Housekeeping after a reply (optional). */
     sweep?(orgId: string, settings: BrainSettings): Promise<void>;
     /** Duplicate-delivery guard for messages this server already took (optional). */
@@ -156,15 +160,18 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
         // ── Batching (2026-11-18): several messages sent back to back get ONE reply ──
         // Live, typed text only. A photo and a voice note are answered on their own, as before.
         let texts = [text];
+        let messageIds = messageId ? [messageId] : [];
         let batchToken: string | null = null;
-        if (!shadow && !media && messageId && deps.batch && !input.replyPrefix) {
+        // A swipe-reply is answered on its own: it is about one particular message.
+        const quotedIds = (input.quotedIds ?? []).filter(id => typeof id === 'string' && id.length > 0).slice(0, 5);
+        if (!shadow && !media && messageId && deps.batch && !input.replyPrefix && !quotedIds.length) {
             const b: BatchResult = await deps.batch({ phone: input.phone, messageId, text }).catch(() => ({ kind: 'unavailable' as const }));
             if (b.kind === 'deferred') {
                 // The newest message's webhook answers this one too. Nothing to do here, and no other bot may answer it.
                 deps.markSeen?.(messageId);
                 return { handled: true, background: async () => undefined };
             }
-            if (b.kind === 'batch' && b.texts.length) { texts = b.texts.map(t => t.trim()).filter(Boolean); batchToken = b.token; }
+            if (b.kind === 'batch' && b.texts.length) { texts = b.texts.map(t => t.trim()).filter(Boolean); messageIds = b.messageIds.slice(0, 10); batchToken = b.token; }
             if (!texts.length) texts = [text];
         }
         const batched = texts.length > 1;
@@ -193,7 +200,7 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
             baseState = state;
             const attachments = shadow ? transient : open;
             const tdeps = deps.turnDeps({ orgId: person.orgId, userId: person.userId, phone: input.phone, settings });
-            const turn = (words: string, st: unknown, files: AttachmentRef[]) => runTurn(tdeps, { actor, settings, aliases, channel: 'whatsapp', text: words, images, attachments: files, state: st, dryRun: shadow });
+            const turn = (words: string, st: unknown, files: AttachmentRef[]) => runTurn(tdeps, { actor, settings, aliases, channel: 'whatsapp', text: words, images, attachments: files, state: st, dryRun: shadow, messageIds, quotedIds });
             // A batch holding a bare Yes / No while a card waits: that line answers the card first, on its own, then the
             // rest is read as one turn. Otherwise a "yes" mixed into other words would never reach the card.
             const answerIdx = batched ? texts.findIndex(t => YES.test(t) || NO.test(t)) : -1;
@@ -252,7 +259,13 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
                         .catch(err => { console.error('[Brain] thread could not be saved', err instanceof Error ? err.message : err); });
                     // The next batch of this person may start only now: it must see the state this turn saved.
                     await release();
-                    const sent = await deps.sendReply(input.phone, reply);
+                    let sent: boolean;
+                    if (deps.sendReplyTracked) {
+                        const r = await deps.sendReplyTracked(input.phone, reply);
+                        sent = r.sent;
+                        // The reply's ids go on its history entry, so a swipe-reply to it can be matched. Never fails the turn.
+                        if (r.sent && r.messageIds.length && out.state.lastActiveAt) await rememberSentIds(deps, person, out.state.lastActiveAt, r.messageIds).catch(() => undefined);
+                    } else sent = await deps.sendReply(input.phone, reply);
                     // Not sent: the message stays unanswered in the ledger under route 'brain', which the never-silent
                     // watchdog watches, so the person gets its apology instead of silence.
                     if (!sent) console.warn('[Brain] the reply could not be sent; the never-silent watchdog covers this message');
@@ -309,4 +322,16 @@ async function saveChecked(deps: BrainWhatsAppDeps, person: BrainPerson, base: u
     }
     console.warn('[Brain] thread kept changing; saving the merged state');
     await deps.saveThread(person.orgId, person.userId, false, { ...next, rev: revOf(latest) + 1 });
+}
+
+/** Puts the ids of a sent reply on its history entry, without overwriting a turn that saved in between (2026-11-18). */
+async function rememberSentIds(deps: BrainWhatsAppDeps, person: BrainPerson, turnAt: string, ids: string[]): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const latest = await deps.loadThread(person.orgId, person.userId, false);
+        const next = withSentIds(latest, turnAt, ids);
+        if (!next) return;
+        if (!deps.saveThreadIf) return deps.saveThread(person.orgId, person.userId, false, next);
+        const expected = latest === null || latest === undefined ? null : revOf(latest);
+        if (await deps.saveThreadIf(person.orgId, person.userId, false, { ...next, rev: (expected ?? 0) + 1 }, expected) === 'ok') return;
+    }
 }
