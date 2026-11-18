@@ -412,19 +412,23 @@ AUDIT STEPS (do every step, in order, do not skip any):
    - A parameter can belong to more than one angle. If a parameter is not clearly visible in any reference angle, assign it to the angle where it would most likely be seen and say so in its reason.
 
 2. MATCH FIELD PHOTOS TO ANGLES:
-   - For each reference angle, find the field photo that shows the SAME area/object from a similar viewpoint.
+   - For each reference angle, identify which field photo shows that SAME area/viewpoint.
+   - Note: Staff photos may be in ANY order (e.g. Field Photo #2 may match Reference Angle #1). Match by visual content, not by order!
    - Zoom and framing differences are fine (references are often 0.5x ultra-wide, staff photos 1x or closer). Never fail a photo only for zoom.
    - A photo of a DIFFERENT area, a different object, or a viewpoint that hides most of the reference area does NOT match.
    - "status": "matched" if a field photo clearly shows the area. "angle_mismatch" if the best photo only partly shows it (turned away, mostly cropped, blurry, too dark). "missing" if no field photo shows that area.
-   - "matched_photo_index": the Field Photo number (1-based) you used, or null.
+   - "matched_photo_index": the 1-based number of the Field Photo (e.g. 1, 2) that matches this angle, or null.
 
-3. VERIFY EVERY PARAMETER IN THE FIELD PHOTOS:
-   - For each parameter, look for it in the field photo matched to its expected angle (also check the other field photos).
+3. VERIFY EVERY PARAMETER ACROSS ALL FIELD PHOTOS:
+   - Checklist parameters (e.g. Company Logo, Tables, Chairs, Flooring, Lights, Plants) are distributed across DIFFERENT field photos and angles.
+   - You MUST look across ALL submitted field photos (Field Photo #1, Field Photo #2, etc.) for each parameter. Do NOT assume all parameters are in Photo #1!
+   - For EVERY single parameter listed in PARAMETERS TO VERIFY, you MUST include an entry in the "parameters" array.
    - Found and clean / conforming: "pass", score 85-100.
    - Found with a minor issue: "needs_attention", score 55-75.
    - Found and dirty, damaged, missing or not done: "fail", score 0-40.
-   - Not visible in ANY field photo, hidden, too blurry or too dark to judge: "not_visible", score null. Do NOT guess. Do NOT mark "pass" just because the rest of the photo looks clean.
-   - "found_in_photo": the Field Photo number where you saw it, or null.
+   - Not visible in ANY of the submitted field photos: "not_visible", score null.
+   - "found_in_photo": the Field Photo number (1, 2, 3...) where this parameter is clearly seen, or null if not seen in any photo.
+   - "box_2d": normalized bounding box [ymin, xmin, ymax, xmax] (0 to 1000) showing where the parameter / item appears on that field photo, or null if not visible.
    - "reason": strictly one concise sentence (max 15 words) stating only what you saw. No generic phrases.
 
 4. OVERALL RESULT:
@@ -445,7 +449,7 @@ Respond ONLY with raw JSON in exactly this shape:
     { "benchmark_id": "<id>", "benchmark_label": "<label>", "matched_photo_index": <number or null>, "status": "matched" | "angle_mismatch" | "missing", "reason": "<max 15 words observation>", "cleanliness_score": <number 0..100> }
   ],
   "parameters": [
-    { "name": "<exact parameter name>", "expected_angle": "<angle label>", "found_in_photo": <number or null>, "reason": "<max 15 words observation>", "status": "pass" | "needs_attention" | "fail" | "not_visible", "score": <number or null> }
+    { "name": "<exact parameter name>", "expected_angle": "<angle label>", "found_in_photo": <number or null>, "box_2d": [<ymin>, <xmin>, <ymax>, <xmax>] or null, "reason": "<max 15 words observation>", "status": "pass" | "needs_attention" | "fail" | "not_visible", "score": <number or null> }
   ],
   "overall_reason": "<max 25 words summary>",
   "overall_score": <number 0..100>,
@@ -486,18 +490,18 @@ Respond ONLY with raw JSON in exactly this shape:
                             messages: [
                                 {
                                     role: 'system',
-                                    content: 'You are an expert cleanliness auditor. Output raw JSON only with strictly concise descriptions.',
+                                    content: 'You are an expert commercial facilities cleanliness auditor API that outputs raw JSON. Do not write extensive thinking or reasoning. Start output immediately with the { JSON object.',
                                 },
                                 {
                                     role: 'user',
                                     content: imageContents,
                                 },
                             ],
-                            max_tokens: 2500,
+                            max_tokens: 8192,
                             temperature: 0.1,
                             response_format: { type: 'json_object' },
                         }),
-                        signal: AbortSignal.timeout(25000),
+                        signal: AbortSignal.timeout(60000),
                     });
 
                     if (engyRes.ok) {
@@ -684,6 +688,10 @@ Respond ONLY with raw JSON in exactly this shape:
 
         // Process Benchmark-to-Field Photo Matches & Detect Missing / Wrong-Angle Areas
         const fieldPhotoUrlAt = (n: any): string | null => {
+            if (typeof n === 'string') {
+                const match = n.match(/\d+/);
+                if (match) n = parseInt(match[0], 10);
+            }
             const idx = typeof n === 'number' ? n : parseInt(String(n ?? ''), 10);
             return Number.isFinite(idx) && idx >= 1 && idx <= fieldPhotoItems.length ? fieldPhotoItems[idx - 1].url : null;
         };
@@ -697,7 +705,7 @@ Respond ONLY with raw JSON in exactly this shape:
                 const status = normalizeMatchStatus(m.status);
                 const matchedUrl = status === 'missing'
                     ? null
-                    : (fieldPhotoUrlAt(m.matched_photo_index) || (typeof m.matched_photo_url === 'string' && m.matched_photo_url.startsWith('/') ? m.matched_photo_url : null) || fieldPhotoItems[idx]?.url || null);
+                    : (fieldPhotoUrlAt(m.matched_photo_index) || (typeof m.matched_photo_url === 'string' && m.matched_photo_url.startsWith('/') ? m.matched_photo_url : null) || (benchmarkItems.length === 1 && fieldPhotoItems[0] ? fieldPhotoItems[0].url : null));
                 return {
                     benchmark_id: matchedBm?.id || m.benchmark_id || `ref_${idx + 1}`,
                     benchmark_label: matchedBm?.label || m.benchmark_label || `Standard ${idx + 1}`,
@@ -771,20 +779,56 @@ Respond ONLY with raw JSON in exactly this shape:
                     status: 'not_visible',
                     score: null,
                     expected_angle: null,
+                    found_in_photo: null,
                     found_in_photo_url: null,
+                    boxes: [],
                     flagged: true,
                     reason: 'AI did not report on this parameter. Please check it manually.',
                 };
             }
             const status = normalizeParamStatus(ai.status);
             const score = status === 'not_visible' ? null : (typeof ai.score === 'number' ? Math.max(0, Math.min(100, Math.round(ai.score))) : null);
+
+            // Extract bounding boxes / visual marks detected during scoring
+            const rawBox = ai.box_2d || ai.box || ai.bbox;
+            let boxes: any[] = [];
+            if (Array.isArray(ai.boxes)) {
+                boxes = ai.boxes.filter((b: any) => Array.isArray(b?.box_2d || b?.box));
+            } else if (Array.isArray(rawBox) && rawBox.length === 4) {
+                const [ymin, xmin, ymax, xmax] = rawBox.map(Number);
+                if (!isNaN(ymin) && !isNaN(xmin) && !isNaN(ymax) && !isNaN(xmax)) {
+                    boxes = [{
+                        box_2d: [
+                            Math.max(0, Math.min(1000, Math.round(ymin))),
+                            Math.max(0, Math.min(1000, Math.round(xmin))),
+                            Math.max(0, Math.min(1000, Math.round(ymax))),
+                            Math.max(0, Math.min(1000, Math.round(xmax))),
+                        ],
+                        label: String(ai.box_label || name).slice(0, 50),
+                    }];
+                }
+            }
+
+            const rawFoundPhoto = ai.found_in_photo ?? ai.found_in_photo_index;
+            let foundPhotoIdx: number | null = null;
+            if (typeof rawFoundPhoto === 'number' && Number.isFinite(rawFoundPhoto)) {
+                foundPhotoIdx = rawFoundPhoto;
+            } else if (typeof rawFoundPhoto === 'string') {
+                const m = rawFoundPhoto.match(/\d+/);
+                if (m) foundPhotoIdx = parseInt(m[0], 10);
+            }
+
+            const foundPhotoUrl = status === 'not_visible' ? null : fieldPhotoUrlAt(foundPhotoIdx);
+
             return {
                 name,
                 is_assessable: status !== 'not_visible',
                 status,
                 score,
                 expected_angle: ai.expected_angle || null,
-                found_in_photo_url: status === 'not_visible' ? null : fieldPhotoUrlAt(ai.found_in_photo),
+                found_in_photo: foundPhotoIdx,
+                found_in_photo_url: foundPhotoUrl,
+                boxes,
                 flagged: status === 'not_visible',
                 reason: ai.reason || (status === 'not_visible' ? 'Not visible in any uploaded photo.' : ''),
             };
