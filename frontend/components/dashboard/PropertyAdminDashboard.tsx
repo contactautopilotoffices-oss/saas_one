@@ -1142,10 +1142,10 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                             onPropertySwitch={handlePropertySwitch}
                         />}
                         {openTab === 'users' && <UserDirectory
-                            propertyId={propertyId}
-                            orgId={property?.organization_id}
+                            propertyId={propertyId === 'all' ? undefined : propertyId}
+                            orgId={property?.organization_id || orgProperties[0]?.organization_id || membership?.org_id}
                             orgName={orgSlug}
-                            properties={property ? [property] : []}
+                            properties={orgProperties.length > 0 ? orgProperties : (assignedProperties.length > 0 ? assignedProperties : (property && property.id !== 'all' ? [property] : []))}
                             onUserUpdated={Object.assign(() => setStatsVersion((v: number) => v + 1), {
                                 __triggerModal: () => setShowAddMemberModal(true)
                             })}
@@ -1337,10 +1337,10 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
             <AddMemberModal
                 isOpen={showAddMemberModal}
                 onClose={() => setShowAddMemberModal(false)}
-                orgId={property?.organization_id || ''}
+                orgId={property?.organization_id || orgProperties[0]?.organization_id || membership?.org_id || ''}
                 orgName={orgSlug || 'Organization'}
-                properties={property ? [property] : []}
-                fixedPropertyId={propertyId}
+                properties={orgProperties.length > 0 ? orgProperties : (assignedProperties.length > 0 ? assignedProperties : (property && property.id !== 'all' ? [property] : []))}
+                fixedPropertyId={propertyId === 'all' ? undefined : propertyId}
                 onSuccess={() => setStatsVersion(v => v + 1)}
             />
 

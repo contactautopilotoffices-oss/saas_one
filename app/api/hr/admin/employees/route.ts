@@ -772,14 +772,18 @@ export async function DELETE(request: Request) {
         const denied = await requireHrAdminOfProfile(request, id);
         if (denied) return denied;
 
+        // Soft delete: keep record intact for historical tickets, leave logs, and audits
         const { error } = await supabaseAdmin
             .from('employee_profiles')
-            .delete()
+            .update({
+                is_active: false,
+                updated_at: new Date().toISOString()
+            })
             .eq('id', id);
 
         if (error) throw error;
 
-        return NextResponse.json({ success: true, message: 'Employee profile deleted successfully' });
+        return NextResponse.json({ success: true, message: 'Employee profile soft-deleted successfully' });
     } catch (err: any) {
         return NextResponse.json({ success: false, error: err.message }, { status: 500 });
     }

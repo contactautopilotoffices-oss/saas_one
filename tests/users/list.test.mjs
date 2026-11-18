@@ -23,6 +23,12 @@ test('active ops can list pending property members through the property alias, w
     assert.equal(response.status, 200); assert.deepEqual((await response.json()).users.map(u => u.id), ['caller', 'pending']);
     assert.ok(!f.reads.some(r => r.table === 'users' && r.filters.some(([k]) => k === 'organization_id')));
 });
+test('propertyId=all lists organization users when orgId is provided', async () => {
+    const f = fixture();
+    const response = await list(f, 'orgId=o1&propertyId=all');
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).users.map(u => u.id), ['caller', 'pending']);
+});
 test('inactive ops cannot list organization users', async () => { assert.equal((await list(fixture({ active: false }), 'orgId=o1')).status, 403); });
 test('property-only lists require authentication', async () => { assert.equal((await list(fixture({ authenticated: false }), 'propertyId=p1')).status, 401); });
 test('property admin lists only its own property', async () => {
