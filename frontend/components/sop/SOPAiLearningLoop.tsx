@@ -863,15 +863,76 @@ export default function SOPAiLearningLoop({ propertyId, isOrgSuperAdmin = true, 
                                             <div className="flex items-center gap-2.5">
                                                 <ShieldCheck size={20} className="text-emerald-600" />
                                                 <div>
-                                                    <span className="text-xs font-black text-emerald-950 block">Rule Adherence Verified</span>
+                                                    <span className="text-xs font-black text-emerald-950 block">AI Vision Adherence & Improvement Verified</span>
                                                     <span className="text-[11px] text-emerald-700 font-medium">Model: {simResult.model_used}</span>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1.5">
-                                                <span className="text-xs font-bold text-emerald-900">Score:</span>
+                                                <span className="text-xs font-bold text-emerald-900">Improved Score:</span>
                                                 <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-black text-xs">
                                                     {simResult.result?.score ?? 90}/100 ({simResult.result?.status?.toUpperCase() ?? 'PASS'})
                                                 </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Side-by-Side: Before Learning vs. After Learning Comparison */}
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                                            {/* Column 1: Before Learning (Original Failure) */}
+                                            <div className="p-4 rounded-2xl bg-rose-50/80 border border-rose-200/90 flex flex-col justify-between gap-3 shadow-2xs">
+                                                <div>
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[10px] font-black uppercase tracking-wider text-rose-800">
+                                                            1. Before Learning (Original AI)
+                                                        </span>
+                                                        <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-rose-200 text-rose-900">
+                                                            Failed / Missed
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-baseline gap-2 mb-1.5">
+                                                        <span className="text-xl font-black text-rose-950">
+                                                            {simulatingRule.ai_status.replace('_', ' ').toUpperCase()}
+                                                        </span>
+                                                        <span className="text-[11px] font-semibold text-rose-700">
+                                                            (Unverified / Low Score)
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-rose-900/90 font-medium leading-relaxed">
+                                                        AI could not verify <span className="font-bold">{simulatingRule.parameter_name}</span> or flagged it as unverified from the camera framing without human guidance.
+                                                    </p>
+                                                </div>
+                                                <div className="pt-2 border-t border-rose-200/70 flex items-center justify-between text-[11px] text-rose-800 font-bold">
+                                                    <span>Needs Human Review:</span>
+                                                    <span className="text-rose-950 font-black">FLAGGED</span>
+                                                </div>
+                                            </div>
+
+                                            {/* Column 2: After Learning (With Human Rule Injected) */}
+                                            <div className="p-4 rounded-2xl bg-emerald-50/90 border border-emerald-200 flex flex-col justify-between gap-3 shadow-2xs">
+                                                <div>
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800">
+                                                            2. After Learning (With Rule Injected)
+                                                        </span>
+                                                        <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-emerald-200 text-emerald-900">
+                                                            Rule Enforced
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-baseline gap-2 mb-1.5">
+                                                        <span className="text-xl font-black text-emerald-950">
+                                                            {simResult.result?.status?.toUpperCase() ?? 'PASS'}
+                                                        </span>
+                                                        <span className="text-[11px] font-semibold text-emerald-700">
+                                                            ({simResult.result?.score ?? 90}/100)
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-xs text-emerald-900/90 font-medium leading-relaxed">
+                                                        {simResult.result?.reasoning}
+                                                    </p>
+                                                </div>
+                                                <div className="pt-2 border-t border-emerald-200/70 flex items-center justify-between text-[11px] text-emerald-800 font-bold">
+                                                    <span>Needs Human Review:</span>
+                                                    <span className="text-emerald-950 font-black">RESOLVED (Auto-Passed)</span>
+                                                </div>
                                             </div>
                                         </div>
 
