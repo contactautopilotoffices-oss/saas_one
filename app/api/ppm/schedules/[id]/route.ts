@@ -115,7 +115,7 @@ async function sendPPMUpdateNotification(
         .from('organization_memberships')
         .select('user_id')
         .eq('organization_id', schedule.organization_id)
-        .in('role', ['org_super_admin', 'owner', 'admin', 'org_admin'])
+        .in('role', ['org_super_admin', 'ops_super_admin', 'owner', 'admin', 'org_admin'])
         .neq('is_active', false);
     (orgAdmins || []).forEach((m: any) => recipientIds.add(m.user_id));
 

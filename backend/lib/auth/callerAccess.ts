@@ -17,7 +17,7 @@ export const EXTERNAL_ROLES = [
     'vendor', 'maintenance_vendor',
 ];
 /** Organisation admins: the roles that get the org admin dashboard (UnifiedDashboard). */
-export const ORG_ADMIN_ROLES = ['org_super_admin', 'org_admin', 'super_admin', 'master_admin'];
+export const ORG_ADMIN_ROLES = ['org_super_admin', 'ops_super_admin', 'org_admin', 'super_admin', 'master_admin'];
 
 export type CallerAccess = {
     userId: string;

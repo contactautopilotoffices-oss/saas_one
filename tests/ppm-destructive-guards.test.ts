@@ -36,9 +36,19 @@ test('canAdministerPpmProperty enforces org/property admin roles and isolation',
         true,
     );
     assert.equal(
+        canAdministerPpmProperty(makeCaller({ orgMemberships: [{ organization_id: orgId, role: 'ops_super_admin' }] }), orgId, propId),
+        true,
+        'ops_super_admin must be allowed to administer PPM schedules',
+    );
+    assert.equal(
         canAdministerPpmProperty(makeCaller({ orgMemberships: [{ organization_id: 'org-other', role: 'org_super_admin' }] }), orgId, propId),
         false,
         'org admin of another org must be rejected',
+    );
+    assert.equal(
+        canAdministerPpmProperty(makeCaller({ orgMemberships: [{ organization_id: 'org-other', role: 'ops_super_admin' }] }), orgId, propId),
+        false,
+        'ops_super_admin of another org must be rejected',
     );
     assert.equal(
         canAdministerPpmProperty(

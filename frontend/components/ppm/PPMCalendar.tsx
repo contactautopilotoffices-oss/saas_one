@@ -317,7 +317,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
     // Determine if this user is a property-scoped admin (not org-level)
     const isPropertyAdmin = membership?.org_role === 'property_admin' ||
-        (!['org_super_admin', 'org_admin', 'admin', 'owner'].includes(membership?.org_role || '') && !!propertyId);
+        (!['org_super_admin', 'ops_super_admin', 'org_admin', 'admin', 'owner'].includes(membership?.org_role || '') && !!propertyId);
 
     // For property admins: always use their property. For org admins: use the selected property in the upload modal.
     const clearPropertyId = isPropertyAdmin ? propertyId : (uploadPropertyId || undefined);
