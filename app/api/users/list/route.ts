@@ -12,10 +12,11 @@ import { isOrganizationUserManager } from '@/backend/lib/users/managementRoles'
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url)
-        const orgId = searchParams.get('orgId')
-        const propertyId = searchParams.get('propertyId')
+        let orgId = searchParams.get('orgId')
+        const rawPropertyId = searchParams.get('propertyId')
+        const propertyId = (!rawPropertyId || rawPropertyId === 'all') ? null : rawPropertyId
 
-        if (!orgId && !propertyId) {
+        if (!orgId && !propertyId && rawPropertyId !== 'all') {
             return NextResponse.json(
                 { error: 'Missing required parameter: orgId or propertyId' },
                 { status: 400 }
@@ -43,6 +44,24 @@ export async function GET(request: NextRequest) {
             .single()
 
         const isMasterAdmin = !!callerUser?.is_master_admin
+
+        if (!orgId && !propertyId && rawPropertyId === 'all') {
+            const { data: callerOrg } = await adminClient
+                .from('organization_memberships')
+                .select('organization_id')
+                .eq('user_id', currentUser.id)
+                .eq('is_active', true)
+                .limit(1)
+                .maybeSingle();
+            if (callerOrg?.organization_id) {
+                orgId = callerOrg.organization_id;
+            } else {
+                return NextResponse.json(
+                    { error: 'Missing required parameter: orgId or propertyId' },
+                    { status: 400 }
+                );
+            }
+        }
 
         // Resolve property scope before any privileged directory reads.
         let resolvedOrgId = orgId;

@@ -11,6 +11,19 @@ const addOtherMemberships = f => {
 test('active ops may invite and create within its organization', async () => {
     for (const name of ['invite', 'create']) { const f = fixture(); assert.equal((await post(f, name, name === 'create' ? createBody : { email: 'created@test', organization_id: 'o1' })).status, 200); assert.equal(f.authCalls.length, 1); }
 });
+test('active ops may create bd_rep role within its organization', async () => {
+    const f = fixture();
+    const res = await post(f, 'create', {
+        email: 'bd_rep@test',
+        full_name: 'BD Rep',
+        password: 'fixture-password',
+        organization_id: 'o1',
+        role: 'bd_rep'
+    });
+    assert.equal(res.status, 200);
+    assert.equal(f.authCalls.length, 1);
+    assert.ok(f.db.organization_memberships.some(m => m.user_id === 'created' && m.role === 'bd_rep'));
+});
 test('inactive ops and other-organization ops cannot invite or create', async () => {
     for (const name of ['invite', 'create']) for (const inactive of [true, false]) {
         const f = fixture({ active: !inactive }); const body = name === 'create' ? { ...createBody } : { email: 'created@test', organization_id: 'o1' };
