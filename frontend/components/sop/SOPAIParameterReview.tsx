@@ -58,6 +58,23 @@ const SOPAIParameterReview: React.FC<Props> = ({
     const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
     const [activeBoxLabel, setActiveBoxLabel] = useState<string | undefined>(undefined);
     const [defectCache, setDefectCache] = useState<Record<string, DefectBox[]>>({});
+    const [activeParam, setActiveParam] = useState<any>(null);
+    const [activeAngleIndex, setActiveAngleIndex] = useState<number>(0);
+
+    const allPhotos: Array<{ index: number; id: string; url: string; label: string }> = React.useMemo(() => {
+        if (Array.isArray(item.photos) && item.photos.length > 0) {
+            return item.photos.map((p: any, idx: number) => ({
+                index: idx,
+                id: p.id || `photo_${idx + 1}`,
+                url: typeof p === 'string' ? p : p.url,
+                label: p.angle_label || `Angle #${idx + 1}`,
+            }));
+        }
+        if (item.photo_url) {
+            return [{ index: 0, id: 'photo_1', url: item.photo_url, label: 'Angle #1' }];
+        }
+        return [];
+    }, [item.photos, item.photo_url]);
 
     const paramScores: any[] = Array.isArray(item.ai_parameter_scores)
         ? item.ai_parameter_scores
@@ -98,34 +115,19 @@ const SOPAIParameterReview: React.FC<Props> = ({
         }
     };
 
-    const handleLocateDefect = async (param: any) => {
-        const rawPhoto = param.found_in_photo_url || (Array.isArray(item.photos) && item.photos[0]?.url) || (typeof item.photos?.[0] === 'string' ? item.photos[0] : null) || item.photo_url;
-        if (!rawPhoto) {
-            onToast?.('No photo available for this parameter', 'error');
-            return;
-        }
-
-        const safePhoto = maskStorageUrl(rawPhoto) || rawPhoto;
-        setPreviewPhotoUrl(safePhoto);
-        setPreviewTitle(`${item.checklist_item?.title || 'Checklist Step'} — ${param.name}`);
-        setActiveBoxLabel(`${param.name} (${normalizeStatus(param).toUpperCase()})`);
-
+    const fetchBoxesForPhoto = async (photoUrl: string, param: any): Promise<DefectBox[]> => {
+        const safePhoto = maskStorageUrl(photoUrl) || photoUrl;
         const cacheKey = `${safePhoto}:${param.name}`;
         if (defectCache[cacheKey]) {
-            setDefectBoxes(defectCache[cacheKey]);
-            setIsLoadingBoxes(false);
-            return;
+            return defectCache[cacheKey];
         }
-
-        setDefectBoxes([]);
-        setIsLoadingBoxes(true);
 
         try {
             const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/locate-defect`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    imageUrl: rawPhoto,
+                    imageUrl: photoUrl,
                     parameterName: param.name,
                     defectDescription: param.reason || param.name,
                 }),
@@ -134,11 +136,111 @@ const SOPAIParameterReview: React.FC<Props> = ({
             if (res.ok) {
                 const data = await res.json();
                 const boxes: DefectBox[] = data.boxes || [];
-                setDefectBoxes(boxes);
                 setDefectCache(prev => ({ ...prev, [cacheKey]: boxes }));
+                return boxes;
             }
         } catch (err) {
             console.error('[Locate Defect] Failed:', err);
+        }
+        return [];
+    };
+
+    const handleLocateDefect = async (param: any) => {
+        if (allPhotos.length === 0) {
+            onToast?.('No photo available for this parameter', 'error');
+            return;
+        }
+
+        setActiveParam(param);
+
+        // Pre-populate cache if param already has pre-computed boxes from score-photo
+        if (Array.isArray(param.boxes) && param.boxes.length > 0) {
+            const targetUrl = param.found_in_photo_url || allPhotos[0]?.url;
+            if (targetUrl) {
+                const safeUrl = maskStorageUrl(targetUrl) || targetUrl;
+                setDefectCache(prev => ({ ...prev, [`${safeUrl}:${param.name}`]: param.boxes }));
+            }
+        }
+
+        // Determine initial photo to show
+        let initialIndex = 0;
+        if (param.found_in_photo_url) {
+            const idx = allPhotos.findIndex(p => p.url === param.found_in_photo_url);
+            if (idx >= 0) initialIndex = idx;
+        } else if (typeof param.found_in_photo === 'number' && param.found_in_photo >= 1 && param.found_in_photo <= allPhotos.length) {
+            initialIndex = param.found_in_photo - 1;
+        } else if (param.expected_angle) {
+            const exp = String(param.expected_angle).toLowerCase();
+            const idx = allPhotos.findIndex(p => p.label.toLowerCase().includes(exp));
+            if (idx >= 0) initialIndex = idx;
+        }
+
+        setActiveAngleIndex(initialIndex);
+        const initialPhoto = allPhotos[initialIndex];
+        const safeInitialPhoto = maskStorageUrl(initialPhoto.url) || initialPhoto.url;
+        setPreviewPhotoUrl(safeInitialPhoto);
+        setPreviewTitle(`${item.checklist_item?.title || 'Checklist Step'} — ${param.name}`);
+        setActiveBoxLabel(`${param.name} (${normalizeStatus(param).toUpperCase()})`);
+
+        const initialCacheKey = `${safeInitialPhoto}:${param.name}`;
+        if (defectCache[initialCacheKey]) {
+            setDefectBoxes(defectCache[initialCacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+
+        try {
+            // When multiple photos exist and the parameter location was uncertain (or marked not_visible),
+            // check all angle photos in parallel so marks across all angles are discovered!
+            if (allPhotos.length > 1 && (!param.found_in_photo_url || param.status === 'not_visible')) {
+                const results = await Promise.all(
+                    allPhotos.map(async (p, pIdx) => {
+                        const boxes = await fetchBoxesForPhoto(p.url, param);
+                        return { pIdx, photoUrl: p.url, boxes };
+                    })
+                );
+
+                // Find if an angle actually found the parameter/defect
+                const matchedAngle = results.find(r => r.boxes.length > 0);
+                if (matchedAngle) {
+                    setActiveAngleIndex(matchedAngle.pIdx);
+                    setPreviewPhotoUrl(maskStorageUrl(matchedAngle.photoUrl) || matchedAngle.photoUrl);
+                    setDefectBoxes(matchedAngle.boxes);
+                } else {
+                    const initialRes = results.find(r => r.pIdx === initialIndex);
+                    setDefectBoxes(initialRes?.boxes || []);
+                }
+            } else {
+                const boxes = await fetchBoxesForPhoto(initialPhoto.url, param);
+                setDefectBoxes(boxes);
+            }
+        } finally {
+            setIsLoadingBoxes(false);
+        }
+    };
+
+    const handleSwitchAngle = async (newIndex: number) => {
+        if (newIndex < 0 || newIndex >= allPhotos.length || !activeParam) return;
+        setActiveAngleIndex(newIndex);
+        const targetPhoto = allPhotos[newIndex];
+        const safePhoto = maskStorageUrl(targetPhoto.url) || targetPhoto.url;
+        setPreviewPhotoUrl(safePhoto);
+
+        const cacheKey = `${safePhoto}:${activeParam.name}`;
+        if (defectCache[cacheKey]) {
+            setDefectBoxes(defectCache[cacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+        try {
+            const boxes = await fetchBoxesForPhoto(targetPhoto.url, activeParam);
+            setDefectBoxes(boxes);
         } finally {
             setIsLoadingBoxes(false);
         }
@@ -297,21 +399,42 @@ const SOPAIParameterReview: React.FC<Props> = ({
                 })}
             </div>
 
-            {/* AI Defect Marks Photo Preview Modal */}
-            <ImagePreviewModal
-                isOpen={Boolean(previewPhotoUrl)}
-                onClose={() => {
-                    setPreviewPhotoUrl(null);
-                    setDefectBoxes([]);
-                    setIsLoadingBoxes(false);
-                    setActiveBoxLabel(undefined);
-                }}
-                imageUrl={maskStorageUrl(previewPhotoUrl) || ''}
-                title={previewTitle}
-                boxes={defectBoxes}
-                isLoadingBoxes={isLoadingBoxes}
-                activeBoxLabel={activeBoxLabel}
-            />
+            {/* AI Defect Marks Photo Preview Modal with Multi-Angle support */}
+            {(() => {
+                const angleTabs = allPhotos.map((p) => {
+                    const safeUrl = maskStorageUrl(p.url) || p.url;
+                    const key = `${safeUrl}:${activeParam?.name}`;
+                    const cached = defectCache[key];
+                    return {
+                        index: p.index,
+                        label: p.label,
+                        url: p.url,
+                        boxCount: cached ? cached.length : undefined,
+                        hasMarks: Boolean(cached && cached.length > 0),
+                    };
+                });
+
+                return (
+                    <ImagePreviewModal
+                        isOpen={Boolean(previewPhotoUrl)}
+                        onClose={() => {
+                            setPreviewPhotoUrl(null);
+                            setDefectBoxes([]);
+                            setIsLoadingBoxes(false);
+                            setActiveBoxLabel(undefined);
+                            setActiveParam(null);
+                        }}
+                        imageUrl={maskStorageUrl(previewPhotoUrl) || ''}
+                        title={previewTitle}
+                        boxes={defectBoxes}
+                        isLoadingBoxes={isLoadingBoxes}
+                        activeBoxLabel={activeBoxLabel}
+                        angles={angleTabs}
+                        activeAngleIndex={activeAngleIndex}
+                        onSelectAngle={handleSwitchAngle}
+                    />
+                );
+            })()}
         </div>
     );
 };

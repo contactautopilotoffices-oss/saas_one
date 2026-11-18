@@ -56,20 +56,20 @@ export async function POST(
         const engyKey = process.env.engy || process.env.COUNCIL_API_KEY;
         const engyBaseUrl = process.env.COUNCIL_BASE_URL || 'https://api.engy.ai/v1';
 
-        const promptText = `You are an expert facilities auditor and visual object detector.
-Analyze this photo and locate any visual defects, compliance violations, dirt, damage, or issues related to:
-Parameter: "${parameterName}"
-Issue/Reason: "${defectDescription || parameterName}"
+        const promptText = `You are an expert commercial facilities auditor and visual object detector.
+Analyze this photo and locate the specified checklist item, parameter, compliance feature, or defect:
+Target Parameter / Item: "${parameterName}"
+Context / Detail: "${defectDescription || parameterName}"
 
 Instructions:
-1. Locate the exact area(s) showing the defect or the parameter needing attention.
+1. Search for the exact area(s) showing this parameter/item (e.g. "${parameterName}") or any defect/issue related to it.
 2. Return bounding boxes as normalized coordinates from 0 to 1000: [ymin, xmin, ymax, xmax].
    - ymin = top (0-1000)
    - xmin = left (0-1000)
    - ymax = bottom (0-1000)
    - xmax = right (0-1000)
-3. If the defect is found, set "found": true and list each bounding box with a concise label (max 4 words).
-4. If the item or defect is not present or cannot be clearly located in this photo, return "found": false and "boxes": [].
+3. If the parameter, item, or defect is clearly visible in this photo, set "found": true and list each bounding box with a concise label (max 4 words, e.g. "${parameterName}").
+4. If this parameter or item is NOT present or not clearly visible from this photo angle, return "found": false and "boxes": [].
 
 Respond ONLY with raw JSON:
 {
