@@ -245,6 +245,12 @@ export async function evaluateCompletionItemCleanliness({
         }
 
         if (rawBenchmarks.length === 0 && !cadFallbackBuffer) {
+            await supabaseAdmin
+                .from('sop_completion_items')
+                .update({
+                    ai_cleanliness_reason: 'Skipped: No reference photo or CAD area configured for this step',
+                })
+                .eq('id', completionItem.id);
             return NextResponse.json({
                 success: true,
                 skipped: true,
@@ -470,7 +476,7 @@ Respond ONLY with raw JSON in exactly this shape:
         if (engyKey) {
             // Configurable model from Tech Console (Brain -> AI models), defaulting to glm-5.3-flash
             const configuredModel = await modelFor('sop_photo', 'glm-5.3-flash').catch(() => 'glm-5.3-flash');
-            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash'].filter(Boolean) as string[];
+            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash', 'deepseek-v4.1-flash'].filter(Boolean) as string[];
             const uniqueModels = Array.from(new Set(engyVisionModels));
             for (const modelToTry of uniqueModels) {
                 if (rawText) break;
@@ -486,14 +492,14 @@ Respond ONLY with raw JSON in exactly this shape:
                             messages: [
                                 {
                                     role: 'system',
-                                    content: 'You are an expert cleanliness auditor. Output raw JSON only with strictly concise descriptions.',
+                                    content: 'You are an expert cleanliness auditor. Output raw JSON only with strictly concise descriptions. Keep internal thinking very brief (under 200 words).',
                                 },
                                 {
                                     role: 'user',
                                     content: imageContents,
                                 },
                             ],
-                            max_tokens: 4096,
+                            max_tokens: 8192,
                             temperature: 0.1,
                             response_format: { type: 'json_object' },
                         }),
