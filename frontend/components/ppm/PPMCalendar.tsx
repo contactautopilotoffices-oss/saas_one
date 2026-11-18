@@ -78,6 +78,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
     const [updateError, setUpdateError] = useState<string | null>(null);
+    const [selectedLocation, setSelectedLocation] = useState<string>('all');
 
     // Upload state
     // Active property filter — comes from props (global selector)
@@ -156,8 +157,17 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
     useEffect(() => { fetchSchedules(); }, [fetchSchedules]);
 
+    const availableLocations = useMemo(() => {
+        return Array.from(new Set(schedules.map(s => s.location).filter(Boolean))).sort() as string[];
+    }, [schedules]);
+
+    const displaySchedules = useMemo(() => {
+        if (selectedLocation === 'all') return schedules;
+        return schedules.filter(s => s.location === selectedLocation);
+    }, [schedules, selectedLocation]);
+
     // Group schedules by date
-    const byDate = schedules.reduce<Record<string, PPMSchedule[]>>((acc, s) => {
+    const byDate = displaySchedules.reduce<Record<string, PPMSchedule[]>>((acc, s) => {
         const d = s.planned_date;
         if (!acc[d]) acc[d] = [];
         acc[d].push(s);
@@ -376,6 +386,21 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     <button onClick={nextMonth} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
                         <ChevronRight className="w-5 h-5 text-slate-600" />
                     </button>
+                    {availableLocations.length > 1 && (
+                        <select
+                            value={selectedLocation}
+                            onChange={e => setSelectedLocation(e.target.value)}
+                            className="px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-2 shadow-2xs"
+                        >
+                            <option value="all">All Floors ({schedules.length})</option>
+                            {availableLocations.map(loc => {
+                                const count = schedules.filter(s => s.location === loc).length;
+                                return (
+                                    <option key={loc} value={loc}>{loc} ({count})</option>
+                                );
+                            })}
+                        </select>
+                    )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 justify-end flex-1 pl-4">
