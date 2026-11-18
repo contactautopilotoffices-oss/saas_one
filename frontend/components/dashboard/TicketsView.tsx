@@ -83,9 +83,11 @@ function parseInitialStatuses(searchParams: { get: (k: string) => string | null 
     const internal = searchParams.get('isInternal');
     const raisedByRole = searchParams.get('raisedByRole');
     const materials = searchParams.get('materialsRequired');
+    const vendor = searchParams.get('vendorTagged');
     const statusParam = searchParams.get('status');
 
     if (sla === 'true') selected.push('sla_breached');
+    if (vendor === 'true') selected.push('vendor_tagged');
     if (internal === 'true') selected.push('internal');
     if (raisedByRole === 'tenant') selected.push('tenant_raised');
     if (materials === 'true') selected.push('materials_required');
@@ -96,6 +98,8 @@ function parseInitialStatuses(searchParams: { get: (k: string) => string | null 
         for (const token of tokens) {
             if (token === 'sla_breached') {
                 if (!selected.includes('sla_breached')) selected.push('sla_breached');
+            } else if (token === 'vendor_tagged') {
+                if (!selected.includes('vendor_tagged')) selected.push('vendor_tagged');
             } else if (token === 'internal') {
                 if (!selected.includes('internal')) selected.push('internal');
             } else if (token === 'tenant_raised') {
@@ -571,13 +575,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
         // Status & Special flags URL syncing
         setOrDelete('slaBreached', selectedStatuses.includes('sla_breached') ? 'true' : '', '');
+        setOrDelete('vendorTagged', selectedStatuses.includes('vendor_tagged') ? 'true' : '', '');
         setOrDelete('isInternal', selectedStatuses.includes('internal') ? 'true' : '', '');
         setOrDelete('raisedByRole', selectedStatuses.includes('tenant_raised') ? 'tenant' : '', '');
         setOrDelete('materialsRequired', selectedStatuses.includes('materials_required') ? 'true' : '', '');
 
         const statusVals: string[] = [];
         for (const s of selectedStatuses) {
-            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+            if (!['sla_breached', 'vendor_tagged', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
                 statusVals.push(...s.split(',').map(x => x.trim()));
             }
         }
@@ -664,13 +669,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         const params = new URLSearchParams();
 
         if (selectedStatuses.includes('sla_breached')) params.set('slaBreached', 'true');
+        if (selectedStatuses.includes('vendor_tagged')) params.set('vendorTagged', 'true');
         if (selectedStatuses.includes('materials_required')) params.set('materialsRequired', 'true');
         if (selectedStatuses.includes('tenant_raised')) params.set('raisedByRole', 'tenant');
         if (selectedStatuses.includes('internal')) params.set('isInternal', 'true');
 
         const statusValues: string[] = [];
         for (const s of selectedStatuses) {
-            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+            if (!['sla_breached', 'vendor_tagged', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
                 statusValues.push(...s.split(',').map(x => x.trim()));
             }
         }
@@ -979,6 +985,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         { value: 'waitlist', label: 'Waitlist', group: 'status' },
         { value: 'resolved,closed,pending_validation', label: 'Completed', group: 'status' },
         { value: 'sla_breached', label: 'SLA breached', group: 'flag' },
+        { value: 'vendor_tagged', label: 'Vendor tagged', group: 'flag' },
         { value: 'materials_required', label: isHighAdmin ? 'Material requested' : 'Material assigned', group: 'flag' },
         { value: 'tenant_raised', label: 'Client raised', group: 'flag' },
         { value: 'internal', label: 'Internal', group: 'flag' },
@@ -1392,6 +1399,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     onEdit={canEditTicket(ticket) ? (e) => handleEditClick(e, ticket) : undefined}
                                     onDelete={canDelete ? (e) => handleDelete(e, ticket.id) : undefined}
                                     hasMaterialRequest={Boolean((ticket.material_requests?.length ?? 0) > 0)}
+                                    isVendorTagged={Boolean(ticket.needs_vendor_procurement)}
                                 />
                             </div>
                         ))}

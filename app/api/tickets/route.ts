@@ -94,6 +94,7 @@ export async function GET(request: NextRequest) {
         const period = searchParams.get('period');
 
         const materialsRequired = searchParams.get('materialsRequired');
+        const vendorTagged = searchParams.get('vendorTagged');
         const floorNumber = searchParams.get('floorNumber') || searchParams.get('floor_number') || searchParams.get('floor');
 
         // Resolve user roles and memberships to prevent unauthorized ticket leaks
@@ -157,6 +158,7 @@ export async function GET(request: NextRequest) {
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
                 resolved_at, sla_deadline, sla_breached, sla_hours, sla_paused, sla_paused_at, total_paused_minutes, sla_pause_reason,
+                needs_vendor_procurement, vendor_procurement_status, vendor_tagged_at,
                 category:issue_categories(id, code, name),
                 skill_group:skill_groups(id, code, name),
                 creator:users!raised_by(id, full_name, email, user_photo_url, property_memberships!property_memberships_user_id_fkey(role, property_id)),
@@ -208,6 +210,11 @@ export async function GET(request: NextRequest) {
             query = query.eq('assigned_to', assignedTo);
         }
         if (raisedBy) query = query.eq('raised_by', raisedBy);
+        if (vendorTagged === 'true') {
+            query = query.eq('needs_vendor_procurement', true);
+        } else if (vendorTagged === 'false') {
+            query = query.eq('needs_vendor_procurement', false);
+        }
         if (slaBreached === 'true') {
             // Include tickets where sla_deadline has passed OR sla_breached flag is explicitly set, excluding paused
             query = query

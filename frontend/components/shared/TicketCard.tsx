@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useId, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box, Lock, MoreHorizontal, ChevronRight } from 'lucide-react';
+import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box, Lock, MoreHorizontal, ChevronRight, Tag } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ShareModal from './ShareModal';
 import { parseDate } from '@/frontend/utils/date';
@@ -215,6 +215,7 @@ export interface TicketCardProps {
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
     hasMaterialRequest?: boolean; // indicator for procurement needs
+    isVendorTagged?: boolean; // indicator when vendor procurement is tagged
     isInternal?: boolean; // badge when ticket is internal (not visible to tenants)
 
     // Actions
@@ -271,6 +272,7 @@ export default function TicketCard({
     onValidate,
     onReject,
     hasMaterialRequest,
+    isVendorTagged,
 }: TicketCardProps) {
     const dateObj = parseDate(createdAt) || new Date();
     const dateStr = dateObj.toLocaleDateString('en-US', {
@@ -471,6 +473,13 @@ export default function TicketCard({
                     <span className={`${chip} bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200`}>
                         <Box className="h-3 w-3" aria-hidden="true" />
                         Materials
+                    </span>
+                )}
+
+                {isVendorTagged && (
+                    <span className={`${chip} bg-amber-100 text-amber-800 border-amber-200`}>
+                        <Tag className="h-3 w-3" aria-hidden="true" />
+                        Vendor Tagged
                     </span>
                 )}
             </div>
