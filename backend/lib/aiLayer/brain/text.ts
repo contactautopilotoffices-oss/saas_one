@@ -66,6 +66,13 @@ export const BRAIN_TEXT = {
     ungrounded: { en: "I couldn't put that answer together reliably. Please ask again in a different way, or check the app.", hi: 'मैं इसका भरोसेमंद जवाब नहीं बना पाया। कृपया दूसरे तरीके से पूछें या ऐप देखें।', hinglish: 'Main iska bharosemand jawab nahi bana paya. Please doosre tareeke se poochiye ya app dekhiye.' },
     photo_ack: { en: 'Got your photo.', hi: 'आपकी फ़ोटो मिल गई।', hinglish: 'Aapki photo mil gayi.' },
     pick: { en: 'Reply with the number.', hi: 'नंबर लिखकर भेजें।', hinglish: 'Number likh kar bhejiye.' },
+    // 2026-11-18: the waiting card and closed topics (the owner's chat about the LAN wire ticket).
+    card_waiting: { en: 'Your earlier request is still waiting. Reply *Yes* to go ahead, or *Cancel* to drop it.', hi: 'आपका पिछला अनुरोध अभी बाकी है। आगे बढ़ने के लिए *हाँ* लिखें, या छोड़ने के लिए *रद्द करें*।', hinglish: 'Aapki pichli request abhi baaki hai. Aage badhne ke liye *Yes* likhiye, ya chhodne ke liye *Cancel*.' },
+    card_again: { en: 'Just to be sure, this is the request that is waiting:', hi: 'पक्का करने के लिए, यह अनुरोध बाकी है:', hinglish: 'Pakka karne ke liye, yeh request baaki hai:' },
+    closed_done: { en: 'Okay, I have dropped that. Nothing was raised or changed.', hi: 'ठीक है, मैंने वह छोड़ दिया। कुछ नहीं बना और कुछ नहीं बदला।', hinglish: 'Theek hai, maine woh chhod diya. Kuch nahi bana aur kuch nahi badla.' },
+    pick_range: { en: 'Please reply with a number from 1 to {n}.', hi: 'कृपया 1 से {n} तक का नंबर भेजें।', hinglish: 'Please 1 se {n} tak ka number bhejiye.' },
+    pick_one: { en: 'Please reply with 1.', hi: 'कृपया 1 भेजें।', hinglish: 'Please 1 bhejiye.' },
+    photo_replaced: { en: '📷 Using your new photo (it replaces the earlier one).', hi: '📷 आपकी नई फ़ोटो लगाई है (पुरानी की जगह)।', hinglish: '📷 Aapki nayi photo lagayi hai (purani ki jagah).' },
 } satisfies Record<string, T>;
 
 export type BrainTextKey = keyof typeof BRAIN_TEXT;

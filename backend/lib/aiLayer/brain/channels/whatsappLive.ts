@@ -89,6 +89,18 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         },
         loadThread: (orgId, userId, shadow) => threads.load(orgId, userId, shadow),
         saveThread: (orgId, userId, shadow, state) => threads.save(orgId, userId, shadow, state),
+        saveThreadIf: (orgId, userId, shadow, state, expectedRev) => threads.saveIf(orgId, userId, shadow, state, expectedRev),
+        // Batching (2026-11-18): the inbox Smart chat already uses. Switch: AI_BRAIN_BATCHING=false turns it off.
+        async batch(input) {
+            if (process.env.AI_BRAIN_BATCHING === 'false') return { kind: 'unavailable' };
+            const { collectBatch, defaultInboxIO, inboxMaybeAvailable } = await import('@/task-manager/SmartChatInbox');
+            if (!inboxMaybeAvailable()) return { kind: 'unavailable' };
+            return collectBatch({ phone: input.phone, messageId: input.messageId, text: input.text, io: await defaultInboxIO() });
+        },
+        async finishBatch(token) {
+            const { defaultInboxIO } = await import('@/task-manager/SmartChatInbox');
+            await (await defaultInboxIO()).finish(token);
+        },
         listOpenFiles: (orgId, userId) => files.listOpen(orgId, userId),
         async stage(input) {
             const { fetchMediaSafely, sniffKind } = await import('@/task-manager/TaskImportInbound');

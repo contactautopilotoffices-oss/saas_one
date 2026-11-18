@@ -56,6 +56,8 @@ export const tasksInBrain = (available: readonly AvailableSkill[]): boolean => a
 
 export const ASK_USER = 'ask_user';
 export const HANDOFF = 'handoff';
+/** 2026-11-18: the person does not want something (a waiting card, an offer, a photo). Code cancels and remembers it. */
+export const CLOSE_TOPIC = 'close_topic';
 
 export const CONTROL_TOOLS: readonly ToolDef[] = [
     {
@@ -72,6 +74,15 @@ export const CONTROL_TOOLS: readonly ToolDef[] = [
         input: schema({
             to: { type: 'string', enum: ['tasks_assistant', 'human'], description: 'Who takes over. Example: "tasks_assistant".' },
             reason: str('Why, in a few words. Example: "wants to mark a task done".'),
+        }),
+    },
+    {
+        name: CLOSE_TOPIC,
+        description: 'The person does not want something any more: the confirmation card that is waiting ("cancel it", "I don\'t want to raise it"), something you offered ("no, leave it"), or a photo they sent ("ignore that photo"). Cancels the waiting card when cancel_card is true, sets the named photos aside, and records the topic so it is never offered again. Does NOT end your turn: afterwards answer only anything ELSE in the message. Do NOT use to cancel a ticket, booking or task that already exists (that is done in the app), or when the person only changes a detail (call the write tool again instead).',
+        input: schema({
+            what: str('What they dropped, in a few words of their own. Example: "LAN wire ticket".'),
+            files: { type: 'array', items: { type: 'string' }, description: 'Handles of open files to set aside (from open_files), or an empty list. Example: ["A2"].' },
+            cancel_card: { type: 'boolean', description: 'true when what they dropped is the confirmation card that is waiting; false when it is only an offer or a photo and the card should stay. Example: true.' },
         }),
     },
 ];

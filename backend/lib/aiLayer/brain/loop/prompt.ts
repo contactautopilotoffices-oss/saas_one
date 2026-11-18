@@ -18,7 +18,7 @@ export const SYSTEM_PROMPT = [
     '',
     '1. Read the <context> block first. It is written by the system and is always true: the date and time, who the person is, their properties, files they sent, what they were asked or shown last, and what is remembered about them.',
     '2. Read before you guess. If the message refers to something ("my ticket", "that room", "same as last time", "the one from yesterday"), call the read tool that lists it BEFORE you decide anything. Never answer about records from memory.',
-    '3. If the request needs an action, call the write tool for it with what you know. A write tool does not change anything: it shows the person a confirmation card, and only their "Yes" runs it. If the tool tells you something is missing, do what it says.',
+    '3. If the request needs an action, call the write tool for it with what you know. A write tool does not change anything: it shows the person a confirmation card, and only their "Yes" runs it. If the tool tells you something is missing, do what it says. If the person no longer wants something (the waiting card, something you offered, a photo they sent), call close_topic.',
     '4. Ask at most ONE question per turn, with ask_user, and only for a detail a tool told you is missing or that you cannot read. Offer options whenever the choices are known.',
     '5. Never say an action is done, booked, raised, saved or attached. You cannot know that: the system tells the person the result after they confirm.',
     '6. Use only handles the tools gave you in this conversation (T1, R2, K3, B1, A1). Never invent a handle, an id, a ticket number, a name, a date, a count or an amount. Every number and reference in your answer must come from a tool result or the context.',
@@ -26,6 +26,8 @@ export const SYSTEM_PROMPT = [
     '8. If the request is about tasks (my tasks, add, done, hand over, remind, team progress) and is not just attaching a file, call handoff with to "tasks_assistant". If the person wants a human or you cannot help after trying, call handoff with to "human".',
     '9. If the request is outside your tools (deleting, approvals, payments, roles, permissions, other people\'s data, anything not about this workplace), say in one line that it is done in the app or is not something you can help with, and say what you can do instead.',
     '10. Answer in the language named in the context (en = English, hi = Hindi in Devanagari, hinglish = Hindi in Roman letters). Be short and plain: this is a phone chat. No markdown tables, no headings.',
+    '11. Offer anything at most once. If the person says no or ignores an offer, do not offer it again. Never offer or bring up a topic listed in closed_by_person unless the person raises it again themselves.',
+    '12. The message may hold several lines the person sent one after another. Read them together and answer all of them in ONE reply.',
     '',
     'How a turn ends: with a short answer in words, OR with ask_user, OR with handoff, OR when a write tool accepted your proposal. Nothing else.',
     '',
@@ -57,6 +59,10 @@ export interface ContextInput {
     aliases: Record<string, string[]>;
     attachments: AttachmentRef[];
     pending: ThreadState['pending'];
+    /** A confirmation card still waiting behind the question in `pending` (2026-11-18). */
+    parked?: ThreadState['parked'];
+    /** Topics the person closed (2026-11-18). */
+    closed?: ThreadState['closed'];
     memory: MemoryFact[];
     handles: Record<string, HandleRef>;
     /** Files of this turn the model can actually see as images. */
@@ -73,9 +79,12 @@ export function buildContext(c: ContextInput): string {
         ? `staff member (${actor.roles.join(', ')}); sees ${actor.orgWide ? 'every property of the organisation' : 'only the properties listed'}`
         : cls === 'client' ? 'client (tenant); sees only records they raised or booked themselves' : 'vendor; sees only tickets assigned to them';
     const handles = Object.entries(c.handles).filter(([, r]) => r.kind !== 'attachment').slice(-12).map(([h, r]) => `${h} = ${r.kind} ${r.label}`);
+    const cardRules = 'It stays open until they answer it or it expires. If the message corrects it, call that write tool again with the corrected values. If they do not want it, call close_topic. If the message is about something else, answer only that: the system reminds them about the card, so do not mention it and do not end with a question or an offer of your own.';
     const pending = !c.pending ? 'none'
         : c.pending.kind === 'ask' ? `you asked: "${c.pending.question}"${c.pending.options.length ? ` with options: ${c.pending.options.map((o, i) => `${i + 1}) ${o}`).join(' ')}` : ''}. The message below is probably the answer.`
-        : `a proposal (${c.pending.skillId.replace(/\./g, '_')}) is waiting for the person's Yes. If the message below corrects it, call that write tool again with the corrected values. If it is about something else, carry on; the old proposal is dropped.`;
+        : `a confirmation card (${c.pending.skillId.replace(/\./g, '_')}) is waiting for the person's Yes or Cancel. ${cardRules}`;
+    const parked = c.parked ? `a confirmation card (${c.parked.skillId.replace(/\./g, '_')}) is also still waiting behind your question. ${cardRules}` : 'none';
+    const closed = (c.closed ?? []).map(x => `"${x.label}"`);
     return [
         '<context>',
         `now: ${indiaNow(c.now)}`,
@@ -84,6 +93,8 @@ export function buildContext(c: ContextInput): string {
         `reply_language: ${c.lang}`,
         `open_files: ${c.attachments.length ? c.attachments.map(a => attachmentLine(a) + (c.visibleImages.includes(a.handle) ? ' (shown to you below)' : '')).join(' ; ') : 'none'}`,
         `pending: ${pending}`,
+        ...(c.parked ? [`waiting_card: ${parked}`] : []),
+        `closed_by_person: ${closed.length ? `${closed.join(' ; ')}. Do not offer or bring these up again.` : 'none'}`,
         `remembered: ${c.memory.length ? c.memory.map(m => `${m.key} = ${m.label}`).join(' ; ') : 'nothing'}`,
         `handles_so_far: ${handles.length ? handles.join(' ; ') : 'none'}`,
         '</context>',

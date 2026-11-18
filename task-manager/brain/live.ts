@@ -231,7 +231,7 @@ export interface LiveClaim {
 const NOT_HANDLED: LiveClaim = { handled: false };
 
 /** A plain text body as the shared parser reads it (same shape as a confirmed voice note), carrying the original's id and time. */
-function bodyWithText(body: unknown, phone: string, messageId: string | null | undefined, text: string): unknown {
+export function bodyWithText(body: unknown, phone: string, messageId: string | null | undefined, text: string): unknown {
     type Parsed = { projectId?: string; inboundAt?: string } | null;
     let n: Parsed;
     try { n = normalizeInbound(body) as Parsed; } catch { n = null; }

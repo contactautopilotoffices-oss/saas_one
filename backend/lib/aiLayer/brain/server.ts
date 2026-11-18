@@ -64,6 +64,25 @@ export function supabaseThreadStore(admin: SupabaseClient) {
                 { organization_id: orgId, user_id: userId, shadow, state, updated_at: new Date().toISOString() }, { onConflict: 'organization_id,user_id,shadow' });
             if (error) throw new Error(error.message);
         },
+        /**
+         * 2026-11-18: save only if the stored thread is still at `expectedRev` (the `rev` counter inside the state;
+         * threads saved before this change have none, which counts as 0). null = there was no thread: insert, and a
+         * row that appeared meanwhile is a conflict. 'conflict' = another turn saved first; nothing was written.
+         */
+        async saveIf(orgId: string, userId: string, shadow: boolean, state: unknown, expectedRev: number | null): Promise<'ok' | 'conflict'> {
+            const at = new Date().toISOString();
+            if (expectedRev === null) {
+                const { error } = await admin.from('ai_brain_threads').insert({ organization_id: orgId, user_id: userId, shadow, state, updated_at: at });
+                if (!error) return 'ok';
+                if (error.code === '23505') return 'conflict';
+                throw new Error(error.message);
+            }
+            let q = admin.from('ai_brain_threads').update({ state, updated_at: at }).eq('organization_id', orgId).eq('user_id', userId).eq('shadow', shadow);
+            q = expectedRev === 0 ? q.or('state->>rev.is.null,state->>rev.eq.0') : q.eq('state->>rev', String(expectedRev));
+            const { data, error } = await q.select('user_id');
+            if (error) throw new Error(error.message);
+            return (data ?? []).length ? 'ok' : 'conflict';
+        },
     };
 }
 
