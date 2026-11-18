@@ -305,18 +305,23 @@ export async function PUT(
                         );
 
                         if (unscored.length > 0) {
-                            await Promise.all(
-                                unscored.map((it: any) =>
-                                    evaluateCompletionItemCleanliness({
-                                        propertyId: targetPropId,
-                                        completionId,
-                                        completionItemId: it.id,
-                                        force: true,
-                                    }).catch((err) => {
-                                        console.warn(`[Background AI Score] Item ${it.id} failed:`, err);
-                                    })
-                                )
-                            );
+                            // Process with controlled concurrency (pool of 2 items) to avoid API rate limits and timeouts
+                            const BATCH_SIZE = 2;
+                            for (let i = 0; i < unscored.length; i += BATCH_SIZE) {
+                                const batch = unscored.slice(i, i + BATCH_SIZE);
+                                await Promise.all(
+                                    batch.map((it: any) =>
+                                        evaluateCompletionItemCleanliness({
+                                            propertyId: targetPropId,
+                                            completionId,
+                                            completionItemId: it.id,
+                                            force: true,
+                                        }).catch((err) => {
+                                            console.warn(`[Background AI Score] Item ${it.id} failed:`, err);
+                                        })
+                                    )
+                                );
+                            }
                         }
                     } catch (bgErr) {
                         console.warn('[Background AI Score Trigger] Error:', bgErr);
