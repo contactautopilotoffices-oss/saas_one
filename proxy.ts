@@ -154,6 +154,8 @@ export async function proxy(request: NextRequest) {
                        // startsWith, and a bare '/a' would also unlock /<orgId>/... for any
                        // org id beginning with "a".
         '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
+        '/guest/',     // Meeting Assistant guest links (/guest/<secret>) — people without a login ask to join an
+                       // online meeting; staff let them in (stage 2, owner 2026-11-18). Keep the trailing slash.
         '/api',        // API routes handle their own auth
         '/.well-known/oauth-protected-resource', // MCP sign-in discovery (RFC 9728); public metadata, no data
         '/kiosk',

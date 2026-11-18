@@ -53,9 +53,64 @@ Files: `supabase/migrations/20261029100001_meeting_notes.sql` (tables `meeting_n
 
 ---
 
+## 3. Online meetings — stage 1 (owner 2026-11-18)
+
+An upgrade of the Meeting Assistant, not a new module. "New meeting" now asks **In the room** (record on this phone, as
+before) or **Online** (a video call with its own link, now or at a set time).
+
+```
+create (kind 'online') → 'scheduled', link /meet/<id> ─▶ someone joins (agrees to the recording first) → 'live'
+  LiveKit records the SOUND only → meeting-audio/<id>/s00/c00000.ogg   (the phone recorder's layout)
+host ends it, or everyone leaves → recording stops → 'uploaded' ─▶ the usual steps (transcript, voice naming, notes, tasks,
+                                                                  then the sound is deleted)
+```
+
+Owner decisions (2026-11-18): **hosted LiveKit** (already used by the Ira meeting room) · **do not keep the video**
+(first "keep recordings", changed the same day: it would take up too much space), so only the sound is recorded, for the
+notes, and deleted once it is text, like an in-room meeting · **tell everyone it is recorded** and ask them to agree before joining · **who can create**: anyone
+who has the Meeting Assistant in their sidebar (the existing spaces, no new roles) · build it as an upgrade of the
+existing recorder.
+
+| Part | Rule |
+|---|---|
+| Rules (offline-tested) | `task-manager/meetings/online.ts`: room name `mn-<id>` (never collides with an Ira room), storage paths, `canJoin`, `egressState`, `liveOutcome`, `parseScheduledFor`, `recordingStorage`, `onlineSetupGaps`. |
+| Who may join | Signed in (`/meet` is not a public route) and one of: the creator · someone picked as attending (any department) · for a meeting that is not confidential, anyone with that Meeting Assistant space (`meetingSpacesFor`, the same role lookup as `requireMeetingSpace`). Anyone else is told the meeting does not exist. |
+| Consent | The join page shows "This call is recorded" (the sound, then deleted; no video) and the Join button stays off until it is ticked. The server refuses a join token without `consent: true`; each join is an audit row `meeting_online_join { consent: true }`. |
+| Token | `OnlineMeetingService.token`: identity = FMS user id, name = full name, 15-minute token, room closes 10 min after creation if nobody enters and 2 min after the last person leaves. **No agent dispatch** (Ira never enters these rooms). |
+| Recording | Started by the server when a participant reports `joined` (the room exists by then): one LiveKit room-composite egress, audio only, OGG/Opus 32 kbps (about 15 MB an hour) into `meeting-audio` through Supabase Storage's S3 address (`SUPABASE_S3_*`). No video is recorded. A recording that stopped mid-call is started again, as the next segment, on the next join. If LiveKit cannot say what is running, nothing is started (no duplicate recordings). Problems never stop the call; the call screen shows "Not recorded" with "Try again". |
+| Concurrency | Changes to `online` happen under the row's `lease_until` (60 s), the same short lock the processing steps use; the processing steps only claim processing statuses, so the two never overlap. |
+| After the call | `OnlineMeetingService.check` (the minute cron through `MeetingService.tick`, and each poll of a live meeting's page) refreshes the sound recordings' state. When the room is closed or the host ended it **and** no recording is still running → `uploaded` if the sound file is in storage, else `failed` with LiveKit's reason. A call live for more than 12 h is stopped and processed. |
+| Deleting | Deleting the meeting stops the call and its recording and deletes the sound; a sound file that finishes saving after the delete is removed by the cron for a day. |
+| Setup (owner, not code) | Migration `20261118000001_meeting_notes_online.sql` · env `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (already used by the Ira room) and `SUPABASE_S3_REGION`, `SUPABASE_S3_ACCESS_KEY_ID`, `SUPABASE_S3_SECRET_ACCESS_KEY` (`SUPABASE_S3_ENDPOINT` optional; default `<supabase url>/storage/v1/s3`). Until then the form says what is missing instead of failing. |
+
+Known limits (stage 1, honest):
+1. **Not yet run on a real call.** Egress into Supabase's S3 address, and the end-to-end path to notes, need one test call after setup.
+2. Speaker names come from Sarvam's voice separation on the mixed sound (and LiveVoice ID where set up), not from each person's login. Per-person transcription, as the Ira room does, is a later step.
+3. ~~No guests without a login yet (stage 2).~~ Built 2026-11-18, see §4. No conference-room device mode yet (stage 3), no HR interview scheduling yet (stage 4).
+4. LiveKit Cloud egress minutes are paid beyond the free allowance. Storage stays small: about 15 MB an hour, deleted once it is text.
+
+## 4. Guests without a login — stage 2 (owner 2026-11-18)
+
+People without a login (candidates, vendors, clients) join an online meeting through a **guest link**, wait, and are
+let in by the team. Built with these defaults (owner said "go ahead"; change any of them on request):
+
+| Part | Rule |
+|---|---|
+| Guest link | `/guest/<secret>`: 24 random bytes (base64url), kept in `online.guestToken`. **Off by default**; only the person who set up the meeting turns it on ("Allow guests") or off. Turning it off makes the link stop working and refuses everyone still waiting; guests already in the call stay until removed. `/guest/` is a public route in `proxy.ts`; the API is `/api/public/meetings/<secret>`. A malformed secret is refused before any database read. |
+| Asking to join | The guest types a name (2–60 characters, letters required, tidied) and must tick "This call is recorded" (the server refuses without `consent: true`). They get their own id and `key`, kept in that browser tab; only that key shows their answer or gets a call token (compared in constant time). At most 30 people may wait at once. Audit: `meeting_guest_asked { consent: true }`. |
+| Waiting room | The guest page asks every 3 s. The team sees "N waiting to join" inside the call (asked every 4 s) and on the meeting's page, with **Let in** / **Refuse**, and **Remove** for guests already let in (they are taken out of the call and cannot come back with that request). Anyone who may join the meeting can decide; the creator alone controls the link. Audit: `meeting_guest_decided`, `meeting_guest_link`. |
+| In the call | Identity `guest-<id>` (never a staff user id), shown as "Name (guest)", 15-minute token, no agent. A guest who connects before anyone from the team starts the sound recording like a staff member would. A guest let in is added to the meeting's typed-in names, so the speech service and the notes know the name. |
+| What a guest can see | The meeting's name, the host's name and time, and their own answer. Never the attendee list, the notes, or why recording failed. |
+
+Known limits (stage 2): no email or phone check on guests (the waiting room is the gate); no rate limit beyond the
+30-person cap; a refused guest can ask again with a new request.
+
+---
+
 ## Agent Spec — Meeting Notes → Tasks (record → transcribe → notes + draft tasks → human Send)
 
 **1. Workflow or agent?**  **workflow** — fixed steps (record → transcribe → delete audio → one extraction call → human review → send); no tools, no loop, no model-chosen path. `[BAA p.104]`
+   2026-11-18: online meetings add a second **input** (LiveKit's recording of the call, written where the phone recorder writes) and no model step; the workflow after 'uploaded' is unchanged, so this stays a workflow. No new AI model is called (docs/AI_MODELS.md: nothing to register). `[BAA p.104]`
    Justification (must be (a) or (b)) `[BAA p.115]`: **N/A — this is a workflow.** The path is fully known; the only open-ended part is one extraction call whose output a person reviews. `[BAA p.104]`
    Head-to-head vs. the deterministic path `[BAA pp.94–95, 99]`: **no prior path exists** (tasks were typed by hand after meetings). Planned comparison on a fixed set (Phase 0, §8): Sarvam vs Whisper × Claude Sonnet 5.5 vs gpt-oss-120b on the same 5 meetings — accuracy __ | cost per 1-hour meeting __ | latency __ — **not yet measured**.
 
@@ -72,6 +127,7 @@ Files: `supabase/migrations/20261029100001_meeting_notes.sql` (tables `meeting_n
    | `transcribeWithWhisper` | N/A | yes — typed result | mime, ≤ 25 MB per file | no |
    | `extractMeeting` | prompt step 6 says what is NOT a task (discussion, past work, ideas nobody took on) | throws only after every model failed → meeting "failed" with a plain message + "Try again" | `validateExtraction`: owner only from the PEOPLE ids, real dates, quote verified, ≤ 80 tasks | no |
    | `MeetingService.send` | N/A — runs only on a human click | yes — per-task `skipped[{why}]` | uuid ids, row claimed `draft→sending` once | no |
+   | `OnlineMeetingService.joined` / `check` / `end` (2026-11-18) | N/A — no model reads it; it only produces the audio file the pipeline already reads | yes — a plain `problem` sentence on the meeting, never throws from `check` | `canJoin`, `consent === true`, uuid ids, row lease; never starts a recording on a guess | no |
 
 **5. Prompt** `[BAA pp.105, 114]`
    Numbered ordered steps: **yes** (9 steps: read all → summary → notes → decisions → open questions → find action items → fill each field → copy exactly → JSON only).

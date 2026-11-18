@@ -2,15 +2,16 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Copy, Download, FileText, Link2, Loader2, Lock, MessageCircle, Mic, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
 } from 'lucide-react';
 import {
-    PROCESSING, STATUS_LABEL, call, clock, meetingUrl, niceDate, type MeetingDetail, type MeetingPerson, type MeetingTask, type MeetingSpace, type SendAs,
+    PROCESSING, STATUS_LABEL, call, clock, joinLink, meetingUrl, niceDate, niceDateTime, type MeetingDetail, type MeetingPerson, type MeetingStatus, type MeetingTask, type MeetingSpace, type SendAs,
 } from './api';
 import { exportPdf, exportWord } from './exportNotes';
 import { SKIP_REASON_TEXT } from '../voice/voiceApi';
 import PendingUploads from './PendingUploads';
 import AttendeesEditor from './AttendeesEditor';
+import GuestPanel from './GuestPanel';
 import { forgetMeeting } from './pieceStore';
 
 /**
@@ -22,6 +23,12 @@ import { forgetMeeting } from './pieceStore';
 type Data = { meeting: MeetingDetail; tasks: MeetingTask[]; people: MeetingPerson[]; me: { name: string; department: string } };
 const IN_MEETING = 'In this meeting';
 const POLL_MS = 4_000;
+/**
+ * How soon to ask again: while processing, and (owner 2026-11-18) while an online call is live, every few seconds; a
+ * scheduled online meeting a little more slowly, to notice when someone joins or a guest is waiting (stage 2);
+ * anything else not at all.
+ */
+const pollDelay = (status: MeetingStatus) => (PROCESSING.includes(status) || status === 'live' ? POLL_MS : status === 'scheduled' ? 6_000 : null);
 const input = 'w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
 export default function MeetingReview({ space, meetingId, people: peopleWithVoice = [], onBack, onContinueRecording }: {
@@ -71,7 +78,8 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
         let timer: ReturnType<typeof setTimeout> | null = null;
         const tick = async () => {
             const status = await load();
-            if (alive.current && status && PROCESSING.includes(status)) timer = setTimeout(tick, POLL_MS);
+            const wait = status ? pollDelay(status) : null;
+            if (alive.current && wait) timer = setTimeout(tick, wait);
         };
         void tick();
         return () => { alive.current = false; if (timer) clearTimeout(timer); };
@@ -281,6 +289,69 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
             )}
             {error && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">{error}</p>}
 
+            {/* Owner 2026-11-18: an online meeting before or during the call — the link, Join, and End for everyone */}
+            {m.kind === 'online' && m.online && (m.status === 'scheduled' || m.status === 'live') && (
+                <Panel>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        {m.status === 'live' ? (
+                            <span className="flex items-center gap-1.5 text-sm font-black text-red-600 dark:text-red-400">
+                                <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" aria-hidden /> {m.online.endedAt ? 'Call ended: saving the sound for the notes' : 'Live now, sound being recorded'}
+                            </span>
+                        ) : (
+                            <span className="text-sm font-black text-zinc-800 dark:text-zinc-200">{m.scheduledFor ? `Scheduled for ${niceDateTime(m.scheduledFor)}` : 'Ready to start'}</span>
+                        )}
+                        {m.online.joinedCount > 0 && <span className="text-xs font-semibold text-zinc-500">{m.online.joinedCount} {m.online.joinedCount === 1 ? 'person has' : 'people have'} joined</span>}
+                    </div>
+                    {!m.online.endedAt && (
+                        <>
+                            <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-800/60">
+                                <Link2 className="h-4 w-4 shrink-0 text-zinc-400" />
+                                <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">{joinLink(m.online.joinPath)}</span>
+                                <button type="button"
+                                    onClick={() => { void navigator.clipboard?.writeText(joinLink(m.online!.joinPath)).then(() => setFlash('Link copied. Share it with the people you picked.'), () => setFlash('Could not copy. Select the link and copy it by hand.')); }}
+                                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
+                                    <Copy className="h-3.5 w-3.5" /> Copy
+                                </button>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <a href={m.online.joinPath} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white hover:bg-indigo-700">
+                                    <Video className="h-4 w-4" /> Join the call
+                                </a>
+                                {m.mine && (
+                                    <button type="button" disabled={!!busy}
+                                        onClick={() => { if (window.confirm(m.status === 'live' ? 'End the call for everyone? The notes are made from the recording.' : 'Close this meeting? Nobody has joined yet, so there will be no notes.')) void act('end_call', { action: 'end_call' }); }}
+                                        className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2.5 text-sm font-bold text-zinc-700 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-red-950/40">
+                                        {busy === 'end_call' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />} {m.status === 'live' ? 'End for everyone' : 'Close meeting'}
+                                    </button>
+                                )}
+                            </div>
+                            {/* Stage 2: the guest link and the people waiting to be let in */}
+                            {m.online.guests && (
+                                <div className="mt-3">
+                                    <GuestPanel guests={m.online.guests} onAction={async body => {
+                                        const r = await call(meetingUrl(meetingId, space), body);
+                                        if (!r.ok) return r.error;
+                                        await load();
+                                        return null;
+                                    }} />
+                                </div>
+                            )}
+                        </>
+                    )}
+                    {m.online.problem && (
+                        <p className="mt-3 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {m.online.problem}
+                        </p>
+                    )}
+                    <p className="mt-3 text-xs text-zinc-500">
+                        {m.online.endedAt
+                            ? 'The notes start by themselves as soon as the recording is saved. You can close this page.'
+                            : 'Share the link with the people you picked. When the call ends, the notes are made by themselves.'}
+                    </p>
+                </Panel>
+            )}
+
             {/* Still recording (e.g. the page was reloaded) */}
             {m.status === 'recording' && (
                 <>
@@ -463,7 +534,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
 
     async function pollAgain() {
         let status = await load();
-        while (alive.current && status && PROCESSING.includes(status)) {
+        while (alive.current && status && (PROCESSING.includes(status) || status === 'live')) {
             await new Promise(r => setTimeout(r, POLL_MS));
             status = await load();
         }

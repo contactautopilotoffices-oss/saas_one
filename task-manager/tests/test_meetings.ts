@@ -14,6 +14,11 @@ import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/m
 import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
 import { mergeCapture, missingFromCapture, reportedSegments } from '../meetings/capture';
+import {
+    LIVE_GIVE_UP_MS, audioPathFor, canJoin, egressState, liveOutcome, onlineSetupGaps, parseScheduledFor, recordingStorage, roomNameFor,
+    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, type GuestEntry,
+} from '../meetings/online';
+import { randomBytes } from 'crypto';
 
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
@@ -390,6 +395,88 @@ async function main() {
         check('no report, no audio → nothing stored', none.missing === 0 && !none.anyStored);
         check('no report but audio → allowed (before the migration)', missingFromCapture(null, new Map([[0, names(3)]])).anyStored === true);
         check('default piece length 30 s when the phone did not say', missingFromCapture({ segments: { '0': { recorded: 2 } } }, new Map()).missingSeconds === 60);
+    }
+
+    console.log('\nOnline meetings (owner 2026-11-18)');
+    {
+        const id = '11111111-2222-3333-4444-555555555555';
+        check('room name is prefixed (never an Ira room)', roomNameFor(id) === `mn-${id}`);
+        check('call audio lands where the phone recorder puts a recording', audioPathFor(id, 0) === `${id}/s00/c00000.ogg` && audioPathFor(id, 3) === `${id}/s03/c00000.ogg`);
+        check('the audio path matches the pipeline\'s piece pattern', /^c\d{5}\.\w+$/.test(audioPathFor(id, 0).split('/')[2]) && /^s\d{2}$/.test(audioPathFor(id, 0).split('/')[1]));
+        check('call audio is a type the speech step accepts', meetingAudioExtension('audio/ogg') === 'ogg');
+
+        check('egress starting/active/ending = running', [0, 1, 2].every(n => egressState(n) === 'active'));
+        check('egress complete and limit reached = done', egressState(3) === 'done' && egressState(6) === 'done');
+        check('egress failed and aborted = failed', egressState(4) === 'failed' && egressState(5) === 'failed');
+        check('unknown egress status = still running (never finish early)', egressState(99) === 'active');
+
+        const host = 'aaaaaaaa-0000-0000-0000-000000000001', guest = 'aaaaaaaa-0000-0000-0000-000000000002', other = 'aaaaaaaa-0000-0000-0000-000000000003';
+        const open = { created_by: host, attendee_ids: [guest], confidential: false, workspace: 'hr' as const };
+        const secret = { ...open, confidential: true };
+        const none = new Set<never>();
+        check('creator can join', canJoin(open, host, none));
+        check('someone picked can join from another department', canJoin(open, guest, none));
+        check('someone with this Meeting Assistant can join an open meeting', canJoin(open, other, new Set(['hr'])));
+        check('someone with another Meeting Assistant cannot', !canJoin(open, other, new Set(['tech'])));
+        check('confidential: the people picked can still join', canJoin(secret, guest, none));
+        check('confidential: the rest of the space cannot', !canJoin(secret, other, new Set(['hr'])));
+        check('older row without a space counts as tech', canJoin({ ...open, workspace: null }, other, new Set(['tech'])));
+
+        const now = Date.parse('2026-11-18T10:00:00Z');
+        const started = '2026-11-18T09:00:00Z';
+        check('recording still running → wait', liveOutcome({ states: ['active', 'done'], roomOpen: false, endedAt: null, startedAt: started, now }) === 'wait');
+        check('room open and nobody ended it → wait', liveOutcome({ states: ['done', 'done'], roomOpen: true, endedAt: null, startedAt: started, now }) === 'wait');
+        check('LiveKit could not be asked → wait (no finishing on a guess)', liveOutcome({ states: ['done'], roomOpen: null, endedAt: null, startedAt: started, now }) === 'wait');
+        check('room closed and recordings stopped → finish', liveOutcome({ states: ['done', 'failed'], roomOpen: false, endedAt: null, startedAt: started, now }) === 'finish');
+        check('host ended and recordings stopped → finish', liveOutcome({ states: ['done', 'done'], roomOpen: true, endedAt: '2026-11-18T09:59:00Z', startedAt: started, now }) === 'finish');
+        check('live far too long → stop', liveOutcome({ states: ['active'], roomOpen: true, endedAt: null, startedAt: new Date(now - LIVE_GIVE_UP_MS - 1000).toISOString(), now }) === 'stop');
+
+        check('no time = start now', parseScheduledFor('', now) === null && parseScheduledFor(undefined, now) === null);
+        check('a time in an hour is kept', parseScheduledFor('2026-11-18T11:00:00Z', now) === '2026-11-18T11:00:00.000Z');
+        const throws = (v: unknown) => { try { parseScheduledFor(v, now); return false; } catch { return true; } };
+        check('nonsense time is refused', throws('next week-ish') && throws(42));
+        check('a time two days ago is refused', throws('2026-11-16T10:00:00Z'));
+        check('a time two years ahead is refused', throws('2028-11-18T10:00:00Z'));
+
+        const base = { NEXT_PUBLIC_SUPABASE_URL: 'https://proj.supabase.co/', SUPABASE_S3_REGION: 'ap-south-1', SUPABASE_S3_ACCESS_KEY_ID: 'k', SUPABASE_S3_SECRET_ACCESS_KEY: 's' };
+        check('storage address worked out from the Supabase URL', recordingStorage(base)?.endpoint === 'https://proj.supabase.co/storage/v1/s3');
+        check('an explicit storage address wins', recordingStorage({ ...base, SUPABASE_S3_ENDPOINT: 'https://x.example/s3' })?.endpoint === 'https://x.example/s3');
+        check('no keys → recording not set up', recordingStorage({ ...base, SUPABASE_S3_SECRET_ACCESS_KEY: '' }) === null);
+        const gaps = onlineSetupGaps({ ...base, LIVEKIT_URL: 'wss://x.livekit.cloud' });
+        check('missing LiveKit keys are named', gaps.length === 1 && gaps[0].includes('LIVEKIT_API_KEY') && gaps[0].includes('LIVEKIT_API_SECRET') && !gaps[0].includes('LIVEKIT_URL'));
+        check('fully set up → no gaps', onlineSetupGaps({ ...base, LIVEKIT_URL: 'wss://x', LIVEKIT_API_KEY: 'a', LIVEKIT_API_SECRET: 'b' }).length === 0);
+    }
+
+    console.log('\nGuests without a login (stage 2, owner 2026-11-18)');
+    {
+        const token = randomBytes(24).toString('base64url');
+        check('a generated guest secret has the expected shape', isGuestToken(token) && token.length === 32);
+        check('wrong-shape secrets are refused before any lookup', !isGuestToken('abc') && !isGuestToken(`${token}x`) && !isGuestToken(`${token.slice(0, 31)}/`) && !isGuestToken(null));
+        check('guest link path', guestPathFor(token) === `/guest/${token}`);
+        check('guest identity is prefixed (never a staff user id)', guestIdentity('g1') === 'guest-g1');
+
+        check('name tidied', cleanGuestName('  Asha   Rao ') === 'Asha Rao');
+        check('angle brackets and control characters dropped', cleanGuestName('<b>Ravi</b>\u0007') === 'bRavi/b');
+        const bad = (v: unknown) => { try { cleanGuestName(v); return false; } catch { return true; } };
+        check('too short, too long, no letters, not text → refused', bad('A') && bad('x'.repeat(61)) && bad('12345') && bad(42) && bad(undefined));
+        check('names in other scripts are fine', cleanGuestName('राहुल शर्मा') === 'राहुल शर्मा');
+
+        const base: GuestEntry = { id: 'g1', name: 'Asha', key: 'secret-key', state: 'waiting', askedAt: '2026-11-18T10:00:00Z', consentAt: '2026-11-18T10:00:00Z' };
+        const admitted = decideGuest(base, 'admit', 'staff-1', '2026-11-18T10:01:00Z');
+        check('a waiting guest can be let in', admitted?.state === 'admitted' && admitted.decidedBy === 'staff-1');
+        check('a waiting guest can be refused', decideGuest(base, 'deny', 's', 'now')?.state === 'denied');
+        check('cannot let in someone already answered', decideGuest({ ...base, state: 'denied' }, 'admit', 's', 'now') === null && decideGuest(admitted!, 'admit', 's', 'now') === null);
+        check('only someone let in can be removed', decideGuest(admitted!, 'remove', 's', 'now')?.state === 'removed' && decideGuest(base, 'remove', 's', 'now') === null);
+        check('a removed guest cannot be let in again', decideGuest({ ...base, state: 'removed' }, 'admit', 's', 'now') === null);
+
+        const view = guestsForStaff([
+            { ...base, id: 'late', askedAt: '2026-11-18T10:05:00Z' },
+            { ...base, id: 'in', state: 'admitted', askedAt: '2026-11-18T09:00:00Z' },
+            { ...base, id: 'early', askedAt: '2026-11-18T10:02:00Z' },
+        ]);
+        check('staff never see a guest\'s key', view.every(g => !('key' in g)));
+        check('waiting first, oldest first; then the rest', view.map(g => g.id).join(',') === 'early,late,in');
+        check('the waiting list has a cap', MAX_WAITING > 0 && MAX_WAITING <= 50);
     }
 
     console.log(failures ? `\n${failures} FAILED` : '\nAll meeting tests passed');

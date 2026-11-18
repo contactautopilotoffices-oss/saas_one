@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireMeetingSpace } from '../../_shared/meetingGuard';
 import { meetingFail } from '../../_shared/meetingFail';
 import { MeetingService, PROCESSING } from '@/task-manager/meetings/MeetingService';
+import { OnlineMeetingService } from '@/task-manager/meetings/OnlineMeetingService';
+import { meetingSpacesFor } from '../../_shared/meetingGuard';
 
 export const dynamic = 'force-dynamic';
 // One processing step (uploading to the speech service, Whisper on an hour of audio, or the AI notes) can take minutes
@@ -11,7 +13,9 @@ export const maxDuration = 300;
  * Owner 2026-10-29: one meeting of the Meeting Assistant. `?space=` (one of MEETING_SPACES): the person needs that space's role, and
  * the meeting must belong to that space. A confidential meeting is only for the person who started it.
  *   GET                       the meeting, its transcript, notes and task list. While it is processing, each GET also
- *                             moves it forward one step (the review screen polls this).
+ *                             moves it forward one step (the review screen polls this). Owner 2026-11-18: while an
+ *                             online meeting is live, each GET also checks whether the call has ended and its
+ *                             recordings are saved, and if so starts the notes.
  *   POST { action, ... }
  *     start_segment { minSegment? }         a new continuous recording → { segment } (never below the phone's own floor)
  *     upload_url  { segment, seq, mimeType } a one-time private upload link for one audio piece
@@ -32,6 +36,10 @@ export const maxDuration = 300;
  *     delete_task { taskId }
  *     send        { taskIds, sendAs }        sendAs 'autopilot' (default) or 'me' (the sender's name + department);
  *                                            no Task Manager assignment rules either way
+ *     end_call                               owner 2026-11-18: an online meeting — end the call for everyone (its
+ *                                            creator only); the notes follow by themselves
+ *     guest_link  { on }                     stage 2: turn the guest link on or off (the creator only)
+ *     guest_decide { guestId, decision }     stage 2: 'admit' | 'deny' a waiting guest, or 'remove' one let in
  */
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -43,6 +51,10 @@ export async function GET(request: NextRequest, { params }: Ctx) {
         const { id } = await params;
         await MeetingService.assertSpace(id, guard.space);
         let result = await MeetingService.get(guard.userId, id);
+        if (result.meeting.status === 'live') {
+            await OnlineMeetingService.check(id);
+            result = await MeetingService.get(guard.userId, id);
+        }
         if (PROCESSING.includes(result.meeting.status)) {
             await MeetingService.advance(id);
             result = await MeetingService.get(guard.userId, id);
@@ -78,6 +90,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             case 'add_task': return NextResponse.json({ success: true, ...(await MeetingService.addTask(userId, id, pickTask(body, false))) });
             case 'delete_task': return NextResponse.json({ success: true, ...(await MeetingService.deleteTask(userId, id, body.taskId)) });
             case 'send': return NextResponse.json({ success: true, ...(await MeetingService.send(userId, id, body.taskIds, body.sendAs ?? 'autopilot')) });
+            case 'end_call': return NextResponse.json({ success: true, ...(await OnlineMeetingService.end(userId, id, await meetingSpacesFor(userId))) });
+            case 'guest_link': return NextResponse.json({ success: true, ...(await OnlineMeetingService.setGuestLink(userId, id, await meetingSpacesFor(userId), body.on === true)) });
+            case 'guest_decide': return NextResponse.json({ success: true, ...(await OnlineMeetingService.decideGuestRequest(userId, id, await meetingSpacesFor(userId), body.guestId, body.decision)) });
             default: return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });
         }
     } catch (err) {
