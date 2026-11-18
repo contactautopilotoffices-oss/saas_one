@@ -33,7 +33,7 @@ export async function PATCH(
             return NextResponse.json({ error: 'Failed to update SLA' }, { status: 500 });
         }
 
-        return NextResponse.json({ success: true, ...result });
+        return NextResponse.json(result);
     } catch (error) {
         console.error('SLA pause error:', error);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
