@@ -14,11 +14,12 @@ import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { firstSourcing, flagKnownPeople, KNOWN_NOTE, knownNote, sourceColumns, sourceColumnsMissing } from "./known";
 import { FIXED_PREFIX, sheetNameKey } from "./normalize";
 import { needsReview, type CleanRow, type ParsedSheet } from "./parse-sheet";
 import { buildSearchText } from "./profile";
 import { CandidateActionError, refreshSearchText } from "./records";
-import type { ImportSummary, UploadMode } from "./types";
+import type { ImportSummary, SourceKind, UploadMode, UploadSource } from "./types";
 
 const BATCH = 500;
 const IN_CHUNK = 200;
@@ -35,6 +36,9 @@ export interface SheetRowDb {
   skipped_count: number;
   upload_count: number;
   uploaded_by_email: string | null;
+  /** Migration 20261116000004 (owner 2026-11-16): where the sheet came from; absent before it. */
+  source_kind?: SourceKind | null;
+  source_name?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -137,11 +141,15 @@ export interface ImportArgs {
   orgId: string;
   userId: string;
   userEmail: string | null;
+  /** The uploader's name, for the history (owner 2026-11-16); the email's first part when unknown. */
+  userName?: string | null;
   fileName: string;
   parsed: ParsedSheet;
   mode: UploadMode;
   /** The live sheet with the same name (required for replace / merge). */
   existing: SheetRowDb | null;
+  /** Where the sheet came from (owner 2026-11-16): a vendor, a job portal, the team's own search. Optional. */
+  source?: UploadSource | null;
 }
 
 /** The route adds `sheet` and, after matching resumes, `candidatesWithResume`. */
@@ -171,7 +179,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
     uploadNo = args.existing.upload_count + 1;
   } else {
     sheetId = randomUUID();
-    const { error } = await client.from("candidate_sheets").insert({
+    const sheetRow = {
       id: sheetId,
       organization_id: orgId,
       name: args.fileName,
@@ -181,7 +189,10 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       uploaded_by: userId,
       uploaded_by_email: args.userEmail,
       replaces_sheet_id: mode === "replace" ? args.existing?.id ?? null : null,
-    });
+    };
+    // Owner 2026-11-16: where the sheet came from; before migration 20261116000004 the columns are missing and the row goes in without them.
+    let { error } = await client.from("candidate_sheets").insert({ ...sheetRow, ...sourceColumns(args.source) });
+    if (error && sourceColumnsMissing(error)) ({ error } = await client.from("candidate_sheets").insert(sheetRow));
     if (error) fail("start the import", error);
   }
 
@@ -237,6 +248,16 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       if (c.totalExpMonths !== null) person.total_exp_months = c.totalExpMonths;
     });
 
+    // Owner 2026-11-16: a row is "already in the database" only when its person was already in ANOTHER sheet or was
+    // entered by hand. Records of this sheet (a replace or a merge of it) do not count, nor does a record the system
+    // made from the person's CV: a row meeting its CV is the normal pairing. Kept, and noted on the row and in history.
+    const firstKnown = await firstSourcing(client, orgId, [...people.values()].filter((p) => !p.isNew).map((p) => p.id), {
+      excludeSheetIds: [sheetId, args.existing?.id],
+      skipResumeRecords: true,
+    });
+    const isKnown = (p: { id: string; isNew: boolean }) => !p.isNew && firstKnown.has(p.id);
+    const knownPeople = [...people.values()].filter(isKnown);
+
     const personRows = [...people.values()].map((person) => {
       const row: Record<string, unknown> = { ...person, updated_at: now };
       delete row.isNew;
@@ -287,6 +308,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       if (previousRow !== undefined) {
         rowIssues.set(row.rowNumber, [`${FIXED_PREFIX}Same candidate and role as row ${previousRow}; this row's values were used`]);
       } else firstRowForKey.set(key, row.rowNumber);
+      if (isKnown(person)) rowIssues.set(row.rowNumber, [...(rowIssues.get(row.rowNumber) ?? []), `${FIXED_PREFIX}${knownNote(firstKnown.get(person.id))}`]);
 
       const existing = existingRecords.get(key);
       const prior = records.get(key);
@@ -360,10 +382,9 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
 
     // 5. Make it live.
     if (mode === "merge") {
-      const { error } = await client
-        .from("candidate_sheets")
-        .update({ ...counts, name: args.fileName, upload_count: uploadNo, uploaded_by: userId, uploaded_by_email: args.userEmail, error: null, updated_at: now })
-        .eq("id", sheetId);
+      const patch = { ...counts, name: args.fileName, upload_count: uploadNo, uploaded_by: userId, uploaded_by_email: args.userEmail, error: null, updated_at: now };
+      let { error } = await client.from("candidate_sheets").update({ ...patch, ...sourceColumns(args.source) }).eq("id", sheetId);
+      if (error && sourceColumnsMissing(error)) ({ error } = await client.from("candidate_sheets").update(patch).eq("id", sheetId));
       if (error) fail("finish the import", error);
     } else {
       const { error } = await client.rpc("candidate_finish_sheet", {
@@ -377,6 +398,26 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       }
     }
 
+    // 6. The history (owner 2026-11-16): one "already in the database" entry per known person, saying how the person
+    //    was first sourced. Never fails the import.
+    const rowsByPerson = new Map<string, number[]>();
+    valid.forEach((row, i) => {
+      const p = people.get(groups[i])!;
+      if (isKnown(p)) rowsByPerson.set(p.id, [...(rowsByPerson.get(p.id) ?? []), row.rowNumber]);
+    });
+    await flagKnownPeople(client, orgId, knownPeople.map((p) => ({
+      candidateId: p.id,
+      by: { id: userId, name: args.userName ?? args.userEmail?.split("@")[0] ?? null },
+      meta: {
+        source: "sheet",
+        sheetId,
+        sheetName: args.fileName,
+        uploadNo,
+        rows: (rowsByPerson.get(p.id) ?? []).slice(0, 20),
+        first: firstKnown.get(p.id) ?? null,
+      },
+    })));
+
     return {
       sheetId,
       mode,
@@ -385,13 +426,15 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
       recordsUpdated,
       rowsSkipped: skippedCount,
       rowsFlagged: counts.flagged_count,
-      // Imported rows whose only notes are automatic fixes (including "same candidate as row N" added above).
+      // Imported rows whose only notes are automatic fixes (including "same candidate as row N" added above); the
+      // "already in the database" note is information, not a fix, and is counted on its own.
       rowsAutoFixed: parsed.rows.filter((row) => {
-        const all = [...row.issues, ...(rowIssues.get(row.rowNumber) ?? [])];
+        const all = [...row.issues, ...(rowIssues.get(row.rowNumber) ?? [])].filter((issue) => !issue.includes(KNOWN_NOTE));
         return row.clean && all.length > 0 && !needsReview(all);
       }).length,
       newCandidates: [...people.values()].filter((p) => p.isNew).length,
       matchedCandidates: matchedIds.length,
+      alreadyKnownRows: valid.filter((row, i) => isKnown(people.get(groups[i])!)).length,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Import failed";

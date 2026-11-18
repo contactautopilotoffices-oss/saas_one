@@ -889,6 +889,7 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                                     (m.benchmark_label && bm.label && m.benchmark_label.toLowerCase() === bm.label.toLowerCase())
                                                     );
 
+                                                    const isManuallySelected = Boolean(selectedAnglePhoto[bm.id]);
                                                     let execPhotoUrl = selectedAnglePhoto[bm.id] || match?.matched_photo_url || null;
                                                     let status = match?.status || (uploadedPhotos[bIdx]?.url ? 'matched' : 'missing');
                                                     let cleanlinessScore = typeof match?.cleanliness_score === 'number'
@@ -900,8 +901,17 @@ const SOPCompletionDetail: React.FC<SOPCompletionDetailProps> = ({ completionId,
                                                         if (benchmarkList.length === 1 && uploadedPhotos[0]?.url) {
                                                             execPhotoUrl = uploadedPhotos[0].url;
                                                             status = 'matched';
-                                                        } else if (uploadedPhotos[bIdx]?.url) {
+                                                        } else if (status !== 'missing' && uploadedPhotos[bIdx]?.url) {
                                                             execPhotoUrl = uploadedPhotos[bIdx].url;
+                                                        }
+                                                    }
+
+                                                    // If checker manually picked a photo for this angle, treat as matched
+                                                    if (isManuallySelected && execPhotoUrl) {
+                                                        status = 'matched';
+                                                        if (reason.toLowerCase().includes('missing photo') || reason.toLowerCase().includes('missing required photo')) {
+                                                            const pIdx = uploadedPhotos.findIndex((p: any) => p.url === execPhotoUrl);
+                                                            reason = `Checker selected Photo #${pIdx >= 0 ? pIdx + 1 : 1} for this area`;
                                                         }
                                                     }
 

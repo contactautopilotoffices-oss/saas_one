@@ -9,11 +9,14 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { looksLikeScreening, parseCandidateScreening } from "../../backend/lib/callInsights/contexts/candidateScreening";
+import { analyseCandidateCall } from "../../backend/lib/callInsights/analyse";
+import { CANDIDATE_INTERVIEW_SCHEMA, CANDIDATE_INTERVIEW_SYSTEM } from "../../backend/lib/callInsights/contexts/candidateInterview";
+import { CANDIDATE_SCREENING_SCHEMA, CANDIDATE_SCREENING_SYSTEM, looksLikeScreening, parseCandidateScreening } from "../../backend/lib/callInsights/contexts/candidateScreening";
 import { runCallAnalysis, type PipelineDeps } from "../../backend/lib/callInsights/pipeline";
-import { stampedTranscript } from "../../backend/lib/callInsights/transcribe";
+import { stampedTranscript, transcribeCall } from "../../backend/lib/callInsights/transcribe";
+import { CALL_TRANSCRIBE_MODELS } from "../../backend/lib/candidates/config";
 import { listActions, resetHistoryCheck } from "../../backend/lib/candidates/actions";
-import { applyCallFacts, confirmCall, deleteCall, getCall, listCalls, prepareCall, retryCall, type CallStorage } from "../../backend/lib/candidates/calls";
+import { applyCallFacts, confirmCall, deleteCall, getCall, listCalls, prepareCall, retryCall, setCallRound, type CallStorage } from "../../backend/lib/candidates/calls";
 import { createPosition } from "../../backend/lib/candidates/positions";
 import { createRecord, getRecord } from "../../backend/lib/candidates/records";
 import type { CallInsights } from "../../backend/lib/candidates/types";
@@ -104,11 +107,10 @@ describe("calls: upload, pipeline, facts, history", () => {
     await assert.rejects(q("insert into public.call_analyses (organization_id, input_kind) values ($1, 'audio')", [ORG]), /candidate_subject/);
   });
 
-  it("refuses a recording of the wrong type, over the limit, or without the consent tick", async () => {
-    const base = { applicationId: asha.id, consent: true };
+  it("refuses a recording of the wrong type or over the limit; no consent tick is needed (owner 2026-11-17)", async () => {
+    const base = { applicationId: asha.id };
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, file: { name: "call.txt", size: 10 } }), /mp3, m4a/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, file: { name: "call.m4a", size: 26 * 1024 * 1024 } }), /larger than 25 MB/);
-    await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id, consent: false, file: { name: "call.m4a", size: 10 } }), /told the call is recorded/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id }), /recording or paste/);
     await assert.rejects(prepareCall(client, storage, ORG, ME, { ...base, positionId: "00000000-0000-0000-0000-0000000000ff", file: { name: "call.m4a", size: 10 } }), /position no longer exists/);
     assert.equal((await q<{ n: number }>("select count(*)::int as n from public.call_analyses")).at(0)?.n, 0);
@@ -248,6 +250,10 @@ describe("calls: upload, pipeline, facts, history", () => {
       ["field_edit", ["currentInhand", "noticePeriodDays"], "call"],
     ]);
     assert.equal(history[1].meta.callId, audioId);
+    // Owner 2026-11-17: the value each fact replaced stays in the history (null when the field was empty).
+    const changes = (history[1].meta.changes as { field: string; from: unknown; to: unknown }[]).map((c) => [c.field, c.from, c.to]);
+    assert.deepEqual(changes, [["currentInhand", 72000, 75000], ["noticePeriodDays", 30, 30]]);
+    assert.equal(history[1].meta.calledOn, "2026-11-16");
   });
 
   it("reads a sloppy model answer without inventing anything", () => {
@@ -279,11 +285,142 @@ describe("calls: upload, pipeline, facts, history", () => {
     assert.match(stampedTranscript(null, "x".repeat(50), 10), /^x{10}\n\[cut/);
   });
 
+  it("keeps which round a call was for, lets it be changed, and says it in the history (owner 2026-11-17)", async () => {
+    await assert.rejects(prepareCall(client, storage, ORG, ME, { applicationId: asha.id, transcript: "Hello Asha, round two now.\nTell me about SQL.\nI use joins daily.", round: "round_9" }), /record \(applicationId\)/);
+    const prepared = await prepareCall(client, storage, ORG, ME, { applicationId: asha.id, positionId, transcript: "Hello Asha, round one now.\nTell me about SQL.\nI use joins daily.", round: "round_1" });
+    assert.equal(prepared.call.round, "round_1");
+    const logged = (await listActions(client, ORG, asha.candidateId)).find((a) => a.action === "call_logged" && a.meta.callId === prepared.call.id)!;
+    assert.equal(logged.meta.round, "Interview round 1");
+
+    const changed = await setCallRound(client, ORG, prepared.call.id, "round_2");
+    assert.equal(changed.round, "round_2");
+    assert.equal((await listCalls(client, ORG, asha.candidateId)).find((c) => c.id === prepared.call.id)?.round, "round_2");
+    await assert.rejects(setCallRound(client, ORG, prepared.call.id, "final"), /Pick the round/);
+    await assert.rejects(q("update public.call_analyses set call_round = 'round_4' where id = $1", [prepared.call.id]), /call_round_check/);
+    await deleteCall(client, storage, ORG, prepared.call.id);
+  });
+
+  it("reads an interview round with its own prompt, the round and the position's must-haves", async () => {
+    const seen: { system: string; user: string; schema: Record<string, unknown> }[] = [];
+    const caller = async (req: { system: string; user: string; schema?: Record<string, unknown> }) => {
+      seen.push({ system: req.system, user: req.user, schema: req.schema ?? {} });
+      return { text: JSON.stringify({ overall_sentiment: "neutral", facts: {}, answers: [{ topic: "SQL joins", verdict: "weak", note: "No join named.", quote: "I usually look it up", at_seconds: 400 }], not_covered: ["Python"], next_round_questions: ["Write a left join."] }), model: "test" };
+    };
+    const ctx = { candidate: { name: "Asha", designation: null, organization: null, location: null, currentInhand: null, expectedInhand: null, noticePeriodDays: null }, position: { title: "Data Analyst", location: null, jdText: null, mustHaves: ["SQL", "Python"] }, transcript: "[6:40] I usually look it up" };
+    const interview = await analyseCandidateCall({ ...ctx, round: "round_1" }, { caller: caller as never });
+    assert.equal(seen[0].system, CANDIDATE_INTERVIEW_SYSTEM);
+    assert.match(seen[0].user, /THE ROUND: Interview round 1/);
+    assert.match(seen[0].user, /Must-haves: SQL; Python/);
+    assert.deepEqual(interview.result.answers, [{ topic: "SQL joins", verdict: "weak", note: "No join named.", quote: "I usually look it up", at: 400 }]);
+    assert.deepEqual([interview.result.notCovered, interview.result.nextRoundQuestions], [["Python"], ["Write a left join."]]);
+
+    const screening = await analyseCandidateCall({ ...ctx, round: "screening" }, { caller: caller as never });
+    assert.notEqual(seen[1].system, CANDIDATE_INTERVIEW_SYSTEM);
+    assert.equal(screening.result.answers, undefined, "a screening call is not read for answers");
+    // The interview prompt never asks the model to judge delivery.
+    assert.match(CANDIDATE_INTERVIEW_SYSTEM, /Never judge or mention accent, fluency, grammar, nervousness, confidence/);
+  });
+
+  it("keeps both answer shapes under Claude's 16 nullable keys", () => {
+    const countNullable = (node: unknown): number => {
+      if (!node || typeof node !== "object") return 0;
+      const n = node as Record<string, unknown>;
+      const self = Array.isArray(n.type) && (n.type as unknown[]).includes("null") ? 1 : 0;
+      return self + Object.values(n).reduce<number>((sum, v) => sum + (Array.isArray(v) ? v.reduce<number>((s2, x) => s2 + countNullable(x), 0) : countNullable(v)), 0);
+    };
+    assert.equal(countNullable(CANDIDATE_SCREENING_SCHEMA), 14);
+    assert.equal(countNullable(CANDIDATE_INTERVIEW_SCHEMA), 15);
+  });
+
+  it("says when pay was said as CTC, never as take-home (the CTC fix)", () => {
+    const parsed = parseCandidateScreening(JSON.stringify({
+      overall_sentiment: "positive",
+      facts: {
+        current_inhand: { value: 20000, pay_basis: "ctc", quote: "Currently it's around 2.4 LPA.", at_seconds: 115 },
+        expected_inhand: { value: 29167, quote: "at least 3.5", at_seconds: 131 },
+      },
+    }));
+    assert.deepEqual(parsed.facts.currentInhand, { value: 20000, quote: "Currently it's around 2.4 LPA.", at: 115, basis: "ctc" });
+    // No basis given: unclear, never assumed to be in-hand.
+    assert.equal(parsed.facts.expectedInhand.basis, "unclear");
+    assert.match(CANDIDATE_SCREENING_SYSTEM, /"2\.4 LPA" = 20000, pay_basis "ctc"/);
+    assert.match(CANDIDATE_SCREENING_SYSTEM, /Never turn a CTC figure into take-home yourself/);
+  });
+
   it("deletes a call: the row is gone from the list and the bytes from the bucket", async () => {
     assert.ok(objects.has(`${ORG}/${audioId}.m4a`));
     await deleteCall(client, storage, ORG, audioId);
     assert.deepEqual(await listCalls(client, ORG, asha.candidateId), []);
     assert.equal(objects.has(`${ORG}/${audioId}.m4a`), false);
     await assert.rejects(getCall(client, ORG, audioId), /no longer exists/);
+  });
+});
+
+/** Owner 2026-11-17: Sarvam is the calls' default speech-to-text, Whisper the backup (Brain → AI models). */
+describe("calls: speech to text, Sarvam first", () => {
+  const audio = { name: "Call with Asha (1).m4a", mimeType: "audio/mp4", bytes: Buffer.from("fake") };
+  const line = (text: string, start = 0, end = 4) => ({ speaker: "Speaker 1", start, end, text });
+  const quiet = { sleep: async () => {}, pollMs: 1 };
+
+  it("is the default chain, with the Whisper models behind it", () => {
+    assert.deepEqual([...CALL_TRANSCRIBE_MODELS], ["sarvam:saaras:v4", "whisper-large-v3", "whisper-large-v3-turbo"]);
+  });
+
+  it("uses Sarvam's batch job, with the chosen model, a plain file name, and waits until it is done", async () => {
+    const started: Array<{ model?: string; name: string }> = [];
+    let checks = 0;
+    let whisperCalled = false;
+    const t = await transcribeCall(audio, {
+      models: CALL_TRANSCRIBE_MODELS,
+      transcribe: async () => { whisperCalled = true; throw new Error("not expected"); },
+      sarvam: {
+        ...quiet,
+        start: async (input) => { started.push({ model: input.model, name: input.files[0].name }); return { ok: true, jobId: "j1", files: [input.files[0].name] }; },
+        check: async () => (++checks < 3 ? { state: "running" } : { state: "done", lines: [line("Namaste, main Asha bol rahi hoon"), line("notice 30 din ka hai", 4, 9)], offsets: [0] }),
+      },
+    });
+    assert.ok(t.ok);
+    assert.equal(t.model, "sarvam:saaras:v4");
+    assert.equal(t.durationSeconds, 9);
+    assert.deepEqual(t.segments.map((s) => s.text), ["Namaste, main Asha bol rahi hoon", "notice 30 din ka hai"]);
+    assert.deepEqual(started, [{ model: "saaras:v4", name: "call.m4a" }]);
+    assert.equal(checks, 3);
+    assert.equal(whisperCalled, false);
+  });
+
+  it("moves on to Whisper (with both Whisper models) when Sarvam has no key, fails, or is too slow", async () => {
+    const whisperOk = async (_files: unknown, deps?: { models?: readonly string[] }) => ({ ok: true as const, lines: [line("hello")], model: deps?.models?.[0] ?? "", failures: [] });
+    const cases: Array<[string, NonNullable<Parameters<typeof transcribeCall>[1]>["sarvam"]]> = [
+      ["no key", { ...quiet, start: async () => ({ ok: false, reason: "no_key", detail: "SARVAM_API_KEY is not configured", failures: [] }) }],
+      ["job failed", { ...quiet, start: async () => ({ ok: true, jobId: "j", files: ["call.m4a"] }), check: async () => ({ state: "failed", detail: "job failed: bad audio" }) }],
+      ["too slow", { ...quiet, waitMs: 0, start: async () => ({ ok: true, jobId: "j", files: ["call.m4a"] }), check: async () => ({ state: "running" }) }],
+    ];
+    for (const [why, sarvam] of cases) {
+      let models: readonly string[] | undefined;
+      const t = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam, transcribe: async (f, d) => { models = d?.models; return whisperOk(f, d); } });
+      assert.ok(t.ok, why);
+      assert.equal(t.model, "whisper-large-v3", why);
+      assert.deepEqual(models, ["whisper-large-v3", "whisper-large-v3-turbo"], why);
+    }
+  });
+
+  it("runs Whisper only, untouched, when Whisper is the saved choice", async () => {
+    let sarvamCalled = false;
+    const t = await transcribeCall(audio, {
+      models: ["whisper-large-v3-turbo", "whisper-large-v3"],
+      sarvam: { ...quiet, start: async () => { sarvamCalled = true; return { ok: true, jobId: "j", files: [] }; } },
+      transcribe: async (_f, d) => ({ ok: true, lines: [line("hi")], model: d?.models?.[0] ?? "", failures: [] }),
+    });
+    assert.ok(t.ok);
+    assert.equal(t.model, "whisper-large-v3-turbo");
+    assert.equal(sarvamCalled, false);
+  });
+
+  it("says why when every service fails: the real failure, and 'not set up' only when no service had a key", async () => {
+    const noSarvam = { ...quiet, start: async () => ({ ok: false as const, reason: "no_key" as const, detail: "no key", failures: [] }) };
+    const busy = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam: noSarvam, transcribe: async () => ({ ok: false, reason: "rate_limited", detail: "429", failures: [] }) });
+    assert.deepEqual(busy, { ok: false, error: "The transcription service is busy. Retry in a minute." });
+    const none = await transcribeCall(audio, { models: CALL_TRANSCRIBE_MODELS, sarvam: noSarvam, transcribe: async () => ({ ok: false, reason: "no_key", detail: "no Groq key", failures: [] }) });
+    assert.ok(!none.ok && /SARVAM_API_KEY or a Groq key/.test(none.error));
   });
 });

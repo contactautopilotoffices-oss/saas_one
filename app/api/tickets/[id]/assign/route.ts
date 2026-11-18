@@ -90,17 +90,8 @@ export async function POST(
             new_value: assigned_to || 'auto'
         });
 
-        // 4. Trigger Notifications
-        if (assigned_to) {
-            try {
-                const { NotificationService } = await import('@/backend/services/NotificationService');
-                NotificationService.afterTicketAssigned(ticketId).catch(err => {
-                    console.error('[Assign API] Notification error:', err);
-                });
-            } catch (err) {
-                console.error('[Assign API] Failed to load NotificationService:', err);
-            }
-        }
+        // 4. Notifications: the assignment above fires trg_tickets_outbox, and the Omnichannel matrix
+        //    decides who is told and on which channel.
 
         return NextResponse.json({ success: true, ticket: data });
 

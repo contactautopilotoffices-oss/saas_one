@@ -6,9 +6,9 @@ import { indexPending } from "@/backend/lib/candidates/indexing";
 import { parseSheet } from "@/backend/lib/candidates/parse-sheet";
 import { linkUnmatched, sheetCandidatesWithResume } from "@/backend/lib/candidates/resume-text";
 import { getSheetSummary, listSheets } from "@/backend/lib/candidates/sheets";
-import type { ImportSummary, UploadConflict, UploadMode } from "@/backend/lib/candidates/types";
+import { SOURCE_KINDS, type ImportSummary, type SourceKind, type UploadConflict, type UploadMode, type UploadSource } from "@/backend/lib/candidates/types";
 
-import { errorResponse, rateLimited, requireCandidateAccess } from "../_lib/auth";
+import { actorFor, errorResponse, rateLimited, requireCandidateAccess } from "../_lib/auth";
 
 export const runtime = "nodejs";
 // Import runs in the request; the embeddings run afterwards, bounded by the same limit.
@@ -75,14 +75,23 @@ export async function POST(request: Request) {
       return NextResponse.json(body, { status: 409 });
     }
 
+    // Owner 2026-11-16: where the sheet came from (optional): a vendor, a job portal, the team's own search.
+    const sourceKind = form.get("sourceKind");
+    const sourceName = form.get("sourceName");
+    const source: UploadSource | null = typeof sourceKind === "string" && (SOURCE_KINDS as readonly string[]).includes(sourceKind)
+      ? { kind: sourceKind as SourceKind, name: typeof sourceName === "string" && sourceName.trim() ? sourceName.trim().slice(0, 120) : null }
+      : null;
+    const actor = await actorFor(auth.admin, auth.user);
     const result = await importSheet(auth.admin, {
       orgId: auth.orgId,
       userId: auth.user.id,
       userEmail: auth.user.email ?? null,
+      userName: actor.name,
       fileName: file.name,
       parsed,
       mode: mode ?? "new",
       existing,
+      source,
     });
     after(() => indexPending(auth.admin, auth.orgId));
 

@@ -21,7 +21,7 @@ import { recordAction, type Actor } from "./actions";
 import { callFileExtension, callFileType } from "./call-files";
 import { CALL_BUCKET, CALL_LINK_SECONDS, CALL_LIST_LIMIT, CALL_TRANSCRIPT_MAX_CHARS, CALL_TRANSCRIPT_MIN_CHARS, MAX_CALL_BYTES } from "./config";
 import { CandidateActionError, getRecord, updateRecord } from "./records";
-import { CALL_FACT_KEYS, CALL_FACT_LABELS, type CallAnalysis, type CallFactKey, type CallInsights, type CallSegment, type CandidateRecord, type PreparedCall } from "./types";
+import { CALL_FACT_KEYS, CALL_FACT_LABELS, CALL_ROUND_LABELS, CALL_ROUNDS, type CallAnalysis, type CallRound, type CallFactKey, type CallInsights, type CallSegment, type CandidateRecord, type PreparedCall } from "./types";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const CALLS_MIGRATION_MESSAGE = "This needs a database update first: run 20261116000001_call_analyses.sql in Supabase.";
@@ -69,12 +69,28 @@ interface CallRow {
   updated_at: string | Date;
   transcript_text?: string | null;
   segments?: CallSegment[] | null;
+  /** Absent before migration 20261117000001. */
+  call_round?: CallRound | null;
 }
 
 const COLUMNS =
   "id, candidate_id, application_id, position_id, input_kind, file_name, file_type, file_size, storage_path, called_on, consent_confirmed, status, error, attempts, " +
   "language, duration_seconds, result, model, tokens_in, tokens_out, applied_facts, created_by_name, created_at, updated_at";
 const FULL_COLUMNS = `${COLUMNS}, transcript_text, segments`;
+
+/**
+ * The round column (owner 2026-11-17, migration 20261117000001). Until it is applied, reads and writes go on without
+ * it: every read asks for it, and an error naming it is retried once without (remembered for a few minutes).
+ */
+let roundMissingAt = 0;
+const ROUND_RECHECK_MS = 5 * 60 * 1000;
+const roundKnownMissing = () => Date.now() - roundMissingAt < ROUND_RECHECK_MS;
+const roundError = (error: { message?: string } | null | undefined) => Boolean(error) && /call_round/.test(error?.message ?? "");
+const withRound = (columns: string) => (roundKnownMissing() ? columns : `${columns}, call_round`);
+/** Tests only. */
+export function resetRoundCheck(): void {
+  roundMissingAt = 0;
+}
 
 function iso(value: unknown): string {
   if (value instanceof Date) return value.toISOString();
@@ -113,6 +129,7 @@ function toCall(row: CallRow, positions: Map<string, string>, now: Date): CallAn
     applicationId: row.application_id ?? null,
     positionId: row.position_id ?? null,
     positionTitle: row.position_id ? positions.get(row.position_id) ?? null : null,
+    round: row.call_round ?? null,
     inputKind: row.input_kind,
     fileName: row.file_name ?? null,
     fileSize: row.file_size === null || row.file_size === undefined ? null : Number(row.file_size) || 0,
@@ -148,7 +165,9 @@ async function positionTitles(client: SupabaseClient, orgId: string, ids: (strin
 
 async function loadRow(client: SupabaseClient, orgId: string, id: string, columns = COLUMNS): Promise<CallRow> {
   if (!UUID.test(id)) throw new CandidateActionError(404, "That call no longer exists.");
-  const { data, error } = await client.from(CALLS_TABLE).select(columns).eq("organization_id", orgId).eq("id", id).is("deleted_at", null).maybeSingle();
+  const read = (cols: string) => client.from(CALLS_TABLE).select(cols).eq("organization_id", orgId).eq("id", id).is("deleted_at", null).maybeSingle();
+  let { data, error } = await read(withRound(columns));
+  if (roundError(error)) { roundMissingAt = Date.now(); ({ data, error } = await read(columns)); }
   if (error) fail("load the call", error);
   if (!data) throw new CandidateActionError(404, "That call no longer exists.");
   return data as unknown as CallRow;
@@ -156,14 +175,16 @@ async function loadRow(client: SupabaseClient, orgId: string, id: string, column
 
 /** The candidate's calls, newest first (without transcripts). */
 export async function listCalls(client: SupabaseClient, orgId: string, candidateId: string, now = new Date()): Promise<CallAnalysis[]> {
-  const { data, error } = await client
+  const read = (cols: string) => client
     .from(CALLS_TABLE)
-    .select(COLUMNS)
+    .select(cols)
     .eq("organization_id", orgId)
     .eq("candidate_id", candidateId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(CALL_LIST_LIMIT);
+  let { data, error } = await read(withRound(COLUMNS));
+  if (roundError(error)) { roundMissingAt = Date.now(); ({ data, error } = await read(COLUMNS)); }
   if (error) fail("load the calls", error);
   const rows = (data ?? []) as unknown as CallRow[];
   const titles = await positionTitles(client, orgId, rows.map((r) => r.position_id));
@@ -185,16 +206,19 @@ const PrepareInput = z.object({
   consent: z.boolean().optional(),
   file: z.object({ name: z.string().trim().min(1).max(255), size: z.number().int().min(1) }).optional(),
   transcript: z.string().max(CALL_TRANSCRIPT_MAX_CHARS * 4).optional(),
+  /** Owner 2026-11-17: which round the call was for (the screen fills it in from the stage in the position). */
+  round: z.enum(CALL_ROUNDS).nullish(),
 });
 
 /**
  * Starts a call: with `file`, a row at 'uploading' and the one-time link the browser sends the bytes to (then
- * confirmCall); with `transcript`, a row at 'uploaded' ready for the pipeline. A recording needs the consent tick.
+ * confirmCall); with `transcript`, a row at 'uploaded' ready for the pipeline. Owner 2026-11-17: no consent tick is
+ * asked for any more ("its not needed"); `consent` is kept as an optional flag on the row.
  */
 export async function prepareCall(client: SupabaseClient, storage: CallStorage, orgId: string, by: Actor, input: unknown): Promise<PreparedCall> {
   const parsed = PrepareInput.safeParse(input ?? {});
   if (!parsed.success) throw new CandidateActionError(400, "Send the record (applicationId) and either a file (name, size) or a transcript.");
-  const { applicationId, positionId, calledOn, consent, file, transcript } = parsed.data;
+  const { applicationId, positionId, calledOn, consent, file, transcript, round } = parsed.data;
   if (!file && transcript === undefined) throw new CandidateActionError(400, "Choose a recording or paste the transcript.");
 
   const record = await getRecord(client, orgId, applicationId);
@@ -221,15 +245,26 @@ export async function prepareCall(client: SupabaseClient, storage: CallStorage, 
     created_by_name: by.name,
     created_at: now,
     updated_at: now,
+    ...(round && !roundKnownMissing() ? { call_round: round } : {}),
+  };
+  /** The insert, again without the round when its column is not there yet (migration 20261117000001). */
+  const insert = async (values: Record<string, unknown>) => {
+    let { error } = await client.from(CALLS_TABLE).insert(values);
+    if (roundError(error)) {
+      roundMissingAt = Date.now();
+      const { call_round: _dropped, ...rest } = values;
+      void _dropped;
+      ({ error } = await client.from(CALLS_TABLE).insert(rest));
+    }
+    return { error };
   };
 
   if (file) {
     const contentType = callFileType(file.name);
     if (!contentType) throw new CandidateActionError(400, "That is not a recording we can read. Use mp3, m4a, wav, ogg or webm.");
     if (file.size > MAX_CALL_BYTES) throw new CandidateActionError(400, `The recording is larger than ${MAX_CALL_BYTES / 1024 / 1024} MB. Export it at a lower quality and try again.`);
-    if (consent !== true) throw new CandidateActionError(400, "Confirm the candidate was told the call is recorded.");
     const path = `${orgId}/${id}${callFileExtension(file.name)}`;
-    const { error } = await client.from(CALLS_TABLE).insert({ ...base, input_kind: "audio", file_name: file.name, file_type: contentType, file_size: file.size, storage_path: path, status: "uploading" });
+    const { error } = await insert({ ...base, input_kind: "audio", file_name: file.name, file_type: contentType, file_size: file.size, storage_path: path, status: "uploading" });
     if (error) fail("start the upload", error);
     const { data: link, error: linkErr } = await storage.createSignedUploadUrl(path, { upsert: true });
     if (linkErr || !link) {
@@ -243,20 +278,20 @@ export async function prepareCall(client: SupabaseClient, storage: CallStorage, 
 
   const text = (transcript ?? "").replace(/\r\n/g, "\n").trim();
   if (text.length < CALL_TRANSCRIPT_MIN_CHARS) throw new CandidateActionError(400, "Paste the whole transcript: at least a few lines.");
-  const { error } = await client.from(CALLS_TABLE).insert({ ...base, input_kind: "transcript", file_name: null, status: "uploaded", transcript_text: text.slice(0, CALL_TRANSCRIPT_MAX_CHARS) });
+  const { error } = await insert({ ...base, input_kind: "transcript", file_name: null, status: "uploaded", transcript_text: text.slice(0, CALL_TRANSCRIPT_MAX_CHARS) });
   if (error) fail("save the transcript", error);
-  await logCall(client, orgId, by, { ...base, position_title: position?.title ?? null }, "Transcript pasted");
+  await logCall(client, orgId, by, { ...base, call_round: round ?? null, position_title: position?.title ?? null }, "Transcript pasted");
   return { call: await getCall(client, orgId, id), upload: null };
 }
 
-async function logCall(client: SupabaseClient, orgId: string, by: Actor, call: { id: string; candidate_id: string; application_id: string | null; position_id: string | null; called_on: string | null; position_title?: string | null }, what: string): Promise<void> {
+async function logCall(client: SupabaseClient, orgId: string, by: Actor, call: { id: string; candidate_id: string; application_id: string | null; position_id: string | null; called_on: string | null; position_title?: string | null; call_round?: CallRound | null }, what: string): Promise<void> {
   await recordAction(client, orgId, by, {
     candidateId: call.candidate_id,
     applicationId: call.application_id,
     positionId: call.position_id,
     action: "call_logged",
     toValue: what,
-    meta: { callId: call.id, calledOn: call.called_on, position: call.position_title ?? null },
+    meta: { callId: call.id, calledOn: call.called_on, position: call.position_title ?? null, round: call.call_round ? CALL_ROUND_LABELS[call.call_round] : null },
   });
 }
 
@@ -289,6 +324,19 @@ export async function confirmCall(client: SupabaseClient, storage: CallStorage, 
  * Runs the pipeline again: after a failure, after a run that was cut off, or on a finished call to read it afresh.
  * The transcript is kept, so a recording is never transcribed twice. The route starts the pipeline after this.
  */
+/**
+ * Which round the call was for, changed after it was added (owner 2026-11-17). The call keeps its reading until HR
+ * reads it again (the screen offers that), so a change never re-runs the model by itself.
+ */
+export async function setCallRound(client: SupabaseClient, orgId: string, id: string, roundInput: unknown): Promise<CallAnalysis> {
+  if (typeof roundInput !== "string" || !(CALL_ROUNDS as readonly string[]).includes(roundInput)) throw new CandidateActionError(400, "Pick the round from the list.");
+  const row = await loadRow(client, orgId, id);
+  const { error } = await client.from(CALLS_TABLE).update({ call_round: roundInput, updated_at: new Date().toISOString() }).eq("id", row.id).eq("organization_id", orgId);
+  if (roundError(error)) { roundMissingAt = Date.now(); throw new CandidateActionError(503, "This needs a database update first: run 20261117000001_call_rounds.sql in Supabase."); }
+  if (error) fail("change the round", error);
+  return getCall(client, orgId, id);
+}
+
 export async function retryCall(client: SupabaseClient, orgId: string, id: string, now = new Date()): Promise<CallAnalysis> {
   const row = await loadRow(client, orgId, id);
   if (row.status === "uploading") throw new CandidateActionError(409, "The recording has not finished uploading.");
@@ -332,8 +380,20 @@ export async function applyCallFacts(client: SupabaseClient, orgId: string, by: 
   let record: CandidateRecord | null = null;
   const common = { candidateId: row.candidate_id, applicationId: row.application_id, positionId: row.position_id };
   if (Object.keys(fields).length) {
+    // Owner 2026-11-17: the history keeps the value each fact replaced (from a sheet, say), so an overwrite can always
+    // be looked up: changes = [{ field, from, to }], from = null when the field was empty.
+    const before = await getRecord(client, orgId, row.application_id);
     record = await updateRecord(client, orgId, by.id, row.application_id, fields);
-    await recordAction(client, orgId, by, { ...common, action: "field_edit", meta: { fields: Object.keys(fields), source: "call", callId: row.id } });
+    // A pay figure said as CTC or with no basis is noted as such (owner 2026-11-17, the CTC fix).
+    const basisOf = (field: string) => (field === "currentInhand" || field === "expectedInhand" ? (facts[field] as { basis?: string }).basis : undefined);
+    const changes = Object.keys(fields).map((field) => {
+      const basis = basisOf(field);
+      return { field, from: (before as unknown as Record<string, unknown>)[field] ?? null, to: fields[field], ...(basis === "ctc" || basis === "unclear" ? { basis } : {}) };
+    });
+    await recordAction(client, orgId, by, {
+      ...common, action: "field_edit",
+      meta: { fields: Object.keys(fields), changes, source: "call", callId: row.id, calledOn: isoDate(row.called_on) },
+    });
   }
   if (reason) {
     const when = isoDate(row.called_on);

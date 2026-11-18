@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@lib/supabase/admin';
 import { checkRateLimit, getClientIP } from '@/frontend/utils/rate-limiter';
+import { resolveGuestFormFields } from '@/backend/lib/ticketing/guestFormConfig';
+import { visibleGuestFormFields } from '@/frontend/lib/guestTicketForm';
 
 export async function GET(req: NextRequest) {
     try {
@@ -26,6 +28,7 @@ export async function GET(req: NextRequest) {
                 floor,
                 zone_name,
                 qr_signature,
+                property_id,
                 properties (
                     id,
                     name
@@ -40,6 +43,10 @@ export async function GET(req: NextRequest) {
 
         const propertyData = Array.isArray(zone.properties) ? zone.properties[0] : zone.properties;
 
+        // Which fields this property's form asks for. Served here so the public page needs one
+        // round trip to render, and only the switched-on fields ever reach the browser.
+        const fields = await resolveGuestFormFields(zone.property_id);
+
         return NextResponse.json({
             success: true,
             zone: {
@@ -47,7 +54,8 @@ export async function GET(req: NextRequest) {
                 zoneName: zone.zone_name,
                 floor: zone.floor || null,
                 propertyName: (propertyData as any)?.name || null
-            }
+            },
+            formFields: visibleGuestFormFields(fields)
         });
     } catch (error: any) {
         console.error('zone-info API error:', error);

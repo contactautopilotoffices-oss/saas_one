@@ -661,6 +661,8 @@ export default function NotificationBell({ align = 'right' }: NotificationBellPr
                 return <Lock className="w-4 h-4 text-purple-600 dark:text-purple-400" />;
             case 'HR_TICKET_COMMENT_ADDED':
                 return <MessageSquareReply className="w-4 h-4 text-blue-600 dark:text-blue-400" />;
+            case 'TICKET_REPLY':
+                return <MessageSquareReply className="w-4 h-4 text-blue-600 dark:text-blue-400" />;
             case 'TICKET_CREATED':
                 return <AlertCircle className="w-4 h-4 text-[#587e85]" />;
             case 'TICKET_ASSIGNED':

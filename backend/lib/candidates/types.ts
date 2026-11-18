@@ -34,6 +34,23 @@ export const STAGE_LABELS: Record<Stage, string> = {
 /** Stages a person must explain with a remark when they move someone there. */
 export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
 
+export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "internship"] as const;
+export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
+export const EMPLOYMENT_TYPE_LABELS: Record<EmploymentType, string> = {
+  full_time: "Full-time",
+  part_time: "Part-time",
+  contract: "Contract",
+  internship: "Internship",
+};
+export const POSITION_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type PositionPriority = (typeof POSITION_PRIORITIES)[number];
+export const PRIORITY_LABELS: Record<PositionPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+
 export interface Position {
   id: string;
   title: string;
@@ -46,6 +63,19 @@ export interface Position {
   prefer: Preferences;
   status: "open" | "closed";
   targetDays: number;
+  // Owner 2026-11-16: the job as a record (migration 20261116000005). Defaults before it is applied.
+  designation: string | null;
+  employmentType: EmploymentType | null;
+  openings: number;
+  hiringManager: string | null;
+  priority: PositionPriority;
+  /** "MBA preferred", "B.E. Electrical": free text. */
+  education: string | null;
+  /** Rupees per month in hand. */
+  budgetMinInhand: number | null;
+  budgetMaxInhand: number | null;
+  /** The role in 2–3 sentences, from the JD and edited by HR. */
+  summary: string | null;
   /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
   recruiterName: string | null;
   createdAt: string;
@@ -54,6 +84,87 @@ export interface Position {
   /** Days since it was opened (until it was closed). */
   daysOpen: number;
   counts: Record<Stage, number>;
+  /** The library JD it was opened from (owner 2026-11-17); null when none, absent before migration 20261117000002. */
+  jd?: PositionJd | null;
+}
+
+/**
+ * What the Create / Edit position form holds (owner 2026-11-16): the job's details and its requirements as HR sees
+ * them. The AI fills it from a JD (POST /api/candidates/positions/read); position-draft.ts turns it into the search
+ * filters the position runs with. Years, days and rupees per month, as typed.
+ */
+export interface PositionDraft {
+  title: string;
+  department: string | null;
+  designation: string | null;
+  location: string | null;
+  employmentType: EmploymentType | null;
+  openings: number | null;
+  hiringManager: string | null;
+  priority: PositionPriority;
+  targetDays: number | null;
+  education: string | null;
+  budgetMinInhand: number | null;
+  budgetMaxInhand: number | null;
+  summary: string | null;
+  expMinYears: number | null;
+  expMaxYears: number | null;
+  noticeMaxDays: number | null;
+  /** Each must-have with the spellings CVs use for it; a record needs any one of them. */
+  mustHaves: { text: string; alts: string[] }[];
+  niceToHaves: string[];
+  /** Software and tools named by the JD (CRM, Excel, AutoCAD); nice-to-haves in the search. */
+  tools: string[];
+  prefer: Preferences;
+  jdText: string;
+  jdFileName: string | null;
+}
+
+/**
+ * The JD library (owner 2026-11-17; migration 20261117000002): one job description per role, every saved text kept as
+ * a numbered version, and the version each position was opened from.
+ */
+export interface JdSummary {
+  id: string;
+  title: string;
+  department: string | null;
+  currentVersion: number;
+  /** The first lines of the current text, for the list. */
+  preview: string;
+  updatedAt: string;
+  updatedByName: string | null;
+  lastUsedAt: string | null;
+  /** Positions opened from this JD (any version). */
+  positions: number;
+}
+export interface JdVersion {
+  version: number;
+  content: string;
+  fileName: string | null;
+  note: string | null;
+  byName: string | null;
+  at: string;
+}
+export interface JdDetail extends JdSummary {
+  /** Newest first. */
+  versions: JdVersion[];
+  /** The positions opened from it, with the version each used. */
+  usedBy: { positionId: string; title: string; version: number; status: "open" | "closed" }[];
+}
+/** What a position records about the library JD it came from. */
+export interface PositionJd {
+  id: string;
+  title: string;
+  version: number;
+  currentVersion: number;
+}
+
+/** POST /api/candidates/positions/read: the draft the AI filled from a JD, for HR to check. */
+export interface PositionReadResponse {
+  draft: PositionDraft;
+  aiParsed: boolean;
+  /** Plain-language notes ("only the first N characters were read", "the JD gives two values for experience"). */
+  notices: string[];
 }
 
 export interface PositionMember {
@@ -287,6 +398,9 @@ export interface CandidateSheet {
   /** Records from this sheet still being prepared for meaning search (HR sees it as a progress bar). */
   pendingIndexCount: number;
   uploadedByEmail: string | null;
+  /** Where the sheet came from (owner 2026-11-16); null when the upload did not say. */
+  sourceKind: SourceKind | null;
+  sourceName: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -316,6 +430,8 @@ export interface ImportSummary {
   matchedCandidates: number;
   /** Candidates with a record in this sheet who have a stored resume (phase 2); null before migration 20261110000001. */
   candidatesWithResume: number | null;
+  /** Rows whose person was already in the database before this upload (owner 2026-11-16): kept, and noted on the row. */
+  alreadyKnownRows: number;
 }
 
 /** 409 from POST /api/candidates/sheets when a live sheet with the same file name exists and no mode was sent. */
@@ -552,6 +668,13 @@ export interface ResumeFile {
   candidateId: string | null;
   candidateName: string | null;
   matchReason: ResumeMatchReason | null;
+  /** Where the upload said it came from (owner 2026-11-16); null when it did not say. */
+  sourceKind: SourceKind | null;
+  sourceName: string | null;
+  /** 'pending': a second CV for this person, waiting for HR (Update the CV or delete it); 'updated': HR made it the CV. */
+  duplicateState: "pending" | "updated" | null;
+  /** Filled for a pending duplicate. */
+  alreadyKnown: AlreadyKnown | null;
 }
 
 export interface ResumeFilesResponse {
@@ -595,6 +718,8 @@ export interface PreparedUpload {
   /** The stored file type, from the extension; the browser sends the bytes with it. */
   contentType?: string;
   reason?: string;
+  /** duplicate: the copy already stored, so the upload summary can say whose it is (owner 2026-11-16). */
+  existing?: { fileName: string; candidateName: string | null; uploadedAt: string | null; uploadedBy: string | null };
 }
 
 export interface ResumeConfirmResponse {
@@ -663,6 +788,35 @@ export interface CallFact<T> extends CallEvidence {
   value: T | null;
 }
 
+/**
+ * How a pay figure was said (owner 2026-11-17, the CTC fix): "in_hand" = take-home per month; "ctc" = cost to
+ * company (LPA, package), so `value` is the yearly figure / 12, NOT take-home; "unclear" = the call does not say.
+ * Only an in-hand figure is a straight fit for the record's in-hand fields.
+ */
+export const PAY_BASES = ["in_hand", "ctc", "unclear"] as const;
+export type PayBasis = (typeof PAY_BASES)[number];
+export interface PayFact extends CallFact<number> {
+  /** Absent on calls read before 2026-11-17 (they were all read as in-hand). */
+  basis?: PayBasis;
+}
+
+/** Which round a call was for (owner 2026-11-17; migration 20261117000001). Interview rounds are read for answers too. */
+export const CALL_ROUNDS = ["screening", "round_1", "round_2", "round_3", "hr_offer"] as const;
+export type CallRound = (typeof CALL_ROUNDS)[number];
+export const CALL_ROUND_LABELS: Record<CallRound, string> = {
+  screening: "Screening",
+  round_1: "Interview round 1",
+  round_2: "Interview round 2",
+  round_3: "Interview round 3",
+  hr_offer: "HR / offer discussion",
+};
+export const isInterviewRound = (round: CallRound | null | undefined): boolean => round === "round_1" || round === "round_2" || round === "round_3";
+
+/** How one answer covered a topic the round asked about (interview rounds): judged on what was said, never on delivery. */
+export const ANSWER_VERDICTS = ["clear", "partial", "weak"] as const;
+export type AnswerVerdict = (typeof ANSWER_VERDICTS)[number];
+export const ANSWER_VERDICT_LABELS: Record<AnswerVerdict, string> = { clear: "Shown clearly", partial: "Partly shown", weak: "Weak" };
+
 /** The facts the model listens for, and the record fields "Apply" writes them to. */
 export const CALL_FACT_KEYS = ["currentInhand", "expectedInhand", "noticePeriodDays", "location", "reasonForChange"] as const;
 export type CallFactKey = (typeof CALL_FACT_KEYS)[number];
@@ -686,13 +840,20 @@ export interface CallInsights {
   concerns: ({ topic: CallConcernTopic; note: string } & CallEvidence)[];
   redFlags: ({ note: string } & CallEvidence)[];
   facts: {
-    currentInhand: CallFact<number>;
-    expectedInhand: CallFact<number>;
+    currentInhand: PayFact;
+    expectedInhand: PayFact;
     noticePeriodDays: CallFact<number>;
     location: CallFact<string>;
     reasonForChange: CallFact<string>;
   };
   language: string;
+  /**
+   * Interview rounds only (owner 2026-11-17): each topic asked about, how the answer covered it, with the quote; the
+   * position's must-haves that never came up; questions for the next round. Empty on a screening call.
+   */
+  answers?: ({ topic: string; verdict: AnswerVerdict; note: string } & CallEvidence)[];
+  notCovered?: string[];
+  nextRoundQuestions?: string[];
 }
 
 export interface CallSegment {
@@ -708,6 +869,8 @@ export interface CallAnalysis {
   applicationId: string | null;
   positionId: string | null;
   positionTitle: string | null;
+  /** Which round the call was for; null = added before 20261117000001 (shown as Screening). */
+  round: CallRound | null;
   inputKind: CallInputKind;
   fileName: string | null;
   fileSize: number | null;
@@ -781,6 +944,55 @@ export interface OutreachPreview {
   sentBefore: { at: string; byName: string | null } | null;
 }
 
+// Where an upload came from, and "already in the database" (owner 2026-11-16; migration 20261116000004) ------------------
+
+export const SOURCE_KINDS = ["own", "naukri", "portal", "vendor"] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+export const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
+  own: "Our own search",
+  naukri: "Naukri",
+  portal: "Job portal",
+  vendor: "Vendor",
+};
+
+/**
+ * The same CV file uploaded again by someone else (owner 2026-11-16): not stored twice, but listed in "Already in the
+ * database" with who uploaded it first and who again, until dismissed.
+ */
+export interface ResumeRepeat {
+  id: string;
+  fileId: string;
+  fileName: string;
+  candidateId: string | null;
+  candidateName: string | null;
+  /** Who uploaded the same file again, and when. */
+  againBy: string | null;
+  againAt: string;
+  /** Who uploaded it first, and when. */
+  firstBy: string | null;
+  firstAt: string | null;
+}
+/** Optional on every upload: who sent these resumes or this sheet. */
+export interface UploadSource {
+  kind: SourceKind | null;
+  /** The vendor's or portal's name. */
+  name: string | null;
+}
+
+/**
+ * A second CV for a person who already had one (owner 2026-11-16): how the person was first sourced, and the CV that
+ * was on file before this one. A CV that only meets its own sheet row is not flagged.
+ */
+export interface AlreadyKnown {
+  /** YYYY-MM-DD */
+  sourcedAt: string | null;
+  /** The sheet it came from, "a resume", or "added by hand". */
+  sourcedFrom: string | null;
+  sourcedBy: string | null;
+  /** The CV on file before this one (the latest earlier upload). */
+  previous: { id: string; fileName: string; uploadedAt: string | null; uploadedBy: string | null } | null;
+}
+
 /** One attempt (GET /api/candidates/outreach, newest first). */
 export interface OutreachRecord {
   id: string;
@@ -796,4 +1008,111 @@ export interface OutreachRecord {
   error: string | null;
   byName: string | null;
   at: string;
+}
+
+// Manpower requisitions (owner 2026-11-17; migration 20261117000003). Stages 1 and 2 of the Recruitment Module spec. ---
+
+export const REQUISITION_STATUSES = ["draft", "submitted", "on_hold", "sent_back", "approved", "rejected", "withdrawn"] as const;
+export type RequisitionStatus = (typeof REQUISITION_STATUSES)[number];
+export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
+  draft: "Draft",
+  submitted: "Awaiting approval",
+  on_hold: "On hold",
+  sent_back: "Sent back for changes",
+  approved: "Approved",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+};
+export const APPROVAL_LEVELS = ["hr_head", "director"] as const;
+export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
+export const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = { hr_head: "HR Head", director: "Director" };
+export const REQUEST_TYPES = ["new", "replacement"] as const;
+export type RequestType = (typeof REQUEST_TYPES)[number];
+/** Stage 2: Approve, Reject with reason, Send back for change, Put on hold (and Resume from hold). */
+export const REQUISITION_DECISIONS = ["approve", "reject", "send_back", "hold", "resume"] as const;
+export type RequisitionDecision = (typeof REQUISITION_DECISIONS)[number];
+
+/** Settings -> Notifications -> Recruitment in the Tech dashboard (organization_settings.recruitment_config). */
+export interface RecruitmentConfig {
+  hrHead: { userId: string | null; backupUserId: string | null };
+  director: { userId: string | null; backupUserId: string | null };
+  /** Rupees per year (CTC). A request whose top budget is above this also needs the Director. null = never on pay alone. */
+  directorCtcLevel: number | null;
+  /** Days to fill a role opened from an approved request. */
+  targetDays: number;
+}
+
+export interface Requisition {
+  id: string;
+  requisitionNo: string | null;
+  status: RequisitionStatus;
+  currentLevel: ApprovalLevel | null;
+  currentApproverId: string | null;
+  currentApproverName: string | null;
+  levelEnteredAt: string | null;
+  roleTitle: string;
+  department: string | null;
+  location: string | null;
+  positions: number;
+  requestType: RequestType;
+  replacingName: string | null;
+  /** Rupees per year (CTC). */
+  budgetMinCtc: number | null;
+  budgetMaxCtc: number | null;
+  requiredSkills: string[];
+  minExperienceYears: number | null;
+  qualification: string | null;
+  targetJoiningDate: string | null;
+  justification: string | null;
+  reportingManager: string | null;
+  inPlan: boolean | null;
+  needsDirector: boolean;
+  holdSince: string | null;
+  holdReason: string | null;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  positionId: string | null;
+  raisedBy: string | null;
+  raisedByName: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Days since it was submitted (until decided). */
+  ageDays: number;
+  /** Stage 1: the last requisition for the same role title, when there was one. */
+  previous?: { id: string; requisitionNo: string | null; status: RequisitionStatus; createdAt: string } | null;
+}
+
+export interface RequisitionApproval {
+  id: string;
+  level: ApprovalLevel | null;
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened";
+  inPlan: boolean | null;
+  reason: string | null;
+  byName: string | null;
+  via: "app" | "link";
+  at: string;
+}
+
+/** What the signed-in person may do with requisitions. */
+export interface RequisitionAccess {
+  /** HR roles and admins: see every request. */
+  seesAll: boolean;
+  /** The levels this person approves at (primary or backup). */
+  approverLevels: ApprovalLevel[];
+  /** The approvers are set in Settings (a request cannot be submitted until they are). */
+  configured: boolean;
+}
+
+export interface RequisitionListResponse {
+  requisitions: Requisition[];
+  access: RequisitionAccess;
+}
+export interface RequisitionResponse {
+  requisition: Requisition;
+  approvals: RequisitionApproval[];
+  access: RequisitionAccess;
+  /** The signed-in person may decide on it now (it waits at their level, and they did not raise it). */
+  canDecide: boolean;
+  canEdit: boolean;
 }

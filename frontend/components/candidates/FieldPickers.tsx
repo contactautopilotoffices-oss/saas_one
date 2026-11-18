@@ -80,6 +80,7 @@ const chipLabel = (t: Token) => [t.text, ...(t.alts ?? [])].join(' / ');
 /** A box that turns what is typed into chips, with the dropdown under it. Enter, a comma or leaving the box adds a chip. */
 export function TokenField({
     id, orgId, field, tokens, onAdd, onRemove, onToggle, placeholder, icon, panel, focusRef, compact, onTyping, onTyped,
+    onOr, onRemoveTerm, orTarget = null, onOrDone,
 }: {
     id: string;
     orgId: string;
@@ -102,6 +103,16 @@ export function TokenField({
      * "MEP / HVAC" and "a AND (b OR c) NOT d" into chips and excludes). Return true when it was taken.
      */
     onTyped?: (typed: string) => boolean;
+    /**
+     * Owner 2026-11-17: "+ or" on each chip. Clicking it asks the field's owner to add the next words to that chip
+     * (`orTarget` is then that chip's text): the box, the dropdown and the AI suggestions all add "/" words to it.
+     */
+    onOr?: (text: string) => void;
+    /** A small x on each word of a chip with more than one: takes out that word only. */
+    onRemoveTerm?: (text: string, term: string) => void;
+    orTarget?: string | null;
+    /** Escape, or leaving the box, ends "+ or". */
+    onOrDone?: () => void;
 }) {
     const [input, setInputState] = useState('');
     const setInput = (value: string) => { setInputState(value); onTyping?.(value.trim()); };
@@ -110,7 +121,9 @@ export function TokenField({
     const [active, setActive] = useState(-1);
     const options = useOptions(orgId, field, input, focused);
     const typed = input.trim();
-    const taken = new Set(tokens.map(t => t.text.toLowerCase()));
+    // Every word already in a chip, its "/" words too: the dropdown does not offer them again.
+    const taken = new Set(tokens.flatMap(t => [t.text, ...(t.alts ?? [])]).map(w => w.toLowerCase()));
+    const orChip = orTarget ? tokens.find(t => t.text === orTarget) ?? null : null;
     const rows = closed ? [] : options.filter(o => !taken.has(o.text.toLowerCase())).map(o => toRow(o, typed, field === 'keyword'));
     if (!closed && typed && !taken.has(typed.toLowerCase()) && !options.some(o => o.text.toLowerCase() === typed.toLowerCase())) {
         rows.push({ text: typed, before: 'Add "', match: typed, after: '"', meta: '' });
@@ -135,7 +148,7 @@ export function TokenField({
             <div className={`flex flex-wrap items-center gap-1.5 rounded-xl border border-border bg-surface transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${compact ? 'min-h-10 px-2 py-1' : 'min-h-11 px-2.5 py-1.5'}`}>
                 {icon}
                 {tokens.map(t => (
-                    <span key={t.text} title={t.alts?.length ? `Any one of: ${chipLabel(t)}` : undefined} className={`inline-flex max-w-full items-center gap-0.5 rounded-full py-0.5 text-[13px] font-semibold text-text-primary ring-1 ring-inset ${onToggle ? 'pl-1 pr-1' : 'pl-2.5 pr-1'} ${t.required ? 'bg-primary/15 ring-primary/40' : 'bg-muted ring-border'}`}>
+                    <span key={t.text} title={t.alts?.length ? `Any one of: ${chipLabel(t)}` : undefined} className={`inline-flex max-w-full items-center gap-0.5 rounded-full py-0.5 text-[13px] font-semibold text-text-primary ring-inset ${orChip === t ? 'ring-2 ring-primary' : 'ring-1'} ${onToggle ? 'pl-1 pr-1' : 'pl-2.5 pr-1'} ${t.required ? 'bg-primary/15 ring-primary/40' : 'bg-muted ring-border'}`}>
                         {onToggle && (
                             <button type="button" onClick={() => onToggle(t.text)} aria-pressed={!!t.required} aria-label={t.required ? `Make ${chipLabel(t)} optional` : `Make ${chipLabel(t)} compulsory`} title={t.required ? 'Compulsory. Click to make it optional.' : 'Click to make it compulsory.'}
                                 className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${t.required ? 'text-primary-dark' : 'text-text-tertiary hover:text-text-primary'}`}>
@@ -144,9 +157,30 @@ export function TokenField({
                         )}
                         <span className="min-w-0 truncate">
                             {t.alts?.length
-                                ? [t.text, ...t.alts].map((part, i) => <React.Fragment key={`${part}-${i}`}>{i > 0 && <span className="px-1 font-normal text-text-tertiary" aria-hidden>/</span>}{part}</React.Fragment>)
+                                ? [t.text, ...t.alts].map((part, i) => (
+                                    <React.Fragment key={`${part}-${i}`}>
+                                        {i > 0 && <span className="px-1 font-normal text-text-tertiary" aria-hidden>/</span>}
+                                        {onRemoveTerm ? (
+                                            // Owner 2026-11-17: one word out of the group, the rest stays.
+                                            <span className="group/term inline-flex items-center">
+                                                {part}
+                                                <button type="button" onClick={() => onRemoveTerm(t.text, part)} aria-label={`Remove ${part} from ${chipLabel(t)}`} title={`Remove ${part} only`}
+                                                    className="-mr-0.5 ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-text-tertiary opacity-0 hover:bg-surface hover:text-text-primary focus-visible:opacity-100 group-hover/term:opacity-100">
+                                                    <X className="h-2.5 w-2.5" aria-hidden />
+                                                </button>
+                                            </span>
+                                        ) : part}
+                                    </React.Fragment>
+                                ))
                                 : t.text}
                         </span>
+                        {onOr && (
+                            <button type="button" onClick={() => { if (orChip === t) onOrDone?.(); else { onOr(t.text); document.getElementById(id)?.focus({ preventScroll: true }); } }}
+                                aria-pressed={orChip === t} aria-label={`Add another word to ${chipLabel(t)}`} title="Add another word to this chip: a candidate needs any one of them"
+                                className={`ml-0.5 inline-flex h-[22px] shrink-0 items-center rounded-full px-1.5 text-[11px] font-bold ${orChip === t ? 'bg-primary text-white' : 'text-primary-dark hover:bg-surface'}`}>
+                                + or
+                            </button>
+                        )}
                         <button type="button" onClick={() => onRemove(t.text)} aria-label={`Remove ${chipLabel(t)}`} className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-text-tertiary hover:text-text-primary">
                             <X className="h-3 w-3" aria-hidden />
                         </button>
@@ -158,9 +192,9 @@ export function TokenField({
                     type="text"
                     autoComplete="off"
                     value={input}
-                    placeholder={placeholder}
+                    placeholder={orChip ? `Another word for ${orChip.text}, then Enter` : placeholder}
                     onFocus={() => setFocused(true)}
-                    onBlur={() => { setFocused(false); addTyped(input); setInput(''); }}
+                    onBlur={() => { setFocused(false); addTyped(input); setInput(''); onOrDone?.(); }}
                     onChange={e => {
                         setClosed(false);
                         setActive(-1);
@@ -177,14 +211,22 @@ export function TokenField({
                     onKeyDown={e => {
                         // A typed group or boolean line is read as typed; the dropdown's pick only takes a plain word.
                         const literal = onTyped && /[/()"]|(^|\s)(AND|OR|NOT)(\s|$)/.test(input);
+                        if (e.key === 'Escape' && orChip && !input) { onOrDone?.(); return; }
                         if (!literal && menuKey(e, rows, active, setActive, pick, () => setClosed(true))) return;
                         if (e.key === 'Escape') { setClosed(true); return; }
                         if (e.key === 'Enter') { e.preventDefault(); addTyped(input); setInput(''); }
-                        else if (e.key === 'Backspace' && !input && tokens.length) onRemove(tokens[tokens.length - 1].text);
+                        // While adding to a chip, Backspace on an empty box does not take a chip away.
+                        else if (e.key === 'Backspace' && !input && tokens.length && !orChip) onRemove(tokens[tokens.length - 1].text);
                     }}
                     className="h-7 min-w-[120px] flex-1 border-0 bg-transparent text-base text-text-primary outline-none placeholder:text-text-tertiary sm:text-sm"
                 />
             </div>
+            {orChip && (
+                <p className="mt-1 text-xs text-text-secondary" aria-live="polite">
+                    Adding to <span className="font-semibold text-text-primary">{chipLabel(orChip)}</span>: pick from the list or type a word. A candidate needs any one of them.
+                    <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => onOrDone?.()} className="ml-1.5 font-semibold text-primary-dark underline-offset-2 hover:underline">Done</button>
+                </p>
+            )}
             {focused && rows.length > 0 && <OptionMenu rows={rows} active={active} label={`${field} suggestions`} onPick={pick} onStar={onToggle ? text => pick(text, true) : undefined} />}
             {focused && !typed && panel}
         </div>

@@ -12,6 +12,7 @@ import { api, qs } from './api';
 import CallsTab from './CallsTab';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { OutreachSection } from './OutreachPanel';
+import { PipelineStrip, PositionFitCard, type PipelineContext } from './PipelineContext';
 import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
 import ResumeDocument, { hasProfile } from './ResumeDocument';
@@ -43,9 +44,14 @@ const maskPhone = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 2)}â€
  * A status change opens "Change status" inline: "Others" needs a remark. Nothing here changes by accident: every
  * action is a click on a named button, and every one of them is in the history.
  */
-export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [] }: {
+export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [], pipeline = null }: {
     record: CandidateRecord; open: boolean; onClose: () => void; onEdit: () => void;
     orgId: string;
+    /**
+     * Opened from the Pipeline tab (owner 2026-11-17): the position and the person's place in it. Adds the strip with
+     * the stage and the quick actions, the fit for the position, and that position's history first.
+     */
+    pipeline?: PipelineContext | null;
     /** Something changed (status, resume, blacklist, position): the lists behind the panel refetch. */
     onChanged?: () => void;
     /** The search's keywords, marked in the resume's text. */
@@ -238,6 +244,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
             resize={{ storeKey: 'candidate-details-width', initial: 640, min: 520 }}
         >
             <div className="@container space-y-4">
+                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
+
                 {/* Change status */}
                 {statusOpen && (
                     <section className={`${CARD} px-4 py-4`} aria-label="Change status">
@@ -300,6 +308,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
                 {tab === 'overview' && (
                     <>
+                        {pipeline && <PositionFitCard record={r} position={pipeline.position} />}
                         {/* Owner 2026-11-16: the cards sit side by side only when the panel is wide enough for one-line values. */}
                         <div className="grid gap-3 @4xl:grid-cols-2">
                             {(hits.length > 0 || r.resumeSnippet) && (
@@ -351,7 +360,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                     </>
                 )}
 
-                {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} />}
+                {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
 

@@ -8,6 +8,7 @@ import {
     isTicketEscalatedToCritical,
     isTicketRaisedByClient,
 } from '@/backend/lib/ticketing/alertClassification';
+import { resolveTicketReplyContext } from '@/backend/lib/ticketing/ticketReplyContext';
 
 export const EventProcessor = {
     async processEvent(event: any) {
@@ -36,6 +37,15 @@ export const EventProcessor = {
             }
             if ((['resolved', 'closed', 'pending_validation'].includes(payload.status)) && payload.old_status && payload.status !== payload.old_status) {
                 await this.handleTicketCompleted(payload);
+            }
+            if (payload.status === 'waitlist' && payload.old_status !== 'waitlist') {
+                await this.handleTicketWaitlisted(payload);
+            }
+            if (payload.status === 'pending_validation' && payload.old_status !== 'pending_validation') {
+                await this.handleTicketPendingValidation(payload);
+            }
+            if (payload.validation_status && payload.validation_status !== payload.old_validation_status) {
+                await this.handleTicketValidated(payload);
             }
         } else if (event_type === 'MATERIAL_REQUEST_CREATED') {
             await this.handleMaterialRequestEvent(payload);
@@ -81,8 +91,10 @@ export const EventProcessor = {
             await this.handleUserApproved(payload);
         } else if (event_type === 'FACILITY_REQUEST_CREATED') {
             await this.handleFacilityRequestCreated(payload);
+        } else if (event_type === 'FACILITY_REQUEST_RESOLVED') {
+            await this.handleFacilityRequestResolved(payload);
         } else if (event_type === 'TICKET_REPLY') {
-            // WhatsApp only: handled by WhatsAppEventProcessor, no email for ticket replies.
+            await this.handleTicketReply(payload);
         } else {
             console.warn(`[EventProcessor] Unknown event type: ${event_type}`);
         }
@@ -805,8 +817,51 @@ export const EventProcessor = {
             await dispatchEmailFeature('critical_ticket_created', false);
         }
 
-        // If ticket has an assigned person on creation, send dedicated assignment email to that person
-        if (ticket.assigned_to_user?.email) {
+        // --- In-app + push, on the same three rules as the emails above ---
+        const propertyName = ticket.property?.name || 'the property';
+        const assigneeName = ticket.assigned_to_user?.full_name || 'a team member';
+        const raiserName = ticket.raised_by_user?.full_name || 'A client';
+        const pushed = new Set<string>();
+
+        // The assigned person is told by ticket_assigned below, with the detail they need.
+        const createdPush = await this.dispatchTicketPush({
+            featureKey: 'ticket_created', type: 'TICKET_CREATED',
+            ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+            title: ticket.assigned_to ? 'New Ticket Created & Assigned' : 'New Ticket Created',
+            message: ticket.assigned_to
+                ? `A new ticket "${ticket.title}" has been raised at ${propertyName} and assigned to ${assigneeName}.`
+                : `A new ticket "${ticket.title}" has been raised at ${propertyName}.`,
+            contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to },
+            excludeUserIds: [ticket.assigned_to]
+        });
+        createdPush.forEach(id => pushed.add(id));
+
+        if (isClientRaised) {
+            const clientPush = await this.dispatchTicketPush({
+                featureKey: 'client_ticket_created', type: 'CLIENT_TICKET_CREATED',
+                ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+                title: 'Client Request Raised',
+                message: `${raiserName} raised "${ticket.title}" at ${propertyName}.`,
+                contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to },
+                excludeUserIds: [...pushed]
+            });
+            clientPush.forEach(id => pushed.add(id));
+        }
+
+        if (isCriticalPriority(ticket.priority || payload.priority)) {
+            await this.dispatchTicketPush({
+                featureKey: 'critical_ticket_created', type: 'TICKET_CRITICAL',
+                ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+                title: 'Critical Request — Immediate Action Required',
+                message: `${raiserName} raised a CRITICAL request at ${propertyName}: "${ticket.title}". Please resolve this urgently.`,
+                priority: 'CRITICAL',
+                contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to },
+                excludeUserIds: [...pushed]
+            });
+        }
+
+        // An assignment made at creation gets the dedicated assignment alert on its own rule.
+        if (ticket.assigned_to) {
             await this.handleTicketAssigned(payload);
         }
     },
@@ -832,14 +887,23 @@ export const EventProcessor = {
                 assigneeEmail: ticket.assigned_to_user?.email
             }
         });
-        if (!enabled || emails.length === 0) return;
+        if (enabled && emails.length > 0) {
+            await EmailService.sendTicketCreatedEmail({
+                emailTo: emails,
+                ticket,
+                property: ticket.property,
+                raisedBy: ticket.raised_by_user,
+                assignedTo: ticket.assigned_to_user
+            });
+        }
 
-        await EmailService.sendTicketCreatedEmail({
-            emailTo: emails,
-            ticket,
-            property: ticket.property,
-            raisedBy: ticket.raised_by_user,
-            assignedTo: ticket.assigned_to_user
+        await this.dispatchTicketPush({
+            featureKey: 'critical_ticket_created', type: 'TICKET_CRITICAL',
+            ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+            title: 'Critical Request — Immediate Action Required',
+            message: `Ticket "${ticket.title}" has been escalated to CRITICAL at ${ticket.property?.name || 'the property'}. Please resolve this urgently.`,
+            priority: 'CRITICAL',
+            contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to }
         });
     },
 
@@ -863,16 +927,40 @@ export const EventProcessor = {
             contextualEmails: [ticket.assigned_to_user?.email]
         });
 
-        if (!enabled || emails.length === 0) return;
+        if (enabled && emails.length > 0) {
+            console.log(`[EventProcessor] Sending Ticket Assigned email for #${ticket.ticket_number} to ${emails.join(', ')}`);
 
-        console.log(`[EventProcessor] Sending Ticket Assigned email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+            await EmailService.sendTicketAssignedEmail({
+                emailTo: emails,
+                ticket,
+                property: ticket.property,
+                assignedTo: ticket.assigned_to_user,
+                raisedBy: ticket.raised_by_user
+            });
+        }
 
-        await EmailService.sendTicketAssignedEmail({
-            emailTo: emails,
-            ticket,
-            property: ticket.property,
-            assignedTo: ticket.assigned_to_user,
-            raisedBy: ticket.raised_by_user
+        // --- In-app + push: the assigned person hears it in the second person, everyone else as news ---
+        const assignedToName = ticket.assigned_to_user?.full_name || 'a team member';
+        const assignedId = String(ticket.assigned_to || payload.assigned_to || '');
+
+        if (assignedId) {
+            await this.dispatchTicketPush({
+                featureKey: 'ticket_assigned', type: 'TICKET_ASSIGNED',
+                ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+                title: 'Ticket Assigned to You',
+                message: `Ticket "${ticket.title}" has been assigned to you.`,
+                contextual: { assigneeId: assignedId },
+                skipRoles: true
+            });
+        }
+
+        await this.dispatchTicketPush({
+            featureKey: 'ticket_assigned', type: 'TICKET_ASSIGNED',
+            ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+            title: 'Ticket Assigned',
+            message: `Ticket "${ticket.title}" has been assigned to ${assignedToName}.`,
+            skipContextual: true,
+            excludeUserIds: [assignedId]
         });
     },
 
@@ -896,17 +984,311 @@ export const EventProcessor = {
             contextualEmails: [ticket.raised_by_user?.email]
         });
 
+        if (enabled && emails.length > 0) {
+            console.log(`[EventProcessor] Sending Ticket Completed email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+
+            await EmailService.sendTicketCompletedEmail({
+                emailTo: emails,
+                ticket,
+                property: ticket.property,
+                resolvedBy: ticket.assigned_to_user || { full_name: 'Technician' },
+                resolutionNotes: payload.resolution_notes || ticket.resolution_notes
+            });
+        }
+
+        await this.dispatchTicketPush({
+            featureKey: 'ticket_completed', type: 'TICKET_COMPLETED',
+            ticketId: ticket.id, organizationId: orgId, propertyId: propId,
+            title: 'Ticket Completed ✅',
+            message: `Ticket "${ticket.title}" has been marked as completed.`,
+            contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to }
+        });
+    },
+
+    /**
+     * In-app + push for a ticket event, with the recipients and the channel both taken from the
+     * Omnichannel rule of the same name. Nothing is sent when the rule is off, when its push channel
+     * is off, or when it resolves to nobody. Returns the ids it notified, so a caller sending several
+     * alerts for one ticket can keep the same person from being told twice.
+     */
+    async dispatchTicketPush(options: {
+        featureKey: string;
+        type: string;
+        ticketId: string;
+        organizationId: string;
+        propertyId?: string | null;
+        title: string;
+        message: string;
+        priority?: 'LOW' | 'NORMAL' | 'HIGH' | 'CRITICAL';
+        contextual?: { requesterId?: string | null; assigneeId?: string | null };
+        excludeUserIds?: (string | null | undefined)[];
+        skipRoles?: boolean;
+        skipContextual?: boolean;
+        deepLinkQuery?: string;
+    }): Promise<string[]> {
+        if (!options.organizationId || !options.ticketId) return [];
+
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        const rule = await NotificationService.getOmnichannelRule(options.organizationId, options.propertyId, options.featureKey);
+        if (!rule.enabled || !rule.channels.push) return [];
+
+        const ids = new Set<string>(options.skipRoles ? [] : await NotificationService.resolveMatrixRecipientIds({
+            organizationId: options.organizationId,
+            propertyId: options.propertyId,
+            roles: rule.roles,
+            userIds: rule.user_ids
+        }));
+
+        if (!options.skipContextual) {
+            if (rule.notify_requester && options.contextual?.requesterId) ids.add(String(options.contextual.requesterId));
+            if (rule.notify_assignee && options.contextual?.assigneeId) ids.add(String(options.contextual.assigneeId));
+        }
+
+        for (const excluded of options.excludeUserIds || []) {
+            if (excluded) ids.delete(String(excluded));
+        }
+        if (ids.size === 0) return [];
+
+        const recipients = Array.from(ids);
+        await NotificationService.sendToMany(recipients, {
+            ticketId: options.ticketId,
+            propertyId: options.propertyId || undefined,
+            organizationId: options.organizationId,
+            type: options.type,
+            title: options.title,
+            message: options.message,
+            deepLink: `/tickets/${options.ticketId}${options.deepLinkQuery ?? '?from=requests'}`,
+            priority: options.priority
+        });
+        return recipients;
+    },
+
+    /** The generic email of a ticket event that has no template of its own, on the same rule as its push. */
+    async dispatchTicketEventEmail(options: {
+        featureKey: string;
+        ticket: any;
+        organizationId: string;
+        propertyId?: string | null;
+        subject: string;
+        title: string;
+        body: string;
+    }) {
+        const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+            organizationId: options.organizationId,
+            propertyId: options.propertyId,
+            featureKey: options.featureKey,
+            contextualRecipients: {
+                requesterEmail: options.ticket?.raised_by_user?.email,
+                assigneeEmail: options.ticket?.assigned_to_user?.email
+            }
+        });
         if (!enabled || emails.length === 0) return;
 
-        console.log(`[EventProcessor] Sending Ticket Completed email for #${ticket.ticket_number} to ${emails.join(', ')}`);
+        const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+        const link = appUrl ? `${appUrl}/tickets/${options.ticket.id}?from=requests` : '';
+        for (const email of emails) {
+            await EmailService.sendGenericNotificationEmail({
+                emailTo: email,
+                subject: options.subject,
+                title: options.title,
+                htmlBody: `${options.body}${link ? `<p><a href="${link}" style="color:#587e85; font-weight:bold;">Open ticket #${options.ticket.ticket_number || ''}</a></p>` : ''}`
+            });
+        }
+    },
 
-        await EmailService.sendTicketCompletedEmail({
-            emailTo: emails,
+    /** Shared read for the status events below. */
+    async loadTicketForEvent(payload: any) {
+        const ticketId = payload?.ticket_id || payload?.id;
+        if (!ticketId) return null;
+        const { data: ticket } = await supabaseAdmin
+            .from('tickets')
+            .select('*, property:properties(id, name, organization_id), raised_by_user:users!tickets_raised_by_fkey(id, full_name, email), assigned_to_user:users!tickets_assigned_to_fkey(id, full_name, email)')
+            .eq('id', ticketId)
+            .maybeSingle();
+        if (!ticket) return null;
+        const organizationId = ticket.organization_id || ticket.property?.organization_id || payload.organization_id;
+        if (!organizationId) return null;
+        return {
             ticket,
-            property: ticket.property,
-            resolvedBy: ticket.assigned_to_user || { full_name: 'Technician' },
-            resolutionNotes: payload.resolution_notes || ticket.resolution_notes
+            organizationId: String(organizationId),
+            propertyId: ticket.property_id || payload.property_id || null,
+            propertyName: ticket.property?.name || 'the property'
+        };
+    },
+
+    /** A ticket parked on the waitlist. */
+    async handleTicketWaitlisted(payload: any) {
+        const ctx = await this.loadTicketForEvent(payload);
+        if (!ctx) return;
+        const { ticket, organizationId, propertyId, propertyName } = ctx;
+
+        await this.dispatchTicketEventEmail({
+            featureKey: 'ticket_waitlisted', ticket, organizationId, propertyId,
+            subject: `[Autopilot FMS] Ticket #${ticket.ticket_number} waitlisted`,
+            title: 'Ticket Waitlisted ⏳',
+            body: `<p>Ticket <strong>#${ticket.ticket_number}</strong> — ${ticket.title} has been added to the waitlist at <strong>${propertyName}</strong>.</p>`
         });
+
+        await this.dispatchTicketPush({
+            featureKey: 'ticket_waitlisted', type: 'TICKET_WAITLISTED',
+            ticketId: ticket.id, organizationId, propertyId,
+            title: 'Ticket Waitlisted ⏳',
+            message: `Ticket "${ticket.title}" has been added to the waitlist at ${propertyName}.`,
+            contextual: { requesterId: ticket.raised_by, assigneeId: ticket.assigned_to }
+        });
+    },
+
+    /** Work is done and the client has to confirm it. */
+    async handleTicketPendingValidation(payload: any) {
+        const ctx = await this.loadTicketForEvent(payload);
+        if (!ctx) return;
+        const { ticket, organizationId, propertyId } = ctx;
+
+        await this.dispatchTicketEventEmail({
+            featureKey: 'ticket_pending_validation', ticket, organizationId, propertyId,
+            subject: `[Autopilot FMS] Please confirm ticket #${ticket.ticket_number}`,
+            title: 'Request Completed — Your Approval Needed',
+            body: `<p>Your request <strong>${ticket.title}</strong> (#${ticket.ticket_number}) has been resolved. Please review and confirm.</p>`
+        });
+
+        await this.dispatchTicketPush({
+            featureKey: 'ticket_pending_validation', type: 'TICKET_PENDING_VALIDATION',
+            ticketId: ticket.id, organizationId, propertyId,
+            title: 'Request Completed — Your Approval Needed',
+            message: `Your request "${ticket.title}" has been resolved. Please review and confirm.`,
+            contextual: { requesterId: ticket.raised_by }
+        });
+    },
+
+    /** The client approved or rejected the completed work. */
+    async handleTicketValidated(payload: any) {
+        const ctx = await this.loadTicketForEvent(payload);
+        if (!ctx) return;
+        const { ticket, organizationId, propertyId } = ctx;
+
+        const status = String(payload.validation_status || ticket.validation_status || '').toLowerCase();
+        const approved = status === 'approved';
+        const message = approved
+            ? `Ticket "${ticket.title}" has been approved and marked as resolved by the client.`
+            : `Ticket "${ticket.title}" was rejected by the client and has been reopened.`;
+
+        await this.dispatchTicketEventEmail({
+            featureKey: 'ticket_validated', ticket, organizationId, propertyId,
+            subject: `[Autopilot FMS] Ticket #${ticket.ticket_number} ${approved ? 'approved' : 'rejected'} by the client`,
+            title: approved ? 'Ticket Validated by Client' : 'Ticket Rejected by Client',
+            body: `<p>${message}</p>`
+        });
+
+        await this.dispatchTicketPush({
+            featureKey: 'ticket_validated', type: approved ? 'TICKET_VALIDATED' : 'TICKET_REJECTED',
+            ticketId: ticket.id, organizationId, propertyId,
+            title: approved ? 'Ticket Validated by Client' : 'Ticket Rejected by Client',
+            message,
+            contextual: { assigneeId: ticket.assigned_to },
+            excludeUserIds: [ticket.validated_by]
+        });
+    },
+
+    /**
+     * A reply (public comment) on a ticket. The DB trigger only reports what happened; who hears about it
+     * and on which channel is the Omnichannel rule's call — Settings -> Notifications -> Tickets -> "Ticket Reply".
+     * This covers email and in-app/push; WhatsAppEventProcessor covers the WhatsApp channel of the same rule.
+     * The person who wrote the comment is never notified about it.
+     */
+    async handleTicketReply(payload: any) {
+        if (!payload?.comment_id) return;
+
+        const ctx = await resolveTicketReplyContext(payload);
+        if (!ctx.organizationId || !ctx.ticketId) return;
+
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        const rule = await NotificationService.getOmnichannelRule(ctx.organizationId, ctx.propertyId, 'ticket_reply');
+        if (!rule.enabled) {
+            console.log('[EventProcessor] ticket_reply is disabled in the Omnichannel matrix.');
+            return;
+        }
+
+        const [{ data: sender }, { data: sides }] = await Promise.all([
+            ctx.senderId
+                ? supabaseAdmin.from('users').select('id, full_name, email').eq('id', ctx.senderId).maybeSingle()
+                : Promise.resolve({ data: null as any }),
+            supabaseAdmin.from('users').select('id, full_name, email')
+                .in('id', [ctx.requesterId, ctx.assigneeId].filter(Boolean) as string[])
+        ]);
+
+        const userById = new Map<string, any>((sides || []).map((u: any) => [String(u.id), u]));
+        const requester = ctx.requesterId ? userById.get(ctx.requesterId) : null;
+        const assignee = ctx.assigneeId ? userById.get(ctx.assigneeId) : null;
+
+        const senderName = sender?.full_name || 'A team member';
+        const senderEmail = sender?.email?.trim().toLowerCase() || null;
+        const replyText = String(payload.message || '').trim();
+        const snippet = replyText.length > 300 ? `${replyText.slice(0, 297)}...` : replyText;
+        const appUrl = (process.env.APP_URL || '').replace(/\/$/, '');
+        const ticketLink = appUrl ? `${appUrl}/tickets/${ctx.ticketId}?from=requests` : '';
+
+        // --- Email ---
+        if (rule.channels.email) {
+            const { enabled, emails } = await EmailRecipientResolver.resolveRecipients({
+                organizationId: ctx.organizationId,
+                propertyId: ctx.propertyId,
+                featureKey: 'ticket_reply',
+                contextualRecipients: {
+                    requesterEmail: requester?.email,
+                    assigneeEmail: assignee?.email
+                }
+            });
+
+            const targets = (enabled ? emails : [])
+                .map(e => e.trim().toLowerCase())
+                .filter(e => e && e !== senderEmail);
+
+            if (targets.length > 0) {
+                console.log(`[EventProcessor] Sending ticket_reply email for #${ctx.ticketNumber} to ${targets.join(', ')}`);
+                const htmlBody = `
+                    <p><strong>${senderName}</strong> replied on ticket <strong>#${ctx.ticketNumber}</strong> — ${ctx.title}:</p>
+                    <blockquote style="margin:16px 0; padding:12px 16px; border-left:3px solid #587e85; background:#f6f8f8; font-size:14px; color:#333;">
+                        ${snippet.replace(/\n/g, '<br/>') || 'No message content.'}
+                    </blockquote>
+                    ${ticketLink ? `<p><a href="${ticketLink}" style="color:#587e85; font-weight:bold;">Open ticket #${ctx.ticketNumber}</a></p>` : ''}
+                `;
+                for (const email of targets) {
+                    await EmailService.sendGenericNotificationEmail({
+                        emailTo: email,
+                        subject: `[Autopilot FMS] New reply on ticket #${ctx.ticketNumber}`,
+                        title: 'New Reply on Your Ticket 💬',
+                        htmlBody
+                    });
+                }
+            }
+        }
+
+        // --- In-app + push ---
+        if (rule.channels.push) {
+            const roleIds = await NotificationService.resolveMatrixRecipientIds({
+                organizationId: ctx.organizationId,
+                propertyId: ctx.propertyId,
+                roles: rule.roles,
+                userIds: rule.user_ids
+            });
+
+            const recipientIds = new Set<string>(roleIds);
+            if (rule.notify_requester && ctx.requesterId) recipientIds.add(ctx.requesterId);
+            if (rule.notify_assignee && ctx.assigneeId) recipientIds.add(ctx.assigneeId);
+            if (ctx.senderId) recipientIds.delete(ctx.senderId);
+
+            if (recipientIds.size > 0) {
+                await NotificationService.sendToMany(Array.from(recipientIds), {
+                    ticketId: ctx.ticketId,
+                    propertyId: ctx.propertyId || undefined,
+                    organizationId: ctx.organizationId,
+                    type: 'TICKET_REPLY',
+                    title: `New Reply on #${ctx.ticketNumber} 💬`,
+                    message: `${senderName}: ${snippet || 'replied on this ticket.'}`,
+                    deepLink: `/tickets/${ctx.ticketId}?from=requests`
+                });
+            }
+        }
     },
 
     async handleChecklistCompleted(payload: any) {
@@ -1338,5 +1720,13 @@ export const EventProcessor = {
         console.log(`[EventProcessor] Processing FACILITY_REQUEST_CREATED for request ${requestId}`);
         const { NotificationService } = await import('@/backend/services/NotificationService');
         await NotificationService.afterFacilityRequestCreated(requestId);
+    },
+
+    async handleFacilityRequestResolved(payload: any) {
+        const requestId = payload.request_id || payload.id;
+        if (!requestId) return;
+        console.log(`[EventProcessor] Processing FACILITY_REQUEST_RESOLVED for request ${requestId}`);
+        const { NotificationService } = await import('@/backend/services/NotificationService');
+        await NotificationService.afterFacilityRequestResolved(requestId);
     }
 };

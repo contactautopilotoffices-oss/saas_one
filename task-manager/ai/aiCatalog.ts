@@ -78,7 +78,8 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', provider: 'gemini', can: ['chat'] },
     // 2026-11-15 (owner: "sarvam goes first"): built for Indian languages. Voice notes up to 30 s; longer ones go to Whisper.
-    { id: 'sarvam:saaras:v4', label: 'Sarvam Saaras v4', provider: 'sarvam', can: ['speech'], note: 'Indian languages; notes up to 30 s' },
+    // 2026-11-17 (owner): also the recruitment calls' default, through Sarvam's batch job (any length).
+    { id: 'sarvam:saaras:v4', label: 'Sarvam Saaras v4', provider: 'sarvam', can: ['speech'], note: 'Indian languages; voice notes up to 30 s, calls any length' },
     { id: 'whisper-large-v3', label: 'Whisper Large v3 (Groq)', provider: 'groq_speech', can: ['speech'], note: 'better on Hindi / Hinglish' },
     { id: 'whisper-large-v3-turbo', label: 'Whisper Large v3 Turbo (Groq)', provider: 'groq_speech', can: ['speech'], note: 'faster' },
 ];
@@ -124,11 +125,11 @@ const CANDIDATE_EXTRACT_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:clau
 const BRAIN_TURN_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-haiku-5-5', 'glm-5.3-flash'] as const;
 /**
  * Owner 2026-11-16: a call's reading sits next to a decision about a person, so a wrong "not interested" costs a lot
- * (doctrine L10): the larger tier first, Sonnet as the backup. The transcription chain is the voice notes' (large-v3
- * first: better on Hindi / Hinglish).
+ * (doctrine L10): the larger tier first, Sonnet as the backup. Owner 2026-11-17: the transcription starts on Sarvam
+ * (built for Indian languages and Hinglish, the voice notes' choice too), Whisper large-v3 then turbo as the backups.
  */
 const CALL_ANALYSE_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5'] as const;
-const CALL_TRANSCRIBE_DEFAULT = ['whisper-large-v3', 'whisper-large-v3-turbo'] as const;
+const CALL_TRANSCRIBE_DEFAULT = ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'] as const;
 
 
 export const AI_JOBS: readonly JobInfo[] = [
@@ -148,7 +149,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
     { key: 'brain_turn', label: 'The brain turn', hint: 'Reads the message, looks things up with its skills, and answers or proposes an action (tickets, rooms, readings, wiki, memory). The first model that answers is used; the rest are backups', group: 'Unified brain', needs: 'chat', providers: ['anthropic', 'engy', 'groq'], defaults: BRAIN_TURN_DEFAULT },
     { key: 'candidate_extract', label: 'Reading resumes', hint: 'Reads education, industry, skills and employers out of each uploaded resume into the candidate\'s empty fields; one call per resume. A scanned PDF is typed out first by the Claude model in this list', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_EXTRACT_DEFAULT },
-    { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
+    { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['sarvam', 'groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
     { key: 'call_analyse', label: 'Calls: reading the call', hint: 'Reads a screening call\'s transcript for sentiment, interest, the concerns raised and the facts heard (pay, notice, location), each with a quote. Advisory only: a person applies each fact. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CALL_ANALYSE_DEFAULT },
 
     // ── Owner 2026-11-15: the rest of the application (Brain → AI models) ──

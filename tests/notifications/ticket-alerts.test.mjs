@@ -15,6 +15,10 @@ const MOCK_IDS = new Set([
     '@/backend/lib/procurement/requisition-approval.mjs',
     '@/backend/services/AiSensyService',
     '@/backend/services/WhatsAppService',
+    // EventProcessor pulls this in for the in-app / push channel of each ticket rule. This file is about
+    // the email and WhatsApp alerts, so the rule here reports push off and the push path stops at once;
+    // push recipients are covered in tests/ticket-reply/channels.test.ts.
+    '@/backend/services/NotificationService',
 ]);
 
 globalThis.__ticketAlertTestState = {
@@ -22,6 +26,7 @@ globalThis.__ticketAlertTestState = {
     enqueued: [],
     emailsSent: [],
     aisensyCalls: [],
+    pushed: [],
 };
 
 registerHooks({
@@ -75,6 +80,19 @@ registerHooks({
             }
             if (specifier === '@/backend/services/WhatsAppService') {
                 return { shortCircuit: true, format: 'module', source: `export const WhatsAppService = {};` };
+            }
+            if (specifier === '@/backend/services/NotificationService') {
+                return {
+                    shortCircuit: true,
+                    format: 'module',
+                    source: `export class NotificationService {
+                        static async getOmnichannelRule() {
+                            return { enabled: true, channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], custom_emails: [], notify_assignee: true, notify_requester: true };
+                        }
+                        static async resolveMatrixRecipientIds() { return []; }
+                        static async sendToMany(userIds, payload) { globalThis.__ticketAlertTestState.pushed?.push({ userIds, payload }); }
+                    }`,
+                };
             }
         }
         return nextLoad(url, context);

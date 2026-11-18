@@ -71,30 +71,8 @@ export async function POST(request: NextRequest) {
             new_value: newStatus,
         });
 
-        // 4. Trigger Notifications
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-
-            if (newAssignee) {
-                NotificationService.afterTicketAssigned(ticketId).catch(err => {
-                    console.error('[UpdateStatus API] Assignment Notification error:', err);
-                });
-            }
-
-            if (newStatus === 'waitlist') {
-                NotificationService.afterTicketWaitlisted(ticketId).catch(err => {
-                    console.error('[UpdateStatus API] Waitlist Notification error:', err);
-                });
-            }
-
-            if (newStatus === 'resolved' || newStatus === 'closed') {
-                NotificationService.afterTicketCompleted(ticketId).catch(err => {
-                    console.error('[UpdateStatus API] Completion Notification error:', err);
-                });
-            }
-        } catch (err) {
-            console.error('[UpdateStatus API] Failed to load NotificationService:', err);
-        }
+        // 4. Notifications: the status / assignee change above fires trg_tickets_outbox, and the
+        //    Omnichannel matrix decides who is told and on which channel.
 
         return NextResponse.json({
             success: true,

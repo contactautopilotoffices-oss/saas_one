@@ -160,7 +160,9 @@ export const CAPABILITY_MATRIX: Record<RoleKey, CapabilityMatrix> = {
     },
     soft_service_supervisor: {
         stock: ['view', 'create', 'update', 'delete'],
-        tickets: ['view', 'approve'],
+        // Owner 2026-11-16: a supervisor raises requests from the Service Hub's Requests tab, so `create` sits
+        // alongside the view/approve rights they already held.
+        tickets: ['view', 'create', 'approve'],
         dashboards: ['view'],
         reports: ['view'],
         petty_cash: ['view', 'create']

@@ -139,13 +139,8 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Trigger Notifications
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-            NotificationService.afterTicketReassigned(ticketId).catch(() => {});
-        } catch (err) {
-            // Silent fail
-        }
+        // Notifications: the new assignee is picked up by trg_tickets_outbox, and the Omnichannel
+        // matrix decides who is told and on which channel.
 
         return NextResponse.json({
             success: true,

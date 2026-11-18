@@ -21,6 +21,8 @@ export const ACTION_TYPES = [
   "added_to_position", "removed_from_position", "call_logged", "field_edit",
   // Owner 2026-11-16: a WhatsApp update sent to the candidate (migration 20261116000003)
   "outreach_sent",
+  // Owner 2026-11-16: a resume or sheet row brought a person already in the database (migration 20261116000004)
+  "duplicate_flagged",
 ] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
 
@@ -160,14 +162,90 @@ export async function changeRecordWithHistory(client: SupabaseClient, orgId: str
   return saved;
 }
 
-/** A remark on its own, from the panel's "Add remark". */
-export async function addRemark(client: SupabaseClient, orgId: string, by: Actor, id: string, remarkInput: unknown): Promise<void> {
+/**
+ * The person is in this position now (a live row in the pipeline). A note filed under a position must belong to it.
+ * Throws a 400 for a malformed id and a 404 when they are not (or no longer) in it.
+ */
+async function assertInPosition(client: SupabaseClient, orgId: string, candidateId: string, positionId: unknown): Promise<string> {
+  if (typeof positionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(positionId)) {
+    throw new CandidateActionError(400, "positionId must be a uuid.");
+  }
+  const { data, error } = await client
+    .from("candidate_position_members")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("position_id", positionId)
+    .eq("candidate_id", candidateId)
+    .is("deleted_at", null)
+    .limit(1);
+  if (error) {
+    console.error("[candidates] position check failed", error);
+    throw new CandidateActionError(500, "Couldn't check the position. Please try again.");
+  }
+  if (!data?.length) throw new CandidateActionError(404, "This person is no longer in that position.");
+  return positionId;
+}
+
+/**
+ * A remark on its own, from the panel's "Add remark". From the pipeline (owner 2026-11-17) it may be filed under the
+ * position the panel was opened from (`positionId`), so it shows in that position's history.
+ */
+export async function addRemark(client: SupabaseClient, orgId: string, by: Actor, id: string, remarkInput: unknown, positionIdInput?: unknown): Promise<void> {
   const remark = cleanRemark(remarkInput);
   if (!remark) throw new CandidateActionError(400, "Type the remark first.");
   const record = await getRecord(client, orgId, id);
+  const positionId = positionIdInput === undefined || positionIdInput === null ? null : await assertInPosition(client, orgId, record.candidateId, positionIdInput);
   if (historyKnownMissing()) throw new CandidateActionError(409, "Remarks need a database update first (migration 20261115000002).");
-  await recordAction(client, orgId, by, { candidateId: record.candidateId, applicationId: record.id, action: "remark", remark });
+  await recordAction(client, orgId, by, { candidateId: record.candidateId, applicationId: record.id, positionId, action: "remark", remark });
   if (historyKnownMissing()) throw new CandidateActionError(409, "Remarks need a database update first (migration 20261115000002).");
+}
+
+// Interviews and feedback (owner 2026-11-17) --------------------------------------------------------------------------
+
+export const NOTE_KINDS = ["interview", "feedback"] as const;
+export type NoteKind = (typeof NOTE_KINDS)[number];
+export const NOTE_LABELS: Record<NoteKind, string> = { interview: "Interview scheduled", feedback: "Interview feedback" };
+
+const PositionNoteInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("interview"),
+    positionId: z.string(),
+    /** Local date and time as the form gives it, "2026-11-20T15:30". */
+    at: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Pick the date and time of the interview."),
+    interviewer: z.string().trim().max(120).optional(),
+    mode: z.enum(["in_person", "video", "phone"]).optional(),
+    note: z.string().trim().max(REMARK_MAX).optional(),
+  }),
+  z.object({
+    kind: z.literal("feedback"),
+    positionId: z.string(),
+    round: z.string().trim().min(1, "Say which round.").max(60),
+    rating: z.number().int().min(1).max(5),
+    recommendation: z.enum(["move_ahead", "hold", "reject"]),
+    note: z.string().trim().min(1, "Write the feedback.").max(REMARK_MAX),
+  }),
+]);
+
+/**
+ * An interview scheduled, or one round's feedback, filed under the position (owner 2026-11-17). Both are history
+ * entries (`remark` with `meta.kind`), so nothing new is needed in the database: insert-only, with who and when, like
+ * every other entry. Moving the stage is a separate, explicit step (the panel does it when HR ticks the box).
+ */
+export async function addPositionNote(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown): Promise<void> {
+  const parsed = PositionNoteInput.safeParse(body ?? {});
+  if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Check the form.");
+  const input = parsed.data;
+  const record = await getRecord(client, orgId, id);
+  const positionId = await assertInPosition(client, orgId, record.candidateId, input.positionId);
+  if (historyKnownMissing()) throw new CandidateActionError(409, "This needs a database update first (migration 20261115000002).");
+  const meta: Record<string, unknown> = input.kind === "interview"
+    ? { kind: "interview", at: input.at, interviewer: input.interviewer || null, mode: input.mode ?? null }
+    : { kind: "feedback", round: input.round, rating: input.rating, recommendation: input.recommendation };
+  await recordAction(client, orgId, by, {
+    candidateId: record.candidateId, applicationId: record.id, positionId, action: "remark",
+    toValue: NOTE_LABELS[input.kind], remark: input.note || null, meta,
+  });
+  if (historyKnownMissing()) throw new CandidateActionError(409, "This needs a database update first (migration 20261115000002).");
 }
 
 /** The candidate's history, newest first (every record of the person, every position). */
@@ -186,7 +264,11 @@ export async function listActions(client: SupabaseClient, orgId: string, candida
     console.error("[candidates] history failed", error);
     throw new CandidateActionError(500, "Couldn't load the history. Please try again.");
   }
-  return ((data ?? []) as Record<string, unknown>[]).map(toAction);
+  return ((data ?? []) as Record<string, unknown>[])
+    .map(toAction)
+    // Owner 2026-11-16: "already in the database" notes written under the first rule (every CV meeting its own sheet
+    // row) are hidden; the current rule's notes carry rule 2 (known.ts, KNOWN_RULE). Nothing is deleted.
+    .filter((a) => a.action !== "duplicate_flagged" || a.meta.rule === 2);
 }
 
 // Blacklist ---------------------------------------------------------------------------------------------------------

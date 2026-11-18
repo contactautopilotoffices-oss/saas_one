@@ -110,6 +110,8 @@ async function run() {
     check('WhatsApp bot: understand / reply / tidy each read their own setting', /chainFor\('wa_understand'\), chainFor\('wa_reply'\), chainFor\('wa_tidy'\)/.test(live) && /brain: \{ llm, promptSections, interpretModels, replyModels, rewriteModels \}/.test(live));
     const voice = read('task-manager/voice/VoiceIntake.ts');
     check('voice notes: speech to text and clean-up read their settings', /chainFor\('voice_transcribe'\)/.test(voice) && /chainFor\('voice_cleanup'\)/.test(voice));
+    // Owner 2026-11-17: recruitment calls start on Sarvam; Whisper stays offered as the backup
+    check('recruitment calls: Sarvam is the default, both Whisper models stay as backups and can be chosen', C.jobInfo('call_transcribe')?.defaults.join(',') === 'sarvam:saaras:v4,whisper-large-v3,whisper-large-v3-turbo' && ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'].every(id => C.modelStatus('call_transcribe', id, () => true).status === 'ready'));
     check('duplicate check reads its setting', /chainFor\('duplicate_check'\)/.test(read('task-manager/WorkspaceService.ts')));
     check('Gemini picks go to Google, not Engy', /startsWith\(GEMINI_PREFIX\)/.test(read('task-manager/brain/llm.ts')));
     const route = read('app/api/task-manager/ai-models/route.ts');

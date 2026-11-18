@@ -4,7 +4,7 @@ import { WhatsAppService } from './WhatsAppService';
 import { WhatsAppQueueService } from './WhatsAppQueueService';
 import { EmailService } from './EmailService';
 import { EventProcessor } from './EventProcessor';
-import { EmailRecipientResolver } from './EmailRecipientResolver';
+import { EmailRecipientResolver, ORG_SCOPED_ROLES, normalizeAndFilterRoles } from './EmailRecipientResolver';
 import { WhatsAppRecipientResolver } from './WhatsAppRecipientResolver';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
@@ -34,6 +34,14 @@ export interface Recipient {
 }
 
 export class NotificationService {
+    /**
+     * The afterTicket* methods below are no longer called (owner 2026-11-16). Ticket notifications now
+     * start from trg_tickets_outbox and trg_ticket_comments_outbox, and EventProcessor /
+     * WhatsAppEventProcessor resolve the recipients and the channels from the Omnichannel matrix, so
+     * Settings -> Notifications -> Tickets is the only place that decides who is told and how.
+     * They are kept for reference only: notifying from an API route again would put a second,
+     * ungoverned path next to the matrix, which is exactly what this change removed.
+     */
     static async afterTicketCreated(ticketId: string) {
         try {
             const { data: ticket, error: ticketError } = await supabaseAdmin
@@ -2047,29 +2055,33 @@ export class NotificationService {
                 }
             }
 
-            // 3. In-App & Push Notification to Assigned Staff / Admins
+            // 3. In-App & Push Notification via Omnichannel Matrix
             try {
-                const recipientUserIds = new Set<string>();
-                if (propertyId) {
-                    const { data: propMembers } = await supabaseAdmin
-                        .from('property_memberships')
-                        .select('user_id')
-                        .eq('property_id', propertyId)
-                        .in('role', ['property_admin', 'staff', 'mst'])
-                        .eq('is_active', true);
-                    (propMembers || []).forEach(m => recipientUserIds.add(String(m.user_id)));
-                }
+                if (orgId) {
+                    const rule = await this.getOmnichannelRule(orgId, propertyId, 'facility_request_created');
+                    const pushEnabled = rule ? (rule.enabled !== false && rule.channels?.push === true) : true;
+                    if (pushEnabled) {
+                        const targetRoles = rule?.roles || ['property_admin', 'staff', 'mst', 'soft_service_staff'];
+                        const targetUserIds = rule?.user_ids || [];
+                        const recipientUserIds = await this.resolveMatrixRecipientIds({
+                            organizationId: orgId,
+                            propertyId,
+                            roles: targetRoles,
+                            userIds: targetUserIds
+                        });
 
-                if (recipientUserIds.size > 0) {
-                    await this.sendToMany(Array.from(recipientUserIds), {
-                        organizationId: orgId,
-                        propertyId,
-                        type: 'TICKET_CREATED',
-                        title: `🏢 Facility Request #${ticketNumber}`,
-                        message: `${locationStr}: ${request.description.substring(0, 80)}`,
-                        deepLink: dashboardDeepLink,
-                        priority: 'HIGH'
-                    });
+                        if (recipientUserIds.length > 0) {
+                            await this.sendToMany(recipientUserIds, {
+                                organizationId: orgId,
+                                propertyId,
+                                type: 'TICKET_CREATED',
+                                title: `🏢 Facility Request #${ticketNumber}`,
+                                message: `${locationStr}: ${request.description.substring(0, 80)}`,
+                                deepLink: dashboardDeepLink,
+                                priority: 'HIGH'
+                            });
+                        }
+                    }
                 }
             } catch (inAppErr) {
                 console.error('[NS] In-App / Push dispatch failed for facility_request_created:', inAppErr);
@@ -2077,6 +2089,205 @@ export class NotificationService {
         } catch (err) {
             console.error('[NS] afterFacilityRequestCreated error:', err);
         }
+    }
+
+    /**
+     * Dispatched when a facility request (client support ticket) is marked RESOLVED.
+     * Uses the omnichannel matrix (facility_requests -> facility_request_resolved)
+     * to notify configured roles and users across WhatsApp, Email, and Push/In-App.
+     */
+    static async afterFacilityRequestResolved(guestRequestId: string) {
+        try {
+            const { data: request, error } = await supabaseAdmin
+                .from('guest_requests')
+                .select(`
+                    *,
+                    qr_facility_zones (
+                        zone_name,
+                        floor
+                    ),
+                    properties (
+                        id,
+                        name,
+                        organization_id
+                    )
+                `)
+                .eq('id', guestRequestId)
+                .single();
+
+            if (error || !request) {
+                console.error('[NS] afterFacilityRequestResolved: request not found', error);
+                return;
+            }
+
+            const property = request.properties as any;
+            const zone = request.qr_facility_zones as any;
+            const orgId = property?.organization_id || process.env.NEXT_PUBLIC_AUTOPILOT_ORG_ID;
+            const propertyId = request.property_id;
+            const propertyName = property?.name || 'Facility';
+            const zoneName = zone?.zone_name || 'Designated Area';
+            const floor = zone?.floor ? `${zone.floor}` : '';
+            const locationStr = floor ? `${zoneName} (${floor})` : zoneName;
+            const ticketNumber = request.ticket_number || `GR-${request.id.substring(0, 6).toUpperCase()}`;
+
+            const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.saasone.com').replace(/\/$/, '');
+            const dashboardDeepLink = orgId && propertyId ? `/${orgId}/properties/${propertyId}/guest-requests` : '/guest-requests';
+            const dashboardFullUrl = `${APP_URL}${dashboardDeepLink}`;
+
+            if (orgId) {
+                // 1. WhatsApp Dispatch via Omnichannel Matrix
+                try {
+                    const waResult = await WhatsAppRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'facility_request_resolved'
+                    });
+
+                    if (waResult.enabled && waResult.users.length > 0) {
+                        const message = [
+                            `*✅ Facility Request Resolved*`,
+                            ``,
+                            `🎫 *Ticket:* #${ticketNumber}`,
+                            `📍 *Location:* ${locationStr}`,
+                            `🏢 *Property:* ${propertyName}`,
+                            `📝 *Issue:* ${request.description}`,
+                            `👤 *Reported By:* ${request.guest_name || 'Visitor'}`,
+                            ``,
+                            `This issue has been marked as resolved.`,
+                            `🔗 ${dashboardFullUrl}`
+                        ].join('\n');
+
+                        for (const targetUser of waResult.users) {
+                            if (targetUser.phone) {
+                                WhatsAppService.send(targetUser.phone, {
+                                    message,
+                                    templateName: 'facility_request_resolved_v1',
+                                    templateParams: [
+                                        targetUser.name || 'Team',
+                                        ticketNumber,
+                                        locationStr,
+                                        propertyName,
+                                        'On-duty Staff'
+                                    ],
+                                    deepLink: dashboardDeepLink
+                                });
+                            }
+                        }
+                    }
+                } catch (waErr) {
+                    console.error('[NS] WhatsApp dispatch failed for facility_request_resolved:', waErr);
+                }
+
+                // 2. Email Dispatch via Omnichannel Matrix
+                try {
+                    const emailResult = await EmailRecipientResolver.resolveRecipients({
+                        organizationId: orgId,
+                        propertyId,
+                        featureKey: 'facility_request_resolved'
+                    });
+
+                    if (emailResult.enabled && emailResult.emails.length > 0) {
+                        for (const email of emailResult.emails) {
+                            if (email) {
+                                EmailService.sendGenericNotificationEmail({
+                                    emailTo: email,
+                                    subject: `[Resolved] Facility Request #${ticketNumber} at ${propertyName}`,
+                                    title: `Facility Request Resolved ✅`,
+                                    htmlBody: `
+                                        <p>The following client support request has been marked as <strong>RESOLVED</strong>:</p>
+                                        <table style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+                                            <tr><td style="padding: 6px; font-weight: bold; width: 140px;">Ticket #:</td><td style="padding: 6px;">${ticketNumber}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Location:</td><td style="padding: 6px;">${locationStr}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Property:</td><td style="padding: 6px;">${propertyName}</td></tr>
+                                            <tr><td style="padding: 6px; font-weight: bold;">Details:</td><td style="padding: 6px;">${request.description}</td></tr>
+                                        </table>
+                                        <p><a href="${dashboardFullUrl}" style="display:inline-block; padding: 10px 20px; background: #059669; color: #fff; text-decoration: none; border-radius: 8px; font-weight: bold;">View Request</a></p>
+                                    `
+                                });
+                            }
+                        }
+                    }
+                } catch (emailErr) {
+                    console.error('[NS] Email dispatch failed for facility_request_resolved:', emailErr);
+                }
+
+                // 3. In-App & Push Notification via Omnichannel Matrix
+                try {
+                    const rule = await this.getOmnichannelRule(orgId, propertyId, 'facility_request_resolved');
+                    const pushEnabled = rule ? (rule.enabled !== false && rule.channels?.push === true) : true;
+                    if (pushEnabled) {
+                        const targetRoles = rule?.roles || ['property_admin'];
+                        const targetUserIds = rule?.user_ids || [];
+                        const recipientUserIds = await this.resolveMatrixRecipientIds({
+                            organizationId: orgId,
+                            propertyId,
+                            roles: targetRoles,
+                            userIds: targetUserIds
+                        });
+
+                        if (recipientUserIds.length > 0) {
+                            await this.sendToMany(recipientUserIds, {
+                                organizationId: orgId,
+                                propertyId,
+                                type: 'TICKET_UPDATED',
+                                title: `✅ Facility Request Resolved #${ticketNumber}`,
+                                message: `${locationStr}: marked resolved`,
+                                deepLink: dashboardDeepLink,
+                                priority: 'NORMAL'
+                            });
+                        }
+                    }
+                } catch (inAppErr) {
+                    console.error('[NS] In-App / Push dispatch failed for facility_request_resolved:', inAppErr);
+                }
+            }
+        } catch (err) {
+            console.error('[NS] afterFacilityRequestCreated error:', err);
+        }
+    }
+
+    /**
+     * Turns an Omnichannel rule's roles and added users into user ids for the in-app / push channel,
+     * the way EmailRecipientResolver and WhatsAppRecipientResolver turn the same rule into addresses
+     * and phone numbers. Only active memberships count, exactly as those two resolvers require, so one
+     * role chosen in the matrix means the same set of people on all three channels.
+     */
+    static async resolveMatrixRecipientIds(params: {
+        organizationId: string;
+        propertyId?: string | null;
+        roles?: string[];
+        userIds?: string[];
+    }): Promise<string[]> {
+        const ids = new Set<string>((params.userIds || []).map(id => String(id).trim()).filter(Boolean));
+        const roles = normalizeAndFilterRoles(params.roles || []);
+        const orgRoles = roles.filter(r => ORG_SCOPED_ROLES.has(r.toLowerCase()));
+        const propertyRoles = roles.filter(r => !ORG_SCOPED_ROLES.has(r.toLowerCase()));
+
+        try {
+            if (orgRoles.length > 0 && params.organizationId) {
+                const { data } = await supabaseAdmin
+                    .from('organization_memberships')
+                    .select('user_id')
+                    .eq('organization_id', params.organizationId)
+                    .eq('is_active', true)
+                    .in('role', orgRoles);
+                (data || []).forEach((m: { user_id: string }) => { if (m?.user_id) ids.add(String(m.user_id)); });
+            }
+
+            if (propertyRoles.length > 0 && params.propertyId) {
+                const { data } = await supabaseAdmin
+                    .from('property_memberships')
+                    .select('user_id')
+                    .eq('property_id', params.propertyId)
+                    .eq('is_active', true)
+                    .in('role', propertyRoles);
+                (data || []).forEach((m: { user_id: string }) => { if (m?.user_id) ids.add(String(m.user_id)); });
+            }
+        } catch (err) {
+            console.error('[NotificationService] resolveMatrixRecipientIds error:', err);
+        }
+
+        return Array.from(ids);
     }
 
     static async getOmnichannelRule(organizationId: string, propertyId: string | null | undefined, eventKey: string) {

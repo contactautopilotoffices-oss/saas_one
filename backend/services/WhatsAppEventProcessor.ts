@@ -12,6 +12,7 @@ import {
     isTicketRaisedByClient,
     normalizePhoneKey,
 } from '@/backend/lib/ticketing/alertClassification';
+import { resolveTicketReplyContext } from '@/backend/lib/ticketing/ticketReplyContext';
 import { getTicketLevelAssigneeIds } from '@/backend/lib/hr/levelAssignees';
 
 interface DispatchOptions {
@@ -929,7 +930,10 @@ export const WhatsAppEventProcessor = {
      * durableBatch stops a retried outbox event from sending the same comment again, however late the retry runs.
      */
     async handleTicketReply(payload: any): Promise<void> {
-        if (!payload.comment_id || !payload.recipient_id) return;
+        if (!payload.comment_id) return;
+
+        const ctx = await resolveTicketReplyContext(payload);
+        if (!ctx.organizationId) return;
 
         const { data: sender } = await supabaseAdmin
             .from('users')
@@ -938,28 +942,31 @@ export const WhatsAppEventProcessor = {
             .maybeSingle();
 
         const repliedBy = sender?.full_name || 'Team Member';
-        const ticketNumber = payload.ticket_number || 'N/A';
+        const ticketNumber = ctx.ticketNumber;
         const reply = sanitizeWhatsAppParam(payload.message, 'reply_text');
 
         await this.dispatch({
             featureKey: 'ticket_reply',
             templateEventKey: 'ticket_reply',
-            organizationId: payload.organization_id,
-            propertyId: payload.property_id,
+            organizationId: ctx.organizationId,
+            propertyId: ctx.propertyId,
             entityId: payload.comment_id,
             durableBatch: true,
             paramValues: {
                 user_name: 'Team',
                 replied_by: repliedBy,
                 ticket_number: ticketNumber,
-                title: payload.title || 'Support Request',
+                title: ctx.title,
                 reply_text: reply.length > 300 ? `${reply.slice(0, 297)}...` : reply
             },
             summaryMessage: `${repliedBy} replied on ticket #${ticketNumber}`,
-            contextualUserIds: payload.recipient_role === 'requester'
-                ? { requesterId: payload.recipient_id }
-                : { assigneeId: payload.recipient_id },
-            excludeUserIds: [payload.sender_id]
+            // Who actually receives this is the Omnichannel rule's call (roles, added users,
+            // notify_requester / notify_assignee). The person who wrote the comment never does.
+            contextualUserIds: {
+                ...(ctx.requesterId ? { requesterId: ctx.requesterId } : {}),
+                ...(ctx.assigneeId ? { assigneeId: ctx.assigneeId } : {})
+            },
+            excludeUserIds: ctx.senderId ? [ctx.senderId] : []
         });
     },
 

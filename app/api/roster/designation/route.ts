@@ -1,15 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/frontend/utils/supabase/server';
+import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { guardProperty } from '@/backend/lib/auth/callerAccess';
 
 export async function PATCH(request: NextRequest) {
     try {
-        const supabase = await createClient();
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-        if (authError || !user) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
         const body = await request.json();
         const { propertyId, userId, designation } = body;
 
@@ -17,7 +11,13 @@ export async function PATCH(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
         }
 
-        const { error } = await supabase
+        // Verify caller has internal access to this property
+        const denied = await guardProperty(request, propertyId);
+        if (denied) return denied;
+
+        const adminClient = createAdminClient();
+
+        const { error } = await adminClient
             .from('property_memberships')
             .update({ custom_designation: designation || null })
             .eq('property_id', propertyId)

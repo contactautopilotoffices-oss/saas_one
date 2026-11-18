@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { resolveCandidateAccess } from "../../backend/lib/candidates/access";
 import { comparePoolSize } from "../../backend/lib/candidates/config";
 import { fallbackSpec, parseQuery, parseSpecJson, searchTextFor, SPEC_JSON_SCHEMA, SpecSchema, specChips } from "../../backend/lib/candidates/query-spec";
-import { combine, deterministicScores, parseRerankReply, recordLine, rerank, RERANK_JSON_SCHEMA } from "../../backend/lib/candidates/rerank";
+import { combine, deterministicScores, parseRerankReply, recordLine, rerank, RERANK_JSON_SCHEMA, scrubPersonal } from "../../backend/lib/candidates/rerank";
 import { validateSearchBody } from "../../backend/lib/candidates/search";
 import type { CandidateRecord } from "../../backend/lib/candidates/types";
 import { callModels, type ChainDeps, type JsonCaller, type JsonRequest } from "../../backend/lib/candidates/models";
@@ -256,6 +256,33 @@ describe("ranking", () => {
     const line = recordLine("c1", record());
     assert.doesNotMatch(line, /Amit|gmail|7534855802/);
     assert.match(line, /role sourced for: BMS Operator/);
+  });
+
+  it("shows the model what the resume says, so a skill on the CV is not 'not stated' (owner 2026-11-17)", () => {
+    const line = recordLine("c1", record({
+      fullName: "Dattaram Nagesh Muknak",
+      extras: {
+        industry: "Education", preferredLocations: [], ugQualification: "B.E. AI and Data Science", pgQualification: "none", ppgQualification: null,
+        institute: "Vasantdada Patil Pratishthan", educationType: null, degreeYear: 2025, careerBreak: null, defenceBackground: null, servingNotice: null,
+        skills: ["Python", "OpenCV", "SQL"],
+        pastCompanies: [{ company: "Kotak Education Foundation", designation: "AI Intern", from: null, to: null }],
+        resumeSummary: "Dattaram Muknak is an AI intern (dattaram@gmail.com, +91 98765 43210) who built a YOLOv5 vision demo.",
+      },
+      keywordHits: [{ text: "python", required: true, where: "both" }, { text: "Computer Vision", required: false, where: "resume" }],
+    }));
+    assert.match(line, /skills: Python, OpenCV, SQL/);
+    assert.match(line, /past roles: AI Intern at Kotak Education Foundation/);
+    assert.match(line, /education: B\.E\. AI and Data Science · Vasantdada Patil Pratishthan/);
+    assert.match(line, /search keywords found: python \(record \+ resume\), Computer Vision \(resume\)/);
+    assert.match(line, /resume summary: The candidate is an AI intern \(\[email\], \[phone\]\) who built a YOLOv5 vision demo\./);
+    assert.doesNotMatch(line, /Dattaram|Muknak|gmail|98765/);
+    // "none" is the reader's word for no qualification, not a degree.
+    assert.doesNotMatch(line, /education: [^|]*none/);
+  });
+
+  it("takes the name out of a summary by whole words only", () => {
+    assert.equal(scrubPersonal("Rao from Raopur worked with Asha Rao. Asha led it.", "Asha Rao"), "The candidate from Raopur worked with the candidate. The candidate led it.");
+    assert.equal(scrubPersonal("No personal data here.", ""), "No personal data here.");
   });
 
   it("ignores unknown ids and bad entries in the model's reply", () => {

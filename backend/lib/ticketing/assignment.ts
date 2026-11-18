@@ -1,6 +1,5 @@
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
-import { NotificationService } from '@/backend/services/NotificationService';
 
 /**
  * Active members of the property's organisation who hold the org-level 'it' role, with lower-cased full names.
@@ -30,6 +29,18 @@ async function getOrgItMembers(propertyId: string): Promise<{ user_id: string; f
         return [];
     }
 }
+
+/**
+ * Owner 2026-11-16: the property roles that can be handed a ticket. Soft service supervisors were missing, so
+ * soft-service tickets never reached them even once they held the `soft_services` skill.
+ */
+const ASSIGNABLE_ROLES = ['mst', 'staff', 'soft_service_supervisor'];
+
+/**
+ * Roles that only ever receive work in their own skill pool — they are deliberately kept out of the `general`
+ * pool, so a technical or plumbing ticket is never round-robined onto a soft service supervisor.
+ */
+const SKILL_ONLY_ROLES = ['soft_service_supervisor'];
 
 interface AssignmentResult {
     ticketId: string;
@@ -96,7 +107,7 @@ export async function processIntelligentAssignment(
         .select('user_id, role, users!inner(full_name)')
         .eq('property_id', propertyId)
         .eq('is_active', true)
-        .in('role', ['mst', 'staff']);
+        .in('role', ASSIGNABLE_ROLES);
 
     // Create a map of user_id -> role for quick lookup
     const userRoleMap: Record<string, string> = {};
@@ -134,7 +145,10 @@ export async function processIntelligentAssignment(
             }
         });
 
-        // Everyone (except staff technical) is in general
+        // Soft service supervisors stay in their own skill pool only (see SKILL_ONLY_ROLES), so they are not
+        // round-robined technical work. Everyone else (except staff technical) is also in general.
+        if (SKILL_ONLY_ROLES.includes(userRole)) return;
+
         mstPools.general.push(rs);
     });
 
@@ -273,10 +287,8 @@ export async function processIntelligentAssignment(
                     .eq('user_id', assignedTo)
                     .eq('property_id', propertyId);
 
-                // Trigger Notification
-                NotificationService.afterTicketAssigned(ticket.id, true).catch(err => {
-                    console.error('[Intelligent Assignment] Notification failed:', err);
-                });
+                // Notifications: the assignment itself fires trg_tickets_outbox, and the Omnichannel
+                // matrix decides who is told and on which channel.
             }
 
             results.push({ ticketId: ticket.id, assignedTo, status: assignedTo ? 'assigned' : 'open' });

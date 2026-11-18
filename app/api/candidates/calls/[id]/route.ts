@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { callStorage, deleteCall, getCall } from "@/backend/lib/candidates/calls";
+import { callStorage, deleteCall, getCall, setCallRound } from "@/backend/lib/candidates/calls";
 import { CALL_RATE_LIMIT } from "@/backend/lib/candidates/config";
 
-import { errorResponse, rateLimited, requireCandidateAccess, UUID } from "../../_lib/auth";
+import { errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../_lib/auth";
 
 export const runtime = "nodejs";
 
@@ -39,5 +39,22 @@ export async function DELETE(request: Request, { params }: Params) {
     return NextResponse.json({ ok: true });
   } catch (error) {
     return errorResponse(error, "Couldn't delete the call");
+  }
+}
+
+/** Which round the call was for (owner 2026-11-17): { orgId, round }. The reading stays until HR reads it again. */
+export async function PATCH(request: Request, { params }: Params) {
+  const body = await readJson(request);
+  if (body instanceof NextResponse) return body;
+  const auth = await requireCandidateAccess(body.orgId);
+  if (auth.error) return auth.error;
+  const { id } = await params;
+  if (!UUID.test(id)) return notFound();
+  const limited = rateLimited("calls", auth.user.id, CALL_RATE_LIMIT);
+  if (limited) return limited;
+  try {
+    return NextResponse.json({ call: await setCallRound(auth.admin, auth.orgId, id, body.round) });
+  } catch (error) {
+    return errorResponse(error, "Couldn't change the round");
   }
 }

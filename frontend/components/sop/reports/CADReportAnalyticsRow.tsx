@@ -78,6 +78,11 @@ export const CADReportAnalyticsRow: React.FC<CADReportAnalyticsRowProps> = ({
                         <span>0</span>
                     </div>
 
+                    {categoryMetrics.length === 0 && (
+                        <p className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-slate-400">
+                            Nothing scored in this period.
+                        </p>
+                    )}
                     {categoryMetrics.map((cat, idx) => {
                         const barColor = cat.score >= 85 ? 'bg-emerald-500' :
                                          cat.score >= 70 ? 'bg-yellow-400' :
@@ -227,6 +232,11 @@ export const CADReportAnalyticsRow: React.FC<CADReportAnalyticsRowProps> = ({
                 </div>
 
                 <div className="space-y-2 flex-1">
+                    {recentAudits.length === 0 && (
+                        <p className="text-[11px] font-semibold text-slate-400 py-6 text-center">
+                            No AI-scored inspections in this period.
+                        </p>
+                    )}
                     {recentAudits.slice(0, 4).map((audit, idx) => (
                         <div
                             key={idx}

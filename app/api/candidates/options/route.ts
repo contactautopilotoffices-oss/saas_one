@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { OPTIONS_RATE_LIMIT } from "@/backend/lib/candidates/config";
-import { filterOptions, isOptionField } from "@/backend/lib/candidates/filter-search";
+import { filterOptions, isOptionField, topOptions } from "@/backend/lib/candidates/filter-search";
 
 import { errorResponse, rateLimited, requireCandidateAccess } from "../_lib/auth";
 
@@ -17,6 +17,8 @@ export async function GET(request: Request) {
   const field = params.get("field");
   if (!isOptionField(field)) return NextResponse.json({ error: "Invalid field" }, { status: 400 });
   try {
+    // Owner 2026-11-16: `top=1` with nothing typed lists the most common values of a column (the "Search for a role" dropdown).
+    if (params.get("top") === "1" && field !== "keyword") return NextResponse.json({ options: await topOptions(auth.admin, auth.orgId, field) });
     return NextResponse.json({ options: await filterOptions(auth.admin, auth.orgId, field, params.get("q") ?? "") });
   } catch (error) {
     return errorResponse(error, "Couldn't load suggestions");

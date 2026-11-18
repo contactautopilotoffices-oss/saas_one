@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { AlertCircle, Check, Loader2, ThumbsUp, ThumbsDown, Eye, GraduationCap } from 'lucide-react';
+import { AlertCircle, Check, Loader2, ThumbsUp, ThumbsDown, Eye, GraduationCap, Crosshair } from 'lucide-react';
+import ImagePreviewModal, { DefectBox } from '@/frontend/components/shared/ImagePreviewModal';
+import { maskStorageUrl } from '@/frontend/utils/storageUrl';
 
 /**
  * Per-parameter AI verdicts for one checklist step, with checker correction controls.
@@ -50,6 +52,29 @@ const SOPAIParameterReview: React.FC<Props> = ({
     const [draftStatus, setDraftStatus] = useState<ParamStatus | null>(null);
     const [draftNote, setDraftNote] = useState('');
     const [saving, setSaving] = useState<string | null>(null);
+    const [previewPhotoUrl, setPreviewPhotoUrl] = useState<string | null>(null);
+    const [previewTitle, setPreviewTitle] = useState('');
+    const [defectBoxes, setDefectBoxes] = useState<DefectBox[]>([]);
+    const [isLoadingBoxes, setIsLoadingBoxes] = useState(false);
+    const [activeBoxLabel, setActiveBoxLabel] = useState<string | undefined>(undefined);
+    const [defectCache, setDefectCache] = useState<Record<string, DefectBox[]>>({});
+    const [activeParam, setActiveParam] = useState<any>(null);
+    const [activeAngleIndex, setActiveAngleIndex] = useState<number>(0);
+
+    const allPhotos: Array<{ index: number; id: string; url: string; label: string }> = React.useMemo(() => {
+        if (Array.isArray(item.photos) && item.photos.length > 0) {
+            return item.photos.map((p: any, idx: number) => ({
+                index: idx,
+                id: p.id || `photo_${idx + 1}`,
+                url: typeof p === 'string' ? p : p.url,
+                label: p.angle_label || `Angle #${idx + 1}`,
+            }));
+        }
+        if (item.photo_url) {
+            return [{ index: 0, id: 'photo_1', url: item.photo_url, label: 'Angle #1' }];
+        }
+        return [];
+    }, [item.photos, item.photo_url]);
 
     const paramScores: any[] = Array.isArray(item.ai_parameter_scores)
         ? item.ai_parameter_scores
@@ -87,6 +112,137 @@ const SOPAIParameterReview: React.FC<Props> = ({
             onToast?.(err.message || 'Could not save correction', 'error');
         } finally {
             setSaving(null);
+        }
+    };
+
+    const fetchBoxesForPhoto = async (photoUrl: string, param: any): Promise<DefectBox[]> => {
+        const safePhoto = maskStorageUrl(photoUrl) || photoUrl;
+        const cacheKey = `${safePhoto}:${param.name}`;
+        if (defectCache[cacheKey]) {
+            return defectCache[cacheKey];
+        }
+
+        try {
+            const res = await fetch(`/api/properties/${propertyId}/sop/completions/${completionId}/locate-defect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    imageUrl: photoUrl,
+                    parameterName: param.name,
+                    defectDescription: param.reason || param.name,
+                }),
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const boxes: DefectBox[] = data.boxes || [];
+                setDefectCache(prev => ({ ...prev, [cacheKey]: boxes }));
+                return boxes;
+            }
+        } catch (err) {
+            console.error('[Locate Defect] Failed:', err);
+        }
+        return [];
+    };
+
+    const handleLocateDefect = async (param: any) => {
+        if (allPhotos.length === 0) {
+            onToast?.('No photo available for this parameter', 'error');
+            return;
+        }
+
+        setActiveParam(param);
+
+        // Pre-populate cache if param already has pre-computed boxes from score-photo
+        if (Array.isArray(param.boxes) && param.boxes.length > 0) {
+            const targetUrl = param.found_in_photo_url || allPhotos[0]?.url;
+            if (targetUrl) {
+                const safeUrl = maskStorageUrl(targetUrl) || targetUrl;
+                setDefectCache(prev => ({ ...prev, [`${safeUrl}:${param.name}`]: param.boxes }));
+            }
+        }
+
+        // Determine initial photo to show
+        let initialIndex = 0;
+        if (param.found_in_photo_url) {
+            const idx = allPhotos.findIndex(p => p.url === param.found_in_photo_url);
+            if (idx >= 0) initialIndex = idx;
+        } else if (typeof param.found_in_photo === 'number' && param.found_in_photo >= 1 && param.found_in_photo <= allPhotos.length) {
+            initialIndex = param.found_in_photo - 1;
+        } else if (param.expected_angle) {
+            const exp = String(param.expected_angle).toLowerCase();
+            const idx = allPhotos.findIndex(p => p.label.toLowerCase().includes(exp));
+            if (idx >= 0) initialIndex = idx;
+        }
+
+        setActiveAngleIndex(initialIndex);
+        const initialPhoto = allPhotos[initialIndex];
+        const safeInitialPhoto = maskStorageUrl(initialPhoto.url) || initialPhoto.url;
+        setPreviewPhotoUrl(safeInitialPhoto);
+        setPreviewTitle(`${item.checklist_item?.title || 'Checklist Step'} — ${param.name}`);
+        setActiveBoxLabel(`${param.name} (${normalizeStatus(param).toUpperCase()})`);
+
+        const initialCacheKey = `${safeInitialPhoto}:${param.name}`;
+        if (defectCache[initialCacheKey]) {
+            setDefectBoxes(defectCache[initialCacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+
+        try {
+            // When multiple photos exist and the parameter location was uncertain (or marked not_visible),
+            // check all angle photos in parallel so marks across all angles are discovered!
+            if (allPhotos.length > 1 && (!param.found_in_photo_url || param.status === 'not_visible')) {
+                const results = await Promise.all(
+                    allPhotos.map(async (p, pIdx) => {
+                        const boxes = await fetchBoxesForPhoto(p.url, param);
+                        return { pIdx, photoUrl: p.url, boxes };
+                    })
+                );
+
+                // Find if an angle actually found the parameter/defect
+                const matchedAngle = results.find(r => r.boxes.length > 0);
+                if (matchedAngle) {
+                    setActiveAngleIndex(matchedAngle.pIdx);
+                    setPreviewPhotoUrl(maskStorageUrl(matchedAngle.photoUrl) || matchedAngle.photoUrl);
+                    setDefectBoxes(matchedAngle.boxes);
+                } else {
+                    const initialRes = results.find(r => r.pIdx === initialIndex);
+                    setDefectBoxes(initialRes?.boxes || []);
+                }
+            } else {
+                const boxes = await fetchBoxesForPhoto(initialPhoto.url, param);
+                setDefectBoxes(boxes);
+            }
+        } finally {
+            setIsLoadingBoxes(false);
+        }
+    };
+
+    const handleSwitchAngle = async (newIndex: number) => {
+        if (newIndex < 0 || newIndex >= allPhotos.length || !activeParam) return;
+        setActiveAngleIndex(newIndex);
+        const targetPhoto = allPhotos[newIndex];
+        const safePhoto = maskStorageUrl(targetPhoto.url) || targetPhoto.url;
+        setPreviewPhotoUrl(safePhoto);
+
+        const cacheKey = `${safePhoto}:${activeParam.name}`;
+        if (defectCache[cacheKey]) {
+            setDefectBoxes(defectCache[cacheKey]);
+            setIsLoadingBoxes(false);
+            return;
+        }
+
+        setDefectBoxes([]);
+        setIsLoadingBoxes(true);
+        try {
+            const boxes = await fetchBoxesForPhoto(targetPhoto.url, activeParam);
+            setDefectBoxes(boxes);
+        } finally {
+            setIsLoadingBoxes(false);
         }
     };
 
@@ -135,7 +291,7 @@ const SOPAIParameterReview: React.FC<Props> = ({
                                 )}
                             </div>
 
-                            {(param.expected_angle || param.found_in_photo_url) && (
+                            {(param.expected_angle || param.found_in_photo_url || (Array.isArray(item.photos) && item.photos.length > 0) || item.photo_url) && (
                                 <div className="mt-1 flex items-center gap-2 flex-wrap text-[9px] text-slate-500 font-semibold">
                                     {param.expected_angle && <span>Expected angle: <span className="text-slate-700">{param.expected_angle}</span></span>}
                                     {param.found_in_photo_url && (
@@ -147,6 +303,19 @@ const SOPAIParameterReview: React.FC<Props> = ({
                                             <Eye size={10} /> Seen in photo
                                         </button>
                                     )}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleLocateDefect(param)}
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer shadow-2xs border ${
+                                            status !== 'pass'
+                                                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                                        }`}
+                                        title="Locate defect and view AI bounding box marks on photo"
+                                    >
+                                        <Crosshair size={10} className={status !== 'pass' ? 'text-rose-500' : 'text-slate-400'} />
+                                        <span>Show Marks</span>
+                                    </button>
                                 </div>
                             )}
 
@@ -229,6 +398,43 @@ const SOPAIParameterReview: React.FC<Props> = ({
                     );
                 })}
             </div>
+
+            {/* AI Defect Marks Photo Preview Modal with Multi-Angle support */}
+            {(() => {
+                const angleTabs = allPhotos.map((p) => {
+                    const safeUrl = maskStorageUrl(p.url) || p.url;
+                    const key = `${safeUrl}:${activeParam?.name}`;
+                    const cached = defectCache[key];
+                    return {
+                        index: p.index,
+                        label: p.label,
+                        url: p.url,
+                        boxCount: cached ? cached.length : undefined,
+                        hasMarks: Boolean(cached && cached.length > 0),
+                    };
+                });
+
+                return (
+                    <ImagePreviewModal
+                        isOpen={Boolean(previewPhotoUrl)}
+                        onClose={() => {
+                            setPreviewPhotoUrl(null);
+                            setDefectBoxes([]);
+                            setIsLoadingBoxes(false);
+                            setActiveBoxLabel(undefined);
+                            setActiveParam(null);
+                        }}
+                        imageUrl={maskStorageUrl(previewPhotoUrl) || ''}
+                        title={previewTitle}
+                        boxes={defectBoxes}
+                        isLoadingBoxes={isLoadingBoxes}
+                        activeBoxLabel={activeBoxLabel}
+                        angles={angleTabs}
+                        activeAngleIndex={activeAngleIndex}
+                        onSelectAngle={handleSwitchAngle}
+                    />
+                );
+            })()}
         </div>
     );
 };

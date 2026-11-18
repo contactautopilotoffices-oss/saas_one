@@ -16,19 +16,33 @@ import { z } from "zod";
 import { cleanRemark, namesOf, recordAction, type Actor } from "./actions";
 import { MAX_JD_LENGTH } from "./config";
 import { parseFilters } from "./filter-search";
+import { jdLinksFor } from "./jd-library";
 import type { SearchFilters } from "./filters";
 import { PreferSchema, type Preferences } from "./query-spec";
 import { CandidateActionError, getRecordRows, markResumes, toRecord } from "./records";
-import { STAGE_LABELS, STAGE_REMARK_REQUIRED, STAGES, type CandidateRecord, type Position, type PositionMember, type Stage } from "./types";
+import {
+  EMPLOYMENT_TYPES, POSITION_PRIORITIES, STAGE_LABELS, STAGE_REMARK_REQUIRED, STAGES,
+  type CandidateRecord, type EmploymentType, type Position, type PositionMember, type PositionPriority, type Stage,
+} from "./types";
 
 // The stage constants and the Position / PositionMember shapes are in types.ts (pure, shared with the client).
 export { FLOW_STAGES, SIDE_STAGES, STAGE_LABELS, STAGE_REMARK_REQUIRED, STAGES, type Position, type PositionMember, type Stage } from "./types";
 
 const POSITION_COLUMNS = "id, title, department, location, jd_file_name, filters, prefer, status, target_days, recruiter_id, created_at, updated_at, closed_at";
+/** The job's details (migration 20261116000005, owner 2026-11-16); read and written only once the migration is applied. */
+const DETAIL_COLUMNS = ", designation, employment_type, openings, hiring_manager, priority, education, budget_min_inhand, budget_max_inhand, summary";
+const DETAIL_KEYS = ["designation", "employment_type", "openings", "hiring_manager", "priority", "education", "budget_min_inhand", "budget_max_inhand", "summary"];
 const MEMBER_COLUMNS = "id, position_id, candidate_id, application_id, stage, stage_changed_at, stage_changed_by, remark, added_at";
 
 const missingRelation = (error: { code?: string; message?: string } | null | undefined) =>
   Boolean(error) && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error?.code ?? "") || /does not exist|schema cache/i.test(error?.message ?? ""));
+/** Migration 20261116000005 not applied: a detail column is missing. */
+const detailsMissing = (error: { code?: string; message?: string } | null | undefined) =>
+  Boolean(error) && ["42703", "PGRST204"].includes(error?.code ?? "") && new RegExp(DETAIL_KEYS.join("|")).test(error?.message ?? "");
+/** The same row without the detail columns. */
+function withoutDetails(row: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(row).filter(([k]) => !DETAIL_KEYS.includes(k)));
+}
 
 function fail(what: string, error: { code?: string; message?: string }): never {
   if (missingRelation(error)) throw new CandidateActionError(409, "Positions need a database update first (migration 20261115000002).");
@@ -53,6 +67,15 @@ function toPosition(row: Record<string, unknown>, counts: Record<Stage, number>,
     prefer: ((row.prefer as Preferences | null) ?? {}),
     status: row.status as "open" | "closed",
     targetDays: (row.target_days as number) ?? 21,
+    designation: (row.designation as string | null) ?? null,
+    employmentType: (row.employment_type as EmploymentType | null) ?? null,
+    openings: Number(row.openings) || 1,
+    hiringManager: (row.hiring_manager as string | null) ?? null,
+    priority: (POSITION_PRIORITIES as readonly string[]).includes(String(row.priority)) ? (row.priority as PositionPriority) : "normal",
+    education: (row.education as string | null) ?? null,
+    budgetMinInhand: row.budget_min_inhand === null || row.budget_min_inhand === undefined ? null : Number(row.budget_min_inhand),
+    budgetMaxInhand: row.budget_max_inhand === null || row.budget_max_inhand === undefined ? null : Number(row.budget_max_inhand),
+    summary: (row.summary as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     closedAt: (row.closed_at as string | null) ?? null,
@@ -76,37 +99,61 @@ async function countsFor(client: SupabaseClient, orgId: string, positionIds: str
 
 /** Open positions first, newest first; `status` narrows. */
 export async function listPositions(client: SupabaseClient, orgId: string, status: "open" | "closed" | "all" = "open"): Promise<Position[]> {
-  let q = client.from("candidate_positions").select(POSITION_COLUMNS).eq("organization_id", orgId).is("deleted_at", null);
-  if (status !== "all") q = q.eq("status", status);
-  const { data, error } = await q.order("status", { ascending: true }).order("created_at", { ascending: false }).limit(200);
+  const run = (columns: string) => {
+    let q = client.from("candidate_positions").select(columns).eq("organization_id", orgId).is("deleted_at", null);
+    if (status !== "all") q = q.eq("status", status);
+    return q.order("status", { ascending: true }).order("created_at", { ascending: false }).limit(200);
+  };
+  let { data, error } = await run(POSITION_COLUMNS + DETAIL_COLUMNS);
+  if (error && detailsMissing(error)) ({ data, error } = await run(POSITION_COLUMNS));
   if (error) fail("load the positions", error);
-  const rows = (data ?? []) as Record<string, unknown>[];
-  const [counts, names] = await Promise.all([countsFor(client, orgId, rows.map((r) => r.id as string)), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean))]);
-  return rows.map((row) => toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names));
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  const ids = rows.map((r) => r.id as string);
+  const [counts, names, jds] = await Promise.all([countsFor(client, orgId, ids), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean)), jdLinksFor(client, orgId, ids)]);
+  // Owner 2026-11-17: the library JD each came from (none before migration 20261117000002).
+  return rows.map((row) => ({ ...toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names), jd: jds.get(row.id as string) ?? null }));
 }
 
 export async function getPosition(client: SupabaseClient, orgId: string, id: string): Promise<Position> {
-  const { data, error } = await client.from("candidate_positions").select(`${POSITION_COLUMNS}, jd_text`).eq("organization_id", orgId).eq("id", id).is("deleted_at", null).maybeSingle();
+  const run = (columns: string) => client.from("candidate_positions").select(`${columns}, jd_text`).eq("organization_id", orgId).eq("id", id).is("deleted_at", null).maybeSingle();
+  let { data, error } = await run(POSITION_COLUMNS + DETAIL_COLUMNS);
+  if (error && detailsMissing(error)) ({ data, error } = await run(POSITION_COLUMNS));
   if (error) fail("load the position", error);
   if (!data) throw new CandidateActionError(404, "That position no longer exists.");
-  const row = data as Record<string, unknown>;
-  const [counts, names] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean))]);
-  return toPosition(row, counts.get(id) ?? emptyCounts(), true, names);
+  const row = data as unknown as Record<string, unknown>;
+  const [counts, names, jds] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean)), jdLinksFor(client, orgId, [id])]);
+  return { ...toPosition(row, counts.get(id) ?? emptyCounts(), true, names), jd: jds.get(id) ?? null };
 }
 
 const text = (max: number) => z.string().trim().max(max);
+const nullableText = (max: number) => text(max).nullable().optional();
+const rupees = z.number().int().min(0).max(10_000_000).nullable().optional();
 const PositionInput = z.object({
   title: text(120).min(1, "Give the position a title."),
-  department: text(80).optional(),
-  location: text(80).optional(),
+  department: text(80).nullable().optional(),
+  location: text(80).nullable().optional(),
   jdText: z.string().max(MAX_JD_LENGTH).optional(),
-  jdFileName: text(200).optional(),
+  jdFileName: text(200).nullable().optional(),
   filters: z.unknown().optional(),
   prefer: PreferSchema.optional(),
   targetDays: z.number().int().min(1).max(365).optional(),
+  // Owner 2026-11-16: the job's details (migration 20261116000005).
+  designation: nullableText(120),
+  employmentType: z.enum(EMPLOYMENT_TYPES, { message: "Employment type must be full-time, part-time, contract or internship." }).nullable().optional(),
+  openings: z.number().int().min(1, "At least one opening.").max(500).optional(),
+  hiringManager: nullableText(120),
+  priority: z.enum(POSITION_PRIORITIES, { message: "Priority must be low, normal, high or urgent." }).optional(),
+  education: nullableText(200),
+  budgetMinInhand: rupees,
+  budgetMaxInhand: rupees,
+  summary: nullableText(2000),
 });
 
 function positionColumns(input: z.infer<typeof PositionInput>, partial: boolean): Record<string, unknown> {
+  // Checked here, not with a zod refinement: an edit parses the schema with .partial(), which refinements forbid.
+  if (input.budgetMinInhand !== null && input.budgetMinInhand !== undefined && input.budgetMaxInhand !== null && input.budgetMaxInhand !== undefined && input.budgetMinInhand > input.budgetMaxInhand) {
+    throw new CandidateActionError(400, "The budget's minimum is above its maximum.");
+  }
   const out: Record<string, unknown> = {};
   const set = (key: string, value: unknown) => { if (value !== undefined || !partial) out[key] = value ?? null; };
   set("title", input.title);
@@ -117,6 +164,16 @@ function positionColumns(input: z.infer<typeof PositionInput>, partial: boolean)
   if (input.filters !== undefined) out.filters = parseFilters(input.filters);
   if (input.prefer !== undefined) out.prefer = input.prefer;
   if (input.targetDays !== undefined) out.target_days = input.targetDays;
+  // The details: only the keys given (an edit leaves the rest alone; a create stores what the form sent).
+  if (input.designation !== undefined) out.designation = input.designation || null;
+  if (input.employmentType !== undefined) out.employment_type = input.employmentType;
+  if (input.openings !== undefined) out.openings = input.openings;
+  if (input.hiringManager !== undefined) out.hiring_manager = input.hiringManager || null;
+  if (input.priority !== undefined) out.priority = input.priority;
+  if (input.education !== undefined) out.education = input.education || null;
+  if (input.budgetMinInhand !== undefined) out.budget_min_inhand = input.budgetMinInhand;
+  if (input.budgetMaxInhand !== undefined) out.budget_max_inhand = input.budgetMaxInhand;
+  if (input.summary !== undefined) out.summary = input.summary || null;
   return out;
 }
 
@@ -125,13 +182,12 @@ export async function createPosition(client: SupabaseClient, orgId: string, by: 
   const parsed = PositionInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
   const now = new Date().toISOString();
-  const { data, error } = await client
-    .from("candidate_positions")
-    .insert({ organization_id: orgId, ...positionColumns(parsed.data, false), created_by: by.id, recruiter_id: by.id, created_at: now, updated_at: now })
-    .select(POSITION_COLUMNS)
-    .single();
+  const row = { organization_id: orgId, ...positionColumns(parsed.data, false), created_by: by.id, recruiter_id: by.id, created_at: now, updated_at: now };
+  // Before migration 20261116000005 the detail columns are missing: the position is saved without them.
+  let { data, error } = await client.from("candidate_positions").insert(row).select(POSITION_COLUMNS + DETAIL_COLUMNS).single();
+  if (error && detailsMissing(error)) ({ data, error } = await client.from("candidate_positions").insert(withoutDetails(row)).select(POSITION_COLUMNS).single());
   if (error) fail("save the position", error);
-  return toPosition(data as Record<string, unknown>, emptyCounts(), false, new Map([[by.id, by.name]]));
+  return toPosition(data as unknown as Record<string, unknown>, emptyCounts(), false, new Map([[by.id, by.name]]));
 }
 
 /** Edits a position; `status: "closed"` closes it (and "open" reopens it). */
@@ -144,19 +200,55 @@ export async function updatePosition(client: SupabaseClient, orgId: string, id: 
   if (b.status === "closed") { columns.status = "closed"; columns.closed_at = now; }
   else if (b.status === "open") { columns.status = "open"; columns.closed_at = null; }
   else if (b.status !== undefined) throw new CandidateActionError(400, "A position is open or closed.");
-  const { data, error } = await client
+  const run = (values: Record<string, unknown>, select: string) =>
+    client.from("candidate_positions").update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", id).is("deleted_at", null).select(select).maybeSingle();
+  let { data, error } = await run(columns, POSITION_COLUMNS + DETAIL_COLUMNS);
+  if (error && detailsMissing(error)) ({ data, error } = await run(withoutDetails(columns), POSITION_COLUMNS));
+  if (error) fail("save the position", error);
+  if (!data) throw new CandidateActionError(404, "That position no longer exists.");
+  const row = data as unknown as Record<string, unknown>;
+  const [counts, names] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean))]);
+  return toPosition(row, counts.get(id) ?? emptyCounts(), false, names);
+}
+
+/**
+ * Deletes a position (owner 2026-11-16). Soft: the position leaves every list and dropdown, and the people in its
+ * pipeline are taken out of it, each with a "removed from position" entry in their history. Nothing is erased: old
+ * calls and WhatsApp messages still name the position. Returns how many people were taken out.
+ */
+export async function deletePosition(client: SupabaseClient, orgId: string, by: Actor, id: string): Promise<{ removed: number }> {
+  const position = await getPosition(client, orgId, id);
+  const now = new Date().toISOString();
+  const { data: gone, error } = await client
     .from("candidate_positions")
-    .update({ ...columns, updated_at: now })
+    .update({ deleted_at: now, updated_at: now })
     .eq("organization_id", orgId)
     .eq("id", id)
     .is("deleted_at", null)
-    .select(POSITION_COLUMNS)
-    .maybeSingle();
-  if (error) fail("save the position", error);
-  if (!data) throw new CandidateActionError(404, "That position no longer exists.");
-  const row = data as Record<string, unknown>;
-  const [counts, names] = await Promise.all([countsFor(client, orgId, [id]), namesOf(client, [row.recruiter_id as string].filter(Boolean))]);
-  return toPosition(row, counts.get(id) ?? emptyCounts(), false, names);
+    .select("id");
+  if (error) fail("delete the position", error);
+  if (!gone?.length) throw new CandidateActionError(404, "That position no longer exists.");
+
+  const { data: members, error: membersErr } = await client
+    .from("candidate_position_members")
+    .update({ deleted_at: now, updated_at: now })
+    .eq("organization_id", orgId)
+    .eq("position_id", id)
+    .is("deleted_at", null)
+    .select(MEMBER_COLUMNS);
+  if (membersErr) fail("take the people out of the position", membersErr);
+  const rows = (members ?? []) as unknown as Record<string, unknown>[];
+  for (const row of rows) {
+    await recordAction(client, orgId, by, {
+      candidateId: row.candidate_id as string,
+      applicationId: (row.application_id as string | null) ?? null,
+      positionId: id,
+      action: "removed_from_position",
+      fromValue: STAGE_LABELS[row.stage as Stage],
+      remark: `Position "${position.title}" was deleted.`,
+    });
+  }
+  return { removed: rows.length };
 }
 
 function toMember(row: Record<string, unknown>, record: CandidateRecord | null, names: Map<string, string | null> = new Map()): PositionMember {
@@ -239,7 +331,8 @@ export async function listMemberships(client: SupabaseClient, orgId: string, can
   const rows = (data ?? []) as Record<string, unknown>[];
   if (!rows.length) return [];
   const ids = [...new Set(rows.map((r) => r.position_id as string))];
-  const positions = await client.from("candidate_positions").select("id, title, location, status").eq("organization_id", orgId).in("id", ids);
+  // A deleted position no longer shows on the person (owner 2026-11-16).
+  const positions = await client.from("candidate_positions").select("id, title, location, status").eq("organization_id", orgId).in("id", ids).is("deleted_at", null);
   if (positions.error) fail("load the positions", positions.error);
   const byId = new Map((positions.data ?? []).map((p) => [p.id as string, p as { id: string; title: string; location: string | null; status: "open" | "closed" }]));
   return rows.flatMap((row) => {

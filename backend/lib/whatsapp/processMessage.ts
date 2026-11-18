@@ -514,15 +514,8 @@ export async function processIncomingMessage(
             console.error('[WA WEBHOOK] Classification log error:', err);
         });
 
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-            await NotificationService.afterTicketCreated(ticket.id);
-            if (finalPriority === 'critical') {
-                await NotificationService.afterCriticalTicketCreated(ticket.id);
-            }
-        } catch (err) {
-            console.error('[WA WEBHOOK] NotificationService import error:', err);
-        }
+        // Notifications: the ticket INSERT fires trg_tickets_outbox, and the Omnichannel matrix
+        // decides the recipients and the channels, exactly as for a ticket raised in the app.
 
         const priorityEmoji: Record<string, string> = {
             critical: '🔴', high: '🟠', medium: '🟡', low: '🟢',

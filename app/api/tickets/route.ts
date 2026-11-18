@@ -573,24 +573,9 @@ export async function POST(request: NextRequest) {
             console.error('[Ticket API] Classification logging error:', err);
         });
 
-        // Trigger Web Push Notifications asynchronously
-        try {
-            const { NotificationService } = await import('@/backend/services/NotificationService');
-
-            // Trigger unified notification (handles both creation broadcast and auto-assignment)
-            NotificationService.afterTicketCreated(finalTicket.id).catch(err => {
-                console.error('>>>>>>>>>> [NOTIFICATION TEST] Notification error (Unified):', err);
-            });
-
-            // If priority is critical, send an urgent alert to all property staff/admins
-            if (finalTicket.priority === 'critical') {
-                NotificationService.afterCriticalTicketCreated(finalTicket.id).catch(err => {
-                    console.error('>>>>>>>>>> [NOTIFICATION TEST] Critical notification error:', err);
-                });
-            }
-        } catch (err) {
-            console.error('>>>>>>>>>> [NOTIFICATION TEST] Failed to load NotificationService:', err);
-        }
+        // Notifications are not sent from here. The INSERT above fires trg_tickets_outbox, and the
+        // Omnichannel matrix (Settings -> Notifications -> Tickets) decides the recipients and the
+        // channels for every one of them — email, WhatsApp and in-app/push alike.
 
         return NextResponse.json({
             success: true,
