@@ -98,6 +98,20 @@
  * **9. Trace** [BAA pp.119–120]: TurnTrace.repaired; a failed repair is in hops as "repair: …"; new reason
  *    quoted_old_card.
  * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99].
+ *
+ * ### Amendment 2026-11-18 (c): the full meeting room cycle
+ * **1.** Still hybrid [BAA p.121]: which property to use for rooms (only those with rooms; the only one, without
+ *    asking) is decided by code in skills/rooms.ts, not by the model.
+ * **3. False positive** [BAA p.112]: two new writes, room.cancel and room.move, both behind the person's Yes on a card
+ *    code built, both starting in shadow like every write. A move books the new time BEFORE cancelling the old, so a
+ *    failure leaves the old booking in place; a cancel that fails after the new booking is said plainly.
+ * **4. Tools**: rooms.list, rooms.free_slots (read), room.cancel, room.move (write). Descriptions say when not to use
+ *    them [BAA p.107]; expected refusals come back as text [BAA p.94]; arguments re-parsed with zod and bookings
+ *    reached only through B handles re-read from the person's own bookings [BAA p.93]; not MCP [BAA p.106].
+ *    Cancelling uses the app's own cancel (moved unchanged to backend/lib/meetingRooms/cancelBooking.ts).
+ * **8. Evaluation** [BAA pp.118–119]: eval cases r-list, r-free-slots, r-cancel, r-move; tests in
+ *    brain-rooms.test.ts. Not re-run with real models or the rubric [BAA pp.96–98].
+ * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99].
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { buildAuditRow, type AuditInput, type AuditStore } from '../../audit';

@@ -36,8 +36,8 @@ export interface TicketDetail {
     id: string; ticketNumber: string; title: string; status: string; priority: string | null;
     propertyId: string; createdAt: string; assigneeName: string | null; hasPhoto: boolean;
 }
-export interface RoomRow { id: string; name: string; propertyId: string }
-export interface BookingRow { id: string; roomName: string; propertyId: string; date: string; startTime: string; endTime: string; status: string }
+export interface RoomRow { id: string; name: string; propertyId: string; /** 2026-11-18, when set up in the app. */ capacity?: number | null; location?: string | null }
+export interface BookingRow { id: string; roomName: string; propertyId: string; date: string; startTime: string; endTime: string; status: string; /** 2026-11-18: for moving a booking to another time in the same room. */ roomId?: string }
 export interface TaskRow { id: string; n: number; title: string; status: string }
 /** Someone this person may give a task to (the Task Manager's own rule). */
 export interface TaskPerson { id: string; name: string; department: string | null }
@@ -66,6 +66,13 @@ export interface BrainData {
     listRooms(propertyId: string): Promise<RoomRow[]>;
     availableRooms(propertyId: string, date: string, startTime: string, endTime: string): Promise<RoomRow[]>;
     myBookings(userId: string, propertyIds: string[], fromDate: string): Promise<BookingRow[]>;
+    /** 2026-11-18: the bookable slots of one room on one day that are still free and not yet started, oldest first (HH:MM). */
+    roomFreeSlots(propertyId: string, roomId: string, date: string): Promise<Array<{ start: string; end: string }>>;
+    /**
+     * 2026-11-18: cancel one booking through the app's own cancel (same checks, credit refund, notifications).
+     * Never throws for an expected refusal: it says why.
+     */
+    cancelBooking(input: { bookingId: string; userId: string }): Promise<{ ok: true } | { ok: false; code: 'not_found' | 'already_cancelled' | 'started' | 'forbidden' | 'failed' }>;
     bookRoom(input: { opId: string; userId: string; propertyId: string; roomId: string; date: string; startTime: string; endTime: string; purpose: string | null }): Promise<{ bookingId: string }>;
 
     /** The person's open tasks for today (numbered as in their digest). null = no Task Manager access. */
