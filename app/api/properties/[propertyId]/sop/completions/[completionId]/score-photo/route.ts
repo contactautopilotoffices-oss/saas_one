@@ -470,7 +470,7 @@ Respond ONLY with raw JSON in exactly this shape:
         if (engyKey) {
             // Configurable model from Tech Console (Brain -> AI models), defaulting to glm-5.3-flash
             const configuredModel = await modelFor('sop_photo', 'glm-5.3-flash').catch(() => 'glm-5.3-flash');
-            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash', 'kimi-k3.1-pro'].filter(Boolean) as string[];
+            const engyVisionModels = [process.env.ENGY_VISION_MODEL, configuredModel, 'glm-5.3-flash'].filter(Boolean) as string[];
             const uniqueModels = Array.from(new Set(engyVisionModels));
             for (const modelToTry of uniqueModels) {
                 if (rawText) break;
@@ -493,16 +493,17 @@ Respond ONLY with raw JSON in exactly this shape:
                                     content: imageContents,
                                 },
                             ],
-                            max_tokens: 2500,
+                            max_tokens: 4096,
                             temperature: 0.1,
                             response_format: { type: 'json_object' },
                         }),
-                        signal: AbortSignal.timeout(25000),
+                        signal: AbortSignal.timeout(60000),
                     });
 
                     if (engyRes.ok) {
                         const engyData = await engyRes.json();
                         const choiceMsg = engyData.choices?.[0]?.message;
+                        console.log(`[AI Score Debug] Model ${modelToTry} succeeded. Content length:`, choiceMsg?.content?.length, 'Reasoning length:', choiceMsg?.reasoning_content?.length);
                         rawText = (choiceMsg?.content || '').trim();
                         if (!rawText && choiceMsg?.reasoning_content) {
                             const jsonMatch = choiceMsg.reasoning_content.match(/\{[\s\S]*"overall_score"[\s\S]*\}/)
@@ -512,6 +513,8 @@ Respond ONLY with raw JSON in exactly this shape:
                         if (rawText) {
                             modelUsed = `${modelToTry} (engy.ai)`;
                             break;
+                        } else {
+                            console.warn(`[AI Score Debug] Model ${modelToTry} returned empty content & no json match in reasoning.`);
                         }
                     } else {
                         console.warn(`[AI Score] engy.ai model ${modelToTry} returned status:`, engyRes.status, await engyRes.text().catch(() => ''));
