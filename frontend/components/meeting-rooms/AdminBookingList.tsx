@@ -138,9 +138,9 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
     }, [propertyId]);
 
     // 2. Fetch Rooms & Bookings
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (quiet = false) => {
         if (!propertyId) return;
-        setIsLoading(true);
+        if (!quiet) setIsLoading(true);
         try {
             const [bookingsRes, roomsRes, companiesRes] = await Promise.all([
                 fetch(`/api/meeting-room-bookings?propertyId=${propertyId}`),
@@ -167,13 +167,53 @@ const AdminBookingList: React.FC<AdminBookingListProps> = ({ propertyId }) => {
         } catch (error) {
             console.error('Error fetching meeting room data:', error);
         } finally {
-            setIsLoading(false);
+            if (!quiet) setIsLoading(false);
         }
     }, [propertyId, bookingsCacheKey, roomsCacheKey, setCachedData]);
 
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    // Realtime subscription & BookMyShow-style live slot synchronization
+    useEffect(() => {
+        if (!propertyId) return;
+
+        // 1. Supabase Realtime channel for instant slot/booking updates
+        const channel = supabase.channel(`rt_admin_bookings_${propertyId}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'meeting_room_bookings',
+                filter: `property_id=eq.${propertyId}`
+            }, () => {
+                invalidateCache(bookingsCacheKey);
+                void fetchData(true);
+            })
+            .subscribe();
+
+        // 2. Active background polling heartbeat (every 8s) + window focus to guarantee zero stale slots
+        const interval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                void fetchData(true);
+            }
+        }, 8000);
+
+        const onFocus = () => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                void fetchData(true);
+            }
+        };
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('visibilitychange', onFocus);
+
+        return () => {
+            supabase.removeChannel(channel);
+            clearInterval(interval);
+            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('visibilitychange', onFocus);
+        };
+    }, [propertyId, supabase, bookingsCacheKey, invalidateCache, fetchData]);
 
     // Helpers
     const timeToMins = (t: string): number => {

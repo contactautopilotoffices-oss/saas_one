@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Calendar, Loader2, X, CheckCircle2, ClipboardList, Clock, Trash2, Zap, AlertTriangle } from 'lucide-react';
 import RoomCard from './RoomCard';
 import AdminBookingList from './AdminBookingList';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
+import { createClient } from '@/frontend/utils/supabase/client';
 
 interface TenantRoomBookingProps {
     propertyId: string;
@@ -19,6 +20,7 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     const [selectedDate, setSelectedDate] = useState(new Date());
     const [selectedCapacity, setSelectedCapacity] = useState<number>(0);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
+    const supabase = useMemo(() => createClient(), []);
     
     const formatLocalDate = (d: Date) => {
         const year = d.getFullYear();
@@ -101,9 +103,9 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
     const [isLoadingRequests, setIsLoadingRequests] = useState(false);
     const [historyTab, setHistoryTab] = useState<'bookings' | 'requests'>('bookings');
 
-    const fetchMyBookings = useCallback(async () => {
+    const fetchMyBookings = useCallback(async (quiet = false) => {
         if (!propertyId) return;
-        setIsLoadingHistory(true);
+        if (!quiet) setIsLoadingHistory(true);
         try {
             // The server returns every booking at the property for admins, and only the
             // caller's own bookings for everyone else.
@@ -118,9 +120,9 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         } catch (err) {
             console.error('Error fetching my bookings:', err);
         } finally {
-            setIsLoadingHistory(false);
+            if (!quiet) setIsLoadingHistory(false);
         }
-    }, [propertyId, historyCacheKey]);
+    }, [propertyId, historyCacheKey, setCachedData]);
 
     const handleDeleteBooking = async (bookingId: string) => {
         if (!confirm(creditFree ? 'Cancel this booking?' : 'Cancel this booking? Your credits will be refunded.')) return;
@@ -213,8 +215,9 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         return d;
     });
 
-    const fetchRooms = async () => {
-        setIsSearching(true);
+    const fetchRooms = useCallback(async (quiet = false) => {
+        if (!propertyId) return;
+        if (!quiet) setIsSearching(true);
         try {
             const dateStr = formatLocalDate(selectedDate);
             // Fetch all rooms for the property with capacity filter
@@ -229,13 +232,88 @@ const TenantRoomBooking: React.FC<TenantRoomBookingProps> = ({ propertyId, user,
         } catch (error) {
             console.error('Error fetching rooms:', error);
         } finally {
-            setIsSearching(false);
+            if (!quiet) setIsSearching(false);
         }
-    };
+    }, [propertyId, selectedDate, selectedCapacity, roomsCacheKey, setCachedData]);
 
     useEffect(() => {
         fetchRooms();
-    }, [selectedDate, propertyId, selectedCapacity]);
+    }, [fetchRooms]);
+
+    // Helper to convert time "HH:MM" to minutes for live conflict detection
+    const timeToMins = useCallback((t: string): number => {
+        if (!t) return 0;
+        const [h, m] = t.split(':').map(Number);
+        return (h || 0) * 60 + (m || 0);
+    }, []);
+
+    // Realtime subscription & BookMyShow-style live slot synchronization
+    useEffect(() => {
+        if (!propertyId) return;
+
+        // 1. Supabase Realtime channel for instant slot/booking updates
+        const channel = supabase.channel(`rt_tenant_bookings_${propertyId}`)
+            .on('postgres_changes', {
+                event: '*',
+                schema: 'public',
+                table: 'meeting_room_bookings',
+                filter: `property_id=eq.${propertyId}`
+            }, () => {
+                invalidateCache('rooms-avail-');
+                invalidateCache('tenant-bookings-');
+                invalidateCache('admin-bookings-');
+                void fetchRooms(true);
+                void fetchMyBookings(true);
+            })
+            .subscribe();
+
+        // 2. Active background polling heartbeat (every 8s) + window focus to guarantee zero stale slots
+        const interval = setInterval(() => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                void fetchRooms(true);
+                void fetchMyBookings(true);
+            }
+        }, 8000);
+
+        const onFocus = () => {
+            if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+                void fetchRooms(true);
+                void fetchMyBookings(true);
+            }
+        };
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('visibilitychange', onFocus);
+
+        return () => {
+            supabase.removeChannel(channel);
+            clearInterval(interval);
+            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('visibilitychange', onFocus);
+        };
+    }, [propertyId, supabase, invalidateCache, fetchRooms, fetchMyBookings]);
+
+    // Live conflict detection: If another user books the pending slot while the modal is open
+    useEffect(() => {
+        if (!pendingBooking || isBooking) return;
+        const currentRoom = rooms.find(r => r.id === pendingBooking.room?.id);
+        if (!currentRoom || !currentRoom.bookings || !pendingBooking.slot) return;
+        const sMins = timeToMins(pendingBooking.slot.start);
+        const eMins = timeToMins(pendingBooking.slot.end);
+        const hasConflict = currentRoom.bookings.some((b: any) => {
+            if (b.status === 'cancelled') return false;
+            const bStart = timeToMins(b.start_time);
+            const bEnd = timeToMins(b.end_time);
+            return bStart < eMins && bEnd > sMins;
+        });
+        if (hasConflict) {
+            setBookingError('This slot was just booked by another user. Please choose another slot.');
+            const timer = setTimeout(() => {
+                setPendingBooking(null);
+                setBookingError('');
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [rooms, pendingBooking, isBooking, timeToMins]);
 
     // Scroll wheel to initially selected date
     useEffect(() => {
