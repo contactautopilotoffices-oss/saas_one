@@ -482,6 +482,28 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                     </div>
                 )}
 
+                {/* SLA Paused Banner */}
+                {Boolean(ticket.sla_paused) && (
+                    <div className="border border-amber-500/30 bg-amber-500/10 rounded-xl p-4 flex items-center justify-between gap-4 text-amber-300">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-amber-500/20">
+                                <Pause className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <span className="font-bold text-sm">
+                                    ⏸️ SLA Timer Paused {ticket.sla_pause_reason ? `— ${ticket.sla_pause_reason}` : ''}
+                                </span>
+                                <p className="text-xs mt-0.5 text-gray-300">
+                                    Target SLA deadline will automatically extend when materials are delivered or vendor is arranged.
+                                </p>
+                            </div>
+                        </div>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 whitespace-nowrap">
+                            Paused
+                        </span>
+                    </div>
+                )}
+
                 {/* Issue Description */}
                 <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-6">
                     <h2 className="text-lg font-semibold mb-3">Issue Description</h2>
