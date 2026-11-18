@@ -70,6 +70,246 @@ function FilterDropdown({
         </div>
     );
 }
+
+interface StatusOption {
+    value: string;
+    label: string;
+    group?: 'status' | 'flag';
+}
+
+function parseInitialStatuses(searchParams: { get: (k: string) => string | null }, initialProp?: string): string[] {
+    const selected: string[] = [];
+    const sla = searchParams.get('slaBreached');
+    const internal = searchParams.get('isInternal');
+    const raisedByRole = searchParams.get('raisedByRole');
+    const materials = searchParams.get('materialsRequired');
+    const statusParam = searchParams.get('status');
+
+    if (sla === 'true') selected.push('sla_breached');
+    if (internal === 'true') selected.push('internal');
+    if (raisedByRole === 'tenant') selected.push('tenant_raised');
+    if (materials === 'true') selected.push('materials_required');
+
+    const handleStatusStr = (str: string) => {
+        if (!str || str === 'all') return;
+        const tokens = str.split(',').map(s => s.trim());
+        for (const token of tokens) {
+            if (token === 'sla_breached') {
+                if (!selected.includes('sla_breached')) selected.push('sla_breached');
+            } else if (token === 'internal') {
+                if (!selected.includes('internal')) selected.push('internal');
+            } else if (token === 'tenant_raised') {
+                if (!selected.includes('tenant_raised')) selected.push('tenant_raised');
+            } else if (token === 'materials_required') {
+                if (!selected.includes('materials_required')) selected.push('materials_required');
+            } else if (token === 'waitlist') {
+                if (!selected.includes('waitlist')) selected.push('waitlist');
+            } else if (token === 'pending_validation') {
+                if (!selected.includes('pending_validation')) selected.push('pending_validation');
+            } else if (['open', 'assigned', 'in_progress', 'blocked'].includes(token)) {
+                if (!selected.includes('open,assigned,in_progress,blocked,waitlist')) {
+                    selected.push('open,assigned,in_progress,blocked,waitlist');
+                }
+            } else if (['resolved', 'closed'].includes(token)) {
+                if (!selected.includes('resolved,closed,pending_validation')) {
+                    selected.push('resolved,closed,pending_validation');
+                }
+            } else {
+                if (!selected.includes(token)) selected.push(token);
+            }
+        }
+    };
+
+    if (statusParam) {
+        handleStatusStr(statusParam);
+    } else if (selected.length === 0 && initialProp && initialProp !== 'all') {
+        handleStatusStr(initialProp);
+    }
+
+    return Array.from(new Set(selected));
+}
+
+function MultiSelectStatusDropdown({
+    selectedValues,
+    onChange,
+    options,
+    placeholder = 'Status',
+}: {
+    selectedValues: string[];
+    onChange: (values: string[]) => void;
+    options: StatusOption[];
+    placeholder?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+        };
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            document.removeEventListener('mousedown', handler);
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, []);
+
+    const isActive = selectedValues.length > 0;
+
+    const toggleValue = (val: string) => {
+        if (selectedValues.includes(val)) {
+            onChange(selectedValues.filter(v => v !== val));
+        } else {
+            onChange([...selectedValues, val]);
+        }
+    };
+
+    const buttonLabel = useMemo(() => {
+        if (!isActive) return `${placeholder}: All`;
+        if (selectedValues.length === 1) {
+            const opt = options.find(o => o.value === selectedValues[0]);
+            return `${placeholder}: ${opt?.label ?? selectedValues[0]}`;
+        }
+        if (selectedValues.length === 2) {
+            const l1 = options.find(o => o.value === selectedValues[0])?.label ?? selectedValues[0];
+            const l2 = options.find(o => o.value === selectedValues[1])?.label ?? selectedValues[1];
+            if (l1.length + l2.length <= 18) {
+                return `${placeholder}: ${l1}, ${l2}`;
+            }
+            return `${placeholder}: ${l1} (+1)`;
+        }
+        const first = options.find(o => o.value === selectedValues[0])?.label ?? selectedValues[0];
+        return `${placeholder}: ${first} (+${selectedValues.length - 1})`;
+    }, [isActive, selectedValues, options, placeholder]);
+
+    const statusItems = options.filter(o => o.group === 'status');
+    const flagItems = options.filter(o => o.group === 'flag');
+
+    return (
+        <div ref={ref} className="relative">
+            <button
+                type="button"
+                onClick={() => setOpen(p => !p)}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary bg-primary/5' : 'border-slate-300 text-slate-700'}`}
+            >
+                <span>{buttonLabel}</span>
+                {isActive && (
+                    <span className="flex items-center justify-center h-4 min-w-[16px] px-1 text-[10px] font-bold bg-primary text-white rounded-full">
+                        {selectedValues.length}
+                    </span>
+                )}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''} ${isActive ? 'text-primary' : 'text-slate-400'}`} />
+            </button>
+
+            <AnimatePresence>
+                {open && (
+                    <motion.div
+                        initial={{ opacity: 0, y: 4, scale: 0.97 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 4, scale: 0.97 }}
+                        transition={{ duration: 0.15 }}
+                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[220px] max-w-[280px] bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-2"
+                    >
+                        <div className="flex items-center justify-between px-2 py-1.5 border-b border-slate-100 text-xs font-semibold text-slate-500">
+                            <span>Filter Status</span>
+                            {isActive && (
+                                <button
+                                    type="button"
+                                    onClick={() => onChange([])}
+                                    className="text-primary hover:underline hover:text-primary-dark"
+                                >
+                                    Clear all
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="max-h-72 overflow-y-auto py-1 space-y-0.5">
+                            {/* "All" Option */}
+                            <button
+                                type="button"
+                                onClick={() => onChange([])}
+                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-colors hover:bg-slate-50 ${!isActive ? 'text-primary font-bold' : 'text-slate-700'}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${!isActive ? 'bg-primary border-primary text-white' : 'border-slate-300 bg-white'}`}>
+                                        {!isActive && <Check className="w-3 h-3 stroke-[3]" />}
+                                    </div>
+                                    <span>All</span>
+                                </div>
+                            </button>
+
+                            {statusItems.length > 0 && (
+                                <>
+                                    <div className="my-1 border-t border-slate-100" />
+                                    <div className="px-2 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Status</div>
+                                    {statusItems.map(opt => {
+                                        const isChecked = selectedValues.includes(opt.value);
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                onClick={() => toggleValue(opt.value)}
+                                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-colors hover:bg-slate-50 ${isChecked ? 'text-primary font-bold' : 'text-slate-700'}`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${isChecked ? 'bg-primary border-primary text-white' : 'border-slate-300 bg-white'}`}>
+                                                        {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                                                    </div>
+                                                    <span>{opt.label}</span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            )}
+
+                            {flagItems.length > 0 && (
+                                <>
+                                    <div className="my-1 border-t border-slate-100" />
+                                    <div className="px-2 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">Conditions & Flags</div>
+                                    {flagItems.map(opt => {
+                                        const isChecked = selectedValues.includes(opt.value);
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                type="button"
+                                                onClick={() => toggleValue(opt.value)}
+                                                className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-left transition-colors hover:bg-slate-50 ${isChecked ? 'text-primary font-bold' : 'text-slate-700'}`}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0 ${isChecked ? 'bg-primary border-primary text-white' : 'border-slate-300 bg-white'}`}>
+                                                        {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                                                    </div>
+                                                    <span>{opt.label}</span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            )}
+                        </div>
+
+                        <div className="pt-1.5 border-t border-slate-100">
+                            <button
+                                type="button"
+                                onClick={() => setOpen(false)}
+                                className="w-full py-1.5 text-center text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+}
 // Owner 2026-11-15: rows and pills for the phone Filters sheet. Each row is a real <select> laid over the row, so the
 // phone's own picker opens; the row shows the chosen value.
 function SheetSelectRow({ label, value, onChange, options, disabledText, last }: {
@@ -200,7 +440,8 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const { membership } = useAuth();
 
-    const [statusFilter, setStatusFilter] = useState<string>(searchParams.get('status') || initialStatusFilter);
+    const [selectedStatuses, setSelectedStatuses] = useState<string[]>(() => parseInitialStatuses(searchParams, initialStatusFilter));
+    const statusKey = useMemo(() => selectedStatuses.length > 0 ? selectedStatuses.slice().sort().join('+') : 'all', [selectedStatuses]);
     const [categoryFilter, setCategoryFilter] = useState<string>(searchParams.get('category') || 'all');
     const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
     const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'priority_high' | 'priority_low'>((searchParams.get('sortBy') as any) || 'newest');
@@ -221,7 +462,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         membership?.properties.some(p => p.role === 'property_admin');
     
     // Note: The cacheKey logic heavily depends on the filter values so changes will cleanly bypass legacy state cache instances
-    const cacheKey = `tickets-${lockedAssigneeId ? `mine-${lockedAssigneeId}-` : ''}${propertyId ?? organizationId ?? 'all'}-${statusFilter}-${categoryFilter}-${raisedByFilter}-${resolvedByFilter}-${assignedToFilter}-${floorFilter}-${sortBy}-${searchQuery}-${dateFrom}-${dateTo}`;
+    const cacheKey = `tickets-${lockedAssigneeId ? `mine-${lockedAssigneeId}-` : ''}${propertyId ?? organizationId ?? 'all'}-${statusKey}-${categoryFilter}-${raisedByFilter}-${resolvedByFilter}-${assignedToFilter}-${floorFilter}-${sortBy}-${searchQuery}-${dateFrom}-${dateTo}`;
 
     // SWR (Stale-While-Revalidate): Show cached data INSTANTLY, revalidate silently in background
     const cachedTickets = getCachedData(cacheKey);
@@ -326,7 +567,21 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
             }
         };
 
-        setOrDelete('status', statusFilter, initialStatusFilter);
+        // Status & Special flags URL syncing
+        setOrDelete('slaBreached', selectedStatuses.includes('sla_breached') ? 'true' : '', '');
+        setOrDelete('isInternal', selectedStatuses.includes('internal') ? 'true' : '', '');
+        setOrDelete('raisedByRole', selectedStatuses.includes('tenant_raised') ? 'tenant' : '', '');
+        setOrDelete('materialsRequired', selectedStatuses.includes('materials_required') ? 'true' : '', '');
+
+        const statusVals: string[] = [];
+        for (const s of selectedStatuses) {
+            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+                statusVals.push(...s.split(',').map(x => x.trim()));
+            }
+        }
+        const uniqueStatuses = Array.from(new Set(statusVals));
+        setOrDelete('status', uniqueStatuses.join(','), initialStatusFilter === 'all' ? '' : initialStatusFilter);
+
         setOrDelete('category', categoryFilter, 'all');
         setOrDelete('search', searchQuery, '');
         setOrDelete('sortBy', sortBy, 'newest');
@@ -343,12 +598,12 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
             // shallow: true is implicit in Next.js 13+ App Router for the same page
             router.replace(newUrl, { scroll: false });
         }
-    }, [statusFilter, categoryFilter, searchQuery, sortBy, dateFrom, dateTo, raisedByFilter, resolvedByFilter, assignedToFilter, searchParams, initialStatusFilter, pathname, router]);
+    }, [selectedStatuses, categoryFilter, searchQuery, sortBy, dateFrom, dateTo, raisedByFilter, resolvedByFilter, assignedToFilter, searchParams, initialStatusFilter, pathname, router]);
 
     useEffect(() => {
         // If initialStatusFilter prop changes (e.g. user toggles tabs outside), reset it
-        if (!searchParams.has('status')) {
-            setStatusFilter(initialStatusFilter);
+        if (!searchParams.has('status') && !searchParams.has('slaBreached') && !searchParams.has('isInternal') && !searchParams.has('raisedByRole') && !searchParams.has('materialsRequired')) {
+            setSelectedStatuses(parseInitialStatuses(searchParams, initialStatusFilter));
         }
     }, [initialStatusFilter, searchParams]);
 
@@ -367,7 +622,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
     // Pre-seed the ref when we have cache to prevent redundant initial fetch on back-navigation
     const currentParamsSnapshot = JSON.stringify({
-        statusFilter, propertyId, organizationId,
+        statusKey, propertyId, organizationId,
         raisedByFilter, assignedToFilter, categoryFilter,
         searchQuery, dateFrom, dateTo
     });
@@ -376,7 +631,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     // Re-fetch only when filters actually change (SWR: skip initial if cache exists)
     useEffect(() => {
         const currentParams = JSON.stringify({
-            statusFilter, propertyId, organizationId,
+            statusKey, propertyId, organizationId,
             raisedByFilter, assignedToFilter, floorFilter, categoryFilter,
             searchQuery, dateFrom, dateTo
         });
@@ -401,17 +656,26 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         }, searchQuery ? 300 : 0); // Only debounce for text search
 
         return () => clearTimeout(timer);
-    }, [statusFilter, propertyId, organizationId, raisedByFilter, resolvedByFilter, assignedToFilter, floorFilter, sortBy, categoryFilter, searchQuery, dateFrom, dateTo]);
+    }, [statusKey, propertyId, organizationId, raisedByFilter, resolvedByFilter, assignedToFilter, floorFilter, sortBy, categoryFilter, searchQuery, dateFrom, dateTo]);
 
     const buildUrl = (offset: number, limitOverride?: number) => {
         const params = new URLSearchParams();
 
-        if (statusFilter === 'tenant_raised') params.set('raisedByRole', 'tenant');
-        else if (statusFilter === 'internal') params.set('isInternal', 'true');
-        else if (statusFilter === 'sla_breached') params.set('slaBreached', 'true');
-        else if (statusFilter === 'pending_validation') params.set('status', 'pending_validation');
-        else if (statusFilter === 'materials_required') params.set('materialsRequired', 'true');
-        else if (statusFilter !== 'all') params.set('status', statusFilter);
+        if (selectedStatuses.includes('sla_breached')) params.set('slaBreached', 'true');
+        if (selectedStatuses.includes('materials_required')) params.set('materialsRequired', 'true');
+        if (selectedStatuses.includes('tenant_raised')) params.set('raisedByRole', 'tenant');
+        if (selectedStatuses.includes('internal')) params.set('isInternal', 'true');
+
+        const statusValues: string[] = [];
+        for (const s of selectedStatuses) {
+            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+                statusValues.push(...s.split(',').map(x => x.trim()));
+            }
+        }
+        const uniqueStatuses = Array.from(new Set(statusValues));
+        if (uniqueStatuses.length > 0) {
+            params.set('status', uniqueStatuses.join(','));
+        }
 
         if (propertyId) params.set('propertyId', propertyId);
         else if (organizationId) params.set('organizationId', organizationId);
@@ -706,16 +970,16 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const resultCount = hasActiveFilters || categoryFilter !== 'all' || searchQuery.trim() ? filteredTickets.length : (totalCount ?? filteredTickets.length);
     const resultText = `${resultCount.toLocaleString('en-IN')} ticket${resultCount !== 1 ? 's' : ''}`;
 
-    const statusOptions = [
+    const statusOptions: StatusOption[] = [
         { value: 'all', label: 'All' },
-        { value: 'open,assigned,in_progress,blocked,waitlist', label: 'Open' },
-        { value: 'resolved,closed,pending_validation', label: 'Completed' },
-        { value: 'waitlist', label: 'Waitlist' },
-        { value: 'sla_breached', label: 'SLA breached' },
-        { value: 'pending_validation', label: 'Pending validation' },
-        { value: 'materials_required', label: isHighAdmin ? 'Material requested' : 'Material assigned' },
-        { value: 'tenant_raised', label: 'Client raised' },
-        { value: 'internal', label: 'Internal' },
+        { value: 'open,assigned,in_progress,blocked,waitlist', label: 'Open', group: 'status' },
+        { value: 'pending_validation', label: 'Pending validation', group: 'status' },
+        { value: 'waitlist', label: 'Waitlist', group: 'status' },
+        { value: 'resolved,closed,pending_validation', label: 'Completed', group: 'status' },
+        { value: 'sla_breached', label: 'SLA breached', group: 'flag' },
+        { value: 'materials_required', label: isHighAdmin ? 'Material requested' : 'Material assigned', group: 'flag' },
+        { value: 'tenant_raised', label: 'Client raised', group: 'flag' },
+        { value: 'internal', label: 'Internal', group: 'flag' },
     ];
     const floorOptions = [
         { value: 'all', label: 'All floors' },
@@ -725,14 +989,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
     // How many filters are on (the badge on the phone Filters button).
     const activeFilterCount = [
-        statusFilter !== 'all', categoryFilter !== 'all', sortBy !== 'newest', dateFrom !== '', dateTo !== '',
+        selectedStatuses.length > 0, categoryFilter !== 'all', sortBy !== 'newest', dateFrom !== '', dateTo !== '',
         raisedByFilter !== 'all', assignedToFilter !== 'all', floorFilter !== 'all',
     ].filter(Boolean).length;
 
     // The desktop "Clear filters" button: unchanged.
     const clearFilters = () => { setDateFrom(''); setDateTo(''); setRaisedByFilter('all'); setResolvedByFilter('all'); setAssignedToFilter('all'); setFloorFilter('all'); setSortBy('newest'); };
     // The phone sheet's "Clear all" also resets status and team, which live in the same sheet.
-    const clearAllFilters = () => { clearFilters(); setStatusFilter('all'); setCategoryFilter('all'); };
+    const clearAllFilters = () => { clearFilters(); setSelectedStatuses([]); setCategoryFilter('all'); };
 
     const showFlowMap = Boolean(propertyId && !lockedAssigneeId && !['org_super_admin', 'master_admin', 'owner', 'tech'].includes(membership?.org_role || ''));
     const flowMapButton = showFlowMap && (
@@ -842,14 +1106,12 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                 </div>
 
                 <div className="flex flex-wrap items-center gap-[8px]">
-                    <select
-                        value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value)}
-                        aria-label="Status"
-                        className="h-10 rounded-[12px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
-                    >
-                        {statusOptions.map(o => <option key={o.value} value={o.value}>{o.value === 'all' ? 'Status: All' : o.label}</option>)}
-                    </select>
+                    <MultiSelectStatusDropdown
+                        selectedValues={selectedStatuses}
+                        onChange={setSelectedStatuses}
+                        options={statusOptions}
+                        placeholder="Status"
+                    />
 
                     <select
                         value={categoryFilter}
@@ -969,8 +1231,26 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     <div role="group" aria-labelledby="tickets-filter-status">
                         <p id="tickets-filter-status" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Status</p>
                         <div className="flex flex-wrap gap-[8px]">
-                            {statusOptions.map(o => (
-                                <SheetPill key={o.value} active={statusFilter === o.value} onClick={() => setStatusFilter(o.value)}>{o.label}</SheetPill>
+                            <SheetPill
+                                active={selectedStatuses.length === 0}
+                                onClick={() => setSelectedStatuses([])}
+                            >
+                                All
+                            </SheetPill>
+                            {statusOptions.filter(o => o.value !== 'all').map(o => (
+                                <SheetPill
+                                    key={o.value}
+                                    active={selectedStatuses.includes(o.value)}
+                                    onClick={() => {
+                                        setSelectedStatuses(prev =>
+                                            prev.includes(o.value)
+                                                ? prev.filter(v => v !== o.value)
+                                                : [...prev, o.value]
+                                        );
+                                    }}
+                                >
+                                    {o.label}
+                                </SheetPill>
                             ))}
                         </div>
                     </div>
