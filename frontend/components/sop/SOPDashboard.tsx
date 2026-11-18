@@ -421,9 +421,11 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                                 )}
 
                                 {activeView === 'reports' && isAdmin && (
-                                    <SOPReportSection 
-                                        propertyId={propertyId!}
+                                    <SOPReportSection
+                                        propertyId={propertyId}
+                                        propertyIds={isMultiProperty ? propertyIds : undefined}
                                         isAdmin={isAdmin}
+                                        onViewRun={handleViewDetail}
                                     />
                                 )}
 
