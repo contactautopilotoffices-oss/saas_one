@@ -52,6 +52,7 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'glm-5.3-flash', label: 'GLM 5.3 Flash (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'qwen3.8-27b', label: 'Qwen 3.8 27B (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6 35B A3B (Engy)', provider: 'engy', can: ['chat'] },
+    { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'deepseek-v4-flash-0731', label: 'DeepSeek V4 Flash (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'glm-5.2', label: 'GLM 5.2 (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'glm-5.3', label: 'GLM 5.3 (Engy)', provider: 'engy', can: ['chat'] },
@@ -163,7 +164,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'bill_ocr', label: 'Reading electricity bills', hint: 'Reads units, amounts and dates out of an electricity bill PDF', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'meter_ocr', label: 'Reading meter photos', hint: 'Reads the number off a photo of an electricity meter', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'electricity_explain', label: 'Electricity "Explain"', hint: 'Writes the plain-words explanation of a month\'s electricity figures', group: 'Facilities', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-luna'], single: true, defaultEnv: 'ELECTRICITY_EXPLAIN_MODEL', defaultPrefix: 'openai:' },
-    { key: 'sop_photo', label: 'Scoring SOP photos', hint: 'Compares a checklist photo with its reference photo. If this model fails, the second model already in the code takes over', group: 'Facilities', needs: 'vision', providers: ['engy'], defaults: ['qwen3.8-27b'], single: true },
+    { key: 'sop_photo', label: 'Scoring SOP photos', hint: 'Compares a checklist photo with its reference photo. If this model fails, the second model already in the code takes over', group: 'Facilities', needs: 'vision', providers: ['engy'], defaults: ['deepseek-v4.1-flash', 'glm-5.3-flash'], single: true },
     { key: 'sop_layout', label: 'Reading SOP floor plans', hint: 'Finds the areas on an uploaded floor plan', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.6-27b'], single: true },
     // Owner 2026-11-15: "everything to go to the llm model ... configurable from the brain". Every ticket (app, WhatsApp,
     // re-sort, Snags upload) is sorted by this chain (backend/lib/ticketing/aiClassifier.ts); main first, then backups.
