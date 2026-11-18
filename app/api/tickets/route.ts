@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
 
         let selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
-                resolved_at, sla_deadline, sla_breached, sla_hours, total_paused_minutes, sla_pause_reason,
+                resolved_at, sla_deadline, sla_breached, sla_hours, sla_paused, sla_paused_at, total_paused_minutes, sla_pause_reason,
                 category:issue_categories(id, code, name),
                 skill_group:skill_groups(id, code, name),
                 creator:users!raised_by(id, full_name, email, user_photo_url, property_memberships!property_memberships_user_id_fkey(role, property_id)),
@@ -209,9 +209,10 @@ export async function GET(request: NextRequest) {
         }
         if (raisedBy) query = query.eq('raised_by', raisedBy);
         if (slaBreached === 'true') {
-            // Include tickets where sla_deadline has passed OR sla_breached flag is explicitly set
+            // Include tickets where sla_deadline has passed OR sla_breached flag is explicitly set, excluding paused
             query = query
                 .or(`sla_deadline.lt.${new Date().toISOString()},sla_breached.eq.true`)
+                .neq('sla_paused', true)
                 .not('status', 'in', '("resolved","closed")');
         } else if (slaBreached === 'false') {
             query = query.or(`sla_deadline.gte.${new Date().toISOString()},sla_deadline.is.null,status.in.("resolved","closed")`);

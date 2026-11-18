@@ -1,15 +1,34 @@
 'use client';
 
 import React from 'react';
-import { AlertCircle, Clock } from 'lucide-react';
+import { AlertCircle, Clock, Pause } from 'lucide-react';
 import { formatDuration } from '@/frontend/utils/date';
 
-export function SLABadge({ slaDeadline, isBreached, readable = false }: {
-    slaDeadline: string | null; isBreached: boolean;
+export function SLABadge({ slaDeadline, isBreached, isPaused = false, pauseReason, readable = false }: {
+    slaDeadline: string | null;
+    isBreached: boolean;
+    isPaused?: boolean;
+    pauseReason?: string | null;
     /** Ticket card chip size (12px, darker text). Same words and meaning; off by default so other lists are unchanged. */
     readable?: boolean;
 }) {
-    if (!slaDeadline && !isBreached) return null;
+    if (!slaDeadline && !isBreached && !isPaused) return null;
+
+    if (isPaused) {
+        if (readable) {
+            return (
+                <span className="inline-flex h-6 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 text-xs font-bold uppercase tracking-[0.02em] text-amber-800">
+                    ⏸️ SLA Paused{pauseReason ? `: ${pauseReason}` : ''}
+                </span>
+            );
+        }
+        return (
+            <span className="px-2 py-0.5 text-[10px] font-black uppercase text-amber-400 bg-amber-500/20 rounded-md border border-amber-500/30 flex items-center gap-1">
+                ⏸️ SLA PAUSED
+            </span>
+        );
+    }
+
     if (readable) {
         return isBreached ? (
             <span className="inline-flex h-6 items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 text-xs font-bold uppercase tracking-[0.02em] text-red-800">
@@ -37,16 +56,16 @@ export function SLABadge({ slaDeadline, isBreached, readable = false }: {
 
 
 export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
-    if (!ticket?.sla_deadline && !ticket?.sla_breached) return null;
+    if (!ticket?.sla_deadline && !ticket?.sla_breached && !ticket?.sla_paused) return null;
 
     const referenceTime = new Date();
     const slaDeadline = ticket.sla_deadline ? new Date(ticket.sla_deadline) : null;
     const isPendingValidation = ticket.status === 'pending_validation';
-
+    const isPaused = Boolean(ticket.sla_paused);
     
-    // Evaluate if breached
-    const isSLABreached = Boolean(ticket.sla_breached) || 
-        (slaDeadline !== null && slaDeadline < referenceTime && !isPendingValidation);
+    // Evaluate if breached (never breached while paused)
+    const isSLABreached = !isPaused && (Boolean(ticket.sla_breached) || 
+        (slaDeadline !== null && slaDeadline < referenceTime && !isPendingValidation));
 
     // Overdue duration calculation
     const breachMs = slaDeadline && isSLABreached ? referenceTime.getTime() - slaDeadline.getTime() : 0;
@@ -57,17 +76,25 @@ export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
             {/* Header & Status Banner */}
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#30363d] pb-5">
                 <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSLABreached ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
-                        {isSLABreached ? <AlertCircle className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                        isPaused 
+                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+                            : isSLABreached 
+                                ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
+                                : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    }`}>
+                        {isPaused ? <Pause className="w-5 h-5" /> : isSLABreached ? <AlertCircle className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
                     </div>
                     <div>
                         <h3 className="text-base font-bold text-white flex items-center gap-2">
-                            SLA Status: {isSLABreached ? 'BREACHED' : 'ON TRACK'}
+                            SLA Status: {isPaused ? 'PAUSED' : isSLABreached ? 'BREACHED' : 'ON TRACK'}
                         </h3>
                         <p className="text-xs text-gray-400">
-                            {isSLABreached
-                                ? `Resolution target (${ticket.sla_hours || 4}h ${ticket.priority ? String(ticket.priority).toUpperCase() : ''} Priority) was missed.`
-                                : 'Ticket is progressing within target SLA window.'}
+                            {isPaused
+                                ? `SLA is currently paused${ticket.sla_pause_reason ? ` (${ticket.sla_pause_reason})` : ''}. Target deadline will be extended when resumed.`
+                                : isSLABreached
+                                    ? `Resolution target (${ticket.sla_hours || 4}h ${ticket.priority ? String(ticket.priority).toUpperCase() : ''} Priority) was missed.`
+                                    : 'Ticket is progressing within target SLA window.'}
                         </p>
                     </div>
                 </div>

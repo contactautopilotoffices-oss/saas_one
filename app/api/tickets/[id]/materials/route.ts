@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { pauseTicketSLA, checkAndResumeTicketSLA } from '@/backend/lib/ticketing/slaPauseService';
 
 /**
  * POST /api/tickets/[id]/materials
@@ -103,6 +104,15 @@ export async function POST(
         // Note: Email dispatch to the procurement assignee and property team is handled
         // asynchronously via the Event Outbox pattern (trg_material_requests_outbox -> EventProcessor)
         // to prevent duplicate emails and reduce API response latency.
+
+        // 6. Automatically pause ticket SLA while waiting for materials
+        const itemsSummary = items.map((i: any) => i.name).filter(Boolean).slice(0, 2).join(', ');
+        await pauseTicketSLA(
+            adminSupabase,
+            ticketId,
+            `Material Requested: ${itemsSummary || 'Parts required'}`,
+            user.id
+        );
 
         return NextResponse.json({ success: true, material_request: materialReq });
     } catch (error) {
@@ -271,6 +281,13 @@ export async function PATCH(
                 status_change: updateData.status
             }
         });
+
+        // 4. SLA Auto-Resume on Delivery (or Re-pause on delivery undo)
+        if (updateData.status === 'delivered') {
+            await checkAndResumeTicketSLA(adminSupabase, ticketId, user.id);
+        } else if (requestRecord.status === 'delivered' && status === 'reverted') {
+            await pauseTicketSLA(adminSupabase, ticketId, 'Material Delivery Reverted', user.id);
+        }
 
         // Notifications
         try {

@@ -2244,6 +2244,36 @@ export default function TicketDetailPage() {
               </div>
             )}
 
+            {/* SLA Paused Banner */}
+            {Boolean((ticket as any)?.sla_paused) && (
+              <div
+                className={`p-6 rounded-3xl border shadow-sm transition-all ${
+                  isDark
+                    ? "bg-amber-950/20 border-amber-800/40 text-amber-200"
+                    : "bg-amber-50/80 border-amber-200 text-amber-900"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-2.5 rounded-2xl bg-amber-500 text-white shrink-0">
+                      <PauseCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm uppercase tracking-wider">
+                        ⏸️ SLA Timer Paused {(ticket as any)?.sla_pause_reason ? `— ${(ticket as any)?.sla_pause_reason}` : ""}
+                      </h4>
+                      <p className="text-xs mt-1 opacity-90 leading-relaxed font-medium">
+                        Target SLA deadline will automatically extend when materials are delivered or vendor is arranged.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300 whitespace-nowrap">
+                    Paused
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Request Description */}
             <div
               id="section-details"

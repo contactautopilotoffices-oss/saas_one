@@ -209,6 +209,8 @@ export interface TicketCardProps {
     escalationChain?: { name: string; avatar?: string | null }[]; // Ordered: [original → ... → current]
     slaDeadline?: string | null;
     slaBreached?: boolean;
+    slaPaused?: boolean;
+    slaPauseReason?: string | null;
 
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
@@ -259,6 +261,8 @@ export default function TicketCard({
     escalationChain,
     slaDeadline,
     slaBreached,
+    slaPaused,
+    slaPauseReason,
     raisedByTenant,
     isInternal,
     onClick,
@@ -301,10 +305,10 @@ export default function TicketCard({
     const isFullyClosed = ['COMPLETED', 'CLOSED', 'RESOLVED'].includes(normalizedStatus);
     const isCritical = priority?.toUpperCase() === 'CRITICAL' && !isFullyClosed;
 
-    // Real-time SLA breach evaluation
+    // Real-time SLA breach evaluation (never breached while paused)
     const parsedDeadline = slaDeadline ? parseDate(slaDeadline) : null;
-    const computedIsBreached = Boolean(slaBreached) ||
-        (parsedDeadline !== null && parsedDeadline.getTime() < Date.now() && !isResolvedByUs && !isFullyClosed);
+    const computedIsBreached = !slaPaused && (Boolean(slaBreached) ||
+        (parsedDeadline !== null && parsedDeadline.getTime() < Date.now() && !isResolvedByUs && !isFullyClosed));
 
 
     // Live elapsed timer — counts up every second for active tickets
@@ -446,7 +450,13 @@ export default function TicketCard({
                     </span>
                 )}
 
-                <SLABadge slaDeadline={slaDeadline ?? null} isBreached={computedIsBreached} readable />
+                <SLABadge
+                    slaDeadline={slaDeadline ?? null}
+                    isBreached={computedIsBreached}
+                    isPaused={Boolean(slaPaused)}
+                    pauseReason={slaPauseReason}
+                    readable
+                />
 
                 {propertyName && (
                     <span className={`${chip} max-w-full bg-indigo-50 text-indigo-700 border-indigo-200`}>

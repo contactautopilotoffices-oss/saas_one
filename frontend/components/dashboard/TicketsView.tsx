@@ -399,6 +399,8 @@ interface Ticket {
     photo_before_url?: string;
     photo_after_url?: string;
     sla_deadline?: string | null;
+    sla_paused?: boolean;
+    sla_pause_reason?: string | null;
     internal?: boolean;
     ticket_escalation_logs?: { from_level: number; to_level: number | null; escalated_at: string; from_employee?: { full_name: string; user_photo_url?: string | null } | null; to_employee?: { full_name: string; user_photo_url?: string | null } | null }[];
 }
@@ -1370,6 +1372,8 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     propertyName={ticket.property?.name}
                                     slaDeadline={ticket.sla_deadline}
                                     slaBreached={ticket.sla_breached}
+                                    slaPaused={ticket.sla_paused}
+                                    slaPauseReason={ticket.sla_pause_reason}
                                     escalationChain={(() => {
 
                                         const logs = ticket.ticket_escalation_logs;
