@@ -154,6 +154,17 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate, onB
 
     const [selectedSlotIndex, setSelectedSlotIndex] = useState<number | null>(null);
 
+    // When room bookings update in real time, if currently selected slot became booked, reset selection
+    useEffect(() => {
+        if (selectedSlotIndex !== null && uniqueSlots[selectedSlotIndex]) {
+            const slot = uniqueSlots[selectedSlotIndex];
+            const avail = getSlotAvailability(slot.start_time, slot.end_time);
+            if (avail.type === 'BOOKED' || avail.type === 'PAST') {
+                setSelectedSlotIndex(null);
+            }
+        }
+    }, [room.bookings, selectedSlotIndex, uniqueSlots]);
+
     const handleBookNowClick = () => {
         let targetIndex = selectedSlotIndex;
         if (targetIndex === null || targetIndex < 0 || targetIndex >= uniqueSlots.length) {
