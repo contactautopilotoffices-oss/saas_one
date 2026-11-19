@@ -184,7 +184,11 @@ const SOPAIParameterReview: React.FC<Props> = ({
 
         const initialCacheKey = `${safeInitialPhoto}:${param.name}`;
         if (defectCache[initialCacheKey]) {
-            setDefectBoxes(defectCache[initialCacheKey]);
+            const cachedBoxes = defectCache[initialCacheKey];
+            setDefectBoxes(cachedBoxes);
+            if (cachedBoxes.length > 0 && param.status === 'not_visible') {
+                setActiveBoxLabel(`${param.name} (LOCATED)`);
+            }
             setIsLoadingBoxes(false);
             return;
         }
@@ -209,13 +213,23 @@ const SOPAIParameterReview: React.FC<Props> = ({
                     setActiveAngleIndex(matchedAngle.pIdx);
                     setPreviewPhotoUrl(maskStorageUrl(matchedAngle.photoUrl) || matchedAngle.photoUrl);
                     setDefectBoxes(matchedAngle.boxes);
+                    if (param.status === 'not_visible') {
+                        setActiveBoxLabel(`${param.name} (LOCATED)`);
+                    }
                 } else {
                     const initialRes = results.find(r => r.pIdx === initialIndex);
-                    setDefectBoxes(initialRes?.boxes || []);
+                    const bxs = initialRes?.boxes || [];
+                    setDefectBoxes(bxs);
+                    if (bxs.length > 0 && param.status === 'not_visible') {
+                        setActiveBoxLabel(`${param.name} (LOCATED)`);
+                    }
                 }
             } else {
                 const boxes = await fetchBoxesForPhoto(initialPhoto.url, param);
                 setDefectBoxes(boxes);
+                if (boxes.length > 0 && param.status === 'not_visible') {
+                    setActiveBoxLabel(`${param.name} (LOCATED)`);
+                }
             }
         } finally {
             setIsLoadingBoxes(false);
@@ -231,7 +245,11 @@ const SOPAIParameterReview: React.FC<Props> = ({
 
         const cacheKey = `${safePhoto}:${activeParam.name}`;
         if (defectCache[cacheKey]) {
-            setDefectBoxes(defectCache[cacheKey]);
+            const cachedBoxes = defectCache[cacheKey];
+            setDefectBoxes(cachedBoxes);
+            if (cachedBoxes.length > 0 && activeParam.status === 'not_visible') {
+                setActiveBoxLabel(`${activeParam.name} (LOCATED)`);
+            }
             setIsLoadingBoxes(false);
             return;
         }
@@ -241,6 +259,9 @@ const SOPAIParameterReview: React.FC<Props> = ({
         try {
             const boxes = await fetchBoxesForPhoto(targetPhoto.url, activeParam);
             setDefectBoxes(boxes);
+            if (boxes.length > 0 && activeParam.status === 'not_visible') {
+                setActiveBoxLabel(`${activeParam.name} (LOCATED)`);
+            }
         } finally {
             setIsLoadingBoxes(false);
         }

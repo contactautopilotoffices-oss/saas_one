@@ -84,7 +84,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
     // Upload state
     // Active property filter — comes from props (global selector)
-    const activePropertyId = propertyId || '';
+    const activePropertyId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : '';
 
     // Each month's schedules are kept in memory (per user): coming back to the tab or to a month shows them at once,
     // and they are refreshed quietly. A ref keeps the cache reader out of fetchSchedules' dependencies.
@@ -121,7 +121,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
         const fetchVendors = async () => {
             try {
                 let url = `/api/vendors/maintenance?organization_id=${organizationId}`;
-                if (propertyId) url += `&property_id=${propertyId}`;
+                if (activePropertyId) url += `&property_id=${activePropertyId}`;
                 const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
