@@ -4,7 +4,7 @@
  */
 import {
     checkSarvamJob, joinFiles, joinFilesWithOffsets, meetingAudioExtension, parseSarvamOutput, startSarvamJob, transcribeWithWhisper,
-    SARVAM_BASE, type AudioFile, type TranscriptLine,
+    SARVAM_BASE, SARVAM_MAX_FILES, type AudioFile, type TranscriptLine,
 } from '../meetings/MeetingTranscriber';
 import {
     buildExtractionPrompt, buildPeople, extractMeeting, formatClock, parseClock, validateExtraction,
@@ -14,6 +14,12 @@ import { MEETING_NOTES_CAMPAIGN, notesParams, notesPreview } from '../meetings/m
 import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/MeetingSpeakers';
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
 import { mergeCapture, missingFromCapture, reportedSegments } from '../meetings/capture';
+import {
+    LIVE_GIVE_UP_MS, MAX_CALL_RECORDINGS, RECORDER_LEASE_MS, UPLOAD_GRACE_MS, callOutcome, canJoin, missingCallPieces, onlineSetupGaps,
+    parseScheduledFor, recorderDecision, roomNameFor, type CallRecording,
+    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, meetingLinkPath, type GuestEntry,
+} from '../meetings/online';
+import { randomBytes } from 'crypto';
 
 let failures = 0;
 const check = (n: string, ok: boolean, x?: unknown) => { if (ok) console.log(`  ✓ ${n}`); else { failures++; console.error(`  ✗ ${n}`, x ?? ''); } };
@@ -390,6 +396,117 @@ async function main() {
         check('no report, no audio → nothing stored', none.missing === 0 && !none.anyStored);
         check('no report but audio → allowed (before the migration)', missingFromCapture(null, new Map([[0, names(3)]])).anyStored === true);
         check('default piece length 30 s when the phone did not say', missingFromCapture({ segments: { '0': { recorded: 2 } } }, new Map()).missingSeconds === 60);
+    }
+
+    console.log('\nOnline meetings (owner 2026-11-18)');
+    {
+        const id = '11111111-2222-3333-4444-555555555555';
+        check('room name is prefixed (never an Ira room)', roomNameFor(id) === `mn-${id}`);
+        check('browser call audio is a type the speech step accepts', !!meetingAudioExtension('audio/webm;codecs=opus') && !!meetingAudioExtension('audio/mp4'));
+
+        const host = 'aaaaaaaa-0000-0000-0000-000000000001', guest = 'aaaaaaaa-0000-0000-0000-000000000002', other = 'aaaaaaaa-0000-0000-0000-000000000003';
+        const open = { created_by: host, attendee_ids: [guest], confidential: false, workspace: 'hr' as const };
+        const secret = { ...open, confidential: true };
+        const none = new Set<never>();
+        check('creator can join', canJoin(open, host, none));
+        check('someone picked can join from another department', canJoin(open, guest, none));
+        check('someone with this Meeting Assistant can join an open meeting', canJoin(open, other, new Set(['hr'])));
+        check('someone with another Meeting Assistant cannot', !canJoin(open, other, new Set(['tech'])));
+        check('confidential: the people picked can still join', canJoin(secret, guest, none));
+        check('confidential: the rest of the space cannot', !canJoin(secret, other, new Set(['hr'])));
+        check('older row without a space counts as tech', canJoin({ ...open, workspace: null }, other, new Set(['tech'])));
+
+        const now = Date.parse('2026-11-18T10:00:00Z');
+        const started = '2026-11-18T09:00:00Z';
+
+        // Owner 2026-11-19: the sound is recorded in ONE team member's browser (free LiveKit plan)
+        const live = (userId: string, segment: number) => ({ userId, segment, until: new Date(now + 10_000).toISOString() });
+        const expired = (userId: string, segment: number) => ({ userId, segment, until: new Date(now - 1).toISOString() });
+        const rec = (segment: number, userId: string, pieces = 0, done = false): CallRecording => ({ segment, userId, pieces, done, at: started });
+        check('nobody recording → the first page to check in records recording 0', JSON.stringify(recorderDecision({}, host, now, null)) === JSON.stringify({ role: 'record', segment: 0, fresh: true }));
+        check('the recorder keeps its recording', JSON.stringify(recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host)] }, host, now, 0)) === JSON.stringify({ role: 'record', segment: 0, fresh: false }));
+        check('everyone else watches while someone records', JSON.stringify(recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host)] }, other, now, null)) === JSON.stringify({ role: 'watch', recording: true }));
+        const takeover = recorderDecision({ recorder: expired(host, 0), recordings: [rec(0, host, 12)] }, other, now, null);
+        check('the recorder left → someone else takes over with a NEW recording', takeover.role === 'record' && takeover.segment === 1 && takeover.fresh);
+        const reload = recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host, 5)] }, host, now, null);
+        check('the recorder\'s page restarted → it starts a new recording (never appends to the old file)', reload.role === 'record' && reload.segment === 1);
+        check('a browser that cannot record is not asked again', JSON.stringify(recorderDecision({ cannotRecord: [other] }, other, now, null)) === JSON.stringify({ role: 'watch', recording: false }));
+        const full = Array.from({ length: MAX_CALL_RECORDINGS }, (_, i) => rec(i, host, 1, true));
+        check('no more recordings than the speech service takes', JSON.stringify(recorderDecision({ recordings: full }, host, now, null)) === JSON.stringify({ role: 'watch', recording: false }));
+        check('the recordings cap matches the speech service', MAX_CALL_RECORDINGS === SARVAM_MAX_FILES);
+        check('a lease outlasts a couple of missed check-ins', RECORDER_LEASE_MS >= 30_000);
+
+        // Owner 2026-11-19: the person who set up the meeting is the main recorder
+        const standIn = { recorder: live(other, 1), recordings: [rec(0, host, 40), rec(1, other)] };
+        const back = recorderDecision(standIn, host, now, null, host);
+        check('the host rejoins → takes the recording back with a new recording', back.role === 'record' && back.segment === 2 && back.fresh);
+        check('the stand-in keeps recording until the host is back', JSON.stringify(recorderDecision(standIn, other, now, 1, host)) === JSON.stringify({ role: 'record', segment: 1, fresh: false }));
+        const handedBack = { recorder: live(host, 2), recordings: [...standIn.recordings, rec(2, host)] };
+        check('after the hand-back the stand-in stops (watches)', JSON.stringify(recorderDecision(handedBack, other, now, 1, host)) === JSON.stringify({ role: 'watch', recording: true }));
+        check('the host keeps it once back', JSON.stringify(recorderDecision(handedBack, host, now, 2, host)) === JSON.stringify({ role: 'record', segment: 2, fresh: false }));
+        check('a host joining late takes over from whoever started', recorderDecision({ recorder: live(other, 0), recordings: [rec(0, other)] }, host, now, null, host).role === 'record');
+        check('a host whose browser cannot record leaves it with the stand-in', JSON.stringify(recorderDecision({ ...standIn, cannotRecord: [host] }, host, now, null, host)) === JSON.stringify({ role: 'watch', recording: true }));
+        check('no hand-back past the recordings cap (the stand-in carries on)', JSON.stringify(recorderDecision({ recorder: live(other, MAX_CALL_RECORDINGS - 1), recordings: full }, host, now, null, host)) === JSON.stringify({ role: 'watch', recording: true }));
+
+        const stored = new Map([[0, 10], [1, 3]]);
+        check('pieces not yet in storage are counted', missingCallPieces([rec(0, host, 10), rec(1, other, 5)], stored) === 2);
+        check('more in storage than reported is not "missing"', missingCallPieces([rec(0, host, 8)], stored) === 0 && missingCallPieces(undefined, stored) === 0);
+
+        const base = { endedAt: null, startedAt: started, recorderAlive: false, missingPieces: 0, lastRecordingAt: started, now };
+        check('call still on → wait', callOutcome({ ...base, roomOpen: true }) === 'wait');
+        check('LiveKit could not be asked → wait (no finishing on a guess)', callOutcome({ ...base, roomOpen: null }) === 'wait');
+        check('call over but a browser is still recording/uploading → wait', callOutcome({ ...base, roomOpen: false, recorderAlive: true }) === 'wait');
+        check('call over, pieces still on their way → wait a little', callOutcome({ ...base, roomOpen: false, missingPieces: 3, lastRecordingAt: new Date(now - 60_000).toISOString() }) === 'wait');
+        check('call over, pieces never came → finish with what arrived', callOutcome({ ...base, roomOpen: false, missingPieces: 3, lastRecordingAt: new Date(now - UPLOAD_GRACE_MS - 1).toISOString() }) === 'finish');
+        check('room closed, all pieces in → finish', callOutcome({ ...base, roomOpen: false }) === 'finish');
+        check('host ended (room not closed yet) → finish', callOutcome({ ...base, roomOpen: true, endedAt: '2026-11-18T09:59:00Z' }) === 'finish');
+        check('live far too long → stop', callOutcome({ ...base, roomOpen: true, startedAt: new Date(now - LIVE_GIVE_UP_MS - 1000).toISOString() }) === 'stop');
+
+        check('no time = start now', parseScheduledFor('', now) === null && parseScheduledFor(undefined, now) === null);
+        check('a time in an hour is kept', parseScheduledFor('2026-11-18T11:00:00Z', now) === '2026-11-18T11:00:00.000Z');
+        const throws = (v: unknown) => { try { parseScheduledFor(v, now); return false; } catch { return true; } };
+        check('nonsense time is refused', throws('next week-ish') && throws(42));
+        check('a time two days ago is refused', throws('2026-11-16T10:00:00Z'));
+        check('a time two years ahead is refused', throws('2028-11-18T10:00:00Z'));
+
+        const gaps = onlineSetupGaps({ LIVEKIT_URL: 'wss://x.livekit.cloud' });
+        check('missing LiveKit keys are named', gaps.length === 1 && gaps[0].includes('LIVEKIT_API_KEY') && gaps[0].includes('LIVEKIT_API_SECRET') && !gaps[0].includes('LIVEKIT_URL'));
+        check('only the LiveKit keys are needed (no storage keys any more)', onlineSetupGaps({ LIVEKIT_URL: 'wss://x', LIVEKIT_API_KEY: 'a', LIVEKIT_API_SECRET: 'b' }).length === 0);
+    }
+
+    console.log('\nGuests without a login (stage 2, owner 2026-11-18)');
+    {
+        const token = randomBytes(24).toString('base64url');
+        check('a generated guest secret has the expected shape', isGuestToken(token) && token.length === 32);
+        check('wrong-shape secrets are refused before any lookup', !isGuestToken('abc') && !isGuestToken(`${token}x`) && !isGuestToken(`${token.slice(0, 31)}/`) && !isGuestToken(null));
+        check('guest link path', guestPathFor(token) === `/guest/${token}`);
+        // Owner 2026-11-18: one link for everyone
+        check('a meeting with a secret shares its one link', meetingLinkPath('m1', token) === `/guest/${token}`);
+        check('an older meeting without a secret keeps its team link', meetingLinkPath('m1', null) === '/meet/m1' && meetingLinkPath('m1', undefined) === '/meet/m1');
+        check('guest identity is prefixed (never a staff user id)', guestIdentity('g1') === 'guest-g1');
+
+        check('name tidied', cleanGuestName('  Asha   Rao ') === 'Asha Rao');
+        check('angle brackets and control characters dropped', cleanGuestName('<b>Ravi</b>\u0007') === 'bRavi/b');
+        const bad = (v: unknown) => { try { cleanGuestName(v); return false; } catch { return true; } };
+        check('too short, too long, no letters, not text → refused', bad('A') && bad('x'.repeat(61)) && bad('12345') && bad(42) && bad(undefined));
+        check('names in other scripts are fine', cleanGuestName('राहुल शर्मा') === 'राहुल शर्मा');
+
+        const base: GuestEntry = { id: 'g1', name: 'Asha', key: 'secret-key', state: 'waiting', askedAt: '2026-11-18T10:00:00Z', consentAt: '2026-11-18T10:00:00Z' };
+        const admitted = decideGuest(base, 'admit', 'staff-1', '2026-11-18T10:01:00Z');
+        check('a waiting guest can be let in', admitted?.state === 'admitted' && admitted.decidedBy === 'staff-1');
+        check('a waiting guest can be refused', decideGuest(base, 'deny', 's', 'now')?.state === 'denied');
+        check('cannot let in someone already answered', decideGuest({ ...base, state: 'denied' }, 'admit', 's', 'now') === null && decideGuest(admitted!, 'admit', 's', 'now') === null);
+        check('only someone let in can be removed', decideGuest(admitted!, 'remove', 's', 'now')?.state === 'removed' && decideGuest(base, 'remove', 's', 'now') === null);
+        check('a removed guest cannot be let in again', decideGuest({ ...base, state: 'removed' }, 'admit', 's', 'now') === null);
+
+        const view = guestsForStaff([
+            { ...base, id: 'late', askedAt: '2026-11-18T10:05:00Z' },
+            { ...base, id: 'in', state: 'admitted', askedAt: '2026-11-18T09:00:00Z' },
+            { ...base, id: 'early', askedAt: '2026-11-18T10:02:00Z' },
+        ]);
+        check('staff never see a guest\'s key', view.every(g => !('key' in g)));
+        check('waiting first, oldest first; then the rest', view.map(g => g.id).join(',') === 'early,late,in');
+        check('the waiting list has a cap', MAX_WAITING > 0 && MAX_WAITING <= 50);
     }
 
     console.log(failures ? `\n${failures} FAILED` : '\nAll meeting tests passed');
