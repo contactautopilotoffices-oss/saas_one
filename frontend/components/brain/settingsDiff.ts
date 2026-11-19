@@ -28,6 +28,11 @@ export function describeChanges(before: BrainSettings, after: BrainSettings, ski
     people('Blocked people', before.blockedUserIds, after.blockedUserIds);
     say('WhatsApp', onOff(before.channels.whatsapp), onOff(after.channels.whatsapp));
     say('In-app chat', onOff(before.channels.app_chat), onOff(after.channels.app_chat));
+    say('Tasks through the task assistant', onOff(before.taskEngine), onOff(after.taskEngine));
+    const learnWord = { off: 'off', shadow: 'watch only', live: 'on' } as const;
+    say('Ticket sorting learns', learnWord[before.ticketLearning.mode], learnWord[after.ticketLearning.mode]);
+    say('Find similar tickets by meaning', onOff(before.ticketLearning.meaning), onOff(after.ticketLearning.meaning));
+    say('Draft new sorting rules every day', onOff(before.ticketLearning.rulesDaily), onOff(after.ticketLearning.rulesDaily));
     for (const s of skills) {
         const was = skillModeOf(before, s), now = skillModeOf(after, s);
         if (was !== now) out.push(`Skill ${s.id}: ${SKILL_MODE_LABEL[was].toLowerCase()} → ${SKILL_MODE_LABEL[now].toLowerCase()}`);

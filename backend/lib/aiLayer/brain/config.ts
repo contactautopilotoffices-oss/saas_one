@@ -26,6 +26,32 @@ export const brainSettingsSchema = z.object({
     pilotUserIds: z.array(z.string().uuid()).max(500).default([]),
     blockedUserIds: z.array(z.string().uuid()).max(500).default([]),
     channels: z.object({ whatsapp: z.boolean().default(false), app_chat: z.boolean().default(false) }).strict().default({ whatsapp: false, app_chat: false }),
+    /**
+     * 2026-11-18 (owner: "the task manager interactions must be exactly as it is now"): on WhatsApp, tasks are answered
+     * by the task assistant itself, unchanged, with the brain in front. A message only about tasks goes the way it goes
+     * today and the brain just remembers the reply; a message that mixes tasks with something else gets ONE reply, the
+     * task assistant's own words joined with the brain's. While on, the brain's own task actions (with their Yes cards)
+     * are not offered. Off = exactly as before.
+     */
+    taskEngine: z.boolean().default(false),
+    /**
+     * 2026-11-19 (owner: "with corrections, it must improve the classification accuracy and confidence"): how new
+     * tickets learn from the Tech team's judgements (backend/lib/ticketing/sortLearning.ts).
+     *   off    = exactly as before: the AI is shown the newest 30 corrections and saves its own rating.
+     *   shadow = watch only: tickets are sorted as before; the new way also runs and is recorded next to it, so the two
+     *            can be compared in Review → Tickets. Nothing about the ticket changes.
+     *   live   = the new way decides: similar past tickets shown to the AI, measured confidence, repeats sorted
+     *            without the AI. If it fails, the old way runs.
+     * meaning = also find similar tickets by meaning (the embedding service the candidate search uses), not only by
+     *           shared words. Off by default: it uses the shared embedding key's quota.
+     * rulesDaily = draft new sorting rules every day from the new corrections (sortRules.ts; owner 2026-11-19: "daily
+     *           automatic as well as on button click"). A draft is only ever offered; a person approves it.
+     */
+    ticketLearning: z.object({
+        mode: skillMode.default('off'),
+        meaning: z.boolean().default(false),
+        rulesDaily: z.boolean().default(true),
+    }).strict().default({ mode: 'off', meaning: false, rulesDaily: true }),
     /** role → module → level. A role with no row here gets the default for its kind of role (see defaultLevel). */
     grid: z.record(z.string().min(1).max(64), moduleGrid).default({}),
     /** skill id → off / shadow / live. Missing = the skill's own default. */

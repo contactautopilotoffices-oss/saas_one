@@ -14,6 +14,9 @@ import { analyzeConfidence, ConfidenceAnalysis, ClassificationZone } from './con
 import { classifyWithAi, classifyManyWithAi, loadCategoryOptions, loadCorrections, type AiDeps, type AiVerdict, type CategoryOption, type Correction } from './aiClassifier';
 import { createClient } from '@supabase/supabase-js';
 import { emitWebhook } from './webhooks';
+import { settingFor, sortNewWay, type LearningDeps, type NewWayResult } from './sortLearningRun';
+import { writeTrace, type LearningTrace } from './sortLearningStore';
+import { activeRulesText } from './sortRulesStore';
 
 export type DecisionSource = 'rule' | 'llm' | 'human';
 
@@ -61,6 +64,12 @@ export interface ResolvedClassification {
             total_tokens: number;
         };
     };
+
+    /**
+     * 2026-11-19: while ticket sorting learning is "watch only" or "on" (Brain → Switches), what the old and the new way
+     * chose, saved by logClassification as the ticket's trace (ticket_sort_traces). Absent when learning is off.
+     */
+    learningTrace?: LearningTrace;
 }
 
 export interface ClassificationLogEntry {
@@ -92,7 +101,14 @@ export interface ResolveOptions {
     deps?: AiDeps;
     categories?: CategoryOption[];
     corrections?: Correction[];
+    /** For tests: the learning setting, examples and track record (sortLearningRun.ts). */
+    learning?: LearningDeps;
+    /** For tests: the organisation's approved sorting rules (sortRules.ts). Default: read from the database. */
+    rules?: string | null;
 }
+
+/** Watch only: after the old way has sorted the ticket, the new way may take at most this much longer. */
+const SHADOW_EXTRA_MS = 2_500;
 
 const TITLE_PRIORITY: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
 
@@ -122,36 +138,98 @@ export async function resolveClassification(ticketText: string, options?: string
     };
 
     // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
-    try {
-        const [categories, corrections] = await Promise.all([
-            opts.categories ?? loadCategoryOptions(opts.propertyId),
-            opts.corrections ?? loadCorrections(opts.organizationId),
-        ]);
-        const sorted = await classifyWithAi(ticketText, categories, opts.deps, corrections);
-        applyVerdict(finalResult, sorted.verdict);
-        finalResult.llmResult = {
-            model: sorted.model,
-            selectedBucket: sorted.verdict.team,
-            secondaryBucket: null,
-            priority: TITLE_PRIORITY[sorted.verdict.priority],
-            riskFlag: sorted.verdict.risk,
-            reason: sorted.verdict.reason,
-            latencyMs: sorted.latencyMs,
-            usage: { prompt_tokens: sorted.tokensIn, completion_tokens: sorted.tokensOut, total_tokens: sorted.tokensIn + sorted.tokensOut },
-        };
-        if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
-        emitWebhook('llm.invoked', 'pending', {
-            ticket_id: 'pending',
-            source: 'resolver',
-            model: sorted.model,
-            latency_ms: sorted.latencyMs,
-            result: sorted.verdict,
-        });
-    } catch (err) {
-        console.warn('[Resolver] AI sorting failed; the keyword rules decide this ticket:', err instanceof Error ? err.message.slice(0, 500) : err);
+    let categories: CategoryOption[] = [];
+    // 2026-11-19: the organisation's approved sorting rules (none until a person approves a version).
+    const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
+    /** Today's way: the newest corrections, the AI's own rating. Returns the verdict it applied, or null. */
+    const oldWay = async (): Promise<AiVerdict | null> => {
+        try {
+            const [cats, corrections] = await Promise.all([
+                categories.length ? Promise.resolve(categories) : opts.categories ?? loadCategoryOptions(opts.propertyId),
+                opts.corrections ?? loadCorrections(opts.organizationId),
+            ]);
+            const sorted = await classifyWithAi(ticketText, cats, opts.deps, corrections, rules);
+            applyAi(finalResult, sorted.verdict, sorted.model, sorted.latencyMs, sorted.tokensIn, sorted.tokensOut);
+            if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
+            return sorted.verdict;
+        } catch (err) {
+            console.warn('[Resolver] AI sorting failed; the keyword rules decide this ticket:', err instanceof Error ? err.message.slice(0, 500) : err);
+            return null;
+        }
+    };
+
+    // 2026-11-19: ticket sorting that learns (Brain → Switches). Off = exactly the old way, nothing else runs.
+    const orgId = opts.organizationId ?? null;
+    const setting = orgId ? await settingFor(orgId, opts.learning) : { mode: 'off' as const, meaning: false };
+    if (setting.mode === 'off' || !orgId) {
+        await oldWay();
+        return finalResult;
     }
 
+    try { categories = opts.categories ?? await loadCategoryOptions(opts.propertyId); } catch { categories = []; }
+    const started = Date.now();
+    const newWay = sortNewWay(ticketText, categories, orgId, setting, opts.deps, opts.learning, rules)
+        .catch(err => { console.warn('[Resolver] the learning way failed:', err instanceof Error ? err.message.slice(0, 300) : err); return 'failed' as const; });
+
+    if (setting.mode === 'shadow') {
+        // Watch only: the old way decides; the new way is recorded next to it and changes nothing.
+        const old = await oldWay();
+        const nw = await withDeadline(newWay, SHADOW_EXTRA_MS);
+        if (nw) finalResult.learningTrace = traceOf(orgId, 'shadow', old, nw, started);
+        return finalResult;
+    }
+
+    // On: the new way decides. If it could not (every model failed), the old way runs, then the keyword rules.
+    const nw = await newWay;
+    if (nw && nw !== 'failed') {
+        applyAi(finalResult, nw.verdict, nw.model, nw.latencyMs, nw.tokensIn, nw.tokensOut);
+        if (nw.failures.length) console.warn(`[Resolver] ticket sorted by ${nw.model} after ${nw.failures.length} model(s) failed`);
+        finalResult.learningTrace = traceOf(orgId, 'live', null, nw, started);
+        return finalResult;
+    }
+    const old = await oldWay();
+    if (nw === 'failed') finalResult.learningTrace = traceOf(orgId, 'live', old, 'failed', started);
     return finalResult;
+}
+
+/** Writes an AI verdict onto a resolution with the model's details, and tells the webhook (one ticket). */
+function applyAi(r: ResolvedClassification, v: AiVerdict, model: string, latencyMs: number, tokensIn: number, tokensOut: number): void {
+    applyVerdict(r, v);
+    r.llmResult = {
+        model,
+        selectedBucket: v.team,
+        secondaryBucket: null,
+        priority: TITLE_PRIORITY[v.priority],
+        riskFlag: v.risk,
+        reason: v.reason,
+        latencyMs,
+        usage: { prompt_tokens: tokensIn, completion_tokens: tokensOut, total_tokens: tokensIn + tokensOut },
+    };
+    emitWebhook('llm.invoked', 'pending', {
+        ticket_id: 'pending',
+        source: 'resolver',
+        model,
+        latency_ms: latencyMs,
+        result: v,
+    });
+}
+
+/** The promise's value, or null when it takes longer than `ms`. */
+async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([p, new Promise<null>(ok => { timer = setTimeout(() => ok(null), ms); })]);
+    } finally { if (timer) clearTimeout(timer); }
+}
+
+function traceOf(orgId: string, mode: 'shadow' | 'live', old: AiVerdict | null, nw: NewWayResult | 'failed', started: number): LearningTrace {
+    const ok = nw !== 'failed';
+    return {
+        organizationId: orgId, mode, method: ok ? nw.method : 'failed', search: ok ? nw.search : 'none',
+        oldCode: old?.code ?? null, oldConfidence: old?.confidence ?? null,
+        newCode: ok ? nw.verdict.code : null, modelConfidence: ok ? nw.modelConfidence : null, newConfidence: ok ? nw.verdict.confidence : null,
+        why: ok ? nw.why : null, neighbours: ok ? nw.neighbours : [], model: ok ? nw.model : null, latencyMs: ok ? nw.latencyMs : Date.now() - started,
+    };
 }
 
 /** Writes an AI verdict onto a resolution (shared by single tickets and bulk import). */
@@ -198,7 +276,8 @@ export async function resolveImportRows(texts: readonly string[], options: Resol
     } catch (err) {
         console.warn('[Resolver] category list unavailable for bulk import:', err instanceof Error ? err.message : err);
     }
-    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections);
+    const rules = options.rules !== undefined ? options.rules : await activeRulesText(options.organizationId);
+    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections, rules);
     return texts.map((text, i) => {
         const hit = ai[i];
         if (hit) {
@@ -255,6 +334,9 @@ export async function logClassification(
     if (error) {
         console.error('[Resolver] Failed to log classification:', error);
     }
+
+    // 2026-11-19: the learning trace (watch only / on), shown in Review → Tickets and used for the track record.
+    if (resolution.learningTrace) await writeTrace(ticketId, resolution.learningTrace, supabase as never);
 
     // Emit final categorized webhook
     emitWebhook('ticket.categorized', ticketId, {

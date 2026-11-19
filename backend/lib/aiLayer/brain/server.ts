@@ -64,6 +64,25 @@ export function supabaseThreadStore(admin: SupabaseClient) {
                 { organization_id: orgId, user_id: userId, shadow, state, updated_at: new Date().toISOString() }, { onConflict: 'organization_id,user_id,shadow' });
             if (error) throw new Error(error.message);
         },
+        /**
+         * 2026-11-18: save only if the stored thread is still at `expectedRev` (the `rev` counter inside the state;
+         * threads saved before this change have none, which counts as 0). null = there was no thread: insert, and a
+         * row that appeared meanwhile is a conflict. 'conflict' = another turn saved first; nothing was written.
+         */
+        async saveIf(orgId: string, userId: string, shadow: boolean, state: unknown, expectedRev: number | null): Promise<'ok' | 'conflict'> {
+            const at = new Date().toISOString();
+            if (expectedRev === null) {
+                const { error } = await admin.from('ai_brain_threads').insert({ organization_id: orgId, user_id: userId, shadow, state, updated_at: at });
+                if (!error) return 'ok';
+                if (error.code === '23505') return 'conflict';
+                throw new Error(error.message);
+            }
+            let q = admin.from('ai_brain_threads').update({ state, updated_at: at }).eq('organization_id', orgId).eq('user_id', userId).eq('shadow', shadow);
+            q = expectedRev === 0 ? q.or('state->>rev.is.null,state->>rev.eq.0') : q.eq('state->>rev', String(expectedRev));
+            const { data, error } = await q.select('user_id');
+            if (error) throw new Error(error.message);
+            return (data ?? []).length ? 'ok' : 'conflict';
+        },
     };
 }
 
@@ -293,8 +312,24 @@ export function liveBrainData(admin: SupabaseClient, c: LiveDataContext): BrainD
         },
 
         async listRooms(propertyId): Promise<RoomRow[]> {
+            // The same rooms the WhatsApp assistant offers (active, by name), plus capacity and location (2026-11-18).
+            const rows = must(await admin.from('meeting_rooms').select('id, name, property_id, capacity, location')
+                .eq('property_id', propertyId).eq('status', 'active').order('name').order('id')) as Array<{ id: string; name: string; property_id: string; capacity: number | null; location: string | null }>;
+            return rows.map(r => ({ id: r.id, name: r.name, propertyId: r.property_id, capacity: r.capacity ?? null, location: r.location ?? null }));
+        },
+        async roomFreeSlots(propertyId, roomId, date) {
             const { assistantRoomServices } = await import('@/backend/lib/whatsapp/assistant/runtime');
-            return (await assistantRoomServices.rooms(propertyId)).map(r => ({ id: r.id, name: r.name, propertyId: r.property_id }));
+            return (await assistantRoomServices.slots(propertyId, roomId, date)).map(s => ({ start: String(s.start_time).slice(0, 5), end: String(s.end_time).slice(0, 5) }));
+        },
+        async cancelBooking(input) {
+            // Exactly the app's cancel (permission check, credit refund, notifications), moved to a shared file for this.
+            const { cancelBooking } = await import('@/backend/lib/meetingRooms/cancelBooking');
+            const out = await cancelBooking(input.bookingId, { id: input.userId });
+            if ('success' in out && out.success) return { ok: true as const };
+            const why = String((out as { error?: string }).error ?? '');
+            const code = /not found/i.test(why) ? 'not_found' as const : /already cancelled/i.test(why) ? 'already_cancelled' as const
+                : /past or already started/i.test(why) ? 'started' as const : /forbidden|only technical/i.test(why) ? 'forbidden' as const : 'failed' as const;
+            return { ok: false as const, code };
         },
         async availableRooms(propertyId, date, startTime, endTime): Promise<RoomRow[]> {
             const { assistantRoomServices } = await import('@/backend/lib/whatsapp/assistant/runtime');
@@ -302,10 +337,10 @@ export function liveBrainData(admin: SupabaseClient, c: LiveDataContext): BrainD
         },
         async myBookings(userId, propertyIds, fromDate): Promise<BookingRow[]> {
             if (!propertyIds.length) return [];
-            const rows = must(await admin.from('meeting_room_bookings').select('id, property_id, booking_date, start_time, end_time, status, room:meeting_rooms(name)')
+            const rows = must(await admin.from('meeting_room_bookings').select('id, property_id, meeting_room_id, booking_date, start_time, end_time, status, room:meeting_rooms(name)')
                 .eq('user_id', userId).in('property_id', propertyIds).gte('booking_date', fromDate).order('booking_date', { ascending: false }).order('start_time', { ascending: false }).limit(20)) as unknown as
-                Array<{ id: string; property_id: string; booking_date: string; start_time: string; end_time: string; status: string | null; room: { name: string } | { name: string }[] | null }>;
-            return rows.map(r => ({ id: r.id, propertyId: r.property_id, date: r.booking_date, startTime: r.start_time, endTime: r.end_time, status: String(r.status ?? ''), roomName: (Array.isArray(r.room) ? r.room[0]?.name : r.room?.name) ?? 'Room' }));
+                Array<{ id: string; property_id: string; meeting_room_id: string | null; booking_date: string; start_time: string; end_time: string; status: string | null; room: { name: string } | { name: string }[] | null }>;
+            return rows.map(r => ({ id: r.id, propertyId: r.property_id, roomId: r.meeting_room_id ?? undefined, date: r.booking_date, startTime: r.start_time, endTime: r.end_time, status: String(r.status ?? ''), roomName: (Array.isArray(r.room) ? r.room[0]?.name : r.room?.name) ?? 'Room' }));
         },
         async bookRoom(input) {
             // The same transactional function the WhatsApp assistant books with: it checks access, credits and the slot

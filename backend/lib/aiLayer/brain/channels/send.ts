@@ -19,3 +19,21 @@ export async function sendBrainReply(phone: string, text: string, env: Record<st
     const { TaskMessagingService } = await import('@/task-manager/TaskMessagingService');
     return TaskMessagingService.sendFreeformReply(phone, text);
 }
+
+/** sendBrainReply, also returning the ids of the sent message so a later swipe-reply can be matched (2026-11-18). */
+export async function sendBrainReplyTracked(phone: string, text: string, env: Record<string, string | undefined> = process.env): Promise<{ sent: boolean; messageIds: string[] }> {
+    if (inTestRun(env)) {
+        console.warn('[Brain] refusing to send a WhatsApp message during a test run');
+        return { sent: false, messageIds: [] };
+    }
+    const { TaskMessagingService } = await import('@/task-manager/TaskMessagingService');
+    // A long reply (a joined task list, 2026-11-18) goes in parts, split the same way the task assistant splits its own.
+    const { splitLongReply } = await import('@/task-manager/brain/text');
+    const ids: string[] = [];
+    let sent = true;
+    for (const part of splitLongReply(text)) {
+        const r = await TaskMessagingService.sendFreeformReplyTracked(phone, part);
+        sent = sent && r.sent; ids.push(...r.messageIds);
+    }
+    return { sent, messageIds: ids };
+}

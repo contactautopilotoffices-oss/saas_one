@@ -18,8 +18,11 @@
  */
 import type { ActorContext } from '../../types';
 import { brainGate, roleClass, type BrainSettings, type RoleClass } from '../config';
+import { NO, YES } from '../../language';
+import { bt } from '../text';
 import { brainHandled, runTurn, type TurnDeps, type TurnImage, type TurnOutput } from '../loop/turn';
-import { skillsFor, tasksInBrain } from '../skills/registry';
+import { mergeThreads, openThread, withExchange, withSentIds, type ThreadState } from '../memory/thread';
+import { skillsFor, taskEngineFor, tasksInBrain } from '../skills/registry';
 import type { AttachmentRef } from '../types';
 import type { Staged } from './media';
 
@@ -31,6 +34,8 @@ export interface BrainInbound {
      * own card), not two (owner 2026-11-14).
      */
     replyPrefix?: string | null;
+    /** 2026-11-18: the person swiped to reply: the WhatsApp ids of the message they quoted (from the webhook payload). */
+    quotedIds?: string[];
 }
 
 export interface BrainPerson { userId: string; orgId: string }
@@ -58,6 +63,8 @@ export interface BrainWhatsAppDeps {
     turnDeps(ctx: { orgId: string; userId: string; phone: string; settings: BrainSettings }): TurnDeps;
     record(r: { orgId: string; userId: string; shadow: boolean; messageId: string | null; userText: string | null; hadFile: boolean; out: TurnOutput; roleClass: RoleClass }): Promise<void>;
     sendReply(phone: string, text: string): Promise<boolean>;
+    /** 2026-11-18: send and return the sent message's ids, so a later swipe-reply to it can be matched. Optional: absent = sendReply. */
+    sendReplyTracked?(phone: string, text: string): Promise<{ sent: boolean; messageIds: string[] }>;
     /** Housekeeping after a reply (optional). */
     sweep?(orgId: string, settings: BrainSettings): Promise<void>;
     /** Duplicate-delivery guard for messages this server already took (optional). */
@@ -65,10 +72,47 @@ export interface BrainWhatsAppDeps {
     markSeen?(messageId: string): void;
     /** Shadow only: look at a photo WITHOUT storing it (the existing bot is the one handling that photo). */
     peekImage?(url: string): Promise<{ mime: string; base64: string } | null>;
+    /**
+     * 2026-11-18 batching (the same inbox Smart chat uses, task-manager/SmartChatInbox.ts): wait until the person stops
+     * typing; the newest message's webhook answers all their waiting messages in ONE reply. Optional: absent, or
+     * 'unavailable' (table missing, any error) = every message is answered on its own, exactly as before.
+     */
+    batch?(input: { phone: string; messageId: string; text: string }): Promise<BatchResult>;
+    /** The batched turn is over (its thread is saved): the next batch of this person may start. Never throws. */
+    finishBatch?(token: string): Promise<void>;
+    /**
+     * 2026-11-18: save only if nobody saved since `expectedRev` (null = there was no thread yet). 'conflict' = another
+     * turn saved first; the caller merges and tries again, so no exchange is ever overwritten. Optional: absent = plain save.
+     */
+    saveThreadIf?(orgId: string, userId: string, shadow: boolean, state: unknown, expectedRev: number | null): Promise<'ok' | 'conflict'>;
+    /**
+     * 2026-11-18 (task engine, a message that mixes tasks with something else): the task assistant answers `text` (the
+     * person's own words about tasks) with its own rules, and its replies to this person are handed back instead of
+     * sent, to be joined with the brain's. taken = false: it did not take them (for example Smart chat is off for them).
+     */
+    askTaskAssistant?(input: { phone: string; messageId: string | null; text: string }): Promise<{ taken: boolean; replies: string[] }>;
 }
 
+export type BatchResult =
+    | { kind: 'unavailable' }
+    /** A newer message's webhook answers for this one too. */
+    | { kind: 'deferred' }
+    | { kind: 'batch'; texts: string[]; messageIds: string[]; token: string };
+
 export type BrainClaim =
-    | { handled: false; why: string; /** Skip the AI Action Layer too: the brain already read this and passed it on. */ skipAiLayer?: boolean; /** Work to run after the webhook has answered (shadow run, trace). Never throws. */ after?: () => Promise<void> }
+    | {
+        handled: false; why: string; /** Skip the AI Action Layer too: the brain already read this and passed it on. */ skipAiLayer?: boolean; /** Work to run after the webhook has answered (shadow run, trace). Never throws. */ after?: () => Promise<void>;
+        /**
+         * 2026-11-18: the brain took several messages as one batch and then passed them on. These are all their words, one
+         * per line: the bots below must answer THEM (not just this webhook's message), and must not batch again.
+         */
+        rewriteText?: string;
+        /**
+         * 2026-11-18 (task engine): a message only about tasks goes on to the task assistant exactly as before; it calls
+         * this with each reply it sends this person, so the brain remembers the exchange. Only listens; never throws.
+         */
+        onTaskReply?: (text: string) => Promise<void>;
+    }
     | { handled: true; background: () => Promise<void> };
 
 const no = (why: string, extra: Partial<Extract<BrainClaim, { handled: false }>> = {}): BrainClaim => ({ handled: false, why, ...extra });
@@ -117,13 +161,37 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
         if (await deps.importBusy(input.phone)) return no('import_busy');
         // Tasks in the brain: the task assistant's open question ("which task?", a superuser's ping) is answered by it,
         // never taken over half-way. Only checked when the brain does tasks for this person; otherwise as before.
-        if (tasksInBrain(skillsFor(actor, settings)) && await deps.taskBotWaiting?.(input.phone, person.userId).catch(() => true)) return no('task_bot_waiting');
+        // The same with the task assistant as the brain's task engine (2026-11-18): its question is answered by it, as today.
+        const engine = mode === 'live' && taskEngineFor(actor, settings);
+        if ((engine || tasksInBrain(skillsFor(actor, settings))) && await deps.taskBotWaiting?.(input.phone, person.userId).catch(() => true)) return no('task_bot_waiting');
         // A repeat delivery of a message this server already took is answered once (the inbound ledger catches repeats
         // across servers when the never-silent switch is on; this covers the same server when it is off).
         if (mode === 'live' && input.messageId && deps.seenBefore?.(input.messageId)) return { handled: true, background: async () => undefined };
 
         const shadow = mode === 'shadow';
         const messageId = input.messageId ?? null;
+
+        // ── Batching (2026-11-18): several messages sent back to back get ONE reply ──
+        // Live, typed text only. A photo and a voice note are answered on their own, as before.
+        let texts = [text];
+        let messageIds = messageId ? [messageId] : [];
+        let batchToken: string | null = null;
+        // A swipe-reply is answered on its own: it is about one particular message.
+        const quotedIds = (input.quotedIds ?? []).filter(id => typeof id === 'string' && id.length > 0).slice(0, 5);
+        if (!shadow && !media && messageId && deps.batch && !input.replyPrefix && !quotedIds.length) {
+            const b: BatchResult = await deps.batch({ phone: input.phone, messageId, text }).catch(() => ({ kind: 'unavailable' as const }));
+            if (b.kind === 'deferred') {
+                // The newest message's webhook answers this one too. Nothing to do here, and no other bot may answer it.
+                deps.markSeen?.(messageId);
+                return { handled: true, background: async () => undefined };
+            }
+            if (b.kind === 'batch' && b.texts.length) { texts = b.texts.map(t => t.trim()).filter(Boolean); messageIds = b.messageIds.slice(0, 10); batchToken = b.token; }
+            if (!texts.length) texts = [text];
+        }
+        const batched = texts.length > 1;
+        const joined = texts.join('\n');
+        const release = async () => { if (batchToken && deps.finishBatch) { const t = batchToken; batchToken = null; await deps.finishBatch(t).catch(() => undefined); } };
+        const passOn = (why: string, extra: Partial<Extract<BrainClaim, { handled: false }>> = {}) => no(why, { ...extra, ...(batched ? { rewriteText: joined } : {}) });
 
         const run = async (): Promise<{ out: TurnOutput; hadFile: boolean }> => {
             let images: TurnImage[] = [];
@@ -143,11 +211,25 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
                 else throw new Error(`photo intake failed: ${staged.reason}`);
             }
             const [state, open] = await Promise.all([deps.loadThread(person.orgId, person.userId, shadow), shadow ? Promise.resolve([] as AttachmentRef[]) : deps.listOpenFiles(person.orgId, person.userId)]);
+            baseState = state;
             const attachments = shadow ? transient : open;
-            const out = await runTurn(deps.turnDeps({ orgId: person.orgId, userId: person.userId, phone: input.phone, settings }),
-                { actor, settings, aliases, channel: 'whatsapp', text, images, attachments, state, dryRun: shadow });
+            const tdeps = deps.turnDeps({ orgId: person.orgId, userId: person.userId, phone: input.phone, settings });
+            const turn = (words: string, st: unknown, files: AttachmentRef[]) => runTurn(tdeps, { actor, settings, aliases, channel: 'whatsapp', text: words, images, attachments: files, state: st, dryRun: shadow, messageIds, quotedIds });
+            // A batch holding a bare Yes / No while a card waits: that line answers the card first, on its own, then the
+            // rest is read as one turn. Otherwise a "yes" mixed into other words would never reach the card.
+            const answerIdx = batched ? texts.findIndex(t => YES.test(t) || NO.test(t)) : -1;
+            const cardWaiting = answerIdx >= 0 && openThread(state, tdeps.now()).pending?.kind === 'confirm';
+            if (cardWaiting) {
+                const first = await turn(texts[answerIdx], state, attachments);
+                const rest = texts.filter((_, i) => i !== answerIdx).join('\n');
+                const files = !shadow ? await deps.listOpenFiles(person.orgId, person.userId).catch(() => attachments) : attachments;
+                const second = await turn(rest, first.state, files);
+                return { out: combine(first, second), hadFile };
+            }
+            const out = await turn(joined, state, attachments);
             return { out, hadFile };
         };
+        let baseState: unknown = null;
         const record = (out: TurnOutput, hadFile: boolean) => deps.record({ orgId: person.orgId, userId: person.userId, shadow, messageId, userText: text || null, hadFile, out, roleClass: roleClass(actor) }).catch(() => undefined);
 
         if (shadow) {
@@ -162,33 +244,158 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
             } });
         }
 
-        const { out, hadFile } = await run();
+        let ran: { out: TurnOutput; hadFile: boolean };
+        try { ran = await run(); }
+        catch (err) {
+            // The existing bots answer instead; with a batch, they get ALL its words.
+            console.error('[Brain] WhatsApp turn failed; the existing bots will answer', err instanceof Error ? err.message : err);
+            await release();
+            return passOn('error');
+        }
+        const { out, hadFile } = ran;
         // "Nothing is switched on for your role" is not worth a WhatsApp reply: the existing bots answer instead.
         if (out.outcome === 'unsupported' || !brainHandled(out) || !out.reply) {
             const tasks = out.handoffTo === 'tasks_assistant';
             const worth = out.outcome !== 'unsupported';
-            return no(out.trace.reason ?? out.outcome, { ...(tasks ? { skipAiLayer: true } : {}), ...(worth ? { after: () => record(out, hadFile) } : {}) });
+            await release();
+            // Only about tasks, with the task engine on: on to the task assistant exactly as today; the brain listens.
+            const listen = tasks && engine ? { onTaskReply: taskListener(deps, person, joined) } : {};
+            return passOn(out.trace.reason ?? out.outcome, { ...(tasks ? { skipAiLayer: true } : {}), ...(worth ? { after: () => record(out, hadFile) } : {}), ...listen });
         }
         const prefix = (input.replyPrefix ?? '').trim();
-        const reply = prefix ? `${prefix}\n\n${out.reply.text}` : out.reply.text;
+        let reply = prefix ? `${prefix}\n\n${out.reply.text}` : out.reply.text;
         if (input.messageId) deps.markSeen?.(input.messageId);
         return {
             handled: true,
             background: async () => {
-                // The thread is saved BEFORE the reply goes out, so a quick "yes" always finds what it answers. The turn has
-                // already run (an action may be done), so a failed save is logged and the reply still goes out.
-                await deps.saveThread(person.orgId, person.userId, false, out.state)
-                    .catch(err => { console.error('[Brain] thread could not be saved', err instanceof Error ? err.message : err); });
-                const sent = await deps.sendReply(input.phone, reply);
-                // Not sent: the message stays unanswered in the ledger under route 'brain', which the never-silent
-                // watchdog watches, so the person gets its apology instead of silence.
-                if (!sent) console.warn('[Brain] the reply could not be sent; the never-silent watchdog covers this message');
-                await record(out, hadFile);
-                await deps.sweep?.(person.orgId, settings).catch(() => undefined);
+                try {
+                    // A message that mixed tasks with something else (2026-11-18): the task assistant answers the task part
+                    // with its own rules and words, and the person gets ONE reply, in the order they wrote the parts.
+                    if (engine && out.taskWords) reply = await withTaskReply(deps, person, input.phone, messageId, joined, out, reply, prefix);
+                    // The thread is saved BEFORE the reply goes out, so a quick "yes" always finds what it answers. The turn has
+                    // already run (an action may be done), so a failed save is logged and the reply still goes out.
+                    await saveChecked(deps, person, baseState, out.state)
+                        .catch(err => { console.error('[Brain] thread could not be saved', err instanceof Error ? err.message : err); });
+                    // The next batch of this person may start only now: it must see the state this turn saved.
+                    await release();
+                    let sent: boolean;
+                    if (deps.sendReplyTracked) {
+                        const r = await deps.sendReplyTracked(input.phone, reply);
+                        sent = r.sent;
+                        // The reply's ids go on its history entry, so a swipe-reply to it can be matched. Never fails the turn.
+                        if (r.sent && r.messageIds.length && out.state.lastActiveAt) await rememberSentIds(deps, person, out.state.lastActiveAt, r.messageIds).catch(() => undefined);
+                    } else sent = await deps.sendReply(input.phone, reply);
+                    // Not sent: the message stays unanswered in the ledger under route 'brain', which the never-silent
+                    // watchdog watches, so the person gets its apology instead of silence.
+                    if (!sent) console.warn('[Brain] the reply could not be sent; the never-silent watchdog covers this message');
+                    await record(out, hadFile);
+                    await deps.sweep?.(person.orgId, settings).catch(() => undefined);
+                } finally { await release(); }
             },
         };
     } catch (err) {
         console.error('[Brain] WhatsApp claim failed; the existing bots will answer', err instanceof Error ? err.message : err);
         return no('error');
     }
+}
+
+/** Two turns of one batch (a card's Yes or No, then the rest) as one reply and one record. */
+function combine(first: TurnOutput, second: TurnOutput): TurnOutput {
+    const texts = [first.reply?.text, brainHandled(second) ? second.reply?.text : null].filter((x): x is string => !!x && !!x.trim());
+    const last = brainHandled(second) && second.reply ? second : first;
+    return {
+        ...last,
+        reply: texts.length ? { ...(last.reply ?? {}), text: texts.join('\n\n') } : first.reply,
+        outcome: brainHandled(second) ? second.outcome : first.outcome,
+        handoffTo: brainHandled(second) ? second.handoffTo : first.handoffTo,
+        state: brainHandled(second) ? second.state : first.state,
+        trace: { ...last.trace, modelCalls: [...first.trace.modelCalls, ...second.trace.modelCalls], toolCalls: [...first.trace.toolCalls, ...second.trace.toolCalls], hops: [...first.trace.hops, ...second.trace.hops] },
+    };
+}
+
+const revOf = (raw: unknown): number => {
+    const r = raw && typeof raw === 'object' ? (raw as { rev?: unknown }).rev : undefined;
+    return typeof r === 'number' && Number.isInteger(r) && r >= 0 ? r : 0;
+};
+
+/**
+ * Saves a live thread without ever overwriting a turn that saved in between (2026-11-18). On a conflict the stored thread
+ * is read again and this turn's exchange is merged into it (memory/thread.ts mergeThreads); at most 3 tries, then a
+ * plain save of the merge. Without a checked save (older wiring, a store error), it is the plain save, as before.
+ */
+async function saveChecked(deps: BrainWhatsAppDeps, person: BrainPerson, base: unknown, ours: ThreadState): Promise<void> {
+    if (!deps.saveThreadIf) return deps.saveThread(person.orgId, person.userId, false, ours);
+    let latest: unknown = base;
+    let next: ThreadState = ours;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const expected = latest === null || latest === undefined ? null : revOf(latest);
+        let res: 'ok' | 'conflict';
+        try { res = await deps.saveThreadIf(person.orgId, person.userId, false, { ...next, rev: (expected ?? 0) + 1 }, expected); }
+        catch (err) {
+            console.warn('[Brain] checked save failed, saving plainly:', err instanceof Error ? err.message : err);
+            return deps.saveThread(person.orgId, person.userId, false, { ...next, rev: (expected ?? 0) + 1 });
+        }
+        if (res === 'ok') return;
+        latest = await deps.loadThread(person.orgId, person.userId, false);
+        next = mergeThreads(latest, base, ours, ours.lastActiveAt ?? new Date().toISOString());
+    }
+    console.warn('[Brain] thread kept changing; saving the merged state');
+    await deps.saveThread(person.orgId, person.userId, false, { ...next, rev: revOf(latest) + 1 });
+}
+
+/** Puts the ids of a sent reply on its history entry, without overwriting a turn that saved in between (2026-11-18). */
+async function rememberSentIds(deps: BrainWhatsAppDeps, person: BrainPerson, turnAt: string, ids: string[]): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const latest = await deps.loadThread(person.orgId, person.userId, false);
+        const next = withSentIds(latest, turnAt, ids);
+        if (!next) return;
+        if (!deps.saveThreadIf) return deps.saveThread(person.orgId, person.userId, false, next);
+        const expected = latest === null || latest === undefined ? null : revOf(latest);
+        if (await deps.saveThreadIf(person.orgId, person.userId, false, { ...next, rev: (expected ?? 0) + 1 }, expected) === 'ok') return;
+    }
+}
+
+/** Each reply the task assistant sends for a message only about tasks goes into the brain's memory (2026-11-18). */
+function taskListener(deps: BrainWhatsAppDeps, person: BrainPerson, userText: string): (text: string) => Promise<void> {
+    let first = true;
+    return async (text: string) => {
+        const at = new Date().toISOString();
+        const entries = [...(first ? [{ role: 'user' as const, text: userText, at }] : []), { role: 'assistant' as const, text, at }];
+        first = false;
+        try {
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const latest = await deps.loadThread(person.orgId, person.userId, false);
+                const next = withExchange(latest, entries, at);
+                if (!deps.saveThreadIf) return await deps.saveThread(person.orgId, person.userId, false, next);
+                const expected = latest === null || latest === undefined ? null : revOf(latest);
+                if (await deps.saveThreadIf(person.orgId, person.userId, false, { ...next, rev: (expected ?? 0) + 1 }, expected) === 'ok') return;
+            }
+        } catch (err) { console.warn('[Brain] the task assistant\'s reply could not be remembered:', err instanceof Error ? err.message : err); }
+    };
+}
+
+/**
+ * The brain's reply joined with the task assistant's own reply to the task words (2026-11-18). Task part first when
+ * the person wrote it first. Not taken (or no reply): the brain's reply asks for the task part on its own. Both waiting
+ * for an answer: the person is told which to answer first. The thread remembers the joined reply.
+ */
+async function withTaskReply(deps: BrainWhatsAppDeps, person: BrainPerson, phone: string, messageId: string | null, message: string, out: TurnOutput, reply: string, prefix: string): Promise<string> {
+    const lang = out.lang;
+    const words = out.taskWords ?? '';
+    const asked = deps.askTaskAssistant
+        ? await deps.askTaskAssistant({ phone, messageId, text: words }).catch(err => { console.warn('[Brain] task assistant failed:', err instanceof Error ? err.message : err); return { taken: false, replies: [] as string[] }; })
+        : { taken: false, replies: [] as string[] };
+    const taskReply = asked.replies.map(r => r.trim()).filter(Boolean).join('\n\n');
+    const own = prefix && reply.startsWith(prefix) ? reply.slice(prefix.length).trim() : reply;
+    let joined: string;
+    if (asked.taken && taskReply) {
+        const at = message.toLowerCase().indexOf(words.split('\n')[0].toLowerCase().trim());
+        joined = at === 0 ? `${taskReply}\n\n${own}` : `${own}\n\n${taskReply}`;
+        if (out.state.pending?.kind === 'confirm' && await deps.taskBotWaiting?.(phone, person.userId).catch(() => false)) joined += `\n\n${bt('task_question_first', lang)}`;
+    } else {
+        joined = `${own}\n\n${bt('task_part_alone', lang)}`;
+    }
+    const last = [...out.state.history].reverse().find(h => h.role === 'assistant');
+    if (last) last.text = joined.slice(0, 2000);
+    return prefix ? `${prefix}\n\n${joined}` : joined;
 }

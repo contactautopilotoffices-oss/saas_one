@@ -20,7 +20,12 @@ const pendingConfirm = z.object({
     kind: z.literal('confirm'), opId: z.string().uuid(), skillId: z.string().max(64), payload: z.unknown(), card: z.string().max(2000),
     /** Fingerprint of what the person could do when the card was shown. A different one at Yes cancels the proposal. */
     scope: z.string().max(80), at: z.string().max(40),
+    /** 2026-11-18: the person was already reminded once that this card is waiting (the reminder is never repeated). */
+    reminded: z.boolean().optional(),
 }).strict();
+
+/** A topic the person closed ("cancel it", "no, leave it"). Never offered or brought up again unless they raise it. */
+const closedTopic = z.object({ label: z.string().max(120), at: z.string().max(40) }).strict();
 
 export const threadStateSchema = z.object({
     lang: z.enum(['en', 'hi', 'hinglish']).optional(),
@@ -28,8 +33,25 @@ export const threadStateSchema = z.object({
     pending: z.union([pendingAsk, pendingConfirm]).nullable().default(null),
     /** Questions asked in a row without the request moving forward. */
     askStreak: z.number().int().min(0).max(20).default(0),
-    history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000), at: z.string().max(40) }).strict()).max(40).default([]),
+    /** `ids` (2026-11-18): the WhatsApp ids of that message, so a swipe-reply to it can be matched. */
+    history: z.array(z.object({ role: z.enum(['user', 'assistant']), text: z.string().max(2000), at: z.string().max(40), ids: z.array(z.string().max(512)).max(10).optional() }).strict()).max(40).default([]),
     lastActiveAt: z.string().max(40).optional(),
+    /**
+     * 2026-11-18: a confirmation card that is still waiting while the brain asks about something else. Only ever set
+     * while `pending` is a question; when that question is over, the card is the pending item again. A side question
+     * no longer throws a card away (the owner's chat: "still waiting" was said about a card code had already dropped).
+     */
+    parked: pendingConfirm.nullable().default(null),
+    /** 2026-11-18: topics the person closed, newest last, kept for a day. */
+    closed: z.array(closedTopic).max(10).default([]),
+    /**
+     * 2026-11-18: was the brain's most recent reply the waiting card itself, or its Yes/Cancel reminder? A bare "yes"
+     * confirms the card only then; otherwise the card is shown again first. Missing (threads saved before this change)
+     * counts as true, which is how they behaved.
+     */
+    cardLast: z.boolean().optional(),
+    /** 2026-11-18: save counter, so two turns saving at once can never silently overwrite each other (see mergeThreads). */
+    rev: z.number().int().min(0).optional(),
 }).strict();
 
 export type ThreadState = z.infer<typeof threadStateSchema>;
@@ -43,10 +65,84 @@ export function openThread(raw: unknown, now: Date): ThreadState {
     const s = parsed.data;
     const t = now.getTime();
     const history = s.history.filter(h => t - Date.parse(h.at) <= HISTORY_MS).slice(-HISTORY_TURNS);
+    const closed = s.closed.filter(c => t - Date.parse(c.at) <= HISTORY_MS);
     const idle = !s.lastActiveAt || t - Date.parse(s.lastActiveAt) > THREAD_IDLE_MS;
-    if (idle) return { ...s, history, pending: null, handles: {}, askStreak: 0 };
+    if (idle) return { ...s, history, closed, pending: null, parked: null, cardLast: false, handles: {}, askStreak: 0 };
     const stale = s.pending?.kind === 'confirm' && t - Date.parse(s.pending.at) > CONFIRM_MS;
-    return { ...s, history, pending: stale ? null : s.pending };
+    const parkedStale = !!s.parked && t - Date.parse(s.parked.at) > CONFIRM_MS;
+    return { ...s, history, closed, pending: stale ? null : s.pending, parked: parkedStale ? null : s.parked, ...(stale ? { cardLast: false } : {}) };
+}
+
+export type HistoryEntry = ThreadState['history'][number];
+
+/** The message a swipe-reply quotes, if it is still in the thread (2026-11-18). */
+export function findQuoted(s: ThreadState, quotedIds: readonly string[]): HistoryEntry | null {
+    if (!quotedIds.length) return null;
+    const want = new Set(quotedIds);
+    for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].ids?.some(id => want.has(id))) return s.history[i];
+    return null;
+}
+
+/**
+ * The stored thread with the WhatsApp ids of a reply that has just gone out, put on that reply's entry (the assistant
+ * entry written at `turnAt`). null = the entry is not there any more, or it already has those ids: nothing to save.
+ */
+export function withSentIds(raw: unknown, turnAt: string, ids: readonly string[]): ThreadState | null {
+    const parsed = threadStateSchema.safeParse(raw ?? {});
+    if (!parsed.success || !ids.length) return null;
+    const s = parsed.data;
+    const i = s.history.findIndex(h => h.role === 'assistant' && h.at === turnAt);
+    if (i < 0) return null;
+    const merged = [...new Set([...(s.history[i].ids ?? []), ...ids])].slice(0, 10);
+    if (merged.length === (s.history[i].ids ?? []).length) return null;
+    const history = s.history.map((h, n) => (n === i ? { ...h, ids: merged } : h));
+    return { ...s, history };
+}
+
+/**
+ * The stored thread with more exchanges at the end (2026-11-18: what the task assistant answered, so the brain
+ * remembers it). Kept to the usual length; a thread that cannot be read starts fresh.
+ */
+export function withExchange(raw: unknown, entries: readonly HistoryEntry[], at: string): ThreadState {
+    const parsed = threadStateSchema.safeParse(raw ?? {});
+    const s = parsed.success ? parsed.data : { ...EMPTY_THREAD };
+    return { ...s, history: [...s.history, ...entries.map(e => ({ ...e, text: e.text.slice(0, 2000) }))].slice(-HISTORY_TURNS), lastActiveAt: at };
+}
+
+/** The confirmation card waiting for the person's Yes or Cancel, whether it is in front or behind a question. */
+export function waitingCard(s: ThreadState): PendingConfirm | null {
+    return s.pending?.kind === 'confirm' ? s.pending : s.parked ?? null;
+}
+
+/**
+ * Two turns of the same person finished at the same time and both want to save (2026-11-18: three quick messages each
+ * ran a turn, and the last save wiped the other two exchanges). `latest` is what is stored now, `base` what this turn
+ * started from, `ours` what this turn produced, `turnAt` its time. Nothing is lost: this turn's new exchanges go after
+ * the stored ones. This turn's open question, card and closed topics win only where this turn changed them; whatever
+ * the other turn changed is kept.
+ */
+export function mergeThreads(latestRaw: unknown, baseRaw: unknown, ours: ThreadState, turnAt: string): ThreadState {
+    const parse = (raw: unknown) => { const p = threadStateSchema.safeParse(raw ?? {}); return p.success ? p.data : { ...EMPTY_THREAD }; };
+    const latest = parse(latestRaw);
+    const base = parse(baseRaw);
+    const key = (h: ThreadState['history'][number]) => `${h.role}|${h.at}|${h.text}`;
+    const known = new Set([...base.history, ...latest.history].map(key));
+    const fresh = ours.history.filter(h => !known.has(key(h)) && h.at === turnAt);
+    const history = [...latest.history, ...fresh].sort((a, b) => a.at.localeCompare(b.at)).slice(-HISTORY_TURNS);
+    const closedSeen = new Set<string>();
+    const closed = [...latest.closed, ...ours.closed].filter(c => { const k = `${c.label}|${c.at}`; if (closedSeen.has(k)) return false; closedSeen.add(k); return true; }).slice(-10);
+    const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+    const changedOpen = !same(ours.pending, base.pending) || !same(ours.parked, base.parked);
+    return {
+        ...latest,
+        lang: ours.lang ?? latest.lang,
+        handles: { ...latest.handles, ...ours.handles },
+        history,
+        closed,
+        ...(changedOpen ? { pending: ours.pending, parked: ours.parked, askStreak: ours.askStreak, cardLast: ours.cardLast } : {}),
+        lastActiveAt: [latest.lastActiveAt, ours.lastActiveAt].filter((x): x is string => !!x).sort().at(-1),
+        rev: latest.rev ?? 0,
+    };
 }
 
 const PREFIX: Record<HandleKind, string> = { ticket: 'T', room: 'R', task: 'K', booking: 'B', attachment: 'A', person: 'P' };

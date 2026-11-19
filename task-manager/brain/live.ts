@@ -231,7 +231,7 @@ export interface LiveClaim {
 const NOT_HANDLED: LiveClaim = { handled: false };
 
 /** A plain text body as the shared parser reads it (same shape as a confirmed voice note), carrying the original's id and time. */
-function bodyWithText(body: unknown, phone: string, messageId: string | null | undefined, text: string): unknown {
+export function bodyWithText(body: unknown, phone: string, messageId: string | null | undefined, text: string): unknown {
     type Parsed = { projectId?: string; inboundAt?: string } | null;
     let n: Parsed;
     try { n = normalizeInbound(body) as Parsed; } catch { n = null; }
@@ -269,6 +269,33 @@ export interface LiveOptions {
     replySuffix?: string;
     /** 2026-11-02: answer this message on its own, never batched with others (callers feeding text from elsewhere). */
     noBatch?: boolean;
+    /**
+     * 2026-11-18 (the brain in front): told each reply that goes to THIS person, after it was sent. Only listens:
+     * what is sent, and how, is exactly as without it. A failure here never affects the reply.
+     */
+    onReply?: (text: string) => Promise<void> | void;
+    /**
+     * 2026-11-18 (a mixed message the brain answers in ONE reply): each reply for THIS person is handed to this instead
+     * of being sent; the caller sends it, joined with its own. Messages to anyone else (hand-over alerts, relays) are
+     * sent exactly as always.
+     */
+    capture?: (text: string) => void;
+}
+
+const samePhone = (a: string, b: string) => a.replace(/\D/g, '').slice(-10) === b.replace(/\D/g, '').slice(-10);
+
+/** The IO with the reply hooks of `opts` (2026-11-18). Without hooks it is the very same object. */
+function withReplyHooks(io: LiveIO, phone: string, opts: LiveOptions): LiveIO {
+    if (!opts.capture && !opts.onReply) return io;
+    return {
+        ...io,
+        async reply(to, text) {
+            const mine = samePhone(to, phone);
+            if (mine && opts.capture) { opts.capture(text); return; }
+            await io.reply(to, text);
+            if (mine && opts.onReply) { try { await opts.onReply(text); } catch { /* listening never breaks a reply */ } }
+        },
+    };
 }
 
 interface InFlightTurn {
@@ -332,7 +359,7 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
     };
 
     try {
-        real = io ?? await defaultLiveIO();
+        real = withReplyHooks(io ?? await defaultLiveIO(), cand.phone, opts);
         // Group 2 "faster replies" (2026-10-13): reads that do not depend on each other run side by side (they used to run one
         // after another). The same checks, in the same order of meaning: any "no" still means the old bot answers.
         const t0 = Date.now();

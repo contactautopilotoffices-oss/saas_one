@@ -60,6 +60,10 @@ export class FakeBrainData implements BrainData {
     /** Room ids that are taken for any window asked about. */
     taken = new Set<string>();
     bookings: BookingRow[] = [];
+    /** 2026-11-18: free slots per room id; a room not listed has every hour from 09:00 to 18:00 free. */
+    freeSlots = new Map<string, Array<{ start: string; end: string }>>();
+    cancelled: string[] = [];
+    failCancel: 'not_found' | 'already_cancelled' | 'started' | 'forbidden' | 'failed' | null = null;
     tasks: TaskRow[] | null = [{ id: TASK_1, n: 1, title: 'Paint the lobby wall', status: 'pending' }, { id: TASK_2, n: 2, title: 'Check the DG set', status: 'in_progress' }];
     memory: MemoryFact[] = [];
     episodes: EpisodeRow[] = [];
@@ -108,6 +112,18 @@ export class FakeBrainData implements BrainData {
     async listRooms(propertyId: string) { return this.rooms.filter(r => r.propertyId === propertyId); }
     async availableRooms(propertyId: string) { return this.rooms.filter(r => r.propertyId === propertyId && !this.taken.has(r.id)); }
     async myBookings(_userId: string, propertyIds: string[], fromDate: string) { return this.bookings.filter(b => propertyIds.includes(b.propertyId) && b.date >= fromDate); }
+    async roomFreeSlots(_propertyId: string, roomId: string) {
+        if (this.taken.has(roomId)) return [];
+        return this.freeSlots.get(roomId) ?? Array.from({ length: 9 }, (_, i) => ({ start: `${String(9 + i).padStart(2, '0')}:00`, end: `${String(10 + i).padStart(2, '0')}:00` }));
+    }
+    async cancelBooking(input: { bookingId: string; userId: string }) {
+        if (this.failCancel) return { ok: false as const, code: this.failCancel };
+        const b = this.bookings.find(x => x.id === input.bookingId);
+        if (!b) return { ok: false as const, code: 'not_found' as const };
+        if (b.status === 'cancelled') return { ok: false as const, code: 'already_cancelled' as const };
+        b.status = 'cancelled'; this.cancelled.push(b.id);
+        return { ok: true as const };
+    }
     async bookRoom(input: { opId: string; userId: string; propertyId: string; roomId: string; date: string; startTime: string; endTime: string; purpose: string | null }) {
         if (this.failBooking) throw Object.assign(new Error(this.failBooking), { code: this.failBooking });
         this.booked.push({ opId: input.opId, roomId: input.roomId, date: input.date, startTime: input.startTime, endTime: input.endTime });
@@ -162,7 +178,7 @@ export function ticket(over: Partial<FakeTicket> = {}): FakeTicket {
 export function brainSettings(over: Record<string, unknown> = {}): BrainSettings {
     return parseBrainSettings({
         mode: 'live', audience: 'everyone', channels: { whatsapp: true, app_chat: true },
-        skillModes: { 'ticket.create': 'live', 'ticket.add_photo': 'live', 'room.book': 'live', 'task.add_file': 'live' },
+        skillModes: { 'ticket.create': 'live', 'ticket.add_photo': 'live', 'room.book': 'live', 'room.cancel': 'live', 'room.move': 'live', 'task.add_file': 'live' },
         ...over,
     });
 }
