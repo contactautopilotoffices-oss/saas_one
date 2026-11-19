@@ -141,7 +141,7 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
                 <input type="checkbox" checked={findTasks} onChange={e => setFindTasks(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
                 <span>
                     <span className="flex items-center gap-1.5 text-sm font-bold text-zinc-800 dark:text-zinc-200"><ListChecks className="h-3.5 w-3.5" /> Find tasks in this meeting</span>
-                    <span className="text-xs text-zinc-500">{findTasks ? 'You get the notes and a list of tasks to send.' : 'You get the notes only. You can still add tasks by hand.'}</span>
+                    <span className="text-xs text-zinc-500">{findTasks ? 'A list of tasks is made for you to send.' : 'No tasks are made. You can still add them by hand.'}</span>
                 </span>
             </label>
 
