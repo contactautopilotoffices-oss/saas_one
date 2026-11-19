@@ -421,21 +421,19 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors" title="Next month">
                         <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
                     </button>
-                    {availableLocations.length > 1 && (
-                        <select
-                            value={selectedLocation}
-                            onChange={e => setSelectedLocation(e.target.value)}
-                            className="px-2 py-1 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[100px] sm:max-w-[160px] truncate"
-                        >
-                            <option value="all">All ({schedules.length})</option>
-                            {availableLocations.map(loc => {
-                                const count = schedules.filter(s => s.location === loc).length;
-                                return (
-                                    <option key={loc} value={loc}>{loc} ({count})</option>
-                                );
-                            })}
-                        </select>
-                    )}
+                    <select
+                        value={selectedLocation}
+                        onChange={e => setSelectedLocation(e.target.value)}
+                        className="px-2 py-1 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[120px] sm:max-w-[170px] truncate"
+                    >
+                        <option value="all">All Floors {schedules.length > 0 ? `(${schedules.length})` : ''}</option>
+                        {availableLocations.map(loc => {
+                            const count = schedules.filter(s => s.location === loc).length;
+                            return (
+                                <option key={loc} value={loc}>{loc} ({count})</option>
+                            );
+                        })}
+                    </select>
                 </div>
 
                 <div className="flex items-center gap-2 sm:gap-3 justify-end">
