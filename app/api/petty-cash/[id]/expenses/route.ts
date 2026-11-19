@@ -36,23 +36,31 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         }, { status: 409 });
     }
 
-    // Check if uploaded document was already attached to an existing expense
+    // Check if uploaded document was already attached to an active expense
     if (Array.isArray(body.documents) && body.documents.length > 0) {
         const uploadIds = body.documents.map((d: any) => d.upload_id).filter(Boolean);
         if (uploadIds.length > 0) {
             const { data: existingDoc } = await supabaseAdmin
                 .from('petty_cash_documents')
-                .select('id, upload_id, request_id, file_name, request:petty_cash_requests(request_no)')
+                .select('id, upload_id, request_id, file_name, expense_id, request:petty_cash_requests(request_no)')
                 .in('upload_id', uploadIds)
                 .not('expense_id', 'is', null)
                 .limit(1)
                 .maybeSingle();
 
-            if (existingDoc) {
-                const reqNo = (existingDoc.request as any)?.request_no || 'another request';
-                return NextResponse.json({
-                    error: `Duplicate receipt file: '${existingDoc.file_name}' was already claimed for an expense in ${reqNo}. Reusing bills/receipts is blocked.`
-                }, { status: 409 });
+            if (existingDoc && existingDoc.expense_id) {
+                const { data: docExpense } = await supabaseAdmin
+                    .from('petty_cash_expenses')
+                    .select('review_status')
+                    .eq('id', existingDoc.expense_id)
+                    .maybeSingle();
+
+                if (docExpense && !['rejected', 'withdrawn'].includes(docExpense.review_status)) {
+                    const reqNo = (existingDoc.request as any)?.request_no || 'another request';
+                    return NextResponse.json({
+                        error: `Duplicate receipt file: '${existingDoc.file_name}' was already claimed for an expense in ${reqNo}. Reusing bills/receipts is blocked.`
+                    }, { status: 409 });
+                }
             }
         }
     }
