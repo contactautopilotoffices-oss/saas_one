@@ -45,6 +45,7 @@ const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboar
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -57,13 +58,14 @@ const TAB_PRELOADS = [
     () => import('./SettingsView'),
     () => import('@/frontend/components/ops/TicketFlowMap'),
     () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('@/frontend/components/ppm/PPMCalendar'),
     () => import('@/frontend/components/assets/AssetsModule'),
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/water/WaterDashboard'),
 ];
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm';
 
 interface Property {
     id: string;
@@ -206,7 +208,7 @@ const MstDashboard = () => {
     // Restore state from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist', 'water', 'assets'].includes(tab)) {
+        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist', 'water', 'assets', 'ppm'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
         
@@ -801,6 +803,16 @@ const MstDashboard = () => {
                                 Checklists
                             </button>
                             <button
+                                onClick={() => handleTabChange('ppm')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'ppm'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Calendar className="w-4 h-4" />
+                                PPM Calendar
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('assets')}
                                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'assets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -910,7 +922,7 @@ const MstDashboard = () => {
 
                 {/* Page Content */}
                 {/* Page Content */}
-                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
+                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' || activeTab === 'ppm' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
                 {dashboardContent ?? (<>
 
 
@@ -991,6 +1003,15 @@ const MstDashboard = () => {
                             {activeTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />}
                             {activeTab === 'water' && propertyId && <WaterDashboard propertyId={propertyId} />}
                             {activeTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                            {activeTab === 'ppm' && property && (
+                                <PPMCalendar
+                                    organizationId={property.organization_id || ''}
+                                    propertyId={property.id}
+                                    properties={[{ id: property.id, name: property.name }]}
+                                    readOnly={false}
+                                    allowUpload={false}
+                                />
+                            )}
                             {activeTab === 'assets' && property && (
                                 <AssetsModule
                                     organizationId={property.organization_id || ''}
