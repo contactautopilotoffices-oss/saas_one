@@ -116,11 +116,10 @@ export function niceDateTime(iso: string | null | undefined): string {
 }
 
 /**
- * Stage 2 (owner 2026-11-18): guests without a login. `path` is the guest link (null = off); only the person who set up
- * the meeting may turn it on or off (`canManageLink`); anyone who may join can let guests in or refuse them.
+ * Stage 2 (owner 2026-11-18): people without a login. `path` is the meeting's one link (owner 2026-11-18: always on,
+ * for everyone); anyone who may join can let the people waiting in, or refuse them.
  */
 export interface GuestsView {
     path: string | null;
     list: Array<{ id: string; name: string; state: 'waiting' | 'admitted' | 'denied' | 'removed'; askedAt: string }>;
-    canManageLink: boolean;
 }

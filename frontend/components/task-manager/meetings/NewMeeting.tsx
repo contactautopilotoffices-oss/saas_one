@@ -12,10 +12,14 @@ import { useVoiceInfo } from '../voice/voiceApi';
  * names typed in by hand), and whether it is confidential. Then record, or upload a recording made with another app.
  * Owner 2026-11-18: or make it ONLINE — a video call with its own link, now or at a set time. The people picked can
  * open the link; the call is recorded and the notes are made the same way.
+ * Owner 2026-11-18: the kind is picked by the button that opened this form ("Record a meeting" or "New video meeting"),
+ * so the form no longer asks.
  */
-export default function NewMeeting({ space, people, onStarted, onOnlineCreated, onCancel }: {
+export default function NewMeeting({ space, people, kind, onStarted, onOnlineCreated, onCancel }: {
     space: MeetingSpace;
     people: MeetingPerson[];
+    /** 'room': recorded on this phone; 'online': a video call with a link */
+    kind: 'room' | 'online';
     onStarted: (id: string, title: string, file: File | null) => void;
     /** Owner 2026-11-18: an online meeting was made; open it (its page has the link and the Join button) */
     onOnlineCreated: (id: string) => void;
@@ -27,8 +31,7 @@ export default function NewMeeting({ space, people, onStarted, onOnlineCreated, 
     const [extra, setExtra] = useState<string[]>([]);
     const [confidential, setConfidential] = useState(false);
     const [busy, setBusy] = useState<'record' | 'upload' | 'online' | null>(null);
-    /** Owner 2026-11-18: where the meeting happens, and (online only) when */
-    const [kind, setKind] = useState<'room' | 'online'>('room');
+    /** Owner 2026-11-18: online only, when the call is */
     const [when, setWhen] = useState<'now' | 'later'>('now');
     const [at, setAt] = useState('');
     const [error, setError] = useState<string | null>(null);
@@ -73,24 +76,11 @@ export default function NewMeeting({ space, people, onStarted, onOnlineCreated, 
     return (
         <div className="mx-auto max-w-2xl space-y-5 rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm sm:p-6 dark:border-zinc-800 dark:bg-zinc-900">
             <div className="flex items-center justify-between gap-3">
-                <h2 className="text-lg font-black text-zinc-900 dark:text-zinc-100">New meeting</h2>
+                <h2 className="flex items-center gap-2 text-lg font-black text-zinc-900 dark:text-zinc-100">
+                    {kind === 'online' ? <Video className="h-5 w-5 text-indigo-600 dark:text-indigo-400" /> : <Mic className="h-5 w-5 text-red-600 dark:text-red-400" />}
+                    {kind === 'online' ? 'New video meeting' : 'Record a meeting'}
+                </h2>
                 <button type="button" onClick={onCancel} aria-label="Close" className="rounded-full p-2 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"><X className="h-5 w-5" /></button>
-            </div>
-
-            {/* Owner 2026-11-18: in the room (recorded on this phone) or online (a video call with a link) */}
-            <div role="radiogroup" aria-label="Where is the meeting" className="grid grid-cols-2 gap-2">
-                {([['room', Mic, 'In the room', 'Record it on this phone'], ['online', Video, 'Online', 'A video call with a link']] as const).map(([k, Icon, label, hint]) => (
-                    <button key={k} type="button" role="radio" aria-checked={kind === k} onClick={() => { setKind(k); setError(null); }}
-                        className={`flex items-start gap-2.5 rounded-2xl border p-3 text-left transition-colors ${kind === k
-                            ? 'border-indigo-600 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-950/40'
-                            : 'border-zinc-200 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/60'}`}>
-                        <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${kind === k ? 'text-indigo-600 dark:text-indigo-400' : 'text-zinc-400'}`} />
-                        <span>
-                            <span className="block text-sm font-black text-zinc-900 dark:text-zinc-100">{label}</span>
-                            <span className="block text-xs text-zinc-500">{hint}</span>
-                        </span>
-                    </button>
-                ))}
             </div>
 
             <label className="block">
@@ -119,7 +109,7 @@ export default function NewMeeting({ space, people, onStarted, onOnlineCreated, 
                                 className="w-full max-w-xs rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100" />
                         </label>
                     )}
-                    <p className="text-xs text-zinc-500">The people you pick below can open the link. Anyone else with this Meeting Assistant can join too, unless the meeting is confidential.</p>
+                    <p className="text-xs text-zinc-500">You get one link for everyone. People from the team go straight in; anyone else, like a candidate or client, types their name and waits until someone lets them in.</p>
                 </div>
             )}
 
@@ -149,7 +139,7 @@ export default function NewMeeting({ space, people, onStarted, onOnlineCreated, 
                 <span>
                     <span className="flex items-center gap-1.5 text-sm font-bold text-zinc-800 dark:text-zinc-200"><Lock className="h-3.5 w-3.5" /> Confidential</span>
                     <span className="text-xs text-zinc-500">{kind === 'online'
-                        ? 'Only you will be able to open the notes, and only the people you pick can join the call.'
+                        ? 'Only you will be able to open the notes. People you did not pick wait until someone lets them in.'
                         : <>Only you will be able to open this meeting&apos;s notes and transcript.</>}</span>
                 </span>
             </label>

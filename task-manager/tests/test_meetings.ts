@@ -4,7 +4,7 @@
  */
 import {
     checkSarvamJob, joinFiles, joinFilesWithOffsets, meetingAudioExtension, parseSarvamOutput, startSarvamJob, transcribeWithWhisper,
-    SARVAM_BASE, type AudioFile, type TranscriptLine,
+    SARVAM_BASE, SARVAM_MAX_FILES, type AudioFile, type TranscriptLine,
 } from '../meetings/MeetingTranscriber';
 import {
     buildExtractionPrompt, buildPeople, extractMeeting, formatClock, parseClock, validateExtraction,
@@ -15,8 +15,9 @@ import { applyNames, fileIndexFor, segmentsFor, voiceLabels } from '../meetings/
 import { embed as voiceEmbed, health as voiceHealth, identify as voiceIdentify, voiceIdConfig } from '../voice/VoiceIdClient';
 import { mergeCapture, missingFromCapture, reportedSegments } from '../meetings/capture';
 import {
-    LIVE_GIVE_UP_MS, audioPathFor, canJoin, egressState, liveOutcome, onlineSetupGaps, parseScheduledFor, recordingStorage, roomNameFor,
-    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, type GuestEntry,
+    LIVE_GIVE_UP_MS, MAX_CALL_RECORDINGS, RECORDER_LEASE_MS, UPLOAD_GRACE_MS, callOutcome, canJoin, missingCallPieces, onlineSetupGaps,
+    parseScheduledFor, recorderDecision, roomNameFor, type CallRecording,
+    MAX_WAITING, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff, isGuestToken, meetingLinkPath, type GuestEntry,
 } from '../meetings/online';
 import { randomBytes } from 'crypto';
 
@@ -401,14 +402,7 @@ async function main() {
     {
         const id = '11111111-2222-3333-4444-555555555555';
         check('room name is prefixed (never an Ira room)', roomNameFor(id) === `mn-${id}`);
-        check('call audio lands where the phone recorder puts a recording', audioPathFor(id, 0) === `${id}/s00/c00000.ogg` && audioPathFor(id, 3) === `${id}/s03/c00000.ogg`);
-        check('the audio path matches the pipeline\'s piece pattern', /^c\d{5}\.\w+$/.test(audioPathFor(id, 0).split('/')[2]) && /^s\d{2}$/.test(audioPathFor(id, 0).split('/')[1]));
-        check('call audio is a type the speech step accepts', meetingAudioExtension('audio/ogg') === 'ogg');
-
-        check('egress starting/active/ending = running', [0, 1, 2].every(n => egressState(n) === 'active'));
-        check('egress complete and limit reached = done', egressState(3) === 'done' && egressState(6) === 'done');
-        check('egress failed and aborted = failed', egressState(4) === 'failed' && egressState(5) === 'failed');
-        check('unknown egress status = still running (never finish early)', egressState(99) === 'active');
+        check('browser call audio is a type the speech step accepts', !!meetingAudioExtension('audio/webm;codecs=opus') && !!meetingAudioExtension('audio/mp4'));
 
         const host = 'aaaaaaaa-0000-0000-0000-000000000001', guest = 'aaaaaaaa-0000-0000-0000-000000000002', other = 'aaaaaaaa-0000-0000-0000-000000000003';
         const open = { created_by: host, attendee_ids: [guest], confidential: false, workspace: 'hr' as const };
@@ -424,12 +418,49 @@ async function main() {
 
         const now = Date.parse('2026-11-18T10:00:00Z');
         const started = '2026-11-18T09:00:00Z';
-        check('recording still running → wait', liveOutcome({ states: ['active', 'done'], roomOpen: false, endedAt: null, startedAt: started, now }) === 'wait');
-        check('room open and nobody ended it → wait', liveOutcome({ states: ['done', 'done'], roomOpen: true, endedAt: null, startedAt: started, now }) === 'wait');
-        check('LiveKit could not be asked → wait (no finishing on a guess)', liveOutcome({ states: ['done'], roomOpen: null, endedAt: null, startedAt: started, now }) === 'wait');
-        check('room closed and recordings stopped → finish', liveOutcome({ states: ['done', 'failed'], roomOpen: false, endedAt: null, startedAt: started, now }) === 'finish');
-        check('host ended and recordings stopped → finish', liveOutcome({ states: ['done', 'done'], roomOpen: true, endedAt: '2026-11-18T09:59:00Z', startedAt: started, now }) === 'finish');
-        check('live far too long → stop', liveOutcome({ states: ['active'], roomOpen: true, endedAt: null, startedAt: new Date(now - LIVE_GIVE_UP_MS - 1000).toISOString(), now }) === 'stop');
+
+        // Owner 2026-11-19: the sound is recorded in ONE team member's browser (free LiveKit plan)
+        const live = (userId: string, segment: number) => ({ userId, segment, until: new Date(now + 10_000).toISOString() });
+        const expired = (userId: string, segment: number) => ({ userId, segment, until: new Date(now - 1).toISOString() });
+        const rec = (segment: number, userId: string, pieces = 0, done = false): CallRecording => ({ segment, userId, pieces, done, at: started });
+        check('nobody recording → the first page to check in records recording 0', JSON.stringify(recorderDecision({}, host, now, null)) === JSON.stringify({ role: 'record', segment: 0, fresh: true }));
+        check('the recorder keeps its recording', JSON.stringify(recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host)] }, host, now, 0)) === JSON.stringify({ role: 'record', segment: 0, fresh: false }));
+        check('everyone else watches while someone records', JSON.stringify(recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host)] }, other, now, null)) === JSON.stringify({ role: 'watch', recording: true }));
+        const takeover = recorderDecision({ recorder: expired(host, 0), recordings: [rec(0, host, 12)] }, other, now, null);
+        check('the recorder left → someone else takes over with a NEW recording', takeover.role === 'record' && takeover.segment === 1 && takeover.fresh);
+        const reload = recorderDecision({ recorder: live(host, 0), recordings: [rec(0, host, 5)] }, host, now, null);
+        check('the recorder\'s page restarted → it starts a new recording (never appends to the old file)', reload.role === 'record' && reload.segment === 1);
+        check('a browser that cannot record is not asked again', JSON.stringify(recorderDecision({ cannotRecord: [other] }, other, now, null)) === JSON.stringify({ role: 'watch', recording: false }));
+        const full = Array.from({ length: MAX_CALL_RECORDINGS }, (_, i) => rec(i, host, 1, true));
+        check('no more recordings than the speech service takes', JSON.stringify(recorderDecision({ recordings: full }, host, now, null)) === JSON.stringify({ role: 'watch', recording: false }));
+        check('the recordings cap matches the speech service', MAX_CALL_RECORDINGS === SARVAM_MAX_FILES);
+        check('a lease outlasts a couple of missed check-ins', RECORDER_LEASE_MS >= 30_000);
+
+        // Owner 2026-11-19: the person who set up the meeting is the main recorder
+        const standIn = { recorder: live(other, 1), recordings: [rec(0, host, 40), rec(1, other)] };
+        const back = recorderDecision(standIn, host, now, null, host);
+        check('the host rejoins → takes the recording back with a new recording', back.role === 'record' && back.segment === 2 && back.fresh);
+        check('the stand-in keeps recording until the host is back', JSON.stringify(recorderDecision(standIn, other, now, 1, host)) === JSON.stringify({ role: 'record', segment: 1, fresh: false }));
+        const handedBack = { recorder: live(host, 2), recordings: [...standIn.recordings, rec(2, host)] };
+        check('after the hand-back the stand-in stops (watches)', JSON.stringify(recorderDecision(handedBack, other, now, 1, host)) === JSON.stringify({ role: 'watch', recording: true }));
+        check('the host keeps it once back', JSON.stringify(recorderDecision(handedBack, host, now, 2, host)) === JSON.stringify({ role: 'record', segment: 2, fresh: false }));
+        check('a host joining late takes over from whoever started', recorderDecision({ recorder: live(other, 0), recordings: [rec(0, other)] }, host, now, null, host).role === 'record');
+        check('a host whose browser cannot record leaves it with the stand-in', JSON.stringify(recorderDecision({ ...standIn, cannotRecord: [host] }, host, now, null, host)) === JSON.stringify({ role: 'watch', recording: true }));
+        check('no hand-back past the recordings cap (the stand-in carries on)', JSON.stringify(recorderDecision({ recorder: live(other, MAX_CALL_RECORDINGS - 1), recordings: full }, host, now, null, host)) === JSON.stringify({ role: 'watch', recording: true }));
+
+        const stored = new Map([[0, 10], [1, 3]]);
+        check('pieces not yet in storage are counted', missingCallPieces([rec(0, host, 10), rec(1, other, 5)], stored) === 2);
+        check('more in storage than reported is not "missing"', missingCallPieces([rec(0, host, 8)], stored) === 0 && missingCallPieces(undefined, stored) === 0);
+
+        const base = { endedAt: null, startedAt: started, recorderAlive: false, missingPieces: 0, lastRecordingAt: started, now };
+        check('call still on → wait', callOutcome({ ...base, roomOpen: true }) === 'wait');
+        check('LiveKit could not be asked → wait (no finishing on a guess)', callOutcome({ ...base, roomOpen: null }) === 'wait');
+        check('call over but a browser is still recording/uploading → wait', callOutcome({ ...base, roomOpen: false, recorderAlive: true }) === 'wait');
+        check('call over, pieces still on their way → wait a little', callOutcome({ ...base, roomOpen: false, missingPieces: 3, lastRecordingAt: new Date(now - 60_000).toISOString() }) === 'wait');
+        check('call over, pieces never came → finish with what arrived', callOutcome({ ...base, roomOpen: false, missingPieces: 3, lastRecordingAt: new Date(now - UPLOAD_GRACE_MS - 1).toISOString() }) === 'finish');
+        check('room closed, all pieces in → finish', callOutcome({ ...base, roomOpen: false }) === 'finish');
+        check('host ended (room not closed yet) → finish', callOutcome({ ...base, roomOpen: true, endedAt: '2026-11-18T09:59:00Z' }) === 'finish');
+        check('live far too long → stop', callOutcome({ ...base, roomOpen: true, startedAt: new Date(now - LIVE_GIVE_UP_MS - 1000).toISOString() }) === 'stop');
 
         check('no time = start now', parseScheduledFor('', now) === null && parseScheduledFor(undefined, now) === null);
         check('a time in an hour is kept', parseScheduledFor('2026-11-18T11:00:00Z', now) === '2026-11-18T11:00:00.000Z');
@@ -438,13 +469,9 @@ async function main() {
         check('a time two days ago is refused', throws('2026-11-16T10:00:00Z'));
         check('a time two years ahead is refused', throws('2028-11-18T10:00:00Z'));
 
-        const base = { NEXT_PUBLIC_SUPABASE_URL: 'https://proj.supabase.co/', SUPABASE_S3_REGION: 'ap-south-1', SUPABASE_S3_ACCESS_KEY_ID: 'k', SUPABASE_S3_SECRET_ACCESS_KEY: 's' };
-        check('storage address worked out from the Supabase URL', recordingStorage(base)?.endpoint === 'https://proj.supabase.co/storage/v1/s3');
-        check('an explicit storage address wins', recordingStorage({ ...base, SUPABASE_S3_ENDPOINT: 'https://x.example/s3' })?.endpoint === 'https://x.example/s3');
-        check('no keys → recording not set up', recordingStorage({ ...base, SUPABASE_S3_SECRET_ACCESS_KEY: '' }) === null);
-        const gaps = onlineSetupGaps({ ...base, LIVEKIT_URL: 'wss://x.livekit.cloud' });
+        const gaps = onlineSetupGaps({ LIVEKIT_URL: 'wss://x.livekit.cloud' });
         check('missing LiveKit keys are named', gaps.length === 1 && gaps[0].includes('LIVEKIT_API_KEY') && gaps[0].includes('LIVEKIT_API_SECRET') && !gaps[0].includes('LIVEKIT_URL'));
-        check('fully set up → no gaps', onlineSetupGaps({ ...base, LIVEKIT_URL: 'wss://x', LIVEKIT_API_KEY: 'a', LIVEKIT_API_SECRET: 'b' }).length === 0);
+        check('only the LiveKit keys are needed (no storage keys any more)', onlineSetupGaps({ LIVEKIT_URL: 'wss://x', LIVEKIT_API_KEY: 'a', LIVEKIT_API_SECRET: 'b' }).length === 0);
     }
 
     console.log('\nGuests without a login (stage 2, owner 2026-11-18)');
@@ -453,6 +480,9 @@ async function main() {
         check('a generated guest secret has the expected shape', isGuestToken(token) && token.length === 32);
         check('wrong-shape secrets are refused before any lookup', !isGuestToken('abc') && !isGuestToken(`${token}x`) && !isGuestToken(`${token.slice(0, 31)}/`) && !isGuestToken(null));
         check('guest link path', guestPathFor(token) === `/guest/${token}`);
+        // Owner 2026-11-18: one link for everyone
+        check('a meeting with a secret shares its one link', meetingLinkPath('m1', token) === `/guest/${token}`);
+        check('an older meeting without a secret keeps its team link', meetingLinkPath('m1', null) === '/meet/m1' && meetingLinkPath('m1', undefined) === '/meet/m1');
         check('guest identity is prefixed (never a staff user id)', guestIdentity('g1') === 'guest-g1');
 
         check('name tidied', cleanGuestName('  Asha   Rao ') === 'Asha Rao');

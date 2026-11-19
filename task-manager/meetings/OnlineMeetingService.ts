@@ -1,28 +1,28 @@
-import {
-    AccessToken, AudioCodec, EgressClient, EncodedFileOutput, EncodedFileType, EncodingOptions, RoomConfiguration,
-    RoomServiceClient, S3Upload, type EgressInfo,
-} from 'livekit-server-sdk';
+import { AccessToken, RoomConfiguration, RoomServiceClient } from 'livekit-server-sdk';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { closeRoom, liveKitConfig } from '@/backend/lib/meetings/livekit';
 import { TaskDatabaseService } from '../TaskDatabaseService';
 import { isMissingSchema } from '../TaskLinks';
 import { isUuid } from '../WorkspaceService';
-import { MEETING_BUCKET, MeetingError } from './MeetingService';
+import { MEETING_BUCKET, MeetingError, MeetingService } from './MeetingService';
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import {
-    MAX_WAITING, audioPathFor, canJoin, cleanGuestName, decideGuest, egressState, guestIdentity, guestPathFor, guestsForStaff,
-    isGuestToken, liveOutcome, onlineSetupGaps, recordingStorage, roomNameFor, type EgressEntry, type GuestEntry, type OnlineState,
+    MAX_WAITING, RECORDER_LEASE_MS, callOutcome, canJoin, cleanGuestName, decideGuest, guestIdentity, guestPathFor, guestsForStaff,
+    isGuestToken, leaseAlive, missingCallPieces, onlineSetupGaps, recorderDecision, roomNameFor, type GuestEntry, type OnlineState,
 } from './online';
 import type { MeetingSpace } from './visibility';
 
 /**
  * Meeting Assistant — online meetings (owner 2026-11-18, stage 1): the LiveKit and database side. Rules: ./online.ts.
  *
- *   create (MeetingService.create, kind 'online') → status 'scheduled', link /meet/<id>
- *   someone joins → `token` (only after agreeing to the recording) → connects → `joined`: status 'live', the sound
- *   recording starts (LiveKit egress, saved straight into our private 'meeting-audio' bucket)
- *   the host ends it, or everyone leaves → the recording stops → `check` (cron and the review screen's polling) moves
- *   the meeting to 'uploaded', and the usual steps write the notes and delete the sound.
+ *   create (MeetingService.create, kind 'online') → status 'scheduled', one link /guest/<secret> for everyone
+ *   someone joins → `token` (after the "This call will be recorded" notice) → connects → `joined`: status 'live'
+ *   owner 2026-11-19 (free LiveKit plan): the sound is recorded in ONE team member's browser, not by LiveKit. Every
+ *   team member's call page checks in (`recorderBeat`); the server gives the job to one of them; that browser uploads
+ *   15-second pieces into our private 'meeting-audio' bucket exactly like the phone recorder (`uploadUrls`) and says
+ *   when its recording is complete (`recorderDone`). If the recorder leaves, someone else takes over.
+ *   the host ends it, or everyone leaves → `check` (cron and the review screen's polling) waits for the last pieces,
+ *   then moves the meeting to 'uploaded', and the usual steps write the notes and delete the sound.
  * The video is never recorded (owner 2026-11-18: it would take up too much space).
  *
  * The meeting agent (Ira) is NOT sent into these rooms: their tokens dispatch no agent.
@@ -39,8 +39,6 @@ interface OnlineRow {
 const LOCK_MS = 60_000;
 /** Join tokens: only for connecting; someone already in the call stays connected. */
 const TOKEN_TTL = '15m';
-/** The call's sound for the notes: Opus at 32 kbps, about 15 MB an hour (deleted once it is text). */
-const AUDIO_OPTIONS = { audioCodec: AudioCodec.OPUS, audioBitrate: 32, audioFrequency: 48000 };
 
 const NOT_FOUND = () => new MeetingError(404, 'This meeting does not exist, or you are not invited to it.', 'NOT_FOUND');
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -49,16 +47,15 @@ function httpUrl(): string | null {
     const cfg = liveKitConfig();
     return cfg ? cfg.url.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:') : null;
 }
-function egressClient(): EgressClient | null {
-    const cfg = liveKitConfig(), url = httpUrl();
-    return cfg && url ? new EgressClient(url, cfg.apiKey, cfg.apiSecret) : null;
-}
 function roomClient(): RoomServiceClient | null {
     const cfg = liveKitConfig(), url = httpUrl();
     return cfg && url ? new RoomServiceClient(url, cfg.apiKey, cfg.apiSecret) : null;
 }
 /** A LiveKit error as a short line for the log and the `problem` field (never a key or a URL with a token). */
 const short = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S+/g, '[url]').slice(0, 160);
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** A whole number from a request, or null. */
+const intOrNull = (v: unknown) => (v === null || v === undefined || v === '' || !Number.isInteger(Number(v)) ? null : Number(v));
 
 export class OnlineMeetingService {
     private static async row(id: string): Promise<OnlineRow> {
@@ -120,7 +117,7 @@ export class OnlineMeetingService {
             },
             setup: onlineSetupGaps(),
             // Stage 2: the guest link (if the host turned it on) and who asked to join through it
-            guests: this.guestsView(m, userId),
+            guests: this.guestsView(m),
         };
     }
 
@@ -155,8 +152,9 @@ export class OnlineMeetingService {
     }
 
     /**
-     * Someone is connected (staff, or since stage 2 an admitted guest): the meeting is live and the sound recording runs.
-     * `userId` (staff only) is noted as joined, and added to "who was present" when they are in the Task Manager.
+     * Someone is connected (staff, or since stage 2 an admitted guest): the meeting is live. `userId` (staff only) is
+     * noted as joined, and added to "who was present" when they are in the Task Manager. Owner 2026-11-19: recording is
+     * no longer started here; a team member's browser records (see `recorderBeat`).
      */
     private static async goLive(id: string, who: { userId?: string; addAttendee?: boolean }) {
         const result = await this.locked(id, async m => {
@@ -165,44 +163,78 @@ export class OnlineMeetingService {
             if (who.userId) online.joined = [...new Set([...(online.joined ?? []), who.userId])];
             // Someone in the Task Manager who joined counts as present (the notes and the speech service use the names)
             const attendees = who.userId && who.addAttendee && !m.attendee_ids.includes(who.userId) ? [...m.attendee_ids, who.userId] : m.attendee_ids;
-            const problem = await this.ensureRecording(id, online);
-            online.problem = problem;
-            return { online, patch: { status: 'live', attendee_ids: attendees }, result: { recording: !problem, problem } };
+            return { online, patch: { status: 'live', attendee_ids: attendees }, result: { recording: true, problem: null as string | null } };
         });
         if (!result) throw new MeetingError(503, 'The meeting is busy. Please try again in a moment.');
         return result;
     }
 
-    /** Starts the sound recording if it is not already running. Returns a plain problem, or null. */
-    private static async ensureRecording(id: string, online: OnlineState): Promise<string | null> {
-        const client = egressClient();
-        const store = recordingStorage();
-        if (!client || !store) return 'Recording is not set up on this server, so this call is not being recorded.';
-        // Never start a recording on a guess: if LiveKit cannot say what is running, a second copy could be started
-        let all: EgressInfo[];
-        try { all = await client.listEgress({ roomName: online.room }); } catch (e) {
-            console.warn('[OnlineMeeting] listEgress:', short(e));
-            return 'Could not check the recording. Press "Try again" in the call.';
-        }
-        // Starting, recording or ending all count as running
-        const running = new Set(all.filter(e => egressState(Number(e.status)) === 'active').map(e => e.egressId));
-        if ((online.audio ?? []).some(e => running.has(e.egressId))) return null;
+    // ── recording in a team member's browser (owner 2026-11-19) ─────────────────
 
-        const path = audioPathFor(id, (online.audio ?? []).length);
-        const s3 = new S3Upload({ accessKey: store.accessKey, secret: store.secret, region: store.region, endpoint: store.endpoint, bucket: MEETING_BUCKET, forcePathStyle: true });
-        try {
-            const info = await client.startRoomCompositeEgress(online.room,
-                { file: new EncodedFileOutput({ fileType: EncodedFileType.OGG, filepath: path, disableManifest: true, output: { case: 's3', value: s3 } }) },
-                { audioOnly: true, encodingOptions: new EncodingOptions(AUDIO_OPTIONS) });
-            online.audio = [...(online.audio ?? []), { egressId: info.egressId, path, startedAt: new Date().toISOString(), state: 'active' }];
-            return null;
-        } catch (e) {
-            console.error('[OnlineMeeting] sound recording did not start:', id, short(e));
-            return 'Recording of the sound (needed for the notes) could not start. Press "Try again" in the call.';
-        }
+    /**
+     * A team member's call page checks in every few seconds with the recording it is making (`segment`, or null) and
+     * how many pieces it has recorded. The answer says whether this page records (and which recording number) or only
+     * watches. Rules: online.ts `recorderDecision`.
+     */
+    static async recorderBeat(userId: string, id: string, spaces: ReadonlySet<MeetingSpace>, input: { segment?: unknown; pieces?: unknown }) {
+        const m = await this.joinable(userId, id, spaces);
+        if (m.status !== 'live' || m.online?.endedAt) return { role: 'watch' as const, recording: false };
+        const mine = intOrNull(input.segment);
+        const pieces = Math.max(0, Math.min(99_999, intOrNull(input.pieces) ?? 0));
+        const out = await this.locked(id, async row => {
+            if (row.status !== 'live' || row.online?.endedAt) return { result: { role: 'watch' as const, recording: false } };
+            const online: OnlineState = { room: roomNameFor(id), ...(row.online ?? {}) };
+            const now = Date.now(), at = new Date(now).toISOString();
+            if (mine !== null) {
+                online.recordings = (online.recordings ?? []).map(r => (r.segment === mine && r.userId === userId ? { ...r, pieces: Math.max(r.pieces, pieces), at } : r));
+            }
+            // Owner 2026-11-19: the meeting's creator takes the recording back whenever they are in the call
+            const d = recorderDecision(online, userId, now, mine, row.created_by);
+            if (d.role === 'record') {
+                online.recorder = { userId, segment: d.segment, until: new Date(now + RECORDER_LEASE_MS).toISOString() };
+                if (d.fresh) online.recordings = [...(online.recordings ?? []), { segment: d.segment, userId, pieces: 0, done: false, at }];
+            }
+            return { online, result: d.role === 'record' ? { role: 'record' as const, segment: d.segment } : d };
+        });
+        if (!out) throw new MeetingError(503, 'The meeting is busy. Please try again in a moment.');
+        return out;
     }
 
-    /** The host ends the call for everyone: recordings stop, the room closes. The notes follow by themselves. */
+    /**
+     * A browser finished a recording (it left the call, lost the job, or the call ended) and has uploaded its pieces:
+     * `pieces` is its final count. `cannot`: this browser cannot record at all, so the job goes to someone else.
+     */
+    static async recorderDone(userId: string, id: string, spaces: ReadonlySet<MeetingSpace>, input: { segment?: unknown; pieces?: unknown; cannot?: unknown }) {
+        await this.joinable(userId, id, spaces);
+        const seg = intOrNull(input.segment);
+        const pieces = Math.max(0, Math.min(99_999, intOrNull(input.pieces) ?? 0));
+        await this.locked(id, async row => {
+            const online: OnlineState = { room: roomNameFor(id), ...(row.online ?? {}) };
+            const at = new Date().toISOString();
+            online.recordings = (online.recordings ?? []).map(r => (r.segment === seg && r.userId === userId ? { ...r, pieces: Math.max(r.pieces, pieces), done: true, at } : r));
+            if (online.recorder?.userId === userId && online.recorder.segment === seg) online.recorder = null;
+            if (input.cannot === true) online.cannotRecord = [...new Set([...(online.cannotRecord ?? []), userId])];
+            return { online, result: true };
+        });
+        // The call may be over and this was the last thing it waited for
+        await this.check(id);
+        return { ok: true };
+    }
+
+    /**
+     * Upload links for the recording browser's pieces (the same links the phone recorder gets). Only for a recording
+     * this person's browser was given, and only while the meeting still takes sound (code FINISHED tells the browser
+     * to drop what is left).
+     */
+    static async uploadUrls(userId: string, id: string, spaces: ReadonlySet<MeetingSpace>, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
+        const m = await this.joinable(userId, id, spaces);
+        if (m.status !== 'live') throw new MeetingError(409, 'This call has finished.', 'FINISHED');
+        const seg = intOrNull(input.segment);
+        if (!(m.online?.recordings ?? []).some(r => r.segment === seg && r.userId === userId)) throw new MeetingError(404, 'This recording is not yours.', 'NOT_FOUND');
+        return MeetingService.pieceUploadUrls(id, input);
+    }
+
+    /** The host ends the call for everyone: the room closes (the recording browser then uploads its last pieces). */
     static async end(userId: string, id: string, spaces: ReadonlySet<MeetingSpace>) {
         const m = await this.joinable(userId, id, spaces);
         if (m.created_by !== userId) throw new MeetingError(403, 'Only the person who set up this meeting can end it for everyone.');
@@ -220,11 +252,6 @@ export class OnlineMeetingService {
     }
 
     private static async stopAndClose(room: string) {
-        const client = egressClient();
-        if (client) {
-            const all = await client.listEgress({ roomName: room }).catch(() => [] as EgressInfo[]);
-            for (const e of all.filter(x => egressState(Number(x.status)) === 'active')) await client.stopEgress(e.egressId).catch(err => console.warn('[OnlineMeeting] stopEgress:', short(err)));
-        }
         await closeRoom(room).catch(err => console.warn('[OnlineMeeting] closeRoom:', short(err)));
     }
 
@@ -235,29 +262,23 @@ export class OnlineMeetingService {
     // secret `key` (in their browser) is the only way to see their answer and get a call token.
 
     /** What staff see: the guest link (if on) and the requests, never a guest's key. Only the creator turns the link on or off. */
-    static guestsView(m: { created_by: string; online?: OnlineState | null }, userId: string) {
+    /**
+     * The people who asked to join through the meeting's link (never a guest's own key). Owner 2026-11-18: the link is
+     * always on (one link for everyone), so there is no switch any more; the waiting room is the gate.
+     */
+    static guestsView(m: { online?: OnlineState | null }) {
         const token = m.online?.guestToken;
-        return { path: token ? guestPathFor(token) : null, list: guestsForStaff(m.online?.guests), canManageLink: m.created_by === userId };
+        return { path: token ? guestPathFor(token) : null, list: guestsForStaff(m.online?.guests) };
     }
 
-    /** The host turns the guest link on (a new secret if there was none) or off (waiting guests are refused). */
-    static async setGuestLink(userId: string, id: string, spaces: ReadonlySet<MeetingSpace>, on: boolean) {
-        const m = await this.joinable(userId, id, spaces);
-        if (m.created_by !== userId) throw new MeetingError(403, 'Only the person who set up this meeting can turn the guest link on or off.');
-        if (!this.isOpen(m)) throw new MeetingError(409, 'This meeting has ended.', 'ENDED');
-        const out = await this.locked(id, async row => {
-            const online: OnlineState = { room: roomNameFor(id), ...(row.online ?? {}) };
-            const now = new Date().toISOString();
-            if (on) online.guestToken = online.guestToken || randomBytes(24).toString('base64url');
-            else {
-                online.guestToken = null;
-                online.guests = (online.guests ?? []).map(g => (g.state === 'waiting' ? { ...g, state: 'denied' as const, decidedAt: now, decidedBy: userId } : g));
-            }
-            return { online, result: { path: online.guestToken ? guestPathFor(online.guestToken) : null } };
-        });
-        if (!out) throw new MeetingError(503, 'The meeting is busy. Please try again in a moment.');
-        await TaskDatabaseService.logAudit({ eventType: 'meeting_guest_link', actorId: userId, details: { meetingId: id, on } });
-        return { guestPath: out.path };
+    /**
+     * Owner 2026-11-18 (one link for everyone): a signed-in team member opened the meeting's link. If they may join
+     * this meeting, the page sends them to the team's join screen (their own name, no waiting); otherwise null and they
+     * ask to join like anyone else.
+     */
+    static async staffMeetingFor(token: unknown, userId: string, spaces: ReadonlySet<MeetingSpace>): Promise<string | null> {
+        const m = await this.byGuestToken(token);
+        return canJoin(m, userId, spaces) ? m.id : null;
     }
 
     /** Let a waiting guest in, refuse them, or remove one already let in. Anyone who may join the meeting can. */
@@ -292,7 +313,7 @@ export class OnlineMeetingService {
     // The guest's side (public: the link's secret is the only key, plus each guest's own key)
 
     private static async byGuestToken(token: unknown): Promise<OnlineRow> {
-        const gone = () => new MeetingError(404, 'This guest link is not valid, or the host has turned it off.', 'LINK_OFF');
+        const gone = () => new MeetingError(404, 'This meeting link is not valid. Please ask the person who invited you for a new one.', 'LINK_OFF');
         if (!isGuestToken(token)) throw gone();
         const { data, error } = await supabaseAdmin.from('meeting_notes').select('*')
             .eq('kind', 'online').eq('online->>guestToken', token).neq('status', 'discarded').limit(1);
@@ -335,14 +356,14 @@ export class OnlineMeetingService {
         const entry: GuestEntry = { id: randomUUID(), name, key: randomBytes(24).toString('base64url'), state: 'waiting', askedAt: now, consentAt: now };
         const out = await this.locked(m.id, async row => {
             const online: OnlineState = { room: roomNameFor(m.id), ...(row.online ?? {}) };
-            // The link may have been turned off a moment ago
+            // The meeting may have been removed a moment ago
             if (online.guestToken !== token) return { result: 'off' as const };
             if ((online.guests ?? []).filter(g => g.state === 'waiting').length >= MAX_WAITING) return { result: 'full' as const };
             online.guests = [...(online.guests ?? []), entry];
             return { online, result: 'ok' as const };
         });
         if (out === null) throw new MeetingError(503, 'The meeting is busy. Please try again in a moment.');
-        if (out === 'off') throw new MeetingError(404, 'This guest link is not valid, or the host has turned it off.', 'LINK_OFF');
+        if (out === 'off') throw new MeetingError(404, 'This meeting link is not valid. Please ask the person who invited you for a new one.', 'LINK_OFF');
         if (out === 'full') throw new MeetingError(429, 'Too many people are waiting to join. Please try again in a few minutes.');
         await TaskDatabaseService.logAudit({ eventType: 'meeting_guest_asked', details: { meetingId: m.id, guestId: entry.id, consent: true } });
         return { guestId: entry.id, key: entry.key };
@@ -382,56 +403,54 @@ export class OnlineMeetingService {
     // ── after the call ────────────────────────────────────────────────────────
 
     /**
-     * A live meeting: brings the sound recordings' state up to date and, once the call is over and every recording has
-     * stopped, hands the meeting to the usual steps ('uploaded'). Called by the cron and by the review screen's polling.
-     * Never throws.
+     * A live meeting: once the call is over, nobody is recording any more and the browsers' pieces are in (or have had
+     * a few minutes to arrive), hands the meeting to the usual steps ('uploaded'). Called by the cron, by the review
+     * screen's polling and when a browser finishes its recording. Never throws. Rules: online.ts `callOutcome`.
      */
     static async check(id: string): Promise<void> {
         try {
-            const client = egressClient(), rooms = roomClient();
-            if (!client || !rooms) return;
+            const rooms = roomClient();
+            if (!rooms) return;
             await this.locked(id, async m => {
                 if (m.status !== 'live') return { result: null };
                 const online: OnlineState = { room: roomNameFor(id), ...(m.online ?? {}) };
-                const infos = await client.listEgress({ roomName: online.room });
-                const byId = new Map(infos.map(e => [e.egressId, e]));
-                const refresh = (list: EgressEntry[] | undefined) => (list ?? []).map(entry => {
-                    const info = byId.get(entry.egressId);
-                    if (!info) return entry;
-                    const file = info.fileResults?.[0];
-                    return {
-                        ...entry, state: egressState(Number(info.status)), error: info.error || null,
-                        ...(file ? { bytes: Number(file.size), durationSeconds: Math.round(Number(file.duration) / 1e9) } : {}),
-                    };
-                });
-                online.audio = refresh(online.audio);
-                const roomOpen = await rooms.listRooms([online.room]).then(r => r.length > 0).catch(() => null);
-                const states = online.audio.map(e => e.state ?? 'active');
-                const outcome = liveOutcome({ states, roomOpen, endedAt: online.endedAt, startedAt: online.startedAt, now: Date.now() });
+                const now = Date.now();
+                const roomOpen = online.endedAt ? false : await rooms.listRooms([online.room]).then(r => r.length > 0).catch(() => null);
+                const recorderAlive = leaseAlive(online.recorder, now);
+                const recordings = online.recordings ?? [];
+                // Storage is only read once the call is over and nobody records (the only time it matters)
+                const settled = (roomOpen === false || !!online.endedAt) && !recorderAlive;
+                const stored = settled ? await this.storedPieces(id, recordings.map(r => r.segment)) : new Map<number, number>();
+                const lastRecordingAt = recordings.reduce<string | null>((a, r) => (!a || r.at > a ? r.at : a), null);
+                const outcome = callOutcome({ roomOpen, endedAt: online.endedAt, startedAt: online.startedAt, recorderAlive, missingPieces: missingCallPieces(recordings, stored), lastRecordingAt, now });
 
                 if (outcome === 'stop') {
                     await this.stopAndClose(online.room);
-                    return { online: { ...online, endedAt: online.endedAt ?? new Date().toISOString(), problem: 'The call ran for more than 12 hours, so it was stopped.' }, result: null };
+                    return { online: { ...online, endedAt: online.endedAt ?? new Date(now).toISOString(), problem: 'The call ran for more than 12 hours, so it was stopped.' }, result: null };
                 }
-                if (outcome === 'wait') return { online, result: null };
+                if (outcome === 'wait') return { result: null };
 
-                online.endedAt = online.endedAt ?? new Date().toISOString();
-                const hasAudio = online.audio.some(a => a.state === 'done') && await this.audioStored(id);
-                await TaskDatabaseService.logAudit({ eventType: 'meeting_online_finished', details: { meetingId: id, audio: online.audio.length, hasAudio } });
+                online.endedAt = online.endedAt ?? new Date(now).toISOString();
+                online.recorder = null;
+                const hasAudio = [...stored.values()].some(n => n > 0);
+                await TaskDatabaseService.logAudit({ eventType: 'meeting_online_finished', details: { meetingId: id, recordings: recordings.length, missing: missingCallPieces(recordings, stored), hasAudio } });
                 if (hasAudio) return { online, patch: { status: 'uploaded', error: null, attempts: 0 }, result: null };
-                // Say why when LiveKit said why (e.g. it could not save into storage)
-                const why = online.audio.find(a => a.error)?.error;
-                const error = why ? `The call's sound could not be saved (${why.slice(0, 120)}), so there are no notes.` : online.problem || 'The call was not recorded, so there are no notes.';
-                return { online, patch: { status: 'failed', error }, result: null };
+                return { online, patch: { status: 'failed', error: online.problem || 'The call was not recorded, so there are no notes.' }, result: null };
             });
         } catch (err) {
             console.error('[OnlineMeeting] check failed:', id, short(err));
         }
     }
 
-    private static async audioStored(id: string): Promise<boolean> {
-        const { data } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(id, { limit: 100 });
-        return (data ?? []).some(f => /^s\d{2}$/.test(f.name));
+    /** How many pieces storage holds for each recording folder (sNN) of a meeting. */
+    private static async storedPieces(id: string, segments: number[]): Promise<Map<number, number>> {
+        const out = new Map<number, number>();
+        for (const seg of [...new Set(segments)]) {
+            const { data, error } = await supabaseAdmin.storage.from(MEETING_BUCKET).list(`${id}/s${pad2(seg)}`, { limit: 10_000 });
+            if (error) throw error;
+            out.set(seg, (data ?? []).filter(f => /^c\d{5}\.\w+$/.test(f.name)).length);
+        }
+        return out;
     }
 
     /** The cron's share: a few live meetings get a check each; late sound files of deleted online meetings are removed. */
@@ -449,7 +468,7 @@ export class OnlineMeetingService {
         return ids;
     }
 
-    /** Deleting an online meeting: stop the call and its recording. (MeetingService.discard then deletes the sound.) */
+    /** Deleting an online meeting: close the call. (MeetingService.discard then deletes the sound.) */
     static async cleanup(m: { id: string; online?: OnlineState | null }) {
         await this.stopAndClose(m.online?.room || roomNameFor(m.id)).catch(() => undefined);
     }

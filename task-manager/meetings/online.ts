@@ -23,8 +23,15 @@ export interface OnlineState {
     /** The host ended it, or the call was found closed */
     endedAt?: string | null;
     endedBy?: string | null;
-    /** One entry per sound recording (a recording that failed mid-call is followed by a new one) */
-    audio?: EgressEntry[];
+    /**
+     * Owner 2026-11-19 (free LiveKit plan): the call's sound is recorded in a team member's BROWSER, not by LiveKit.
+     * `recorder` is whose browser records right now (one at a time, kept alive by its beat); `recordings` lists each
+     * continuous recording a browser made (folder sNN, like the phone recorder) with the pieces it says it made.
+     */
+    recorder?: RecorderLease | null;
+    recordings?: CallRecording[];
+    /** Team members whose browser could not record (they are not asked again in this call) */
+    cannotRecord?: string[];
     /** Everyone who joined (user ids), for "who was present" */
     joined?: string[];
     /** A plain sentence when recording could not start or stopped early */
@@ -52,35 +59,15 @@ export interface GuestEntry {
     decidedBy?: string | null;
 }
 export type GuestState = 'waiting' | 'admitted' | 'denied' | 'removed';
-export interface EgressEntry {
-    egressId: string;
-    /** Storage path in 'meeting-audio' */
-    path: string;
-    startedAt: string;
-    state?: EgressState;
-    bytes?: number;
-    durationSeconds?: number;
-    error?: string | null;
-}
-export type EgressState = 'active' | 'done' | 'failed';
 
-const pad = (n: number, w: number) => String(n).padStart(w, '0');
+/** Owner 2026-11-19: the browser recording the call now. `until` is pushed forward by each of its beats. */
+export interface RecorderLease { userId: string; segment: number; until: string }
+/** One continuous recording made in a browser (folder sNN). `pieces` is what that browser says it recorded. */
+export interface CallRecording { segment: number; userId: string; pieces: number; done: boolean; at: string }
 
 /** The LiveKit room of an online meeting. Prefixed so it can never collide with an Ira meeting room. */
 export const roomNameFor = (meetingId: string) => `mn-${meetingId}`;
 
-/** Audio recording n as the phone recorder's layout: folder sNN holding one piece, so it is "one recording" to the pipeline. */
-export const audioPathFor = (meetingId: string, n: number) => `${meetingId}/s${pad(n, 2)}/c00000.ogg`;
-
-/**
- * LiveKit's egress status number → our three states. LIMIT_REACHED still leaves a usable file up to the limit, so it
- * counts as done; FAILED and ABORTED are failed. Unknown numbers are treated as still running (never finish early).
- */
-export function egressState(status: number): EgressState {
-    if (status === 3 || status === 6) return 'done';
-    if (status === 4 || status === 5) return 'failed';
-    return 'active';
-}
 
 /**
  * Who may join an online meeting (owner 2026-11-18). Signed in, and one of:
@@ -99,22 +86,77 @@ export function canJoin(
     return !m.confidential && spaces.has(m.workspace ?? 'tech');
 }
 
-/** How long a call may stay "live" before it is stopped and processed anyway (a recording LiveKit never closed). */
+/** How long a call may stay "live" before it is closed and processed anyway. */
 export const LIVE_GIVE_UP_MS = 12 * 60 * 60 * 1000;
 
+// ── Recording in the browser (owner 2026-11-19: stay on LiveKit's free plan) ───────────────────────────────────────
+// LiveKit's own recording (egress) is capped at 60 minutes a month on the free plan, so the call's sound is recorded by
+// ONE team member's browser instead: it mixes its own microphone with everyone else's sound and uploads 15-second
+// pieces exactly like the phone recorder. Every team member's call page checks in ("beat"); the server hands the job to
+// one of them. If that person leaves or their page dies, the job passes to someone else within a lease.
+
+/** How often a team member's call page checks in. */
+export const RECORDER_BEAT_MS = 10_000;
+/** A recorder that has not checked in for this long has left: someone else takes over. */
+export const RECORDER_LEASE_MS = 35_000;
+/** After the call, how long to wait for pieces a browser said it recorded but that have not arrived. */
+export const UPLOAD_GRACE_MS = 3 * 60_000;
+/** Recordings per call (each handover starts one); the speech service takes at most this many files. */
+export const MAX_CALL_RECORDINGS = 20;
+
+export const leaseAlive = (lease: RecorderLease | null | undefined, now: number) => !!lease && Date.parse(lease.until) > now;
+
 /**
- * What to do with a live meeting, from what LiveKit reports:
- *   wait      the call or a recording is still going
- *   finish    nobody is in the room any more and every recording has stopped → process it
- *   stop      it has been live for far too long → stop the recordings and close the room, then finish
+ * What a team member's call page should do on its beat. `mine` is the recording that page is making (null: none).
+ *   record (fresh: false)  keep recording `segment` (your lease is renewed)
+ *   record (fresh: true)   start a NEW recording `segment` (nobody is recording, your page restarted, or you are the
+ *                          host taking the recording back)
+ *   watch                  someone else records (`recording` true), or nobody can (`recording` false)
+ * Owner 2026-11-19: the person who set up the meeting (`hostId`) is the main recorder. Whenever they are in the call
+ * their browser records; someone else records only while they are away, and hands it back when they return (the
+ * stand-in stops on its next check-in, so a few seconds may be in both recordings, none are lost).
+ */
+export function recorderDecision(
+    state: { recorder?: RecorderLease | null; recordings?: CallRecording[]; cannotRecord?: string[] },
+    userId: string, now: number, mine: number | null, hostId?: string | null,
+): { role: 'record'; segment: number; fresh: boolean } | { role: 'watch'; recording: boolean } {
+    const lease = state.recorder;
+    const alive = leaseAlive(lease, now);
+    if (alive && lease!.userId === userId && mine === lease!.segment) return { role: 'record', segment: mine, fresh: false };
+    const someoneElse = alive && lease!.userId !== userId;
+    const cannot = (state.cannotRecord ?? []).includes(userId);
+    const hostTakesBack = !!hostId && userId === hostId && !cannot;
+    if (someoneElse && !hostTakesBack) return { role: 'watch', recording: true };
+    if (cannot) return { role: 'watch', recording: someoneElse };
+    const used = (state.recordings ?? []).map(r => r.segment);
+    const next = used.length ? Math.max(...used) + 1 : 0;
+    if (next >= MAX_CALL_RECORDINGS) return { role: 'watch', recording: someoneElse };
+    return { role: 'record', segment: next, fresh: true };
+}
+
+/** Pieces the browsers said they recorded that are not in storage yet (`stored`: folder number → pieces there). */
+export function missingCallPieces(recordings: CallRecording[] | undefined, stored: ReadonlyMap<number, number>): number {
+    return (recordings ?? []).reduce((sum, r) => sum + Math.max(0, r.pieces - (stored.get(r.segment) ?? 0)), 0);
+}
+
+/**
+ * What to do with a live meeting:
+ *   wait    the call is still on, a browser is still recording, or pieces are still on their way (for a while)
+ *   finish  the call is over and the sound is in → process it (no sound at all → it fails with a plain reason)
+ *   stop    it has been live for far too long → close the room, then finish
  * `roomOpen` null = could not ask LiveKit (treat as open: never finish on a guess).
  */
-export function liveOutcome(input: { states: EgressState[]; roomOpen: boolean | null; endedAt: string | null | undefined; startedAt: string | null | undefined; now: number }): 'wait' | 'finish' | 'stop' {
+export function callOutcome(input: {
+    roomOpen: boolean | null; endedAt: string | null | undefined; startedAt: string | null | undefined;
+    recorderAlive: boolean; missingPieces: number; lastRecordingAt: string | null | undefined; now: number;
+}): 'wait' | 'finish' | 'stop' {
     const since = Date.parse(String(input.startedAt ?? ''));
     if (Number.isFinite(since) && input.now - since > LIVE_GIVE_UP_MS) return 'stop';
-    const recording = input.states.some(s => s === 'active');
-    const closed = input.roomOpen === false || !!input.endedAt;
-    return closed && !recording ? 'finish' : 'wait';
+    const over = input.roomOpen === false || !!input.endedAt;
+    if (!over || input.recorderAlive) return 'wait';
+    const last = Date.parse(String(input.lastRecordingAt ?? ''));
+    if (input.missingPieces > 0 && Number.isFinite(last) && input.now - last < UPLOAD_GRACE_MS) return 'wait';
+    return 'finish';
 }
 
 /**
@@ -130,25 +172,13 @@ export function parseScheduledFor(input: unknown, now = Date.now()): string | nu
     return new Date(t).toISOString();
 }
 
-/** Supabase Storage's S3 address and keys, which LiveKit needs to save the call's sound into our bucket. */
-export interface RecordingStorage { endpoint: string; region: string; accessKey: string; secret: string }
-
-export function recordingStorage(env: Record<string, string | undefined> = process.env): RecordingStorage | null {
-    const base = (env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim().replace(/\/+$/, '');
-    const endpoint = (env.SUPABASE_S3_ENDPOINT ?? '').trim() || (base ? `${base}/storage/v1/s3` : '');
-    const region = (env.SUPABASE_S3_REGION ?? '').trim();
-    const accessKey = (env.SUPABASE_S3_ACCESS_KEY_ID ?? '').trim();
-    const secret = (env.SUPABASE_S3_SECRET_ACCESS_KEY ?? '').trim();
-    return endpoint && region && accessKey && secret ? { endpoint, region, accessKey, secret } : null;
-}
-
-/** What is missing for online meetings, in words, so the screen can say it instead of failing. */
+/**
+ * What is missing for online meetings, in words, so the screen can say it instead of failing. Owner 2026-11-19: only
+ * the LiveKit keys; the sound is uploaded by the browser like the phone recorder, so no storage keys are needed.
+ */
 export function onlineSetupGaps(env: Record<string, string | undefined> = process.env): string[] {
-    const gaps: string[] = [];
     const lk = ['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'].filter(k => !(env[k] ?? '').trim());
-    if (lk.length) gaps.push(`${lk.join(', ')} ${lk.length === 1 ? 'is' : 'are'} not set, so nobody can join a video call yet.`);
-    if (!recordingStorage(env)) gaps.push('SUPABASE_S3_REGION, SUPABASE_S3_ACCESS_KEY_ID and SUPABASE_S3_SECRET_ACCESS_KEY are not set, so calls cannot be recorded (and no notes can be made).');
-    return gaps;
+    return lk.length ? [`${lk.join(', ')} ${lk.length === 1 ? 'is' : 'are'} not set, so nobody can join a video call yet.`] : [];
 }
 
 // ── Stage 2: guests without a login (owner 2026-11-18) ──────────────────────────────────────────────────────────────
@@ -161,6 +191,13 @@ export const guestIdentity = (guestId: string) => `guest-${guestId}`;
 
 /** The public page of the guest link. */
 export const guestPathFor = (token: string) => `/guest/${token}`;
+
+/**
+ * Owner 2026-11-18: ONE link for everyone, like Google Meet. Every online meeting gets its secret link when it is made;
+ * team members who open it while signed in go straight to the join screen, everyone else asks to join and waits.
+ * A meeting made before this (no secret) keeps its team-only link.
+ */
+export const meetingLinkPath = (meetingId: string, token: string | null | undefined) => (token ? guestPathFor(token) : `/meet/${meetingId}`);
 
 /** A guest link secret looks like this (24 random bytes, base64url). Anything else is refused before a database read. */
 export const isGuestToken = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{32}$/.test(v);

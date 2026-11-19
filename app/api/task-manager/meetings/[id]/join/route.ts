@@ -13,9 +13,12 @@ export const dynamic = 'force-dynamic';
  * Rules: task-manager/meetings/online.ts (canJoin). Plan: docs/MEETING_TASKS_SPEC.md
  *   GET                        the meeting's name, host, time and whether it is open, plus what is not set up yet
  *   POST { action: 'token', consent: true }   a LiveKit token to join (only after agreeing to the recording)
- *   POST { action: 'joined' }  connected: the meeting goes live and the recordings start (again, if they stopped)
+ *   POST { action: 'joined' }  connected: the meeting goes live
+ *   POST { action: 'recorder', segment, pieces }     owner 2026-11-19: the page checks in; the answer says whether this
+ *                                                    browser records the call's sound (and which recording) or watches
+ *   POST { action: 'recorder_done', segment, pieces, cannot? }   that recording is complete and uploaded
+ *   POST { action: 'upload_urls', segment, from, count, mimeType }  upload links for the recording browser's pieces
  *   POST { action: 'end' }     the creator ends the call for everyone
- *   POST { action: 'guest_link', on }                       stage 2: the creator turns the guest link on or off
  *   POST { action: 'guest_decide', guestId, decision }      stage 2: 'admit' | 'deny' a waiting guest, or 'remove' one
  */
 
@@ -48,7 +51,9 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             case 'token': return NextResponse.json({ success: true, ...(await OnlineMeetingService.token(me.userId, id, me.spaces, { consent: body.consent })) });
             case 'joined': return NextResponse.json({ success: true, ...(await OnlineMeetingService.joined(me.userId, id, me.spaces)) });
             case 'end': return NextResponse.json({ success: true, ...(await OnlineMeetingService.end(me.userId, id, me.spaces)) });
-            case 'guest_link': return NextResponse.json({ success: true, ...(await OnlineMeetingService.setGuestLink(me.userId, id, me.spaces, body.on === true)) });
+            case 'recorder': return NextResponse.json({ success: true, ...(await OnlineMeetingService.recorderBeat(me.userId, id, me.spaces, { segment: body.segment, pieces: body.pieces })) });
+            case 'recorder_done': return NextResponse.json({ success: true, ...(await OnlineMeetingService.recorderDone(me.userId, id, me.spaces, { segment: body.segment, pieces: body.pieces, cannot: body.cannot })) });
+            case 'upload_urls': return NextResponse.json({ success: true, ...(await OnlineMeetingService.uploadUrls(me.userId, id, me.spaces, { segment: body.segment, from: body.from, count: body.count, mimeType: body.mimeType })) });
             case 'guest_decide': return NextResponse.json({ success: true, ...(await OnlineMeetingService.decideGuestRequest(me.userId, id, me.spaces, body.guestId, body.decision)) });
             default: return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });
         }

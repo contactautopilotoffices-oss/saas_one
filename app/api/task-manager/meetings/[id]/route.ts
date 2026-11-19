@@ -38,7 +38,6 @@ export const maxDuration = 300;
  *                                            no Task Manager assignment rules either way
  *     end_call                               owner 2026-11-18: an online meeting — end the call for everyone (its
  *                                            creator only); the notes follow by themselves
- *     guest_link  { on }                     stage 2: turn the guest link on or off (the creator only)
  *     guest_decide { guestId, decision }     stage 2: 'admit' | 'deny' a waiting guest, or 'remove' one let in
  */
 
@@ -91,7 +90,6 @@ export async function POST(request: NextRequest, { params }: Ctx) {
             case 'delete_task': return NextResponse.json({ success: true, ...(await MeetingService.deleteTask(userId, id, body.taskId)) });
             case 'send': return NextResponse.json({ success: true, ...(await MeetingService.send(userId, id, body.taskIds, body.sendAs ?? 'autopilot')) });
             case 'end_call': return NextResponse.json({ success: true, ...(await OnlineMeetingService.end(userId, id, await meetingSpacesFor(userId))) });
-            case 'guest_link': return NextResponse.json({ success: true, ...(await OnlineMeetingService.setGuestLink(userId, id, await meetingSpacesFor(userId), body.on === true)) });
             case 'guest_decide': return NextResponse.json({ success: true, ...(await OnlineMeetingService.decideGuestRequest(userId, id, await meetingSpacesFor(userId), body.guestId, body.decision)) });
             default: return NextResponse.json({ success: false, error: 'Unknown action' }, { status: 400 });
         }

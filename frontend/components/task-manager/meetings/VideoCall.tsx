@@ -3,8 +3,9 @@
 /**
  * Owner 2026-11-18 — the Meeting Assistant's online meeting: the page behind the link /meet/<id>.
  *
- *   lobby  the meeting's name, host and time; camera and microphone choice; the recording notice, which must be
- *          agreed to before joining (the server refuses a join token without it). Only the sound is recorded.
+ *   lobby  the meeting's name, host and time; camera and microphone choice; "This call will be recorded" under the
+ *          Join button (owner 2026-11-18: a notice, no tick box, like Google Meet). Only the sound is recorded.
+ *          Joining after seeing the notice is sent to the server as the agreement it requires.
  *   call   a grid of everyone's camera (a name tile when the camera is off); a shared screen takes the stage with
  *          the cameras in a strip beside it. Controls: microphone, camera, share screen, leave, and for the host
  *          "End for everyone". A "Recording" mark shows the call is being recorded, or a warning when it is not.
@@ -13,8 +14,9 @@
  * Stage 2 (owner 2026-11-18): inside the call the team sees the guest link and the people waiting to be let in
  * (GuestPanel), checked every few seconds. Guests have their own page (GuestCall.tsx) and reuse CallScreen below.
  *
- * Video runs through hosted LiveKit. The page only gets a token from FMS (/api/task-manager/meetings/<id>/join);
- * the recording is started by the server once someone is connected. Built from @livekit/components-react hooks with
+ * Video runs through hosted LiveKit. The page only gets a token from FMS (/api/task-manager/meetings/<id>/join).
+ * Owner 2026-11-19 (free LiveKit plan): the sound is recorded in a team member's browser (CallRecorder.tsx); the
+ * server picks one, and another takes over if that person leaves. Built from @livekit/components-react hooks with
  * our own styling (the LiveKit style sheet package is not installed).
  */
 
@@ -25,6 +27,7 @@ import { Track, type Participant } from 'livekit-client';
 import { AlertTriangle, ChevronDown, Loader2, Mic, MicOff, MonitorUp, PhoneOff, RotateCcw, ShieldCheck, UserPlus, Users, Video, VideoOff } from 'lucide-react';
 import { call, niceDateTime, type GuestsView } from './api';
 import GuestPanel from './GuestPanel';
+import CallRecorder, { type CallRecordingState } from './CallRecorder';
 
 interface Info {
     meeting: {
@@ -45,12 +48,15 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
     const [error, setError] = useState<string | null>(null);
     const [stage, setStage] = useState<Stage>('lobby');
     const [conn, setConn] = useState<Conn | null>(null);
-    const [consent, setConsent] = useState(false);
     const [camOn, setCamOn] = useState(true);
     const [micOn, setMicOn] = useState(true);
     const [busy, setBusy] = useState(false);
-    /** null = recording (or not known yet); a sentence = the call is NOT being recorded */
-    const [recordingProblem, setRecordingProblem] = useState<string | null>(null);
+    /** Set when telling the server we joined did not work (then nothing records from this page) */
+    const [joinProblem, setJoinProblem] = useState<string | null>(null);
+    /** Owner 2026-11-19: the server knows we are in the call, so this page may record */
+    const [announced, setAnnounced] = useState(false);
+    const [recState, setRecState] = useState<CallRecordingState>('checking');
+    const recordingProblem = joinProblem ?? (recState === 'off' ? 'This call is not being recorded right now, so this part will not be in the notes.' : null);
     const [endedByHost, setEndedByHost] = useState(false);
 
     /** The meeting's name, host, time and whether it is open. `reloads` goes up to ask again (after leaving). */
@@ -68,7 +74,7 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
     }, [meetingId, reloads]);
 
     const join = async () => {
-        if (!consent || busy) return;
+        if (busy) return;
         setBusy(true);
         setError(null);
         const r = await call<Conn>(joinUrl(meetingId), { action: 'token', consent: true });
@@ -78,11 +84,12 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
         setStage('connecting');
     };
 
-    /** Connected: tell the server, which marks the meeting live and starts (or restarts) the recording. */
+    /** Connected: tell the server, which marks the meeting live. Then this page takes part in recording. */
     const announce = useCallback(async () => {
-        const r = await call<{ recording: boolean; problem: string | null }>(joinUrl(meetingId), { action: 'joined' }, { timeoutMs: 45_000 });
-        if (!r.ok) { setRecordingProblem(r.error); return; }
-        setRecordingProblem(r.problem);
+        const r = await call(joinUrl(meetingId), { action: 'joined' }, { timeoutMs: 45_000 });
+        if (!r.ok) { setJoinProblem(r.error); return; }
+        setJoinProblem(null);
+        setAnnounced(true);
     }, [meetingId]);
 
     const endForEveryone = async () => {
@@ -92,6 +99,7 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
         setEndedByHost(true);
         setStage('left');
         setConn(null);
+        setAnnounced(false);
     };
 
     if (stage === 'call' || stage === 'connecting') {
@@ -99,13 +107,14 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
             <LiveKitRoom serverUrl={conn?.url} token={conn?.token} connect audio={micOn} video={camOn}
                 options={{ adaptiveStream: true, dynacast: true }}
                 onConnected={() => { setStage('call'); void announce(); }}
-                onDisconnected={() => { setStage('left'); setConn(null); }}
+                onDisconnected={() => { setStage('left'); setConn(null); setAnnounced(false); setRecState('checking'); }}
                 onError={e => setError(e.message)}
                 className="fixed inset-0 z-50 flex flex-col bg-zinc-950 text-white">
                 <CallScreen title={info?.meeting.title ?? 'Meeting'} connecting={stage === 'connecting'} isHost={!!info?.meeting.isHost}
-                    recordingProblem={recordingProblem} onRetryRecording={() => void announce()} onEnd={() => void endForEveryone()}
+                    recordingProblem={recordingProblem} onRetryRecording={joinProblem ? () => void announce() : undefined} onEnd={() => void endForEveryone()}
                     extra={<StaffGuests meetingId={meetingId} />} />
                 <RoomAudioRenderer />
+                {announced && <CallRecorder meetingId={meetingId} endpoint={joinUrl(meetingId)} onState={setRecState} />}
             </LiveKitRoom>
         );
     }
@@ -155,19 +164,13 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
                                     <Toggle on={micOn} onClick={() => setMicOn(v => !v)} onIcon={Mic} offIcon={MicOff} label={micOn ? 'Microphone on' : 'Microphone off'} />
                                     <Toggle on={camOn} onClick={() => setCamOn(v => !v)} onIcon={Video} offIcon={VideoOff} label={camOn ? 'Camera on' : 'Camera off'} />
                                 </div>
-                                {/* Owner 2026-11-18: everyone agrees to the recording before joining (the server checks it too) */}
-                                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-                                    <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-500" />
-                                    <span className="text-sm text-zinc-200">
-                                        <span className="flex items-center gap-1.5 font-bold"><ShieldCheck className="h-4 w-4 text-indigo-300" /> This call is recorded</span>
-                                        <span className="mt-0.5 block text-xs text-zinc-400">The sound is recorded and turned into notes and tasks, then deleted. The video is not recorded. By joining you agree to this.</span>
-                                    </span>
-                                </label>
                                 {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">{error}</p>}
-                                <button type="button" onClick={() => void join()} disabled={!consent || busy}
+                                <button type="button" onClick={() => void join()} disabled={busy}
                                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black hover:bg-indigo-500 disabled:opacity-40">
                                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />} Join now
                                 </button>
+                                {/* Owner 2026-11-18: a notice, no tick box */}
+                                <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-zinc-400"><ShieldCheck className="h-3.5 w-3.5 text-indigo-300" /> This call will be recorded</p>
                             </>
                         )}
                     </>
@@ -204,7 +207,8 @@ function StaffGuests({ meetingId }: { meetingId: string }) {
     }, [meetingId, tick]);
     if (!guests) return null;
     const waiting = guests.list.filter(g => g.state === 'waiting').length;
-    if (!guests.path && !guests.canManageLink && !waiting) return null;
+    const inCall = guests.list.filter(g => g.state === 'admitted').length;
+    if (!waiting && !inCall) return null;
     const shown = open || waiting > 0;
     return (
         <div className="px-4 pt-2">

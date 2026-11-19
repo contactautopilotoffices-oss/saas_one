@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Copy, Download, FileText, Link2, Loader2, Lock, MessageCircle, Mic, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, CircleHelp, Copy, Download, FileText, Link2, Loader2, Lock, MessageCircle, Mic, NotebookText, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
 } from 'lucide-react';
 import {
     PROCESSING, STATUS_LABEL, call, clock, joinLink, meetingUrl, niceDate, niceDateTime, type MeetingDetail, type MeetingPerson, type MeetingStatus, type MeetingTask, type MeetingSpace, type SendAs,
@@ -308,7 +308,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                 <Link2 className="h-4 w-4 shrink-0 text-zinc-400" />
                                 <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">{joinLink(m.online.joinPath)}</span>
                                 <button type="button"
-                                    onClick={() => { void navigator.clipboard?.writeText(joinLink(m.online!.joinPath)).then(() => setFlash('Link copied. Share it with the people you picked.'), () => setFlash('Could not copy. Select the link and copy it by hand.')); }}
+                                    onClick={() => { void navigator.clipboard?.writeText(joinLink(m.online!.joinPath)).then(() => setFlash('Link copied. Anyone can use it: people from the team go straight in, others wait until someone lets them in.'), () => setFlash('Could not copy. Select the link and copy it by hand.')); }}
                                     className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
                                     <Copy className="h-3.5 w-3.5" /> Copy
                                 </button>
@@ -326,7 +326,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                     </button>
                                 )}
                             </div>
-                            {/* Stage 2: the guest link and the people waiting to be let in */}
+                            {/* Stage 2: the people waiting to be let in (the one link above is for everyone) */}
                             {m.online.guests && (
                                 <div className="mt-3">
                                     <GuestPanel guests={m.online.guests} onAction={async body => {
@@ -412,24 +412,28 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
             {/* Ready */}
             {m.status === 'ready' && m.summary && (
                 <>
-                    <Panel title="Summary">
-                        <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{m.summary.summary}</p>
-                    </Panel>
-                    <div className="grid gap-5 md:grid-cols-2">
-                        {m.summary.decisions.length > 0 && <Panel title="Decisions"><Bullets items={m.summary.decisions} /></Panel>}
-                        {m.summary.openQuestions.length > 0 && <Panel title="Open questions"><Bullets items={m.summary.openQuestions} /></Panel>}
+                    {/* Owner 2026-11-19: colour-coded notes (option B: white cards with a colour band; numbered decisions and questions) */}
+                    <NotesCard tone="summary" title="Summary">
+                        <p className="whitespace-pre-line text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200">{m.summary.summary}</p>
+                    </NotesCard>
+                    <div className="grid items-start gap-5 md:grid-cols-2">
+                        {m.summary.decisions.length > 0 && <NotesCard tone="decisions" title="Decisions" count={m.summary.decisions.length}><Numbered tone="decisions" items={m.summary.decisions} /></NotesCard>}
+                        {m.summary.openQuestions.length > 0 && <NotesCard tone="questions" title="Open questions" count={m.summary.openQuestions.length}><Numbered tone="questions" items={m.summary.openQuestions} /></NotesCard>}
                     </div>
                     {m.summary.notes.length > 0 && (
-                        <Panel title="Notes">
+                        <NotesCard tone="notes" title="Notes" count={m.summary.notes.length} countLabel={m.summary.notes.length === 1 ? 'topic' : 'topics'}>
                             <div className="space-y-4">
-                                {m.summary.notes.map((n, i) => (
-                                    <div key={i}>
-                                        <p className="text-sm font-black text-zinc-800 dark:text-zinc-200">{n.topic}</p>
-                                        <Bullets items={n.points} />
-                                    </div>
-                                ))}
+                                {m.summary.notes.map((n, i) => {
+                                    const c = TOPIC_COLOURS[i % TOPIC_COLOURS.length];
+                                    return (
+                                        <div key={i}>
+                                            <p className="flex items-center gap-2 text-[15px] font-black text-zinc-900 dark:text-zinc-100"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${c.dot}`} aria-hidden />{n.topic}</p>
+                                            <ul className={`mt-1.5 list-disc space-y-1 pl-5 text-[15px] leading-relaxed text-zinc-700 dark:text-zinc-300 ${c.marker}`}>{n.points.map((x, j) => <li key={j}>{x}</li>)}</ul>
+                                        </div>
+                                    );
+                                })}
                             </div>
-                        </Panel>
+                        </NotesCard>
                     )}
 
                     {/* Tasks */}
@@ -558,8 +562,53 @@ function Panel({ title, children }: { title?: string; children: React.ReactNode 
     );
 }
 
-function Bullets({ items }: { items: string[] }) {
-    return <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;
+/**
+ * Owner 2026-11-19 (option B): the notes as white cards with a colour band along the top; the heading, its icon and the
+ * markers in the section's colour. Summary purple, decisions green, open questions amber, notes blue.
+ */
+type NotesTone = 'summary' | 'decisions' | 'questions' | 'notes';
+const TONES: Record<NotesTone, { band: string; title: string; badge: string; icon: typeof Sparkles }> = {
+    summary: { band: 'border-t-indigo-500 dark:border-t-indigo-400', title: 'text-indigo-700 dark:text-indigo-300', badge: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300', icon: Sparkles },
+    decisions: { band: 'border-t-emerald-500 dark:border-t-emerald-400', title: 'text-emerald-700 dark:text-emerald-300', badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300', icon: CheckCircle2 },
+    questions: { band: 'border-t-amber-500 dark:border-t-amber-400', title: 'text-amber-700 dark:text-amber-300', badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300', icon: CircleHelp },
+    notes: { band: 'border-t-sky-500 dark:border-t-sky-400', title: 'text-sky-700 dark:text-sky-300', badge: 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300', icon: NotebookText },
+};
+/** Each notes topic gets its own colour (dot and bullets), in turn */
+const TOPIC_COLOURS = [
+    { dot: 'bg-violet-500', marker: 'marker:text-violet-500' },
+    { dot: 'bg-pink-500', marker: 'marker:text-pink-500' },
+    { dot: 'bg-cyan-500', marker: 'marker:text-cyan-500' },
+    { dot: 'bg-orange-500', marker: 'marker:text-orange-500' },
+];
+
+function NotesCard({ tone, title, count, countLabel, children }: { tone: NotesTone; title: string; count?: number; countLabel?: string; children: React.ReactNode }) {
+    const t = TONES[tone];
+    const Icon = t.icon;
+    return (
+        <section className={`rounded-3xl border border-t-[5px] border-zinc-200 bg-white p-5 shadow-sm sm:p-6 dark:border-zinc-800 dark:bg-zinc-900 ${t.band}`}>
+            <div className="mb-3 flex items-center gap-2.5">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${t.badge}`}><Icon className="h-4 w-4" /></span>
+                <h3 className={`text-sm font-black tracking-wide ${t.title}`}>{title}</h3>
+                {count !== undefined && <span className={`ml-auto rounded-full px-2.5 py-0.5 text-xs font-black ${t.badge}`}>{count}{countLabel ? ` ${countLabel}` : ''}</span>}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+/** Owner 2026-11-19: decisions and open questions are numbered, each number in the section's colour. */
+function Numbered({ tone, items }: { tone: NotesTone; items: string[] }) {
+    const badge = TONES[tone].badge;
+    return (
+        <ol className="space-y-2.5">
+            {items.map((x, i) => (
+                <li key={i} className="flex gap-2.5 text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+                    <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums ${badge}`}>{i + 1}</span>
+                    <span className="min-w-0">{x}</span>
+                </li>
+            ))}
+        </ol>
+    );
 }
 
 function Steps({ status, withVoice }: { status: MeetingDetail['status']; withVoice: boolean }) {

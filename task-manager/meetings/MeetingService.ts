@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from '../TaskDatabaseService';
 import { isMissingSchema } from '../TaskLinks';
@@ -20,7 +20,7 @@ import { health as voiceHealth, identify as voiceIdentify, voiceIdConfig, VOICEP
 import { applyNames, segmentsFor, voiceLabels } from './MeetingSpeakers';
 import { mergeCapture, missingFromCapture, reportedSegments, type Capture } from './capture';
 import { OnlineMeetingService } from './OnlineMeetingService';
-import { onlineSetupGaps, parseScheduledFor, roomNameFor, type MeetingKind, type OnlineState } from './online';
+import { meetingLinkPath, onlineSetupGaps, parseScheduledFor, roomNameFor, type MeetingKind, type OnlineState } from './online';
 
 /**
  * Meeting Notes → Tasks (owner 2026-10-29). The Tech dashboard's "Meetings" tab.
@@ -286,11 +286,12 @@ export class MeetingService {
             kind: (m.kind ?? 'room') as MeetingKind,
             scheduledFor: m.scheduled_for ?? null,
             online: m.kind === 'online' ? {
-                joinPath: `/meet/${m.id}`,
+                // Owner 2026-11-18: one link for everyone (team straight in, others wait to be let in)
+                joinPath: meetingLinkPath(m.id, m.online?.guestToken),
                 startedAt: m.online?.startedAt ?? null, endedAt: m.online?.endedAt ?? null,
                 problem: m.online?.problem ?? null, joinedCount: m.online?.joined?.length ?? 0,
                 // Stage 2: the guest link and who asked to join through it (never a guest's own key)
-                guests: OnlineMeetingService.guestsView(m, userId),
+                guests: OnlineMeetingService.guestsView(m),
             } : null,
         };
     }
@@ -378,14 +379,16 @@ export class MeetingService {
         // The meeting's date is the planned day (India time) when it is scheduled, else today
         const meetingDate = scheduledFor ? new Date(Date.parse(scheduledFor) + 330 * 60_000).toISOString().slice(0, 10) : todayIST();
         const id = randomUUID();
+        // Owner 2026-11-18: the meeting's one link — a secret nobody can guess, made with the meeting
+        const linkSecret = online ? randomBytes(24).toString('base64url') : null;
         const { data, error } = await supabaseAdmin.from('meeting_notes').insert({
             id, title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
             meeting_date: meetingDate, status: online ? 'scheduled' : 'recording', workspace: space,
-            ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id) } satisfies OnlineState } : {}),
+            ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret } satisfies OnlineState } : {}),
         }).select('id').single();
         if (error || !data) dbFail(error, 'Could not start the meeting');
         await TaskDatabaseService.logAudit({ eventType: 'meeting_created', actorId: userId, details: { meetingId: data.id, people: attendeeIds.length + extraNames.length, kind: online ? 'online' : 'room' } });
-        return { id: data.id as string, joinPath: online ? `/meet/${data.id}` : null };
+        return { id: data.id as string, joinPath: online ? meetingLinkPath(data.id as string, linkSecret) : null };
     }
 
     /** The recordings already stored for a meeting: folder s00, s01, … — one per continuous recording. */
@@ -449,6 +452,14 @@ export class MeetingService {
     static async uploadUrls(userId: string, id: string, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
         const m = await this.owned(userId, id);
         this.stillRecording(m);
+        return this.pieceUploadUrls(id, input);
+    }
+
+    /**
+     * The upload links themselves, after the caller has checked who may upload. Owner 2026-11-19: also used by an online
+     * call's recording browser (OnlineMeetingService.uploadUrls), so call pieces land exactly where phone pieces do.
+     */
+    static async pieceUploadUrls(id: string, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
         const { segment, seq: from, ext } = this.checkPieceNumbers({ segment: input.segment, seq: input.from, mimeType: input.mimeType });
         const count = Math.min(UPLOAD_URL_BATCH, Math.max(1, Number(input.count) || 1));
         const urls: Array<{ seq: number; path: string; token: string; signedUrl: string }> = [];

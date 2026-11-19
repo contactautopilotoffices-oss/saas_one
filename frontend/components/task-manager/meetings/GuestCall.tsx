@@ -1,9 +1,12 @@
 'use client';
 
 /**
- * Stage 2 (owner 2026-11-18) — the guest link /guest/<secret>: an online meeting for someone without a login.
+ * Stage 2 (owner 2026-11-18) — the meeting's link /guest/<secret>. Owner 2026-11-18: this is now the ONE link for
+ * everyone, like Google Meet: a signed-in team member who may join is shown the team's join screen (VideoCall, their
+ * own name, no waiting); anyone else asks to join here and waits to be let in.
  *
- *   form     the meeting's name, host and time; their name; camera and microphone; the recording notice to agree to
+ *   form     the meeting's name, host and time; their name; camera and microphone; "This call will be recorded"
+ *            (a notice, no tick box; asking to join is sent to the server as the agreement it requires)
  *   waiting  "Someone will let you in" — asks the server every few seconds
  *   call     the same call screen as the team (CallScreen), without the team's controls
  *   end      let in and left / refused / removed / the meeting ended / the link was turned off
@@ -16,9 +19,9 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { LiveKitRoom, RoomAudioRenderer } from '@livekit/components-react';
 import { Clock, Loader2, Mic, MicOff, PhoneOff, RotateCcw, ShieldCheck, Video, VideoOff, XCircle } from 'lucide-react';
 import { call, niceDateTime } from './api';
-import { CallScreen } from './VideoCall';
+import VideoCall, { CallScreen } from './VideoCall';
 
-interface Info { meeting: { title: string; hostName: string; scheduledFor: string | null; open: boolean }; ready: boolean }
+interface Info { meeting: { title: string; hostName: string; scheduledFor: string | null; open: boolean }; ready: boolean; staffMeetingId: string | null }
 type Mine = { guestId: string; key: string; name: string };
 type GuestState = 'waiting' | 'admitted' | 'denied' | 'removed';
 type Stage = 'form' | 'waiting' | 'connecting' | 'call' | 'left' | 'refused' | 'removed' | 'ended' | 'gone';
@@ -47,7 +50,6 @@ export default function GuestCall({ token }: { token: string }) {
     const [stage, setStage] = useState<Stage>('form');
     const [mine, setMine] = useState<Mine | null>(null);
     const [name, setName] = useState('');
-    const [consent, setConsent] = useState(false);
     const [camOn, setCamOn] = useState(true);
     const [micOn, setMicOn] = useState(true);
     const [busy, setBusy] = useState(false);
@@ -60,7 +62,7 @@ export default function GuestCall({ token }: { token: string }) {
         void call<Info>(apiUrl(token)).then(r => {
             if (!live) return;
             if (!r.ok) { setError(r.error); setStage(r.code === 'LINK_OFF' ? 'gone' : 'form'); return; }
-            setInfo({ meeting: r.meeting, ready: r.ready });
+            setInfo({ meeting: r.meeting, ready: r.ready, staffMeetingId: r.staffMeetingId ?? null });
             const saved = readMine(token);
             if (saved) { setMine(saved); setName(saved.name); setStage('waiting'); }
         });
@@ -100,7 +102,7 @@ export default function GuestCall({ token }: { token: string }) {
     }, [stage, mine, token, enter]);
 
     const ask = async () => {
-        if (busy || !consent) return;
+        if (busy) return;
         setBusy(true);
         setError(null);
         const r = await call<{ guestId: string; key: string }>(apiUrl(token), { action: 'ask', name, consent: true });
@@ -121,6 +123,9 @@ export default function GuestCall({ token }: { token: string }) {
         if (r.ok && !r.open) { saveMine(token, null); setStage('ended'); return; }
         setStage('left');
     }, [mine, token]);
+
+    // One link for everyone: a signed-in team member who may join gets the team's screen (own name, no waiting)
+    if (info?.staffMeetingId && !mine) return <VideoCall meetingId={info.staffMeetingId} />;
 
     if ((stage === 'connecting' || stage === 'call') && conn) {
         return (
@@ -145,7 +150,7 @@ export default function GuestCall({ token }: { token: string }) {
         <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-white">
             <div className="w-full max-w-md space-y-5 rounded-3xl border border-white/10 bg-zinc-900 p-6 shadow-xl">
                 {stage === 'gone' ? (
-                    <End icon={XCircle} title="This link does not work" text="The link is not valid, or the host has turned it off. Please ask them for a new one." />
+                    <End icon={XCircle} title="This link does not work" text="The link is not valid. Please ask the person who invited you for a new one." />
                 ) : !info && !error ? (
                     <p className="flex items-center gap-2 text-sm text-zinc-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</p>
                 ) : !info ? (
@@ -194,18 +199,13 @@ export default function GuestCall({ token }: { token: string }) {
                                     <Toggle on={micOn} onClick={() => setMicOn(v => !v)} on_={<Mic className="h-4 w-4" />} off_={<MicOff className="h-4 w-4" />} label={micOn ? 'Microphone on' : 'Microphone off'} />
                                     <Toggle on={camOn} onClick={() => setCamOn(v => !v)} on_={<Video className="h-4 w-4" />} off_={<VideoOff className="h-4 w-4" />} label={camOn ? 'Camera on' : 'Camera off'} />
                                 </div>
-                                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
-                                    <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-500" />
-                                    <span className="text-sm text-zinc-200">
-                                        <span className="flex items-center gap-1.5 font-bold"><ShieldCheck className="h-4 w-4 text-indigo-300" /> This call is recorded</span>
-                                        <span className="mt-0.5 block text-xs text-zinc-400">The sound is recorded and turned into meeting notes, then deleted. The video is not recorded. By asking to join you agree to this.</span>
-                                    </span>
-                                </label>
                                 {error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">{error}</p>}
-                                <button type="button" onClick={() => void ask()} disabled={!consent || busy || name.trim().length < 2}
+                                <button type="button" onClick={() => void ask()} disabled={busy || name.trim().length < 2}
                                     className="flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black hover:bg-indigo-500 disabled:opacity-40">
                                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />} Ask to join
                                 </button>
+                                {/* Owner 2026-11-18: a notice, no tick box */}
+                                <p className="flex items-center justify-center gap-1.5 text-xs font-semibold text-zinc-400"><ShieldCheck className="h-3.5 w-3.5 text-indigo-300" /> This call will be recorded</p>
                             </>
                         )}
                     </>

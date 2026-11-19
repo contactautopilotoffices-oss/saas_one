@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, CheckSquare, ChevronRight, Download, FileText, Loader2, Lock, Mic, Pencil, Plus, Square, Users, Video, X } from 'lucide-react';
+import { Check, CheckSquare, ChevronRight, Download, FileText, Loader2, Lock, Mic, Pencil, Square, Users, Video, X } from 'lucide-react';
 import MeetingRecorder from './MeetingRecorder';
 import MeetingReview from './MeetingReview';
 import NewMeeting from './NewMeeting';
@@ -15,11 +15,13 @@ import { PROCESSING, STATUS_LABEL, call, clock, meetingUrl, meetingsUrl, niceDat
  * ("from Autopilot"). Plan: docs/MEETING_TASKS_SPEC.md
  * Owner 2026-11-13: a recovery banner for audio still on this phone, and "Select" to download the notes of several
  * meetings as one PDF or Word file.
+ * Owner 2026-11-18: two buttons at the top, "Record a meeting" and "New video meeting", instead of one "New meeting"
+ * with a choice inside. Both kinds stay in the one list below.
  */
 
 type View =
     | { kind: 'list' }
-    | { kind: 'new' }
+    | { kind: 'new'; meeting: 'room' | 'online' }
     | { kind: 'record'; id: string; title: string; file: File | null }
     | { kind: 'review'; id: string };
 
@@ -99,7 +101,7 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
     };
 
     if (view.kind === 'new') {
-        return <NewMeeting space={space} people={people} onCancel={() => setView({ kind: 'list' })} onStarted={(id, title, file) => setView({ kind: 'record', id, title, file })} onOnlineCreated={id => setView({ kind: 'review', id })} />;
+        return <NewMeeting space={space} people={people} kind={view.meeting} onCancel={() => setView({ kind: 'list' })} onStarted={(id, title, file) => setView({ kind: 'record', id, title, file })} onOnlineCreated={id => setView({ kind: 'review', id })} />;
     }
     if (view.kind === 'record') {
         return <MeetingRecorder space={space} meetingId={view.id} title={view.title} file={view.file} people={people} onDone={() => setView({ kind: 'review', id: view.id })} onBack={() => setView({ kind: 'review', id: view.id })} onDiscarded={() => setView({ kind: 'list' })} />;
@@ -125,9 +127,13 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
                             {selecting ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />} {selecting ? 'Done' : 'Select'}
                         </button>
                     )}
-                    <button type="button" onClick={() => setView({ kind: 'new' })} disabled={!!error && !meetings?.length}
+                    <button type="button" onClick={() => setView({ kind: 'new', meeting: 'room' })} disabled={!!error && !meetings?.length}
                         className="flex items-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-red-700 disabled:opacity-50">
-                        <Plus className="h-4 w-4" /> New meeting
+                        <Mic className="h-4 w-4" /> Record a meeting
+                    </button>
+                    <button type="button" onClick={() => setView({ kind: 'new', meeting: 'online' })} disabled={!!error && !meetings?.length}
+                        className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50">
+                        <Video className="h-4 w-4" /> New video meeting
                     </button>
                 </div>
             </div>
