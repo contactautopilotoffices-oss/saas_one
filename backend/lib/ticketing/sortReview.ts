@@ -27,6 +27,7 @@ import { CONFIDENCE_HIGH, categoryOptionsFrom, confidenceWord, forgetCorrections
 import type { SkillGroup } from './classifyTicket';
 import { learningSetting, removeExample, retireExamples, saveExample } from './sortLearningStore';
 import { learningView, type LearningView, type TicketLearningNote } from './sortLearningView';
+import { rulesView, type RulesView } from './sortRulesStore';
 
 export const REVIEW_DAYS = 30;
 /** At most this many tickets are looked at for the queue, and this many are sent to the screen. */
@@ -95,6 +96,8 @@ export interface TicketReviewView {
     recent: TicketJudgement[];
     /** 2026-11-19: the learning (examples, watch-only comparison, weeks, disagreements); null when unreadable. */
     learning: LearningView | null;
+    /** 2026-11-19: the sorting rules (in use, waiting for approval, runs, history); null when unreadable. */
+    rules: RulesView | null;
 }
 
 type Row = Record<string, unknown>;
@@ -213,11 +216,16 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
 
     // The learning: never a reason for the screen to fail.
     let learning: LearningView | null = null;
+    let rules: RulesView | null = null;
+    const setting = await learningSetting(orgId, admin);
     try {
-        learning = await learningView(admin, orgId, await learningSetting(orgId, admin), queue.map(q => q.id), now);
+        learning = await learningView(admin, orgId, setting, queue.map(q => q.id), now);
         for (const q of queue) q.learning = learning.notes[q.id] ?? null;
     } catch (err) {
         console.warn('[TicketReview] the learning part could not be read:', err instanceof Error ? err.message : err);
+    }
+    try { rules = await rulesView(admin, orgId, setting.rulesDaily !== false); } catch (err) {
+        console.warn('[TicketReview] the sorting rules could not be read:', err instanceof Error ? err.message : err);
     }
 
     return {
@@ -228,6 +236,7 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
         accuracy: { days: REVIEW_DAYS, sorted, byAi, byRules, resorted, percent: sorted ? Math.round((100 * (sorted - resorted)) / sorted) : null, judgedRight, judgedWrong },
         recent,
         learning,
+        rules,
     };
 }
 

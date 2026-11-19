@@ -121,7 +121,8 @@ async function run() {
     // 2026-11-02: the Candidate Search jobs are allowed by the follow-up migration that widens the job list
     // 2026-11-15: the newest migration restates the whole list (every earlier job plus the rest of the application's)
     // 2026-11-16: the Recruitment calls' two jobs (call_transcribe, call_analyse) make the newest list this one
-    const sqlJobs = read('supabase/migrations/20261116000002_ai_models_call_jobs.sql');
+    // 2026-11-19: the ticket sorting rules' drafting job (ticket_rules_draft) makes the newest list this one
+    const sqlJobs = read('supabase/migrations/20261119000003_ai_models_ticket_rules_job.sql');
     check('every job in the catalog is allowed by the newest job list (which replaces the earlier ones)', C.AI_JOBS.every(j => sqlJobs.includes(`'${j.key}'`)));
     const earlier = [...read('supabase/migrations/20261114000001_unified_brain_ai_model_job.sql').matchAll(/'([a-z_]+)'/g)].map(m => m[1]).filter(j => /^(wa_|voice_|import_|superuser_|learning_|duplicate_|candidate_|brain_)/.test(j));
     check('and every job that could be saved before can still be saved', earlier.length >= 16 && earlier.every(j => sqlJobs.includes(`'${j}'`)), earlier.filter(j => !sqlJobs.includes(`'${j}'`)));
@@ -244,6 +245,7 @@ async function run() {
     console.log('\n11. Each call site reads its choice and keeps today\'s model as the fallback');
     const SITES: Array<[string, RegExp]> = [
         ['backend/lib/ticketing/aiClassifier.ts', /chainFor\('ticket_classify'\)/],
+        ['backend/lib/ticketing/sortRulesStore.ts', /chainFor\('ticket_rules_draft'\)[\s\S]*withModelFallback\(chain, async model => \{\s+const res = await llm\.complete\(\{ model,/],
         ['backend/lib/coaching/groqCoach.ts', /modelFor\('coaching_feedback', GROQ_MODEL\)[\s\S]*markFailed\('coaching_feedback'\);\s+return scoreWith\(GROQ_MODEL, input\)/],
         ['app/api/master-admin-chatbot/route.ts', /runWithModel\('admin_chatbot', MODEL,/],
         ['backend/lib/documentBank/ocr.ts', /modelFor\('document_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, content\)/],

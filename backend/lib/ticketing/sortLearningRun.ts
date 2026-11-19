@@ -52,7 +52,7 @@ export function examplesForPrompt(neighbours: readonly Neighbour[]): Correction[
     return neighbours.map(n => ({ text: n.example.text, code: n.example.code, team: n.example.team, kind: n.example.source === 'judged_right' ? 'confirmed' : 'corrected' }));
 }
 
-export async function sortNewWay(text: string, options: readonly CategoryOption[], orgId: string, setting: LearningSetting, deps: AiDeps = {}, ld: LearningDeps = {}): Promise<NewWayResult | null> {
+export async function sortNewWay(text: string, options: readonly CategoryOption[], orgId: string, setting: LearningSetting, deps: AiDeps = {}, ld: LearningDeps = {}, rules: string | null = null): Promise<NewWayResult | null> {
     const started = Date.now();
     const clean = String(text ?? '').trim();
     if (!clean) throw new Error('the ticket has no text');
@@ -79,7 +79,7 @@ export async function sortNewWay(text: string, options: readonly CategoryOption[
         return { verdict: short.verdict, model: SHORTCUT_MODEL, method: 'shortcut', search, modelConfidence: null, why, neighbours: neighbours.map(noteOf), latencyMs: Date.now() - started, tokensIn: 0, tokensOut: 0, failures: [] };
     }
 
-    const sorted = await classifyWithAi(clean, options, deps, examplesForPrompt(neighbours));
+    const sorted = await classifyWithAi(clean, options, deps, examplesForPrompt(neighbours), rules);
     const measured = measuredConfidence(sorted.verdict.confidence, sorted.verdict.code, neighbours, calibration, name);
     return {
         verdict: { ...sorted.verdict, confidence: measured.confidence },

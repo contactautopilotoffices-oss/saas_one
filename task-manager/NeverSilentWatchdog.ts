@@ -142,5 +142,9 @@ export async function runBotHousekeeping(): Promise<{ watchdog: WatchdogResult |
     } catch (err) { console.warn('[BotHousekeeping] watchdog skipped:', err instanceof Error ? err.message : err); }
     try { const { runPhase5Housekeeping } = await import('./BotLearningHousekeeping'); out.phase5 = await runPhase5Housekeeping(); }
     catch (err) { console.warn('[BotHousekeeping] Phase 5 skipped:', err instanceof Error ? err.message : err); }
+    // 2026-11-19: carry on a ticket sorting rules test that was cut short (backend/lib/ticketing/sortRulesStore.ts).
+    // Only continues runs already started (daily cron or the button); never drafts, never makes rules live.
+    try { const { dailyRulesStep } = await import('@/backend/lib/ticketing/sortRulesStore'); await dailyRulesStep(new Date(), 15_000, { startNew: false }); }
+    catch (err) { console.warn('[BotHousekeeping] ticket rules step skipped:', err instanceof Error ? err.message : err); }
     return out;
 }

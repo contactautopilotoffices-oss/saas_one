@@ -83,7 +83,7 @@ const SKILL_SEEDS: SkillSeed[] = [
 
 const SETTINGS: BrainSettings = {
     mode: 'live', audience: 'pilot', pilotUserIds: [uuid(1), uuid(2), uuid(3), uuid(5), uuid(20), uuid(21), uuid(22), uuid(23), uuid(24)], blockedUserIds: [],
-    channels: { whatsapp: true, app_chat: true }, taskEngine: false, ticketLearning: { mode: 'shadow', meaning: false }, grid: {},
+    channels: { whatsapp: true, app_chat: true }, taskEngine: false, ticketLearning: { mode: 'shadow', meaning: false, rulesDaily: true }, grid: {},
     skillModes: { 'ticket.create': 'live', 'room.book': 'shadow', 'task.add_file': 'off' },
     limits: { perUserPerHour: 30, actionsPerUserPerDay: 50, maxToolCalls: 4, maxQuestionsInRow: 2 },
     model: { effort: 'low', maxTokens: 2000, vision: true },
@@ -537,6 +537,20 @@ export function createDemoApi(): BrainApi {
     let ticketQueue: TicketReviewView['queue'] = empty ? [] : structuredClone(TICKET_QUEUE);
     const ticketJudged = { right: empty ? 0 : 12, wrong: empty ? 0 : 3 };
     let ticketRecent: TicketReviewView['recent'] = empty ? [] : [{ ticketId: 'tk-0', at: at(dayBefore(1), '11:02'), text: 'Drainage needs to clean 2nd C wing male washroom', verdict: 'wrong', chosen: 'cleaning_required', right: 'washroom_issue', moved: true, canUndo: true }];
+    const ruleV = (id: string, version: number, status: 'offered' | 'active' | 'retired' | 'rejected', rules: string[], days: number) => ({
+        id, version, status, source: 'daily', summary: status === 'offered' ? 'Adds a rule for MCP (the MCB panel) after 3 corrections; keeps the AC drip rule.' : null,
+        rules: rules.map((text, i) => ({ text, sources: i === 0 && status === 'offered' ? [{ text: 'MCP fix in electrical room', code: 'power_outage' }, { text: 'MCP needs fixing 4th floor', code: 'power_outage' }, { text: 'MCB tripping 2nd floor B wing', code: 'power_outage' }] : [] })),
+        test: status === 'offered' ? { fix: { tickets: 9, beforeRight: 3, afterRight: 8 }, heldOut: { tickets: 64, beforeRight: 57, afterRight: 58, beforeWrongButHigh: 3, afterWrongButHigh: 2 }, dangerLowered: [], fixed: [{ text: 'MCP needs fixing 4th floor', right: 'power_outage' }], broke: [], failed: 0, passes: true, why: 'Passed.' } : null,
+        at: at(dayBefore(days), '02:47'), decidedAt: status === 'active' ? at(dayBefore(days - 1), '10:12') : null,
+    });
+    const ticketRules = (): TicketReviewView['rules'] => (empty ? null : {
+        tableMissing: false, daily: settings.ticketLearning.rulesDaily, running: null,
+        active: ruleV('rv-2', 2, 'active', ['Water dripping from an AC unit or its drain pipe is ac_breakdown, not water_leakage.'], 6),
+        offered: ruleV('rv-3', 3, 'offered', ['MCP at these sites means the MCB panel: power_outage, not fire_alarm.', 'Water dripping from an AC unit or its drain pipe is ac_breakdown, not water_leakage.'], 0),
+        history: [ruleV('rv-1', 1, 'retired', ['Water from the AC is ac_breakdown.'], 12)],
+        runs: [{ id: 'run-3', trigger: 'daily', status: 'offered', message: 'Version 3 offered. Passed: fixed 5 ticket(s), right on 58 of 64 it never saw (before: 57), no danger ticket lowered.', at: at(dayBefore(0), '02:45') },
+            { id: 'run-2', trigger: 'daily', status: 'no_change', message: 'No new corrections since the last run, so nothing new to learn.', at: at(dayBefore(1), '02:45') }],
+    });
     const ticketLearning = (): TicketReviewView['learning'] => (empty ? null : {
         setting: settings.ticketLearning, tableMissing: variant === 'nolearning', examples: 184,
         notes: {},
@@ -549,7 +563,7 @@ export function createDemoApi(): BrainApi {
         // Judged wrong here, plus two changed with the Override button on the ticket.
         const resorted = empty ? 0 : ticketJudged.wrong + 2;
         return {
-            tableMissing: variant === 'noreview', queue: ticketQueue, waiting: ticketQueue.length, choices: TICKET_CHOICES, recent: ticketRecent, learning: ticketLearning(),
+            tableMissing: variant === 'noreview', queue: ticketQueue, waiting: ticketQueue.length, choices: TICKET_CHOICES, recent: ticketRecent, learning: ticketLearning(), rules: ticketRules(),
             accuracy: { days: 30, sorted, byAi: empty ? 0 : 214, byRules: empty ? 0 : 112, resorted, percent: sorted ? Math.round((100 * (sorted - resorted)) / sorted) : null, judgedRight: ticketJudged.right, judgedWrong: ticketJudged.wrong },
         };
     };
@@ -752,6 +766,9 @@ export function createDemoApi(): BrainApi {
             }
             if ('action' in body && body.action === 'keep') {
                 return { ok: true, status: status(), data: structuredClone({ ...ticketView(), learning: ticketView().learning && { ...ticketView().learning!, conflicts: [] } }), message: 'Kept. The other answer is no longer shown to the AI.' };
+            }
+            if ('action' in body && body.action.startsWith('rules_')) {
+                return { ok: true, status: status(), data: structuredClone(ticketView()), message: 'In the demo, rules are not saved.' };
             }
             if ('action' in body) return { ok: false, kind: 'invalid', message: 'Unknown action.' };
             const t = ticketQueue.find(x => x.id === body.ticketId);

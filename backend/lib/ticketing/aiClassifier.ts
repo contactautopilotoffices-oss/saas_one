@@ -73,6 +73,7 @@
  */
 import type { BrainLlm } from '@/task-manager/brain/llm';
 import type { SkillGroup } from './classifyTicket';
+import { rulesBlock } from './sortRules';
 
 export const TEAMS: readonly SkillGroup[] = ['technical', 'plumbing', 'vendor', 'soft_services'];
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
@@ -243,13 +244,13 @@ function correctionLines(corrections: readonly Correction[], options: readonly C
         usable.map(c => `- "${c.text.replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 200)}" → ${c.code}`).join('\n');
 }
 
-export function userPrompt(text: string, options: readonly CategoryOption[], corrections: readonly Correction[] = []): string {
-    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${correctionLines(corrections, options)}\n\nTicket:\n"""\n${text.slice(0, MAX_TEXT)}\n"""`;
+export function userPrompt(text: string, options: readonly CategoryOption[], corrections: readonly Correction[] = [], rules: string | null = null): string {
+    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${rulesBlock(rules)}${correctionLines(corrections, options)}\n\nTicket:\n"""\n${text.slice(0, MAX_TEXT)}\n"""`;
 }
 
-export function batchPrompt(texts: readonly string[], options: readonly CategoryOption[], corrections: readonly Correction[] = []): string {
+export function batchPrompt(texts: readonly string[], options: readonly CategoryOption[], corrections: readonly Correction[] = [], rules: string | null = null): string {
     const tickets = texts.map((t, i) => `${i + 1}. """${t.slice(0, MAX_TEXT).replace(/"""/g, '"')}"""`).join('\n');
-    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${correctionLines(corrections, options)}\n\n` +
+    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${rulesBlock(rules)}${correctionLines(corrections, options)}\n\n` +
         `Sort each of these ${texts.length} tickets separately, following the same steps for each.\n${tickets}\n\n` +
         `Answer with JSON only: {"results":[{"n":1,"category":…,"team":…,"priority":…,"risk":…,"reason":…,"vague":…,"confidence":…}, …]} with one entry per ticket, n = the ticket's number.`;
 }
@@ -335,7 +336,7 @@ async function llmOf(deps: AiDeps, timeoutMs: number): Promise<BrainLlm> {
  * Sorts one ticket. Tries the models in order (a slow one gets the next started alongside after a few seconds); the
  * first answer that passes the checks wins. Throws when every model failed; the caller then uses the keyword rules.
  */
-export async function classifyWithAi(text: string, options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = []): Promise<AiSorted> {
+export async function classifyWithAi(text: string, options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = [], rules: string | null = null): Promise<AiSorted> {
     const clean = String(text ?? '').trim();
     if (!clean) throw new Error('the ticket has no text');
     if (!options.length) throw new Error('the category list is empty');
@@ -343,7 +344,7 @@ export async function classifyWithAi(text: string, options: readonly CategoryOpt
     const { withModelFallback } = await import('@/task-manager/brain/llm');
     const started = Date.now();
     const { value, trace } = await withModelFallback(chain, async model => {
-        const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: userPrompt(clean, options, corrections), maxTokens: 300, json: true });
+        const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: userPrompt(clean, options, corrections, rules), maxTokens: 300, json: true });
         return { verdict: checkVerdict(jsonOf(res.text), options), tokensIn: res.tokensIn, tokensOut: res.tokensOut };
     }, 'ticket sorting', { hedgeMs: HEDGE_MS });
     return { verdict: value.verdict, model: trace.model, latencyMs: Date.now() - started, tokensIn: value.tokensIn, tokensOut: value.tokensOut, failures: trace.failures };
@@ -354,7 +355,7 @@ export async function classifyWithAi(text: string, options: readonly CategoryOpt
  * the verdict, or null where the model gave no usable answer for that row (the caller uses the keyword rules there).
  * Never throws.
  */
-export async function classifyManyWithAi(texts: readonly string[], options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = []): Promise<Array<{ verdict: AiVerdict; model: string } | null>> {
+export async function classifyManyWithAi(texts: readonly string[], options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = [], rules: string | null = null): Promise<Array<{ verdict: AiVerdict; model: string } | null>> {
     const out: Array<{ verdict: AiVerdict; model: string } | null> = texts.map(() => null);
     if (!texts.length || !options.length) return out;
     let chain: readonly string[];
@@ -373,7 +374,7 @@ export async function classifyManyWithAi(texts: readonly string[], options: read
         const part = idx.map(i => String(texts[i] ?? '').trim() || '(empty)');
         try {
             const { value, trace } = await withModelFallback(chain, async model => {
-                const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: batchPrompt(part, options, corrections), maxTokens: 130 * part.length + 100, json: true });
+                const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: batchPrompt(part, options, corrections, rules), maxTokens: 130 * part.length + 100, json: true });
                 const results = (jsonOf(res.text) as { results?: unknown })?.results;
                 if (!Array.isArray(results)) throw new Error('no results list in the answer');
                 const got = part.map((_, k) => {

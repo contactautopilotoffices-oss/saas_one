@@ -44,11 +44,14 @@ export const brainSettingsSchema = z.object({
      *            without the AI. If it fails, the old way runs.
      * meaning = also find similar tickets by meaning (the embedding service the candidate search uses), not only by
      *           shared words. Off by default: it uses the shared embedding key's quota.
+     * rulesDaily = draft new sorting rules every day from the new corrections (sortRules.ts; owner 2026-11-19: "daily
+     *           automatic as well as on button click"). A draft is only ever offered; a person approves it.
      */
     ticketLearning: z.object({
         mode: skillMode.default('off'),
         meaning: z.boolean().default(false),
-    }).strict().default({ mode: 'off', meaning: false }),
+        rulesDaily: z.boolean().default(true),
+    }).strict().default({ mode: 'off', meaning: false, rulesDaily: true }),
     /** role → module → level. A role with no row here gets the default for its kind of role (see defaultLevel). */
     grid: z.record(z.string().min(1).max(64), moduleGrid).default({}),
     /** skill id → off / shadow / live. Missing = the skill's own default. */

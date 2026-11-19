@@ -196,7 +196,7 @@ test('on, everything fails: the keyword rules still sort the ticket', async () =
 
 test('the setting: off by default, and an old saved row without it still reads', () => {
     const d = brainSettingsSchema.parse({});
-    assert.deepEqual(d.ticketLearning, { mode: 'off', meaning: false });
+    assert.deepEqual(d.ticketLearning, { mode: 'off', meaning: false, rulesDaily: true });
     assert.equal(brainSettingsSchema.safeParse({ mode: 'live', ticketLearning: { mode: 'sometimes' } }).success, false);
 });
 

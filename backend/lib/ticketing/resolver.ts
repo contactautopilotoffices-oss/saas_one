@@ -16,6 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import { emitWebhook } from './webhooks';
 import { settingFor, sortNewWay, type LearningDeps, type NewWayResult } from './sortLearningRun';
 import { writeTrace, type LearningTrace } from './sortLearningStore';
+import { activeRulesText } from './sortRulesStore';
 
 export type DecisionSource = 'rule' | 'llm' | 'human';
 
@@ -102,6 +103,8 @@ export interface ResolveOptions {
     corrections?: Correction[];
     /** For tests: the learning setting, examples and track record (sortLearningRun.ts). */
     learning?: LearningDeps;
+    /** For tests: the organisation's approved sorting rules (sortRules.ts). Default: read from the database. */
+    rules?: string | null;
 }
 
 /** Watch only: after the old way has sorted the ticket, the new way may take at most this much longer. */
@@ -136,6 +139,8 @@ export async function resolveClassification(ticketText: string, options?: string
 
     // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
     let categories: CategoryOption[] = [];
+    // 2026-11-19: the organisation's approved sorting rules (none until a person approves a version).
+    const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
     /** Today's way: the newest corrections, the AI's own rating. Returns the verdict it applied, or null. */
     const oldWay = async (): Promise<AiVerdict | null> => {
         try {
@@ -143,7 +148,7 @@ export async function resolveClassification(ticketText: string, options?: string
                 categories.length ? Promise.resolve(categories) : opts.categories ?? loadCategoryOptions(opts.propertyId),
                 opts.corrections ?? loadCorrections(opts.organizationId),
             ]);
-            const sorted = await classifyWithAi(ticketText, cats, opts.deps, corrections);
+            const sorted = await classifyWithAi(ticketText, cats, opts.deps, corrections, rules);
             applyAi(finalResult, sorted.verdict, sorted.model, sorted.latencyMs, sorted.tokensIn, sorted.tokensOut);
             if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
             return sorted.verdict;
@@ -163,7 +168,7 @@ export async function resolveClassification(ticketText: string, options?: string
 
     try { categories = opts.categories ?? await loadCategoryOptions(opts.propertyId); } catch { categories = []; }
     const started = Date.now();
-    const newWay = sortNewWay(ticketText, categories, orgId, setting, opts.deps, opts.learning)
+    const newWay = sortNewWay(ticketText, categories, orgId, setting, opts.deps, opts.learning, rules)
         .catch(err => { console.warn('[Resolver] the learning way failed:', err instanceof Error ? err.message.slice(0, 300) : err); return 'failed' as const; });
 
     if (setting.mode === 'shadow') {
@@ -271,7 +276,8 @@ export async function resolveImportRows(texts: readonly string[], options: Resol
     } catch (err) {
         console.warn('[Resolver] category list unavailable for bulk import:', err instanceof Error ? err.message : err);
     }
-    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections);
+    const rules = options.rules !== undefined ? options.rules : await activeRulesText(options.organizationId);
+    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections, rules);
     return texts.map((text, i) => {
         const hit = ai[i];
         if (hit) {

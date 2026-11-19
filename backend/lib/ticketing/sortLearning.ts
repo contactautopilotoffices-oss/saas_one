@@ -86,7 +86,7 @@ export function mergeNeighbours(a: readonly Neighbour[], b: readonly Neighbour[]
 // ── Phase 3: the repeat shortcut ────────────────────────────────────────────────────────────────────────────────────
 
 /** Words that may mean danger: such a ticket always goes to the AI, which may raise the priority. */
-const DANGER = /\b(fire|smoke|smok|spark|sparking|burn|burning|shock|short ?circuit|flood|flooding|stuck|trapped|injur|bleed|faint|emergency|urgent|gas|explo|collapse|aag|dhuan|dhua|jal|current|chingari|phas)/i;
+export const DANGER = /\b(fire|smoke|smok|spark|sparking|burn|burning|shock|short ?circuit|flood|flooding|stuck|trapped|injur|bleed|faint|emergency|urgent|gas|explo|collapse|aag|dhuan|dhua|jal|current|chingari|phas)/i;
 
 export interface ShortcutResult { verdict: AiVerdict; agreeing: Neighbour[] }
 

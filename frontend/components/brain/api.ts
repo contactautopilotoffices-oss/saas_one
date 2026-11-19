@@ -17,7 +17,10 @@ import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; code: string | null }
     /** 2026-11-19: take a judgement back (within 7 days), or keep one of two learning examples that disagree. */
     | { action: 'undo'; ticketId: string }
-    | { action: 'keep'; keep: string; drop: string };
+    | { action: 'keep'; keep: string; drop: string }
+    /** Sorting rules: draft now, carry on a test, test one's own rules, use / reject a version, stop using rules. */
+    | { action: 'rules_suggest' } | { action: 'rules_continue'; runId: string } | { action: 'rules_own'; text: string }
+    | { action: 'rules_use' | 'rules_reject'; versionId: string } | { action: 'rules_stop' };
 /** The judging reply also says what happened to the ticket (moved, not moved because closed, …). */
 export type TicketReviewResult = Result<TicketReviewView> & { message?: string };
 

@@ -176,6 +176,10 @@
       "schedule": "45 20 * * *"
     },
     {
+      "path": "/api/cron/ticket-rules",
+      "schedule": "15 21 * * *"
+    },
+    {
       "path": "/api/cron/process-petty-cash-deliveries",
       "schedule": "* * * * *"
     },

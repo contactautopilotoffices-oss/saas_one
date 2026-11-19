@@ -212,6 +212,10 @@ function LearningCard({ d, saved, edit }: CardProps) {
                     hint="Also finds similar tickets that use different words (“AC dripping” and “water from the split unit”). Uses the embedding service’s shared quota. Off: similar tickets are found by shared words only.">
                     <Toggle id={`${id}m`} label="Find similar tickets by meaning" checked={T.meaning} disabled={T.mode === 'off'} onChange={meaning => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, meaning } }))} />
                 </Field>
+                <Field htmlFor={`${id}r`} label={<>Draft new sorting rules every day<Was show={T.rulesDaily !== TS.rulesDaily} was={TS.rulesDaily ? 'on' : 'off'} /></>}
+                    hint="At 2:45 am, when there are new corrections, the AI drafts short sorting rules and tests them. A draft that passes waits in Review → Tickets; it is only used after you approve it. “Suggest rules now” there works either way.">
+                    <Toggle id={`${id}r`} label="Draft new sorting rules every day" checked={T.rulesDaily} onChange={rulesDaily => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, rulesDaily } }))} />
+                </Field>
             </div>
             <p className="flex flex-wrap items-center gap-x-[8px] gap-y-[4px] pt-[8px] text-[12.5px] text-(--bc-ink-3)">
                 Guidance, a short note the brain keeps in view for every reply, has its own screen.

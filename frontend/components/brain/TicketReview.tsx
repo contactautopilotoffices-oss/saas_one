@@ -11,8 +11,9 @@
  * whether the queue shrinks and the confidence gets more honest.
  * Built from the screen's own pieces (ui.tsx, charts.tsx, brain.module.css); no new visual values.
  */
-import React, { useEffect, useId, useState } from 'react';
-import { Check, CircleSlash, Eye, Gauge, GitCompare, GraduationCap, History, Scale, ShieldCheck, TriangleAlert, Undo2, X } from 'lucide-react';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { BookCheck, Check, CircleSlash, Eye, Gauge, GitCompare, GraduationCap, History, Scale, ShieldCheck, Sparkles, TriangleAlert, Undo2, X } from 'lucide-react';
+import type { RuleVersionView, RulesView } from '@/backend/lib/ticketing/sortRulesStore';
 import type { CategoryChoice, TicketReviewItem, TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 import type { ConflictView, LearningView, TicketLearningNote, WeekRow } from '@/backend/lib/ticketing/sortLearningView';
 import { BarSeries } from './charts';
@@ -52,6 +53,7 @@ export default function TicketReview({ onCount }: { onCount: (n: number) => void
                     )}
                     <Accuracy d={d} />
                     {d.learning && <LearningStatus l={d.learning} />}
+                    {d.rules && <RulesCard r={d.rules} names={namesOf(d)} onReplace={replace} />}
                     <div className={cx(s.tab, 'flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-(--bc-ink-2)')}>
                         <span><b className={cx(s.numMd, 'text-(--bc-ink-1)')}>{int(d.waiting)}</b> waiting</span>
                         {d.waiting > d.queue.length && <span className="text-(--bc-ink-3)">showing the newest {int(d.queue.length)}</span>}
@@ -355,5 +357,191 @@ function Weeks({ weeks }: { weeks: WeekRow[] }) {
                 </table>
             </div>
         </Card>
+    );
+}
+
+// ── sorting rules (2026-11-19) ──────────────────────────────────────────────────────────────────────────────────────
+
+const TRIGGER_WORD: Record<string, string> = { daily: 'Daily', button: 'Suggested now', person: 'Your rules' };
+const RUN_TONE: Record<string, Tone> = { offered: 'ok', not_offered: 'warn', no_change: 'neutral', failed: 'bad', testing: 'warn' };
+const RUN_WORD: Record<string, string> = { offered: 'Offered', not_offered: 'Not offered', no_change: 'Nothing new', failed: 'Failed', testing: 'Testing' };
+
+/**
+ * Short rules the AI follows for every ticket, learned from the team's corrections. Drafted every day (when there are
+ * new corrections) and on "Suggest rules now"; tested on judged tickets; used only after a person approves.
+ */
+function RulesCard({ r, names, onReplace }: { r: RulesView; names: (code: string | null) => string; onReplace: (d: TicketReviewView) => void }) {
+    const { api, report, toast, go } = useBrain();
+    const ids = useId();
+    const [busy, setBusy] = useState<string | null>(null);
+    const [own, setOwn] = useState<string>(() => r.active?.rules.map((x, i) => `${i + 1}. ${x.text}`).join('\n') ?? '');
+    const continuing = useRef(false);
+
+    const send = async (body: Parameters<typeof api.postTicketReview>[0], label: string) => {
+        setBusy(label);
+        const res = await api.postTicketReview(body);
+        setBusy(null);
+        report(res);
+        if (!res.ok) { toast(res.message, 'bad'); return null; }
+        onReplace(res.data);
+        if (res.message) toast(res.message);
+        return res.data;
+    };
+
+    // While a run is being tested, keep asking the server to carry on until it is done (it also carries on by itself).
+    useEffect(() => {
+        if (!r.running || continuing.current) return;
+        continuing.current = true;
+        let stop = false;
+        (async () => {
+            let runId: string | null = r.running?.id ?? null;
+            while (runId && !stop) {
+                const res = await api.postTicketReview({ action: 'rules_continue', runId });
+                if (!res.ok || stop) break;
+                onReplace(res.data);
+                runId = res.data.rules?.running?.id ?? null;
+                if (!runId && res.message) toast(res.message);
+            }
+            continuing.current = false;
+        })();
+        return () => { stop = true; continuing.current = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- restart only when another run starts
+    }, [r.running?.id]);
+
+    if (r.tableMissing) {
+        return (
+            <Card as="section" className="flex min-w-0 flex-col gap-2 p-[16px]" aria-labelledby={`${ids}h`}>
+                <CardHead id={`${ids}h`} icon={BookCheck} label="Sorting rules" />
+                <p className="text-[13px] text-(--bc-warn-text)">Sorting rules need migrations 20261119000002 and 20261119000003 to be applied.</p>
+            </Card>
+        );
+    }
+    const running = r.running;
+    return (
+        <Card as="section" className="@container flex min-w-0 flex-col gap-[14px] p-[16px] @3xl:p-6" aria-labelledby={`${ids}h`}>
+            <CardHead id={`${ids}h`} icon={BookCheck} label="Sorting rules"
+                hint="Short rules the AI follows for every ticket, learned from your corrections. A draft is tested on judged tickets first and is only used after you approve it."
+                right={<Btn size="sm" variant="ghost" icon={Sparkles} disabled={!!busy || !!running} onClick={() => send({ action: 'rules_suggest' }, 'suggest')}>{busy === 'suggest' ? 'Drafting…' : 'Suggest rules now'}</Btn>} />
+            <p className="text-[12.5px] text-(--bc-ink-3)">
+                {r.daily ? 'Drafted automatically every day at 2:45 am when there are new corrections.' : 'Daily drafting is off.'}{' '}
+                <button type="button" className="underline" onClick={() => go('switches')}>Change in Switches</button>
+            </p>
+
+            {running && (
+                <div className={cx(s.well, 'flex min-w-0 flex-col gap-2 p-[12px]')} role="status">
+                    <span className="text-[13px] font-semibold text-(--bc-ink-1)">Testing rules ({TRIGGER_WORD[running.trigger] ?? running.trigger}): {int(running.done)} of {int(running.total)} tickets</span>
+                    <div className="h-[6px] w-full rounded-full bg-(--bc-line)"><div className="h-[6px] rounded-full bg-(--bc-accent)" style={{ width: `${running.total ? Math.round((100 * running.done) / running.total) : 0}%` }} /></div>
+                    <span className="text-[12px] text-(--bc-ink-3)">You can leave this page; testing carries on by itself.</span>
+                </div>
+            )}
+
+            {r.offered && <OfferedRules v={r.offered} names={names} busy={busy}
+                onUse={() => send({ action: 'rules_use', versionId: r.offered!.id }, 'use')}
+                onReject={() => send({ action: 'rules_reject', versionId: r.offered!.id }, 'reject')} />}
+
+            <div className="flex min-w-0 flex-col gap-2">
+                <span className="text-[13.5px] font-semibold text-(--bc-ink-1)">{r.active ? `In use: version ${r.active.version}` : 'No rules in use'}</span>
+                {r.active ? (
+                    <>
+                        <ol className="list-decimal pl-5 text-[13px] text-(--bc-ink-2)">{r.active.rules.map((x, i) => <li key={i} className="break-words py-0.5">{x.text}</li>)}</ol>
+                        <p className="text-[12px] text-(--bc-ink-3)">Approved {r.active.decidedAt ? dateTimeIN(r.active.decidedAt) : ''}</p>
+                        <Btn size="sm" variant="quiet" className="self-start" disabled={!!busy} onClick={() => send({ action: 'rules_stop' }, 'stop')}>{busy === 'stop' ? 'Stopping…' : 'Stop using rules'}</Btn>
+                    </>
+                ) : <p className="text-[13px] text-(--bc-ink-3)">Tickets are sorted with the fixed instructions only.</p>}
+            </div>
+
+            <details className={cx(s.well, 'min-w-0 p-[12px]')}>
+                <summary className="cursor-pointer text-[13px] font-semibold text-(--bc-ink-1)">Write or edit rules yourself</summary>
+                <div className="mt-[10px] flex min-w-0 flex-col gap-2">
+                    <label htmlFor={`${ids}own`} className="text-[12.5px] text-(--bc-ink-3)">One rule per line, about which category fits which kind of ticket. They are tested like the AI&apos;s before you can use them.</label>
+                    <textarea id={`${ids}own`} className={s.input} rows={5} maxLength={1600} value={own} onChange={e => setOwn(e.target.value)}
+                        placeholder="1. MCP at our sites means the MCB panel: power_outage, not fire_alarm." />
+                    <Btn size="sm" variant="ghost" className="self-start" disabled={!!busy || !!running || !own.trim()} onClick={() => send({ action: 'rules_own', text: own }, 'own')}>{busy === 'own' ? 'Starting the test…' : 'Test my rules'}</Btn>
+                </div>
+            </details>
+
+            {r.history.length > 0 && (
+                <details className="min-w-0">
+                    <summary className="cursor-pointer text-[13px] font-semibold text-(--bc-ink-1)">Earlier versions</summary>
+                    <ul className={cx(s.rows, 'mt-2')}>
+                        {r.history.map(v => (
+                            <li key={v.id} className="flex min-w-0 flex-wrap items-center gap-2 py-2 text-[13px]">
+                                <span className="font-semibold">Version {v.version}</span>
+                                <Chip tone={v.status === 'rejected' ? 'bad' : 'neutral'}>{v.status === 'rejected' ? 'Rejected' : 'Not in use'}</Chip>
+                                <span className="text-(--bc-ink-3)">{v.rules.length} rule(s) · {dateTimeIN(v.at)}</span>
+                                {v.status === 'retired' && <Btn size="sm" variant="quiet" disabled={!!busy} onClick={() => send({ action: 'rules_use', versionId: v.id }, `use-${v.id}`)}>{busy === `use-${v.id}` ? 'Putting back…' : 'Put back'}</Btn>}
+                            </li>
+                        ))}
+                    </ul>
+                </details>
+            )}
+
+            {r.runs.length > 0 && (
+                <details className="min-w-0">
+                    <summary className="cursor-pointer text-[13px] font-semibold text-(--bc-ink-1)">Recent runs</summary>
+                    <ul className={cx(s.rows, 'mt-2')}>
+                        {r.runs.map(x => (
+                            <li key={x.id} className="flex min-w-0 flex-col gap-1 py-2">
+                                <p className={cx(s.tab, 'flex flex-wrap items-center gap-2 text-[12px] text-(--bc-ink-3)')}>
+                                    <Chip tone={RUN_TONE[x.status] ?? 'neutral'}>{RUN_WORD[x.status] ?? x.status}</Chip>
+                                    <span>{TRIGGER_WORD[x.trigger] ?? x.trigger}</span><span>{dateTimeIN(x.at)}</span>
+                                </p>
+                                <p className="text-[13px] break-words text-(--bc-ink-2)">{x.message}</p>
+                            </li>
+                        ))}
+                    </ul>
+                </details>
+            )}
+        </Card>
+    );
+}
+
+/** A tested draft waiting for a person: the rules, where each came from, and the test. */
+function OfferedRules({ v, names, busy, onUse, onReject }: { v: RuleVersionView; names: (code: string | null) => string; busy: string | null; onUse: () => void; onReject: () => void }) {
+    const t = v.test;
+    const ba = (b: number, a: number, of: number) => <>{int(b)} → <b className="font-semibold text-(--bc-ink-1)">{int(a)}</b> <span className="text-(--bc-ink-3)">of {int(of)}</span></>;
+    return (
+        <div className="flex min-w-0 flex-col gap-[12px] rounded-[12px] border border-(--bc-line) p-[14px]">
+            <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[14px] font-semibold text-(--bc-ink-1)">Version {v.version} is waiting for you</span>
+                <Chip tone="ok" icon={Check}>Passed the test</Chip>
+                <span className="text-[12px] text-(--bc-ink-3)">{TRIGGER_WORD[v.source] ?? v.source} · {dateTimeIN(v.at)}</span>
+            </div>
+            {v.summary && <p className="text-[13px] text-(--bc-ink-2)">{v.summary}</p>}
+            <ol className="flex list-decimal flex-col gap-2 pl-5">
+                {v.rules.map((x, i) => (
+                    <li key={i} className="text-[13px] break-words text-(--bc-ink-1)">
+                        {x.text}
+                        {x.sources.length > 0 && (
+                            <details className="mt-1">
+                                <summary className="cursor-pointer text-[12px] text-(--bc-ink-3)">Learned from {x.sources.length} ticket(s)</summary>
+                                <ul className="mt-1 flex flex-col gap-1 text-[12px] text-(--bc-ink-2)">{x.sources.map((src, k) => <li key={k}>“{src.text}” → {names(src.code)}</li>)}</ul>
+                            </details>
+                        )}
+                    </li>
+                ))}
+            </ol>
+            {t && (
+                <dl className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-2 text-[13px] text-(--bc-ink-2) @xl:grid-cols-2">
+                    <Fact k="Tickets it was written from, sorted right">{ba(t.fix.beforeRight, t.fix.afterRight, t.fix.tickets)}</Fact>
+                    <Fact k="Tickets it never saw, sorted right">{ba(t.heldOut.beforeRight, t.heldOut.afterRight, t.heldOut.tickets)}</Fact>
+                    <Fact k="Wrong but rated High">{int(t.heldOut.beforeWrongButHigh)} → <b className="font-semibold text-(--bc-ink-1)">{int(t.heldOut.afterWrongButHigh)}</b></Fact>
+                    <Fact k="Danger tickets given a lower priority">{int(t.dangerLowered.length)}</Fact>
+                </dl>
+            )}
+            {t && (t.fixed.length > 0 || t.broke.length > 0) && (
+                <details>
+                    <summary className="cursor-pointer text-[12.5px] text-(--bc-ink-3)">Tickets it changes ({t.fixed.length} fixed, {t.broke.length} broken)</summary>
+                    <ul className="mt-1 flex flex-col gap-1 text-[12px] text-(--bc-ink-2)">
+                        {t.fixed.map((x, i) => <li key={`f${i}`}><span className="text-(--bc-ok-text)">Fixed:</span> “{x.text}” → {names(x.right)}</li>)}
+                        {t.broke.map((x, i) => <li key={`b${i}`}><span className="text-(--bc-bad-text)">Broken:</span> “{x.text}” (right: {names(x.right)})</li>)}
+                    </ul>
+                </details>
+            )}
+            <div className="flex flex-wrap gap-2">
+                <Btn size="sm" icon={Check} disabled={!!busy} onClick={onUse}>{busy === 'use' ? 'Saving…' : 'Use these rules'}</Btn>
+                <Btn size="sm" variant="quiet" icon={X} disabled={!!busy} onClick={onReject}>{busy === 'reject' ? 'Saving…' : 'Reject'}</Btn>
+            </div>
+        </div>
     );
 }
