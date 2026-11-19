@@ -87,6 +87,10 @@ function ChannelsCard({ d, saved, edit }: CardProps) {
                 <Field htmlFor={`${id}a`} label={<>In-app chat<Was show={d.channels.app_chat !== saved.channels.app_chat} was={saved.channels.app_chat ? 'on' : 'off'} /></>} hint="The chat inside the app.">
                     <Toggle id={`${id}a`} label="In-app chat" checked={d.channels.app_chat} onChange={on => edit(x => ({ ...x, channels: { ...x.channels, app_chat: on } }))} />
                 </Field>
+                {/* 2026-11-18: the task assistant answers tasks, unchanged, with the brain in front (config taskEngine). */}
+                <Field htmlFor={`${id}t`} label={<>Tasks through the task assistant<Was show={d.taskEngine !== saved.taskEngine} was={saved.taskEngine ? 'on' : 'off'} /></>} hint="On WhatsApp, the task assistant answers tasks exactly as it does today. A message that also asks something else gets one reply. The brain’s own task actions are not used while this is on.">
+                    <Toggle id={`${id}t`} label="Tasks through the task assistant" checked={d.taskEngine} onChange={on => edit(x => ({ ...x, taskEngine: on }))} />
+                </Field>
             </div>
         </Card>
     );
@@ -173,13 +177,21 @@ function PilotCard({ d, saved, edit, people }: CardProps & { people: SettingsVie
  * Learning: judged messages as lessons. Turning lessons on is one of the changes that need an explicit "I understand"
  * (riskyChanges in settingsDiff.ts), because judged messages then steer answers for everyone who gets the brain.
  */
+const TICKET_LEARNING_LABEL: Record<BrainSettings['ticketLearning']['mode'], string> = { off: 'Off', shadow: 'Watch only', live: 'On' };
+const TICKET_LEARNING_SENTENCE: Record<BrainSettings['ticketLearning']['mode'], string> = {
+    off: 'New tickets are sorted as before: the AI sees the newest 30 corrections and its own rating is saved.',
+    shadow: 'New tickets are sorted as before. The learning way also runs and is recorded next to it, so Review → Tickets can compare the two. It costs a second AI call per ticket.',
+    live: 'The AI sees the most similar judged tickets, the confidence is measured from its track record and from similar tickets, and repeats are sorted without the AI. If that fails, tickets are sorted as before.',
+};
+
 function LearningCard({ d, saved, edit }: CardProps) {
     const { go } = useBrain();
     const id = useId();
     const L = d.learning, S = saved.learning;
+    const T = d.ticketLearning, TS = saved.ticketLearning;
     return (
         <Card as="section" className="@container flex flex-col gap-1 p-[16px] @3xl:p-6" aria-labelledby="sw-learning">
-            <CardHead id="sw-learning" icon={GraduationCap} label="Learning" hint="What the brain takes from the Tech team’s judging on the Review screen." />
+            <CardHead id="sw-learning" icon={GraduationCap} label="Learning" hint="What the brain and ticket sorting take from the Tech team’s judging on the Review screen." />
             <div className={s.rows}>
                 <Field htmlFor={`${id}l`} label={<>Lessons from judged messages<Was show={L.lessons !== S.lessons} was={S.lessons ? 'on' : 'off'} /></>}
                     hint="When a message arrives that is like one the Tech team judged, from the same kind of login, the brain is shown the judged example. A lesson can only steer which of the person’s own skills is used; it cannot add a skill, skip a confirmation or change access.">
@@ -188,6 +200,17 @@ function LearningCard({ d, saved, edit }: CardProps) {
                 <Field htmlFor={`${id}n`} label={<>Lessons shown per message<Was show={L.maxLessons !== S.maxLessons} was={S.maxLessons} /></>} hint="From 1 to 6.">
                     <NumberField id={`${id}n`} value={L.maxLessons} min={1} max={6} width="w-20!" disabled={!L.lessons}
                         onChange={n => edit(x => ({ ...x, learning: { ...x.learning, maxLessons: n } }))} />
+                </Field>
+                {/* 2026-11-19: ticket sorting learns from the judged tickets (config ticketLearning). */}
+                <div className="flex flex-col gap-[10px] py-[12px]">
+                    <span className="text-[13.5px] font-semibold">Ticket sorting learns<Was show={T.mode !== TS.mode} was={TICKET_LEARNING_LABEL[TS.mode]} /></span>
+                    <Segmented label="Ticket sorting learns" value={T.mode} onChange={mode => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, mode } }))} className="self-start"
+                        options={[{ value: 'off', label: 'Off', icon: Power }, { value: 'shadow', label: 'Watch only', icon: Contrast }, { value: 'live', label: 'On', icon: Radio }]} />
+                    <p className="text-[13px] leading-relaxed text-(--bc-ink-2)">{TICKET_LEARNING_SENTENCE[T.mode]}</p>
+                </div>
+                <Field htmlFor={`${id}m`} label={<>Find similar tickets by meaning<Was show={T.meaning !== TS.meaning} was={TS.meaning ? 'on' : 'off'} /></>}
+                    hint="Also finds similar tickets that use different words (“AC dripping” and “water from the split unit”). Uses the embedding service’s shared quota. Off: similar tickets are found by shared words only.">
+                    <Toggle id={`${id}m`} label="Find similar tickets by meaning" checked={T.meaning} disabled={T.mode === 'off'} onChange={meaning => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, meaning } }))} />
                 </Field>
             </div>
             <p className="flex flex-wrap items-center gap-x-[8px] gap-y-[4px] pt-[8px] text-[12.5px] text-(--bc-ink-3)">

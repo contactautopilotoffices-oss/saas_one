@@ -112,6 +112,26 @@
  * **8. Evaluation** [BAA pp.118–119]: eval cases r-list, r-free-slots, r-cancel, r-move; tests in
  *    brain-rooms.test.ts. Not re-run with real models or the rubric [BAA pp.96–98].
  * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99].
+ *
+ * ### Amendment 2026-11-18 (d): the task assistant as the brain's task engine (config taskEngine, default off)
+ * **1. Workflow or agent?** [BAA p.104] Still one agent in front; tasks are delegated whole to the task assistant, an
+ *    existing specialist with its own rules [BAA p.116]. Not a second agent in this loop: the brain only marks the words.
+ *    Justification [BAA p.115] (a): people mix tasks with tickets and rooms in one message; one front door routes that.
+ * **2. Context** [BAA p.112]: unchanged for the model; the task assistant's replies are added to the thread so later
+ *    turns know them. The task assistant's own context is NOT changed (owner: "exactly as it is now").
+ * **3. False positive** [BAA p.112]: no new write in the brain. task_part takes only the person's own words (checked in
+ *    code, ownWords), so the task assistant never acts on the model's rewording. The brain's own Yes-card task actions
+ *    are not offered while this is on.
+ * **4. Tools**: control tool task_part, with when-not-to-use [BAA p.107], reported back as text [BAA p.94], arguments
+ *    checked in code [BAA p.93]; not MCP [BAA p.106].
+ * **5. Prompt** [BAA pp.105, 114]: step 8 has a third frozen variant (SYSTEM_PROMPT_TASK_ENGINE), used only with the
+ *    switch on; off, the brain gets SYSTEM_PROMPT byte for byte.
+ * **8. Evaluation** [BAA pp.118–119]: brain-task-engine.test.ts runs the REAL task assistant code side by side (direct /
+ *    brain listening / brain borrowing the reply) and requires the same words and the same task changes. The task
+ *    assistant's own test files give the same results before and after. Not measured: how often the real model marks
+ *    the task words correctly [BAA pp.96–98]; read it in Review before widening.
+ * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99]. A message only about tasks takes today's path
+ *    unchanged, so the risk sits only in mixed messages.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { buildAuditRow, type AuditInput, type AuditStore } from '../../audit';
@@ -122,12 +142,12 @@ import type { ActorContext, Lang } from '../../types';
 import { effectiveBrainLimits, roleClass, scopeFingerprint, type BrainSettings } from '../config';
 import { NO_LEARNING, cleanGuidance, echoesLesson, guidanceBlock, lessonsBlock, selectLessons, type Learned } from '../learning/lessons';
 import { findQuoted, handleBook, openThread, waitingCard, HISTORY_TURNS, type PendingConfirm, type ThreadState } from '../memory/thread';
-import { ASK_USER, CLOSE_TOPIC, HANDOFF, skillByTool, skillsFor, tasksInBrain, toolDefs, toolName, type AvailableSkill } from '../skills/registry';
+import { ASK_USER, CLOSE_TOPIC, HANDOFF, TASK_PART, skillByTool, taskEngineFor, skillsFor, tasksInBrain, toolDefs, toolName, type AvailableSkill } from '../skills/registry';
 import { bt } from '../text';
 import type { AttachmentRef, Block, BrainChannel, BrainData, BrainModel, BrainReply, MemoryFact, Msg, Outcome, SkillContext, TurnTrace, WriteSkill } from '../types';
 import { ungroundedParts } from './grounding';
 import { isCancelPhrase, sameQuestion } from './intent';
-import { SYSTEM_PROMPT, SYSTEM_PROMPT_TASKS, buildContext } from './prompt';
+import { SYSTEM_PROMPT, SYSTEM_PROMPT_TASKS, SYSTEM_PROMPT_TASK_ENGINE, buildContext } from './prompt';
 
 export interface TurnDeps {
     data: BrainData;
@@ -175,6 +195,12 @@ export interface TurnOutput {
     state: ThreadState;
     outcome: Outcome;
     handoffTo: 'tasks_assistant' | 'human' | null;
+    /**
+     * 2026-11-18 (task engine): the person's own words about tasks in a message that ALSO asked something else. The
+     * channel has the task assistant answer them and joins its reply with this one. Absent when there is none, and for
+     * a message only about tasks (that is a plain hand-off to the task assistant, exactly as before).
+     */
+    taskWords?: string;
     lang: Lang;
     trace: TurnTrace;
 }
@@ -183,6 +209,21 @@ const MAX_MODELS = 3;
 const sha = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 32);
 const clipArg = (v: unknown): unknown => (typeof v === 'string' ? v.slice(0, 200) : Array.isArray(v) ? v.slice(0, 10).map(clipArg) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, clipArg(x)])) : v);
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e)).slice(0, 200);
+
+const plainWords = (s: string) => s.toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/** Every line of `words` is in the person's message (2026-11-18, task_part): never the model's own wording. */
+export function ownWords(words: string, message: string): boolean {
+    const m = plainWords(message);
+    const lines = words.split('\n').map(plainWords).filter(Boolean);
+    return lines.length > 0 && lines.every(l => m.includes(l));
+}
+
+/** The task words are (nearly) the whole message: it is only about tasks. */
+export function coversMessage(words: string, message: string): boolean {
+    const m = plainWords(message).length;
+    return m > 0 && plainWords(words.split('\n').join(' ')).length >= 0.85 * m;
+}
 
 /** What the model is told when its answer failed the fact check (2026-11-18). Frozen wording; only the parts vary. */
 export function repairNote(bad: string[]): string {
@@ -226,6 +267,11 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     const looksLikeCard = (t: string) => (['en', 'hi', 'hinglish'] as const).some(l => t.includes(bt('confirm_tail', l)));
     const quotesCard = !!card && !!quotedText && quotedText.includes(card.card);
     const quotesOldCard = !!quotedText && !quotesCard && looksLikeCard(quotedText);
+    // Declared before any fast path: finish() reads taskWordsOut.
+    /** task_part words of this model run (2026-11-18), each checked to be the person's own words. */
+    let taskBits: string[] = [];
+    /** Set when the message mixed tasks with something else: the words the task assistant answers. */
+    let taskWordsOut: string | undefined;
     /** Topics the person closed in THIS turn, and whether the waiting card was cancelled by it. */
     const closedNow: Array<{ label: string; at: string }> = [];
     let cardClosed = false;
@@ -270,7 +316,7 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
         const priced = trace.modelCalls.filter(c => c.costUsd !== null);
         trace.costUsd = priced.length ? priced.reduce((n, c) => n + (c.costUsd as number), 0) : null;
         return {
-            reply, outcome, lang, trace, handoffTo: next.handoffTo ?? null,
+            reply, outcome, lang, trace, handoffTo: next.handoffTo ?? null, ...(taskWordsOut && next.handoffTo !== 'tasks_assistant' ? { taskWords: taskWordsOut } : {}),
             state: next.keepThread ? { ...state, lastActiveAt: state.lastActiveAt } : {
                 lang, handles: book.snapshot(), history, lastActiveAt: at,
                 ...carry(next),
@@ -358,9 +404,11 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     }
 
     // ── 4. The model step ──
-    const tools = toolDefs(available);
+    // The task assistant as the brain's task engine (2026-11-18): only on WhatsApp, where the task assistant lives.
+    const engine = input.channel === 'whatsapp' && taskEngineFor(actor, settings);
+    const tools = toolDefs(available, { taskPart: engine });
     // Tasks in the brain (owner 2026-11-15): only when one of the person's task actions is on; otherwise the same prompt as before.
-    const system = tasksInBrain(available) ? SYSTEM_PROMPT_TASKS : SYSTEM_PROMPT;
+    const system = engine ? SYSTEM_PROMPT_TASK_ENGINE : tasksInBrain(available) ? SYSTEM_PROMPT_TASKS : SYSTEM_PROMPT;
     const visible = images.filter(i => attachments.some(a => a.handle === i.handle));
     const context = buildContext({ actor, lang, now, aliases, attachments, pending: state.pending, parked: state.parked, closed: state.closed, quoted, memory, handles: book.all(), visibleImages: visible.map(i => i.handle) });
     // What the Tech team taught (lessons) and wrote (guidance). It sits AFTER the frozen prompt and the context, so the
@@ -392,11 +440,12 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     /** What close_topic asked for in this model run (2026-11-18). Applied by code after the loop, once. */
     const closing: { ask: { what: string; handles: string[]; card: boolean } | null } = { ask: null };
 
+
     /** The conversation of the model run that answered, so a repair can carry on from it with its tool results. */
     let convo: Msg[] = [];
 
     const runLoop = async (model: string, resume = false): Promise<LoopEnd> => {
-        if (!resume) { sources = []; displays = []; lastRead = null; closing.ask = null; convo = [...history, { role: 'user', blocks: userBlocks }]; }
+        if (!resume) { sources = []; displays = []; lastRead = null; closing.ask = null; taskBits = []; convo = [...history, { role: 'user', blocks: userBlocks }]; }
         const messages: Msg[] = convo;
         let reads = 0; let problems = 0;
         for (let round = 0; round < limits.maxToolCalls + 4; round++) {
@@ -456,6 +505,16 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
                     record(ASK_USER, 'control', { options: options.length }, !!question, 0, 0);
                     if (question) return { kind: 'ask', question, options };
                     note(use, 'ask_user needs a question.', true); continue;
+                }
+                if (use.name === TASK_PART && engine) {
+                    const words = String((use.input as { words?: unknown } | null)?.words ?? '').trim().slice(0, 1500);
+                    const own = ownWords(words, raw);
+                    record(TASK_PART, 'control', { chars: words.length, own }, own, 0, 0);
+                    if (own) taskBits.push(words);
+                    note(use, own
+                        ? 'Noted: the task assistant answers this part itself, in its own words. Now answer only anything ELSE in the message, briefly; never mention the task part. If there is nothing else, reply with nothing.'
+                        : 'Not taken: those words are not in the message. Copy the person\'s words about tasks exactly, or answer without task_part.');
+                    continue;
                 }
                 if (use.name === CLOSE_TOPIC) {
                     const a = use.input as { what?: unknown; files?: unknown; cancel_card?: unknown } | null;
@@ -546,6 +605,18 @@ export async function runTurn(deps: TurnDeps, input: TurnInput): Promise<TurnOut
     const closeLine = closing.ask ? await applyClose(closing.ask) : null;
     /** The reply with the close line in front of it, when something was closed this turn. */
     const withClose = (text: string) => (closeLine ? (text.trim() ? `${closeLine}\n\n${text}` : closeLine) : text);
+    // Tasks for the task assistant (2026-11-18). Only about tasks (the words are the whole message, or the brain has
+    // nothing else to say): the plain hand-off, so the message goes to the task assistant exactly as it does today.
+    // Mixed with something else: the brain answers the rest and the channel adds the task assistant's own reply.
+    if (engine && taskBits.length) {
+        const taskText = taskBits.join('\n');
+        const nothingElse = end.kind === 'text' && !end.text.trim() && !closeLine;
+        if (coversMessage(taskText, raw) || nothingElse) {
+            await safeAudit({ entryId: null, decision: 'handed_off', refusalReason: 'to_task_manager', ...usage });
+            return finish('handoff', { text: bt('tasks_elsewhere', lang) }, { handoffTo: 'tasks_assistant', reason: 'tasks' });
+        }
+        taskWordsOut = taskText;
+    }
     const allSources = sourcesNow();
     /** The reply repeats another person's judged message: treated like an invented fact. */
     const echoes = (reply: string) => echoesLesson(reply, lessons, allSources);

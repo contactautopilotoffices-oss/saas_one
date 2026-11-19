@@ -161,7 +161,9 @@ export async function POST(req: NextRequest) {
     // Batching (2026-11-02): several messages sent back to back are answered ONCE, by the newest message's webhook; the earlier
     // ones come back handled with nothing to do. A batch that is not Smart chat's (only greetings, a ticket request) comes
     // back with `rewrite` = their words, and the code below carries on with that, as for a confirmed voice note.
-    const smartChat = brainBatched ? await claimSmartChat(body, undefined, { noBatch: true }) : await claimSmartChat(body);
+    // 2026-11-18: with the task assistant as the brain's task engine, the brain listens to its reply (never changes it).
+    const smartOpts = { ...(brainBatched ? { noBatch: true } : {}), ...(!brain.handled && brain.onTaskReply ? { onReply: brain.onTaskReply } : {}) };
+    const smartChat = Object.keys(smartOpts).length ? await claimSmartChat(body, undefined, smartOpts) : await claimSmartChat(body);
     if (smartChat.handled) {
         if (smartChat.background) {
             await markRoute(input?.messageId, 'smart_chat', input?.phone, input?.text);

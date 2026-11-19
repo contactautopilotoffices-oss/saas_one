@@ -45,6 +45,16 @@ export const SYSTEM_PROMPT_TASKS = SYSTEM_PROMPT.replace(
 );
 if (SYSTEM_PROMPT_TASKS === SYSTEM_PROMPT) throw new Error('prompt.ts: the task variant of step 8 did not apply');
 
+/**
+ * 2026-11-18: step 8 while the task assistant is the brain's task engine (config taskEngine). The task assistant
+ * answers tasks in its own words; the brain only marks which words are about tasks. Also frozen text.
+ */
+export const SYSTEM_PROMPT_TASK_ENGINE = SYSTEM_PROMPT.replace(
+    '8. If the request is about tasks (my tasks, add, done, hand over, remind, team progress) and is not just attaching a file, call handoff with to "tasks_assistant". If the person wants a human or you cannot help after trying, call handoff with to "human".',
+    '8. Tasks (my tasks, add, done, hand over, remind, progress, team tasks) are answered by the task assistant itself. Call task_part with the person\'s words about tasks, copied exactly. If the WHOLE message is about tasks, call task_part with the whole message and then reply with nothing. If only part of it is, answer only the other part: never answer, repeat or mention the task part, because the task assistant\'s reply is added to yours. Attaching a file to a task is still yours (task_add_file). If the person wants a human or you cannot help after trying, call handoff with to "human".',
+);
+if (SYSTEM_PROMPT_TASK_ENGINE === SYSTEM_PROMPT) throw new Error('prompt.ts: the task-engine variant of step 8 did not apply');
+
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function indiaNow(now: Date): string {

@@ -83,7 +83,7 @@ const SKILL_SEEDS: SkillSeed[] = [
 
 const SETTINGS: BrainSettings = {
     mode: 'live', audience: 'pilot', pilotUserIds: [uuid(1), uuid(2), uuid(3), uuid(5), uuid(20), uuid(21), uuid(22), uuid(23), uuid(24)], blockedUserIds: [],
-    channels: { whatsapp: true, app_chat: true }, grid: {},
+    channels: { whatsapp: true, app_chat: true }, taskEngine: false, ticketLearning: { mode: 'shadow', meaning: false }, grid: {},
     skillModes: { 'ticket.create': 'live', 'room.book': 'shadow', 'task.add_file': 'off' },
     limits: { perUserPerHour: 30, actionsPerUserPerDay: 50, maxToolCalls: 4, maxQuestionsInRow: 2 },
     model: { effort: 'low', maxTokens: 2000, vision: true },
@@ -481,10 +481,12 @@ const TICKET_CHOICES: TicketReviewView['choices'] = {
     ],
 };
 const TICKET_QUEUE: TicketReviewView['queue'] = [
-    { id: 'tk-1', number: 'AP-SSP-1741', at: at(dayBefore(0), '10:12'), status: 'assigned', property: 'SS Plaza', text: '3rd floor A wing entrance glass door stuck in the carpet', sortedBy: 'ai', categoryCode: 'carpentry_civil', categoryName: 'Carpentry & Door Repair', team: 'technical', priority: 'medium', confidence: 78, confidenceWord: 'Medium', reason: 'Door dragging on the carpet needs a carpenter', risk: null, canMove: true, choicesKey: 'prop-a' },
-    { id: 'tk-2', number: 'AP-SSP-1738', at: at(dayBefore(0), '09:40'), status: 'open', property: 'SS Plaza', text: '2nd floor B wing MCP needs to be fixed', sortedBy: 'ai', categoryCode: 'fire_alarm', categoryName: 'Fire Alarm', team: 'vendor', priority: 'high', confidence: 52, confidenceWord: 'Low', reason: 'MCP is probably the fire alarm call point', risk: 'Fire risk', canMove: true, choicesKey: 'prop-a' },
-    { id: 'tk-3', number: 'AP-SSP-1729', at: at(dayBefore(1), '17:05'), status: 'closed', property: 'SS Plaza', text: 'workstation dusting 4th C enclosure area', sortedBy: 'rules', categoryCode: 'desk_alignment', categoryName: 'Desk Alignment', team: 'soft_services', priority: 'low', confidence: null, confidenceWord: null, reason: null, risk: null, canMove: false, choicesKey: 'prop-a' },
-    { id: 'tk-4', number: 'AP-SSP-1722', at: at(dayBefore(2), '12:31'), status: 'in_progress', property: 'SS Plaza', text: 'Lan port fixing required floor area', sortedBy: 'ai', categoryCode: 'wifi_down', categoryName: 'Wi-Fi Down', team: 'technical', priority: 'medium', confidence: 81, confidenceWord: 'Medium', reason: 'A LAN port is network work', risk: null, canMove: false, choicesKey: 'prop-a' },
+    { id: 'tk-1', number: 'AP-SSP-1741', at: at(dayBefore(0), '10:12'), status: 'assigned', property: 'SS Plaza', text: '3rd floor A wing entrance glass door stuck in the carpet', sortedBy: 'ai', categoryCode: 'carpentry_civil', categoryName: 'Carpentry & Door Repair', team: 'technical', priority: 'medium', confidence: 78, confidenceWord: 'Medium', reason: 'Door dragging on the carpet needs a carpenter', risk: null, canMove: true, choicesKey: 'prop-a',
+        learning: { mode: 'shadow', method: 'ai', search: 'words', oldCode: 'carpentry_civil', oldConfidence: 78, newCode: 'carpentry_civil', modelConfidence: 88, newConfidence: 86, why: 'The AI said 88%. When it said 85-89% before, it was right 17 of 21 times. 2 of 2 similar past tickets went to the same category.', neighbours: [{ id: 'ex-1', text: 'glass door at reception dragging on floor', code: 'carpentry_civil', source: 'judged_right', strength: 0.55, by: 'words' }, { id: 'ex-2', text: 'cabin door stuck, not closing', code: 'carpentry_civil', source: 'judged_wrong', strength: 0.5, by: 'words' }] } },
+    { id: 'tk-2', number: 'AP-SSP-1738', at: at(dayBefore(0), '09:40'), status: 'open', property: 'SS Plaza', text: '2nd floor B wing MCP needs to be fixed', sortedBy: 'ai', categoryCode: 'fire_alarm', categoryName: 'Fire Alarm', team: 'vendor', priority: 'high', confidence: 52, confidenceWord: 'Low', reason: 'MCP is probably the fire alarm call point', risk: 'Fire risk', canMove: true, choicesKey: 'prop-a',
+        learning: { mode: 'shadow', method: 'ai', search: 'words', oldCode: 'fire_alarm', oldConfidence: 52, newCode: 'power_outage', modelConfidence: 70, newConfidence: 81, why: 'The AI said 70%. When it said 70-79% before, it was right 9 of 16 times. 3 of 3 similar past tickets went to the same category.', neighbours: [{ id: 'ex-3', text: 'MCB tripping 2nd floor B wing', code: 'power_outage', source: 'judged_wrong', strength: 0.6, by: 'words' }, { id: 'ex-4', text: 'MCP fix in electrical room', code: 'power_outage', source: 'judged_wrong', strength: 0.57, by: 'words' }, { id: 'ex-5', text: 'MCP needs fixing 4th floor', code: 'power_outage', source: 'override', strength: 0.52, by: 'words' }] } },
+    { id: 'tk-3', number: 'AP-SSP-1729', at: at(dayBefore(1), '17:05'), status: 'closed', property: 'SS Plaza', text: 'workstation dusting 4th C enclosure area', sortedBy: 'rules', categoryCode: 'desk_alignment', categoryName: 'Desk Alignment', team: 'soft_services', priority: 'low', confidence: null, confidenceWord: null, reason: null, risk: null, canMove: false, choicesKey: 'prop-a', learning: null },
+    { id: 'tk-4', number: 'AP-SSP-1722', at: at(dayBefore(2), '12:31'), status: 'in_progress', property: 'SS Plaza', text: 'Lan port fixing required floor area', sortedBy: 'ai', categoryCode: 'wifi_down', categoryName: 'Wi-Fi Down', team: 'technical', priority: 'medium', confidence: 81, confidenceWord: 'Medium', reason: 'A LAN port is network work', risk: null, canMove: false, choicesKey: 'prop-a', learning: null },
 ];
 
 export function createDemoApi(): BrainApi {
@@ -534,13 +536,20 @@ export function createDemoApi(): BrainApi {
     const judged = { right: empty ? 0 : 41, wrong: empty ? 0 : 9 };
     let ticketQueue: TicketReviewView['queue'] = empty ? [] : structuredClone(TICKET_QUEUE);
     const ticketJudged = { right: empty ? 0 : 12, wrong: empty ? 0 : 3 };
-    let ticketRecent: TicketReviewView['recent'] = empty ? [] : [{ at: at(dayBefore(1), '11:02'), text: 'Drainage needs to clean 2nd C wing male washroom', verdict: 'wrong', chosen: 'cleaning_required', right: 'washroom_issue', moved: true }];
+    let ticketRecent: TicketReviewView['recent'] = empty ? [] : [{ ticketId: 'tk-0', at: at(dayBefore(1), '11:02'), text: 'Drainage needs to clean 2nd C wing male washroom', verdict: 'wrong', chosen: 'cleaning_required', right: 'washroom_issue', moved: true, canUndo: true }];
+    const ticketLearning = (): TicketReviewView['learning'] => (empty ? null : {
+        setting: settings.ticketLearning, tableMissing: variant === 'nolearning', examples: 184,
+        notes: {},
+        watch: settings.ticketLearning.mode === 'off' ? null : { known: 61, oldRight: 47, newRight: 55, differed: 11, oldToReview: 38, newToReview: 24, oldWrongButHigh: 6, newWrongButHigh: 2, shortcuts: 9 },
+        weeks: Array.from({ length: 8 }, (_, i) => ({ from: dayBefore(7 * (7 - i)), tickets: 70 + i * 3, resorted: Math.max(1, 9 - i), toReview: Math.max(8, 30 - i * 3), judgedRight: 6 + i, judgedWrong: Math.max(1, 6 - i), saidAvg: 72 + i, actuallyRight: 55 + i * 4 })),
+        conflicts: [{ strength: 0.83, a: { id: 'ex-8', text: 'water dripping from ceiling near pantry', code: 'water_leakage', source: 'judged_wrong', at: at(dayBefore(9), '10:00') }, b: { id: 'ex-9', text: 'water dripping from ceiling near pantry AC', code: 'ac_breakdown', source: 'override', at: at(dayBefore(3), '16:20') } }],
+    });
     const ticketView = (): TicketReviewView => {
         const sorted = empty ? 0 : 326;
         // Judged wrong here, plus two changed with the Override button on the ticket.
         const resorted = empty ? 0 : ticketJudged.wrong + 2;
         return {
-            tableMissing: variant === 'noreview', queue: ticketQueue, waiting: ticketQueue.length, choices: TICKET_CHOICES, recent: ticketRecent,
+            tableMissing: variant === 'noreview', queue: ticketQueue, waiting: ticketQueue.length, choices: TICKET_CHOICES, recent: ticketRecent, learning: ticketLearning(),
             accuracy: { days: 30, sorted, byAi: empty ? 0 : 214, byRules: empty ? 0 : 112, resorted, percent: sorted ? Math.round((100 * (sorted - resorted)) / sorted) : null, judgedRight: ticketJudged.right, judgedWrong: ticketJudged.wrong },
         };
     };
@@ -737,6 +746,14 @@ export function createDemoApi(): BrainApi {
         postTicketReview: async body => {
             await new Promise(r => setTimeout(r, 350));
             if (variant === 'noreview') return { ok: false, kind: 'missing', message: 'Ticket review needs migration 20261115000003 to be applied.' };
+            if ('action' in body && body.action === 'undo') {
+                ticketRecent = ticketRecent.filter(x => x.ticketId !== body.ticketId);
+                return { ok: true, status: status(), data: structuredClone(ticketView()), message: 'Undone. The ticket is in the queue again and the AI no longer learns from it.' };
+            }
+            if ('action' in body && body.action === 'keep') {
+                return { ok: true, status: status(), data: structuredClone({ ...ticketView(), learning: ticketView().learning && { ...ticketView().learning!, conflicts: [] } }), message: 'Kept. The other answer is no longer shown to the AI.' };
+            }
+            if ('action' in body) return { ok: false, kind: 'invalid', message: 'Unknown action.' };
             const t = ticketQueue.find(x => x.id === body.ticketId);
             if (!t) return { ok: false, kind: 'invalid', message: 'Someone has judged this ticket already.' };
             if (body.verdict === 'wrong') {
@@ -745,7 +762,7 @@ export function createDemoApi(): BrainApi {
             }
             ticketQueue = ticketQueue.filter(x => x.id !== t.id);
             ticketJudged[body.verdict]++;
-            ticketRecent = [{ at: new Date().toISOString(), text: t.text, verdict: body.verdict, chosen: t.categoryCode, right: body.verdict === 'wrong' ? body.code : null, moved: body.verdict === 'wrong' && t.canMove }, ...ticketRecent];
+            ticketRecent = [{ ticketId: t.id, at: new Date().toISOString(), text: t.text, verdict: body.verdict, chosen: t.categoryCode, right: body.verdict === 'wrong' ? body.code : null, moved: body.verdict === 'wrong' && t.canMove, canUndo: true }, ...ticketRecent];
             const message = body.verdict === 'right' ? 'Marked right.'
                 : t.canMove ? 'Marked wrong. The ticket moved to the right team and the AI learns from it.'
                     : 'Marked wrong. The AI learns from it. The ticket was not moved because it is no longer open.';

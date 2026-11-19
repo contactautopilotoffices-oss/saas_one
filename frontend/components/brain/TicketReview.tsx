@@ -5,11 +5,17 @@
  * the ones below High, and the ones the keyword rules sorted while the AI was unavailable, wait here. The Tech team says
  * Right or Wrong; a wrong one with the right category teaches the AI and, while the ticket is open, moves it.
  * The ticket's words arrive masked and nothing here says who raised it.
- * Built from the screen's own pieces (ui.tsx, brain.module.css); no new visual values.
+ * 2026-11-19 (owner: "with corrections, it must improve the classification accuracy and confidence"): the learning.
+ * Each ticket shows the similar past tickets used and why its confidence is what it is; a judgement can be undone for
+ * 7 days; examples that disagree are listed to settle; "watch only" compares the old and the new way; the weeks show
+ * whether the queue shrinks and the confidence gets more honest.
+ * Built from the screen's own pieces (ui.tsx, charts.tsx, brain.module.css); no new visual values.
  */
 import React, { useEffect, useId, useState } from 'react';
-import { Check, CircleSlash, Eye, Gauge, History, ShieldCheck, TriangleAlert, X } from 'lucide-react';
+import { Check, CircleSlash, Eye, Gauge, GitCompare, GraduationCap, History, Scale, ShieldCheck, TriangleAlert, Undo2, X } from 'lucide-react';
 import type { CategoryChoice, TicketReviewItem, TicketReviewView } from '@/backend/lib/ticketing/sortReview';
+import type { ConflictView, LearningView, TicketLearningNote, WeekRow } from '@/backend/lib/ticketing/sortLearningView';
+import { BarSeries } from './charts';
 import { confidenceLabel, confidenceWord } from '@/backend/lib/ticketing/confidenceWord';
 import { useBrain, useView } from './BrainContext';
 import { dateTimeIN, int, type Tone } from './labels';
@@ -45,6 +51,7 @@ export default function TicketReview({ onCount }: { onCount: (n: number) => void
                         </div>
                     )}
                     <Accuracy d={d} />
+                    {d.learning && <LearningStatus l={d.learning} />}
                     <div className={cx(s.tab, 'flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-(--bc-ink-2)')}>
                         <span><b className={cx(s.numMd, 'text-(--bc-ink-1)')}>{int(d.waiting)}</b> waiting</span>
                         {d.waiting > d.queue.length && <span className="text-(--bc-ink-3)">showing the newest {int(d.queue.length)}</span>}
@@ -53,10 +60,12 @@ export default function TicketReview({ onCount }: { onCount: (n: number) => void
                         <Card><Empty icon={ShieldCheck} title="Nothing to check">Tickets the AI is not sure about appear here.</Empty></Card>
                     ) : (
                         <ul className="flex min-w-0 flex-col gap-[16px]">
-                            {d.queue.map(t => <TicketItem key={t.id} t={t} choices={d.choices[t.choicesKey] ?? []} off={d.tableMissing} onReplace={replace} />)}
+                            {d.queue.map(t => <TicketItem key={t.id} t={t} choices={d.choices[t.choicesKey] ?? []} off={d.tableMissing} onReplace={replace} names={namesOf(d)} />)}
                         </ul>
                     )}
-                    {d.recent.length > 0 && <Recent d={d} />}
+                    {d.learning && d.learning.conflicts.length > 0 && <Conflicts conflicts={d.learning.conflicts} names={namesOf(d)} onReplace={replace} />}
+                    {d.recent.length > 0 && <Recent d={d} onReplace={replace} />}
+                    {d.learning && d.learning.weeks.length > 0 && <Weeks weeks={d.learning.weeks} />}
                 </>
             )}
         </div>
@@ -90,7 +99,7 @@ function Fact({ k, children }: { k: string; children: React.ReactNode }) {
     );
 }
 
-function TicketItem({ t, choices, off, onReplace }: { t: TicketReviewItem; choices: CategoryChoice[]; off: boolean; onReplace: (d: TicketReviewView) => void }) {
+function TicketItem({ t, choices, off, onReplace, names }: { t: TicketReviewItem; choices: CategoryChoice[]; off: boolean; onReplace: (d: TicketReviewView) => void; names: (code: string | null) => string }) {
     const { api, report, toast } = useBrain();
     const id = useId();
     const [wrong, setWrong] = useState(false);
@@ -136,6 +145,7 @@ function TicketItem({ t, choices, off, onReplace }: { t: TicketReviewItem; choic
                 {t.risk && <Fact k="Risk"><span className="inline-flex items-start gap-1.5 text-(--bc-warn-text)"><TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />{t.risk}</span></Fact>}
             </dl>
             {t.reason && <p className="text-[13px] break-words text-(--bc-ink-2)"><span className="text-(--bc-ink-3)">Why: </span>{t.reason}</p>}
+            {t.learning && <TicketLearning n={t.learning} names={names} />}
             <div className="flex min-w-0 flex-wrap items-center gap-[8px]">
                 <span className="mr-1 text-[13.5px] font-semibold text-(--bc-ink-1)">Was it sorted right?</span>
                 <Btn size="sm" variant="ok" icon={Check} disabled={off || !!busy} onClick={() => judge('right')}>{busy === 'right' ? 'Saving…' : 'Right'}</Btn>
@@ -160,11 +170,20 @@ function TicketItem({ t, choices, off, onReplace }: { t: TicketReviewItem; choic
     );
 }
 
-function Recent({ d }: { d: TicketReviewView }) {
-    // Category codes in plain names, from every property's list the screen already has.
-    const names = new Map<string, string>();
-    for (const list of Object.values(d.choices)) for (const c of list) if (!names.has(c.code)) names.set(c.code, c.name);
-    const name = (code: string | null) => (code ? names.get(code) ?? code : 'No category');
+function Recent({ d, onReplace }: { d: TicketReviewView; onReplace: (d: TicketReviewView) => void }) {
+    const { api, report, toast } = useBrain();
+    const name = namesOf(d);
+    const [busy, setBusy] = useState<string | null>(null);
+    const undo = async (ticketId: string) => {
+        if (busy) return;
+        setBusy(ticketId);
+        const r = await api.postTicketReview({ action: 'undo', ticketId });
+        setBusy(null);
+        report(r);
+        if (!r.ok) { toast(r.message, 'bad'); return; }
+        onReplace(r.data);
+        toast(r.message ?? 'Undone.');
+    };
     return (
         <Card as="section" className="@container flex min-w-0 flex-col gap-[12px] p-[16px] @3xl:p-6" aria-labelledby="ticket-recent-h">
             <CardHead id="ticket-recent-h" icon={History} label="Recently judged" />
@@ -175,6 +194,9 @@ function Recent({ d }: { d: TicketReviewView }) {
                         <p className={cx(s.tab, 'flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-(--bc-ink-3)')}>
                             {r.verdict === 'right' ? <Chip tone="ok" icon={Check}>Right</Chip> : <Chip tone="bad" icon={X}>Wrong</Chip>}
                             <span>{dateTimeIN(r.at)}</span>
+                            {r.canUndo && r.ticketId && (
+                                <Btn size="sm" variant="quiet" icon={Undo2} disabled={!!busy} onClick={() => undo(r.ticketId!)}>{busy === r.ticketId ? 'Undoing…' : 'Undo'}</Btn>
+                            )}
                         </p>
                         {r.verdict === 'wrong' && (
                             <p className="text-[12.5px] break-words text-(--bc-ink-2)">
@@ -185,6 +207,153 @@ function Recent({ d }: { d: TicketReviewView }) {
                     </li>
                 ))}
             </ul>
+        </Card>
+    );
+}
+
+/** Category codes in plain names, from every property's list the screen already has. */
+function namesOf(d: TicketReviewView): (code: string | null) => string {
+    const names = new Map<string, string>();
+    for (const list of Object.values(d.choices)) for (const c of list) if (!names.has(c.code)) names.set(c.code, c.name);
+    return (code: string | null) => (code ? names.get(code) ?? words(code) : 'No category');
+}
+
+const SOURCE_LABEL: Record<string, string> = { judged_right: 'confirmed right', judged_wrong: 'corrected', override: 're-sorted on the ticket' };
+const MODE_WORD: Record<LearningView['setting']['mode'], string> = { off: 'Off', shadow: 'Watch only', live: 'On' };
+
+/** The similar past tickets used, and why the confidence is what it is (one ticket). */
+function TicketLearning({ n, names }: { n: TicketLearningNote; names: (code: string | null) => string }) {
+    const differs = n.mode === 'shadow' && n.method !== 'failed' && n.newCode !== n.oldCode;
+    return (
+        <details className={cx(s.well, 'min-w-0 p-[12px]')}>
+            <summary className="cursor-pointer text-[13px] font-semibold text-(--bc-ink-1)">
+                {n.method === 'shortcut' ? 'Sorted as a repeat, without the AI' : 'Similar past tickets and why this confidence'}
+                {n.mode === 'shadow' && <span className="ml-2 font-normal text-(--bc-ink-3)">(watch only: the learning way did not decide)</span>}
+            </summary>
+            <div className="mt-[10px] flex min-w-0 flex-col gap-[10px]">
+                {n.method === 'failed' && <p className="text-[13px] text-(--bc-ink-2)">The learning way could not sort this ticket, so it was sorted the old way.</p>}
+                {n.mode === 'shadow' && n.method !== 'failed' && (
+                    <p className="text-[13px] text-(--bc-ink-2)">
+                        The learning way would have chosen <b className="font-semibold text-(--bc-ink-1)">{names(n.newCode)}</b>{n.newConfidence !== null && <> at {confidenceLabel(n.newConfidence)}</>}
+                        {differs ? <span className="text-(--bc-warn-text)"> (different from the old way)</span> : ' (the same as the old way)'}.
+                    </p>
+                )}
+                {n.why && <p className="text-[13px] break-words text-(--bc-ink-2)"><span className="text-(--bc-ink-3)">Why this confidence: </span>{n.why}</p>}
+                {n.neighbours.length > 0 ? (
+                    <ul className={s.rows}>
+                        {n.neighbours.map(x => (
+                            <li key={x.id} className="flex min-w-0 flex-col gap-1 py-2 first:pt-0 last:pb-0">
+                                <p className="text-[13px] break-words text-(--bc-ink-1)">“{x.text}”</p>
+                                <p className={cx(s.tab, 'flex flex-wrap gap-x-2 text-[12px] text-(--bc-ink-3)')}>
+                                    <span>→ <b className="font-semibold text-(--bc-ink-2)">{names(x.code)}</b></span>
+                                    <span>{SOURCE_LABEL[x.source] ?? x.source}</span>
+                                    <span>{Math.round(x.strength * 100)}% alike{x.by === 'meaning' ? ' (by meaning)' : ''}</span>
+                                </p>
+                            </li>
+                        ))}
+                    </ul>
+                ) : <p className="text-[12.5px] text-(--bc-ink-3)">No similar past ticket was found.</p>}
+            </div>
+        </details>
+    );
+}
+
+/** The setting, the examples and, while watching, the old way against the new way. */
+function LearningStatus({ l }: { l: LearningView }) {
+    const { go } = useBrain();
+    const w = l.watch;
+    const share = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : '—');
+    return (
+        <Card as="section" className="@container flex min-w-0 flex-col gap-[12px] p-[16px] @3xl:p-6" aria-labelledby="ticket-learn-h">
+            <CardHead id="ticket-learn-h" icon={GraduationCap} label="How ticket sorting learns"
+                right={<Btn size="sm" variant="quiet" onClick={() => go('switches')}>Change in Switches</Btn>} />
+            <p className={cx(s.tab, 'flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-(--bc-ink-2)')}>
+                <Chip tone={l.setting.mode === 'live' ? 'ok' : l.setting.mode === 'shadow' ? 'warn' : 'neutral'}>{MODE_WORD[l.setting.mode]}</Chip>
+                <span>{int(l.examples)} learning examples</span>
+                <span>similar tickets found by {l.setting.meaning ? 'meaning and words' : 'words'}</span>
+            </p>
+            {l.tableMissing && <p className="text-[12.5px] text-(--bc-warn-text)">Learning examples need migration 20261119000001 to be applied. Until then, tickets are sorted as before whatever the setting says.</p>}
+            {w && (
+                <div className="flex min-w-0 flex-col gap-[8px] border-t border-(--bc-line) pt-[12px]">
+                    <span className="flex items-center gap-1.5 text-[13.5px] font-semibold text-(--bc-ink-1)"><GitCompare className="h-4 w-4" />Old way and learning way, last 30 days</span>
+                    {w.known === 0 ? <p className="text-[13px] text-(--bc-ink-3)">No ticket with a known right answer yet. Judge some tickets here, or wait a week.</p> : (
+                        <dl className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-3 @xl:grid-cols-4">
+                            <Fact k="Sorted right">old {share(w.oldRight, w.known)} · new <b>{share(w.newRight, w.known)}</b> <span className="text-(--bc-ink-3)">of {int(w.known)}</span></Fact>
+                            <Fact k="Sent to Review">old {int(w.oldToReview)} · new <b>{int(w.newToReview)}</b></Fact>
+                            <Fact k="Wrong but rated High">old {int(w.oldWrongButHigh)} · new <b>{int(w.newWrongButHigh)}</b></Fact>
+                            <Fact k="Repeats, no AI">{int(w.shortcuts)}</Fact>
+                        </dl>
+                    )}
+                    <p className="text-[12px] text-(--bc-ink-3)">Tickets nobody re-sorted within 7 days count as right. Switch to On when the new way is right at least as often and has fewer “wrong but rated High”.</p>
+                </div>
+            )}
+        </Card>
+    );
+}
+
+/** Near-identical examples with different categories: a person keeps one. */
+function Conflicts({ conflicts, names, onReplace }: { conflicts: ConflictView[]; names: (code: string | null) => string; onReplace: (d: TicketReviewView) => void }) {
+    const { api, report, toast } = useBrain();
+    const [busy, setBusy] = useState<string | null>(null);
+    const keep = async (keepId: string, dropId: string) => {
+        if (busy) return;
+        setBusy(keepId);
+        const r = await api.postTicketReview({ action: 'keep', keep: keepId, drop: dropId });
+        setBusy(null);
+        report(r);
+        if (!r.ok) { toast(r.message, 'bad'); return; }
+        onReplace(r.data);
+        toast(r.message ?? 'Kept.');
+    };
+    const side = (x: ConflictView['a'], other: ConflictView['a']) => (
+        <div className="flex min-w-0 flex-col gap-[6px]">
+            <p className="text-[13px] break-words text-(--bc-ink-1)">“{x.text}”</p>
+            <p className={cx(s.tab, 'text-[12px] text-(--bc-ink-3)')}>→ <b className="font-semibold text-(--bc-ink-2)">{names(x.code)}</b> · {SOURCE_LABEL[x.source] ?? x.source} · {dateTimeIN(x.at)}</p>
+            <Btn size="sm" variant="ghost" icon={Check} className="self-start" disabled={!!busy} onClick={() => keep(x.id, other.id)}>{busy === x.id ? 'Saving…' : 'Keep this one'}</Btn>
+        </div>
+    );
+    return (
+        <Card as="section" className="@container flex min-w-0 flex-col gap-[12px] p-[16px] @3xl:p-6" aria-labelledby="ticket-conflict-h">
+            <CardHead id="ticket-conflict-h" icon={Scale} label="Examples that disagree" hint="Nearly the same ticket, sorted to different categories. The AI is shown both until you keep one." />
+            <ul className={s.rows}>
+                {conflicts.map(c => (
+                    <li key={`${c.a.id}-${c.b.id}`} className="grid min-w-0 gap-[16px] py-3 first:pt-1 last:pb-1 @xl:grid-cols-2">
+                        {side(c.a, c.b)}
+                        {side(c.b, c.a)}
+                    </li>
+                ))}
+            </ul>
+        </Card>
+    );
+}
+
+/** Week by week: is the Review queue shrinking, and is the confidence getting more honest? */
+function Weeks({ weeks }: { weeks: WeekRow[] }) {
+    const label = (from: string) => new Date(`${from}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    const queue = weeks.map(w => ({ key: w.from, label: label(w.from), long: `Week from ${label(w.from)}: ${w.toReview} of ${w.tickets} tickets sent to Review`, value: w.toReview }));
+    const right = weeks.map(w => ({ key: w.from, label: label(w.from), long: `Week from ${label(w.from)}: ${w.tickets ? Math.round((100 * (w.tickets - w.resorted)) / w.tickets) : 0}% not re-sorted by a person`, value: w.tickets ? Math.round((100 * (w.tickets - w.resorted)) / w.tickets) : 0 }));
+    return (
+        <Card as="section" className="@container flex min-w-0 flex-col gap-[16px] p-[16px] @3xl:p-6" aria-labelledby="ticket-weeks-h">
+            <CardHead id="ticket-weeks-h" icon={History} label="Week by week" hint="Learning works when the Review queue shrinks, fewer tickets need re-sorting, and the confidence given matches how often it is right." />
+            <div className="grid min-w-0 gap-[24px] @3xl:grid-cols-2">
+                <BarSeries bars={queue} format={v => int(v)} unit="tickets" title="Sent to Review" />
+                <BarSeries bars={right} format={v => `${int(v)}%`} unit="%" title="Sorted right" />
+            </div>
+            <div className="min-w-0 overflow-x-auto">
+                <table className={cx(s.tab, 'w-full text-left text-[12.5px]')}>
+                    <thead className="text-(--bc-ink-3)"><tr><th className="py-1 pr-4 font-medium">Week from</th><th className="py-1 pr-4 font-medium">Tickets</th><th className="py-1 pr-4 font-medium">Judged right / wrong</th><th className="py-1 font-medium">Confidence given vs really right</th></tr></thead>
+                    <tbody className="text-(--bc-ink-2)">
+                        {weeks.map(w => (
+                            <tr key={w.from} className="border-t border-(--bc-line)">
+                                <td className="py-1.5 pr-4">{label(w.from)}</td>
+                                <td className="py-1.5 pr-4">{int(w.tickets)}</td>
+                                <td className="py-1.5 pr-4">{int(w.judgedRight)} / {int(w.judgedWrong)}</td>
+                                <td className="py-1.5">{w.saidAvg === null ? '—' : <>said {w.saidAvg}%, right {w.actuallyRight}%{Math.abs(w.saidAvg - (w.actuallyRight ?? 0)) <= 5 ? ' (honest)' : ''}</>}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </Card>
     );
 }

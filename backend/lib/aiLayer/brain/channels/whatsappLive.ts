@@ -118,6 +118,16 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         record: r => recordTurn(supabaseAdmin, { ...r, channel: 'whatsapp' }),
         sendReply: (phone, text) => sendBrainReply(phone, text),
         sendReplyTracked: (phone, text) => sendBrainReplyTracked(phone, text),
+        // 2026-11-18 task engine: the task assistant itself answers the task words of a mixed message, with its own
+        // rules (confirm, undo, wording, team settings); its replies to this person are handed back, not sent.
+        async askTaskAssistant(input) {
+            const { bodyWithText, claimSmartChat } = await import('@/task-manager/brain/live');
+            const replies: string[] = [];
+            const claim = await claimSmartChat(bodyWithText(null, input.phone, input.messageId, input.text), undefined, { noBatch: true, capture: t => { replies.push(t); } });
+            if (!claim.handled) return { taken: false, replies: [] };
+            await claim.background?.();
+            return { taken: true, replies };
+        },
         sweep: (orgId, settings) => sweepBrain(supabaseAdmin, orgId, settings),
         seenBefore: id => { const at = taken.get(id); return at !== undefined && Date.now() - at < TAKEN_MS; },
         markSeen: id => { if (taken.size > 5000) taken.clear(); taken.set(id, Date.now()); },

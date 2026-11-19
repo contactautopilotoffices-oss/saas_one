@@ -81,6 +81,9 @@ export const BRAIN_TEXT = {
     closed_done: { en: 'Okay, I have dropped that. Nothing was raised or changed.', hi: 'ठीक है, मैंने वह छोड़ दिया। कुछ नहीं बना और कुछ नहीं बदला।', hinglish: 'Theek hai, maine woh chhod diya. Kuch nahi bana aur kuch nahi badla.' },
     pick_range: { en: 'Please reply with a number from 1 to {n}.', hi: 'कृपया 1 से {n} तक का नंबर भेजें।', hinglish: 'Please 1 se {n} tak ka number bhejiye.' },
     pick_one: { en: 'Please reply with 1.', hi: 'कृपया 1 भेजें।', hinglish: 'Please 1 bhejiye.' },
+    // 2026-11-18, the task assistant as the brain's task engine (mixed messages).
+    task_part_alone: { en: 'For the task part, please send it as its own message.', hi: 'टास्क वाला हिस्सा कृपया अलग मैसेज में भेजें।', hinglish: 'Task wala hissa please alag message mein bhejiye.' },
+    task_question_first: { en: 'Please answer the task question first. Your other request stays open.', hi: 'कृपया पहले टास्क वाले सवाल का जवाब दें। आपका दूसरा अनुरोध खुला रहेगा।', hinglish: 'Please pehle task wale sawaal ka jawab dijiye. Aapki doosri request khuli rahegi.' },
     photo_replaced: { en: '📷 Using your new photo (it replaces the earlier one).', hi: '📷 आपकी नई फ़ोटो लगाई है (पुरानी की जगह)।', hinglish: '📷 Aapki nayi photo lagayi hai (purani ki jagah).' },
 } satisfies Record<string, T>;
 

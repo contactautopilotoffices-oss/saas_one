@@ -99,6 +99,16 @@ export function withSentIds(raw: unknown, turnAt: string, ids: readonly string[]
     return { ...s, history };
 }
 
+/**
+ * The stored thread with more exchanges at the end (2026-11-18: what the task assistant answered, so the brain
+ * remembers it). Kept to the usual length; a thread that cannot be read starts fresh.
+ */
+export function withExchange(raw: unknown, entries: readonly HistoryEntry[], at: string): ThreadState {
+    const parsed = threadStateSchema.safeParse(raw ?? {});
+    const s = parsed.success ? parsed.data : { ...EMPTY_THREAD };
+    return { ...s, history: [...s.history, ...entries.map(e => ({ ...e, text: e.text.slice(0, 2000) }))].slice(-HISTORY_TURNS), lastActiveAt: at };
+}
+
 /** The confirmation card waiting for the person's Yes or Cancel, whether it is in front or behind a question. */
 export function waitingCard(s: ThreadState): PendingConfirm | null {
     return s.pending?.kind === 'confirm' ? s.pending : s.parked ?? null;

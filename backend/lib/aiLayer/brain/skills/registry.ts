@@ -48,9 +48,16 @@ export function skillsFor(actor: ActorContext, settings: BrainSettings): Availab
         if (mode === 'off') continue;
         out.push({ skill, mode });
     }
+    // With the task assistant as the brain's task engine (2026-11-18), the brain's own task actions are not offered:
+    // tasks are answered by the task assistant, with its own rules.
+    const own = settings.taskEngine ? out.filter(a => !TASK_ACTION_IDS.has(a.skill.id)) : out;
     // The task look-ups exist only for the task actions: without one of those on, they are not offered at all.
-    return tasksInBrain(out) ? out : out.filter(a => !TASK_HELPER_IDS.has(a.skill.id));
+    return tasksInBrain(own) ? own : own.filter(a => !TASK_HELPER_IDS.has(a.skill.id));
 }
+
+/** Does the task assistant answer this person's tasks with the brain in front? (Switch on, and tasks not off for them.) */
+export const taskEngineFor = (actor: ActorContext, settings: BrainSettings): boolean =>
+    settings.taskEngine && brainLevelFor(actor, settings, 'tasks') !== 'off';
 
 /** Has this person got at least one of the brain's own task actions (add, done, hand over, remind)? */
 export const tasksInBrain = (available: readonly AvailableSkill[]): boolean => available.some(a => TASK_ACTION_IDS.has(a.skill.id));
@@ -61,6 +68,15 @@ export const ASK_USER = 'ask_user';
 export const HANDOFF = 'handoff';
 /** 2026-11-18: the person does not want something (a waiting card, an offer, a photo). Code cancels and remembers it. */
 export const CLOSE_TOPIC = 'close_topic';
+/** 2026-11-18: the part of the message that is about tasks, for the task assistant to answer itself. */
+export const TASK_PART = 'task_part';
+
+/** Offered only while the task assistant is the brain's task engine for this person. */
+export const TASK_PART_TOOL: ToolDef = {
+    name: TASK_PART,
+    description: 'Hand the part of the message that is about tasks (my tasks, add, done, hand over, remind, progress, team tasks) to the task assistant, which answers it itself, in its own words. Copy the person\'s words about tasks EXACTLY from the message, nothing added or reworded. Does NOT end your turn: afterwards answer only the rest of the message, or reply with nothing if the whole message was about tasks. Do NOT use for tickets, rooms or anything that is not a task.',
+    input: schema({ words: str('The person\'s own words about tasks, copied exactly from the message. Example: "done 2".') }),
+};
 
 export const CONTROL_TOOLS: readonly ToolDef[] = [
     {
@@ -90,15 +106,18 @@ export const CONTROL_TOOLS: readonly ToolDef[] = [
     },
 ];
 
-export function toolDefs(available: AvailableSkill[]): ToolDef[] {
+export function toolDefs(available: AvailableSkill[], opts: { taskPart?: boolean } = {}): ToolDef[] {
     // With a task action on, the descriptions that send tasks to the task assistant say what the brain now does itself.
     const inBrain = tasksInBrain(available);
     const describe = (id: string, text: string) => (inBrain && IN_BRAIN_DESCRIPTIONS[id]) || text;
     return [
         ...available.map(a => ({ name: toolName(a.skill.id), description: describe(a.skill.id, a.skill.description), input: a.skill.input })),
-        ...CONTROL_TOOLS.map(t => (t.name === HANDOFF ? { ...t, description: describe('handoff', t.description) } : t)),
+        ...CONTROL_TOOLS.map(t => (t.name === HANDOFF ? { ...t, description: opts.taskPart ? HANDOFF_WITH_TASK_ENGINE : describe('handoff', t.description) } : t)),
+        ...(opts.taskPart ? [TASK_PART_TOOL] : []),
     ];
 }
+
+const HANDOFF_WITH_TASK_ENGINE = 'Pass the conversation to a person. Ends your turn. Use when the person asks for a person, is upset, or you cannot help after trying. Do NOT use for tasks (use task_part) or for requests you can answer with your tools.';
 
 /** For the console and the docs: every skill with what it needs. */
 export function describeSkills() {

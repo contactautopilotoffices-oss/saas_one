@@ -44,6 +44,32 @@
  *    testing before scale `[BAA p.116]`: the eval script on real tickets, before any setting is changed.
  * **10. Laws knowingly violated**: L6 (rubric grader) is not used because the right answer is a category code that can be
  *    compared exactly. L9 (MCP) N/A, no tools.
+ *
+ * ### Amendment 2026-11-19 — learning from judgements (owner: "it must improve the classification accuracy and confidence")
+ * Behind Brain → Switches → "Ticket sorting learns" (config ticketLearning: off / watch only / on; default off = all of
+ * the above, unchanged). Code: sortLearning.ts (pure), sortLearningStore.ts, sortLearningRun.ts, resolver.ts.
+ * **1. Workflow or agent?** still a workflow `[BAA p.104]`: retrieve, then one model call or none, a fixed path. Hybrid
+ *    `[BAA p.121]`: a deterministic shortcut sorts near-identical repeats (≥2 agreeing examples, nothing disagreeing, no
+ *    danger words) without the model; everything else goes to the model.
+ * **2. Context** `[BAA p.112]`: plus the 8 most similar learning examples of the organisation, only of categories the
+ *    ticket's property can use, each marked corrected or confirmed.
+ * **3. Cost of a false positive** `[BAA p.112]`: unchanged; the shortcut never handles danger words, so a priority
+ *    raise is never skipped. Model tier unchanged (ticket_classify). Embeddings for "by meaning" are fixed to the
+ *    candidate-search model (inventory row with its why, docs/AI_MODELS.md).
+ * **5. Prompt** `[BAA pp.105, 114]`: unchanged system prompt; the examples replace the "past corrections" block.
+ * **6. Memory** `[BAA pp.100–103]`: retrieval over a written memory (ticket_sort_examples), not "the newest 30": the
+ *    book's finding is that retrieval does the early lifting and repeats are where memory pays `[BAA p.103]`, and ticket
+ *    work repeats. Writers are people only (a judgement, an Override); the model still has no write tool. A key outside
+ *    the property's category list is never shown `[BAA p.101]`. Examples can be undone or retired when two disagree
+ *    (the book's open question: grade and delete useless evidence `[BAA p.103]`).
+ * **8. Evaluation** `[BAA pp.118–119]`: the saved confidence is now measured, not self-rated: the model's rating
+ *    corrected by its track record per band, mixed with how many similar judged tickets agree. Both ways run side by side
+ *    in "watch only" and on the same past tickets in scripts/tickets/backtest_learning.ts (L2 `[BAA pp.94–95, 99]`);
+ *    Review → Tickets shows the comparison and a weekly trend. Baseline first: scripts/tickets/learning_baseline.ts.
+ * **9. Trace** `[BAA pp.119–120]`: ticket_sort_traces per ticket: old and new choice, the model's rating, the measured
+ *    confidence and why, the similar tickets used, latency.
+ * **10. Laws knowingly violated**: L5 tool axis N/A (no tools). L6 still not used (exact labels). Watch-only costs a
+ *    second model call per ticket while it is on; that is the price of L2 on live traffic, and it is off by default.
  */
 import type { BrainLlm } from '@/task-manager/brain/llm';
 import type { SkillGroup } from './classifyTicket';
@@ -73,8 +99,12 @@ export { CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, confidenceWord } from './confidence
 /** A model that gives no usable rating gets this: Low, so a person checks it. */
 const CONFIDENCE_MISSING = 50;
 
-/** A ticket the Tech team said was sorted wrong, and the right answer (Brain → Review → Tickets). */
-export interface Correction { text: string; code: string; team: SkillGroup | null }
+/**
+ * A ticket the Tech team said was sorted wrong, and the right answer (Brain → Review → Tickets). With `kind` set it is
+ * a learning example found for this ticket (sortLearning.ts, owner 2026-11-19): 'corrected' (judged wrong, or re-sorted
+ * by hand) or 'confirmed' (judged right). Without `kind` the prompt is exactly as before.
+ */
+export interface Correction { text: string; code: string; team: SkillGroup | null; kind?: 'corrected' | 'confirmed' }
 /** How many of the newest corrections are shown to the model. */
 export const MAX_CORRECTIONS = 30;
 
@@ -205,6 +235,10 @@ function correctionLines(corrections: readonly Correction[], options: readonly C
     const known = new Set(options.map(o => o.code));
     const usable = corrections.filter(c => known.has(c.code)).slice(0, MAX_CORRECTIONS);
     if (!usable.length) return '';
+    if (usable.some(c => c.kind)) {
+        return `\n\nSimilar past tickets of this organisation, most similar first, and the category its team decided:\n` +
+            usable.map(c => `- "${c.text.replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 200)}" → ${c.code} (${c.kind === 'confirmed' ? 'the AI chose this and the team confirmed it' : 'the team corrected it to this'})`).join('\n');
+    }
     return `\n\nPast corrections by this organisation's team (tickets that were sorted wrong, and the right category):\n` +
         usable.map(c => `- "${c.text.replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 200)}" → ${c.code}`).join('\n');
 }

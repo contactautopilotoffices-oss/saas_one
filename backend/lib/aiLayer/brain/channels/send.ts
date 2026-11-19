@@ -27,5 +27,13 @@ export async function sendBrainReplyTracked(phone: string, text: string, env: Re
         return { sent: false, messageIds: [] };
     }
     const { TaskMessagingService } = await import('@/task-manager/TaskMessagingService');
-    return TaskMessagingService.sendFreeformReplyTracked(phone, text);
+    // A long reply (a joined task list, 2026-11-18) goes in parts, split the same way the task assistant splits its own.
+    const { splitLongReply } = await import('@/task-manager/brain/text');
+    const ids: string[] = [];
+    let sent = true;
+    for (const part of splitLongReply(text)) {
+        const r = await TaskMessagingService.sendFreeformReplyTracked(phone, part);
+        sent = sent && r.sent; ids.push(...r.messageIds);
+    }
+    return { sent, messageIds: ids };
 }

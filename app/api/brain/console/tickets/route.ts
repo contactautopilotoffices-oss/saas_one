@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { consoleStatus } from '@/backend/lib/aiLayer/brain/console/server';
-import { judgeTicketSort, ticketReviewView, type Reassign } from '@/backend/lib/ticketing/sortReview';
+import { judgeTicketSort, keepExample, ticketReviewView, undoTicketJudgement, type Reassign } from '@/backend/lib/ticketing/sortReview';
 import { NO_STORE, consoleGuard, fail } from '../_lib';
 
 export const runtime = 'nodejs';
@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic';
  *   POST ?orgId=   { ticketId, verdict: 'right' | 'wrong', code }   code = the right category, when wrong.
  *                  Wrong: becomes a correction the AI learns from, and an open ticket is moved to that category and team
  *                  and assigned again (backend/lib/ticketing/sortReview.ts).
+ *                  2026-11-19: { action: 'undo', ticketId }  takes a judgement back (within 7 days).
+ *                              { action: 'keep', keep, drop }  two learning examples disagree: keep one.
  * The ticket's words are masked and nothing says who raised it.
  */
 export async function GET(request: NextRequest) {
@@ -42,7 +44,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
     if (!body || typeof body !== 'object') return fail(400, 'Nothing to save.');
     try {
-        const done = await judgeTicketSort(supabaseAdmin, guard.orgId, guard.userId, body, reassign);
+        const done = body.action === 'undo' ? await undoTicketJudgement(supabaseAdmin, guard.orgId, guard.userId, body, reassign)
+            : body.action === 'keep' ? await keepExample(supabaseAdmin, guard.orgId, body)
+            : await judgeTicketSort(supabaseAdmin, guard.orgId, guard.userId, body, reassign);
         if (!done.ok) return fail(done.status, done.error);
         const { status } = await consoleStatus(supabaseAdmin, guard.orgId);
         const data = await ticketReviewView(supabaseAdmin, guard.orgId);

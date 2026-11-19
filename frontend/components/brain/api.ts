@@ -14,7 +14,10 @@ import type { InventoryRow } from '@/task-manager/ai/aiInventory';
 import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 
 /** Review → Tickets (owner 2026-11-15): judge how a ticket was sorted. code = the right category, when wrong. */
-export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; code: string | null };
+export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; code: string | null }
+    /** 2026-11-19: take a judgement back (within 7 days), or keep one of two learning examples that disagree. */
+    | { action: 'undo'; ticketId: string }
+    | { action: 'keep'; keep: string; drop: string };
 /** The judging reply also says what happened to the ticket (moved, not moved because closed, …). */
 export type TicketReviewResult = Result<TicketReviewView> & { message?: string };
 
