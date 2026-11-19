@@ -539,8 +539,9 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                                 <div
                                                                     key={t.id}
                                                                     className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md truncate ${fcfg.bg} ${fcfg.text}`}
+                                                                    title={`${t.location ? `[${t.location}] ` : ''}${t.system_name}${t.detail_name ? ` - ${t.detail_name}` : ''}`}
                                                                 >
-                                                                    {t.system_name}
+                                                                    {t.location ? `${t.location.replace(/ floor/i, 'F')} · ${t.system_name}` : t.system_name}
                                                                 </div>
                                                             );
                                                         })}
@@ -612,8 +613,15 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                     <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${cfg.text}`} />
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center justify-between gap-2">
-                                                            <p className={`text-xs font-black ${fcfg.text}`}>{task.system_name}</p>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${cfg.bg} ${cfg.text}`}>
+                                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                                <p className={`text-xs font-black truncate ${fcfg.text}`}>{task.system_name}</p>
+                                                                {task.location && (
+                                                                    <span className="px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider rounded bg-slate-200/90 text-slate-700 shrink-0">
+                                                                        {task.location}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${cfg.bg} ${cfg.text}`}>
                                                                 {cfg.label}
                                                             </span>
                                                         </div>
@@ -656,7 +664,14 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
                             <div className="min-w-0 pr-2">
                                 <p className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase tracking-widest truncate">{selectedTask.status === 'done' && !isEditMode ? 'Task Details' : 'Update PPM Task'}</p>
-                                <h3 className="text-base sm:text-lg font-black text-slate-900 truncate">{selectedTask.system_name}</h3>
+                                <div className="flex items-center gap-2 truncate">
+                                    <h3 className="text-base sm:text-lg font-black text-slate-900 truncate">{selectedTask.system_name}</h3>
+                                    {selectedTask.location && (
+                                        <span className="px-2 py-0.5 text-xs font-bold rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+                                            📍 {selectedTask.location}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                             <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
                                 <X className="w-5 h-5" />
@@ -800,7 +815,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                         className="hidden"
                                                         disabled={isUploadingAttachment}
                                                         onChange={async e => {
-                                                            const files = Array.from(e.target.files || []);
+                                                            const files = Array.from(e.target.files || []) as File[];
                                                             for (const f of files) await handleAttachmentUpload(f, 'photo');
                                                             e.target.value = '';
                                                         }}
