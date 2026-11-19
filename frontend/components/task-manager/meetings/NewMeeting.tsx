@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useRef, useState } from 'react';
-import { AudioLines, CalendarClock, Loader2, Lock, Mic, Upload, Video, X } from 'lucide-react';
+import { AudioLines, CalendarClock, ListChecks, Loader2, Lock, Mic, Upload, Video, X } from 'lucide-react';
 import { call, meetingsUrl, type MeetingPerson, type MeetingSpace } from './api';
 import PeoplePicker from './PeoplePicker';
 import VoiceServerStatus from '../voice/VoiceServerStatus';
@@ -30,6 +30,8 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
     const [selected, setSelected] = useState<Set<string>>(new Set());
     const [extra, setExtra] = useState<string[]>([]);
     const [confidential, setConfidential] = useState(false);
+    /** Owner 2026-11-19: pull tasks out of the meeting (ticked by default) */
+    const [findTasks, setFindTasks] = useState(true);
     const [busy, setBusy] = useState<'record' | 'upload' | 'online' | null>(null);
     /** Owner 2026-11-18: online only, when the call is */
     const [when, setWhen] = useState<'now' | 'later'>('now');
@@ -47,7 +49,7 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
         if (busy) return;
         setError(null);
         setBusy(file ? 'upload' : 'record');
-        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, confidential });
+        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, confidential, findTasks });
         setBusy(null);
         if (!r.ok) { setError(r.error); return; }
         onStarted(r.id, title.trim(), file);
@@ -64,7 +66,7 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
             scheduledFor = t.toISOString();
         }
         setBusy('online');
-        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, confidential, kind: 'online', scheduledFor });
+        const r = await call<{ id: string }>(meetingsUrl(space), { title, attendeeIds: [...selected], extraNames: extra, confidential, kind: 'online', scheduledFor, findTasks });
         setBusy(null);
         if (!r.ok) { setError(r.error); return; }
         onOnlineCreated(r.id);
@@ -133,6 +135,15 @@ export default function NewMeeting({ space, people, kind, onStarted, onOnlineCre
                     </div>
                 )}
             </div>
+
+            {/* Owner 2026-11-19: ticked by default */}
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
+                <input type="checkbox" checked={findTasks} onChange={e => setFindTasks(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />
+                <span>
+                    <span className="flex items-center gap-1.5 text-sm font-bold text-zinc-800 dark:text-zinc-200"><ListChecks className="h-3.5 w-3.5" /> Find tasks in this meeting</span>
+                    <span className="text-xs text-zinc-500">{findTasks ? 'You get the notes and a list of tasks to send.' : 'You get the notes only. You can still add tasks by hand.'}</span>
+                </span>
+            </label>
 
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
                 <input type="checkbox" checked={confidential} onChange={e => setConfidential(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-600" />

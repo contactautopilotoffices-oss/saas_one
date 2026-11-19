@@ -40,6 +40,8 @@ export interface MeetingDetail {
     /** Owner 2026-11-18: online meetings — the link, the call's times and problems (the video is never recorded) */
     kind?: MeetingKind; scheduledFor?: string | null;
     online?: { joinPath: string; startedAt: string | null; endedAt: string | null; problem: string | null; joinedCount: number; guests?: GuestsView } | null;
+    /** Owner 2026-11-19: false when "Find tasks in this meeting" was unticked */
+    findTasks?: boolean;
 }
 
 export interface MeetingTask {

@@ -485,7 +485,9 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                 ))}
                             </div>
                         )}
-                        {tasks.length === 0 && <Panel><p className="text-sm text-zinc-500">No tasks were found in this meeting. Use &ldquo;Add task&rdquo; if something was missed.</p></Panel>}
+                        {tasks.length === 0 && <Panel><p className="text-sm text-zinc-500">{m.findTasks === false
+                            ? <>Tasks were not pulled out for this meeting. Use &ldquo;Add task&rdquo; to add one by hand.</>
+                            : <>No tasks were found in this meeting. Use &ldquo;Add task&rdquo; if something was missed.</>}</p></Panel>}
                         {tasks.length > 0 && toSend.length === 0 && (
                             <Panel><p className="text-sm text-zinc-500">Every task has been sent. See the &ldquo;Sent&rdquo; tab for the record.</p></Panel>
                         )}

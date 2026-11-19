@@ -119,6 +119,10 @@ devices at once (LiveKit keeps only the newest device for one login).
 room, on this phone, or upload a recording) and **New video meeting** (an online call with a link, now or later). The
 form no longer asks which kind. Both kinds stay in the one list, marked with a video icon for online meetings.
 
+**Find tasks (owner 2026-11-19):** both forms have "Find tasks in this meeting", ticked by default. Unticked, the notes are
+written exactly the same way (same AI call, same prompt) but the tasks it found are not kept (`llm.findTasks: false`,
+set at creation and kept by the notes step); the meeting page says tasks were not pulled out, and "Add task" still works.
+
 ---
 
 ## Agent Spec — Meeting Notes → Tasks (record → transcribe → notes + draft tasks → human Send)

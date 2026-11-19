@@ -287,7 +287,8 @@ export class OnlineMeetingService {
         if (typeof guestId !== 'string' || !isUuid(guestId)) throw new MeetingError(400, 'Unknown guest.');
         const m = await this.joinable(userId, id, spaces);
         if (!this.isOpen(m)) throw new MeetingError(409, 'This meeting has ended.', 'ENDED');
-        const out = await this.locked(id, async row => {
+        // The three possible answers are named, so TypeScript does not narrow them to the first one (Vercel build error)
+        const out = await this.locked<'missing' | 'answered' | GuestEntry>(id, async row => {
             const online: OnlineState = { room: roomNameFor(id), ...(row.online ?? {}) };
             const guest = (online.guests ?? []).find(g => g.id === guestId);
             if (!guest) return { result: 'missing' as const };

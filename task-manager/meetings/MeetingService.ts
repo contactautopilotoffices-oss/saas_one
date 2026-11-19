@@ -283,6 +283,8 @@ export class MeetingService {
                 segments: Object.keys(capture.segments ?? {}).length,
             } : null,
             // Owner 2026-11-18: online meetings — the link and the call's times (the video is never recorded)
+            // Owner 2026-11-19: false when "Find tasks in this meeting" was unticked
+            findTasks: m.llm?.findTasks !== false,
             kind: (m.kind ?? 'room') as MeetingKind,
             scheduledFor: m.scheduled_for ?? null,
             online: m.kind === 'online' ? {
@@ -365,7 +367,7 @@ export class MeetingService {
      * Owner 2026-11-18: `kind` 'online' makes a video call with its own link instead of a phone recording; it may be
      * planned for later (`scheduledFor`, an ISO date-time). It starts as 'scheduled' and goes live when someone joins.
      */
-    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown }, space: MeetingSpace) {
+    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown }, space: MeetingSpace) {
         const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : '';
         if (title.length < 1 || title.length > 150) throw new MeetingError(400, 'Give the meeting a name (up to 150 characters).');
         const online = input.kind === 'online';
@@ -384,6 +386,8 @@ export class MeetingService {
         const { data, error } = await supabaseAdmin.from('meeting_notes').insert({
             id, title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
             meeting_date: meetingDate, status: online ? 'scheduled' : 'recording', workspace: space,
+            // Owner 2026-11-19: "Find tasks in this meeting" (ticked by default); kept in `llm`, which the notes step keeps
+            ...(input.findTasks === false ? { llm: { findTasks: false } } : {}),
             ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret } satisfies OnlineState } : {}),
         }).select('id').single();
         if (error || !data) dbFail(error, 'Could not start the meeting');
@@ -996,7 +1000,10 @@ export class MeetingService {
         }
         // A retry replaces earlier drafts that were never sent
         await supabaseAdmin.from('meeting_note_tasks').delete().eq('meeting_id', m.id).eq('status', 'draft').eq('source', 'ai');
-        if (result.tasks.length) {
+        // Owner 2026-11-19: "Find tasks in this meeting" was unticked — the notes are written the same way (same AI call,
+        // same prompt), only the tasks it found are not kept. Tasks added by hand still work.
+        const findTasks = m.llm?.findTasks !== false;
+        if (findTasks && result.tasks.length) {
             const { error } = await supabaseAdmin.from('meeting_note_tasks').insert(result.tasks.map((t, i) => ({
                 meeting_id: m.id, position: i, title: t.title, note: t.note, owner_name: t.ownerName, owner_user_id: t.ownerUserId, owner_user_ids: t.ownerUserId ? [t.ownerUserId] : [],
                 due_date: t.dueDate, due_time: t.dueTime, quote: t.quote, quote_at_seconds: t.quoteAtSeconds, quote_found: t.quoteFound,
@@ -1007,9 +1014,9 @@ export class MeetingService {
         }
         await this.update(m.id, {
             status: 'ready', error: null, summary: result.summary,
-            llm: { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut, failures: result.failures, tasks: result.tasks.length },
+            llm: { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut, failures: result.failures, tasks: findTasks ? result.tasks.length : 0, ...(findTasks ? {} : { findTasks: false }) },
         });
-        await TaskDatabaseService.logAudit({ eventType: 'meeting_ready', details: { meetingId: m.id, tasks: result.tasks.length, model: result.model, provider: m.stt?.provider ?? null } });
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_ready', details: { meetingId: m.id, tasks: findTasks ? result.tasks.length : 0, findTasks, model: result.model, provider: m.stt?.provider ?? null } });
     }
 
     // ── the task list ─────────────────────────────────────────────────────────
