@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { RosterBoard } from './RosterBoard';
-import { ShiftConfigModal, ShiftConfig } from './ShiftConfigModal';
+import { ShiftConfigModal, ShiftConfig, getContrastTextColor } from './ShiftConfigModal';
 import { AddOfflineStaffModal } from './AddOfflineStaffModal';
 import { CustomTimeModal } from './CustomTimeModal';
 import { Button } from '@/frontend/components/ui/button';
@@ -579,20 +579,56 @@ export function RosterDashboard({ propertyId }: Props) {
                     <Button onClick={() => setIsConfigOpen(true)}>Configure Shift Codes First</Button>
                 </div>
             ) : (
-                <RosterBoard 
-                    staff={staff}
-                    rosters={currentRosters}
-                    configs={configs}
-                    year={year}
-                    month={month}
-                    viewDate={viewMode === 'daily' ? new Date() : undefined}
-                    onCellChange={handleCellChange}
-                    onToggleReliever={handleToggleReliever}
-                    onUpdateDesignation={handleUpdateDesignation}
-                    onRenameOfflineStaff={handleRenameOfflineStaff}
-                    onRemoveStaff={handleRemoveStaff}
-                    onCopyDay={handleCopyDay}
-                />
+                <div className="space-y-3">
+                    {/* Shift Legend */}
+                    {configs.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs">
+                            <span className="font-bold text-gray-500 text-[11px] uppercase tracking-wider mr-1">Shift Legend:</span>
+                            {configs.map(c => {
+                                const shiftBg = c.color && c.color !== '#f1f5f9'
+                                    ? c.color
+                                    : (c.code === 'L' || c.code === 'Leave'
+                                        ? '#ef4444'
+                                        : (c.code.includes('W/O') || !c.is_working_day ? '#38bdf8' : '#e2e8f0'));
+                                const shiftText = getContrastTextColor(shiftBg);
+                                return (
+                                    <div key={c.id || c.code} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-gray-200 bg-white shadow-2xs">
+                                        <span 
+                                            className="w-3 h-3 rounded-full shrink-0 shadow-xs border border-black/10" 
+                                            style={{ backgroundColor: shiftBg }} 
+                                        />
+                                        <span className="font-bold text-gray-800">{c.code}</span>
+                                        <span className="text-gray-500 text-[11px]">
+                                            {c.name}{c.is_working_day && c.start_time && c.end_time ? ` (${c.start_time.slice(0, 5)}-${c.end_time.slice(0, 5)})` : ''}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                            <button 
+                                type="button" 
+                                onClick={() => setIsConfigOpen(true)}
+                                className="text-[11px] text-primary hover:underline font-semibold ml-auto"
+                            >
+                                Edit Colors & Shifts
+                            </button>
+                        </div>
+                    )}
+
+                    <RosterBoard 
+                        staff={staff}
+                        rosters={currentRosters}
+                        configs={configs}
+                        year={year}
+                        month={month}
+                        viewDate={viewMode === 'daily' ? new Date() : undefined}
+                        onCellChange={handleCellChange}
+                        onToggleReliever={handleToggleReliever}
+                        onUpdateDesignation={handleUpdateDesignation}
+                        onRenameOfflineStaff={handleRenameOfflineStaff}
+                        onRemoveStaff={handleRemoveStaff}
+                        onCopyDay={handleCopyDay}
+                    />
+                </div>
             )}
 
             <ShiftConfigModal 
