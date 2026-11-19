@@ -279,12 +279,13 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
                 setCurrentUser(user);
                 console.log('SOPChecklistRunner: User fetched', user?.id);
 
-                // Fetch template (skip property_id filter if not provided — checklist deep-link page)
+                // Fetch template (skip property_id filter if not provided or 'all' — checklist deep-link page)
+                const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
                 let templateQuery = supabase
                     .from('sop_templates')
                     .select(`*, items:sop_checklist_items(*)`)
                     .eq('id', templateId);
-                if (propertyId) templateQuery = (templateQuery as any).eq('property_id', propertyId);
+                if (validPropId) templateQuery = (templateQuery as any).eq('property_id', validPropId);
 
                 const { data: templateData, error: templateError } = await templateQuery.single();
 
@@ -309,7 +310,6 @@ const SOPChecklistRunner: React.FC<SOPChecklistRunnerProps> = ({
                 console.log('SOPChecklistRunner: Template fetched', templateData?.id);
 
                 // Use resolved propertyId — fall back to template row's property_id if prop not passed
-                const validPropId = (!propertyId || propertyId === 'undefined' || propertyId === 'null' || propertyId === 'all') ? null : propertyId;
                 const resolvedPropertyId = validPropId || templateData.property_id;
                 if (!resolvedPropertyId) throw new Error('Property ID could not be resolved for this template. Check RLS on sop_templates or properties table.');
 

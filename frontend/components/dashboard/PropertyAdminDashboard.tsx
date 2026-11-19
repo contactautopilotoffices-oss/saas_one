@@ -1216,11 +1216,16 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         {openTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} />}
                         {openTab === 'electricity_analytics' && property && <ElectricityAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'stock' && property && <StockDashboard propertyId={property.id} initialItemId={searchParams.get('scanItem') ?? undefined} />}
-                        {openTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                        {openTab === 'checklist' && property && (
+                            <SOPDashboard
+                                propertyId={property.id === 'all' ? undefined : property.id}
+                                propertyIds={property.id === 'all' ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined}
+                            />
+                        )}
                         {openTab === 'ppm' && property && (
                             <PPMModule
                                 organizationId={property.organization_id}
-                                propertyId={property.id}
+                                propertyId={property.id === 'all' ? undefined : property.id}
                             />
                         )}
                         {openTab === 'assets' && property && (

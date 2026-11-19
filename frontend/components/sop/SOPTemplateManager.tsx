@@ -139,10 +139,13 @@ const SOPTemplateManager: React.FC<SOPTemplateManagerProps> = ({ propertyId, pro
                 `)
                 .eq('is_active', true);
 
-            if (isMultiProperty) {
-                query = query.in('property_id', propertyIds);
-            } else if (propertyId) {
-                query = query.eq('property_id', propertyId);
+            const validPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : null;
+            const validPropertyIds = (propertyIds || []).filter(id => id && id !== 'all' && id !== 'undefined');
+
+            if (validPropertyIds.length > 0) {
+                query = query.in('property_id', validPropertyIds);
+            } else if (validPropId) {
+                query = query.eq('property_id', validPropId);
             }
 
             if (!isAdmin) {

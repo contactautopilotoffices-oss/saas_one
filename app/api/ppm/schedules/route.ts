@@ -36,7 +36,8 @@ export async function GET(request: NextRequest) {
             .lte('planned_date', endDate)
             .order('planned_date', { ascending: true });
 
-        if (propertyId) query = query.eq('property_id', propertyId);
+        const validPropertyId = propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null' ? propertyId : null;
+        if (validPropertyId) query = query.eq('property_id', validPropertyId);
 
         let { data, error } = await query;
         if (error || !data || data.length === 0) {
@@ -48,7 +49,7 @@ export async function GET(request: NextRequest) {
                 .gte('planned_date', startDate)
                 .lte('planned_date', endDate)
                 .order('planned_date', { ascending: true });
-            if (propertyId) adminQuery = adminQuery.eq('property_id', propertyId);
+            if (validPropertyId) adminQuery = adminQuery.eq('property_id', validPropertyId);
             const adminRes = await adminQuery;
             if (adminRes.data && adminRes.data.length > 0) {
                 data = adminRes.data;
