@@ -253,7 +253,13 @@ export function liveBrainData(admin: SupabaseClient, c: LiveDataContext): BrainD
         const url = await uploadMediaToStorage('staged', ticketId, undefined, Buffer.from(photo.bytes));
         if (!url) return false;
         const { data, error } = await admin.from('tickets').update({ photo_before_url: url }).eq('id', ticketId).eq('organization_id', c.orgId).is('photo_before_url', null).select('id');
-        return !error && (data || []).length === 1;
+        const attached = !error && (data || []).length === 1;
+        // 2026-11-19: the AI reads the ticket's photo after the reply (backend/lib/ticketing/ticketPhoto.ts). Never throws.
+        if (attached) {
+            try { const { checkPhotoAfterResponse } = await import('@/backend/lib/ticketing/ticketPhoto'); await checkPhotoAfterResponse(ticketId); }
+            catch (err) { console.warn('[TicketPhoto] not started:', err instanceof Error ? err.message : err); }
+        }
+        return attached;
     };
 
     return {

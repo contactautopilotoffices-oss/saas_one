@@ -80,7 +80,8 @@ export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 const PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'urgent'];
 
 /** One category the model may choose. */
-export interface CategoryOption { code: string; name: string; team: SkillGroup | null; priority: Priority | null }
+/** hint: "what belongs here", set in Brain → Categories & SLAs (2026-11-19); shown to the AI when present. */
+export interface CategoryOption { code: string; name: string; team: SkillGroup | null; priority: Priority | null; hint?: string | null }
 
 /** What the model decided, after checking. `code` null = none of the categories fits ("other"). */
 export interface AiVerdict {
@@ -144,7 +145,7 @@ export function normalPriority(p: unknown): Priority | null {
 
 const asTeam = (s: unknown): SkillGroup | null => (TEAMS as readonly unknown[]).includes(s) ? (s as SkillGroup) : null;
 
-interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_active?: unknown; property_id?: unknown; skill_group?: { code?: unknown } | null }
+interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_active?: unknown; property_id?: unknown; ai_hint?: unknown; skill_group?: { code?: unknown } | null }
 
 /**
  * The categories one property can use, one per code: the property's own row first, else the shared (global) row. A row
@@ -152,8 +153,10 @@ interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_a
  */
 export function categoryOptionsFrom(rows: readonly CategoryRow[], propertyId?: string | null): CategoryOption[] {
     const active = rows.filter(r => r && r.is_active !== false && typeof r.code === 'string' && r.code.trim());
+    // 2026-11-19: a category switched off at this property (Brain → Categories & SLAs) also hides the shared one there.
+    const offHere = new Set(rows.filter(r => r && propertyId && r.property_id === propertyId && r.is_active === false && typeof r.code === 'string').map(r => String(r.code).trim()));
     // Never another property's own categories (they may belong to another organisation): with no property, the shared ones.
-    const usable = active.filter(r => !r.property_id || (!!propertyId && r.property_id === propertyId));
+    const usable = active.filter(r => (!r.property_id && !offHere.has(String(r.code).trim())) || (!!propertyId && r.property_id === propertyId));
     const rank = (r: CategoryRow) => (propertyId && r.property_id === propertyId ? 0 : !r.property_id ? 1 : 2);
     const byCode = new Map<string, CategoryRow>();
     for (const r of [...usable].sort((a, b) => rank(a) - rank(b))) {
@@ -165,6 +168,7 @@ export function categoryOptionsFrom(rows: readonly CategoryRow[], propertyId?: s
         name: String(r.name ?? code).trim() || code,
         team: asTeam(r.skill_group?.code) ?? asTeam(active.find(o => o.code === code && asTeam(o.skill_group?.code))?.skill_group?.code),
         priority: normalPriority(r.priority),
+        ...(typeof r.ai_hint === 'string' && r.ai_hint.trim() ? { hint: r.ai_hint.trim().slice(0, 300) } : {}),
     }));
 }
 
@@ -177,9 +181,13 @@ export async function loadCategoryOptions(propertyId?: string | null): Promise<C
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS) return hit.options;
     const { supabaseAdmin } = await import('@/backend/lib/supabase/admin');
-    const { data, error } = await supabaseAdmin
+    // ai_hint (migration 20261119000006): until it is applied, the list is read as before.
+    let { data, error } = await supabaseAdmin
         .from('issue_categories')
-        .select('code, name, priority, is_active, property_id, skill_group:skill_groups(code)');
+        .select('code, name, priority, is_active, property_id, ai_hint, skill_group:skill_groups(code)');
+    if (error && ['42703', 'PGRST204'].includes(String(error.code ?? ''))) {
+        ({ data, error } = await supabaseAdmin.from('issue_categories').select('code, name, priority, is_active, property_id, skill_group:skill_groups(code)'));
+    }
     if (error) { console.error('[TicketAI] could not read the category list:', error.message); return []; }
     const options = categoryOptionsFrom((data ?? []) as CategoryRow[], propertyId);
     cache.set(key, { at: Date.now(), options });
@@ -225,7 +233,7 @@ Answer: {"category":"water_leakage","team":"plumbing","priority":"high","risk":"
 Answer with JSON only, in exactly that shape.`;
 
 function categoryLines(options: readonly CategoryOption[]): string {
-    return options.map(o => `- ${o.code}: ${o.name} (team: ${o.team ?? 'choose'}${o.priority ? `, usual priority: ${o.priority}` : ''})`).join('\n');
+    return options.map(o => `- ${o.code}: ${o.name} (team: ${o.team ?? 'choose'}${o.priority ? `, usual priority: ${o.priority}` : ''})${o.hint ? `, for: ${o.hint.replace(/\s+/g, ' ')}` : ''}`).join('\n');
 }
 
 /**

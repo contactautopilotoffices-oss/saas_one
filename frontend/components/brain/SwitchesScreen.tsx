@@ -184,6 +184,12 @@ const TICKET_LEARNING_SENTENCE: Record<BrainSettings['ticketLearning']['mode'], 
     live: 'The AI sees the most similar judged tickets, the confidence is measured from its track record and from similar tickets, and repeats are sorted without the AI. If that fails, tickets are sorted as before.',
 };
 
+const PHOTO_SENTENCE: Record<BrainSettings['ticketPhotos']['mode'], string> = {
+    off: 'Ticket photos are not read.',
+    shadow: 'The AI reads the photo on each new ticket and records what it shows next to the ticket. Nothing about the ticket changes. Compare the photo with the words in Review → Tickets.',
+    live: 'When the photo points to a different category than the words, the ticket goes to Review for your team to confirm (it is never moved by the photo). A photo showing danger can raise the priority, never lower it.',
+};
+
 function LearningCard({ d, saved, edit }: CardProps) {
     const { go } = useBrain();
     const id = useId();
@@ -212,6 +218,13 @@ function LearningCard({ d, saved, edit }: CardProps) {
                     hint="Also finds similar tickets that use different words (“AC dripping” and “water from the split unit”). Uses the embedding service’s shared quota. Off: similar tickets are found by shared words only.">
                     <Toggle id={`${id}m`} label="Find similar tickets by meaning" checked={T.meaning} disabled={T.mode === 'off'} onChange={meaning => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, meaning } }))} />
                 </Field>
+                {/* 2026-11-19: the AI reads ticket photos (config ticketPhotos). */}
+                <div className="flex flex-col gap-[10px] py-[12px]">
+                    <span className="text-[13.5px] font-semibold">Read ticket photos<Was show={d.ticketPhotos.mode !== saved.ticketPhotos.mode} was={TICKET_LEARNING_LABEL[saved.ticketPhotos.mode]} /></span>
+                    <Segmented label="Read ticket photos" value={d.ticketPhotos.mode} onChange={mode => edit(x => ({ ...x, ticketPhotos: { mode } }))} className="self-start"
+                        options={[{ value: 'off', label: 'Off', icon: Power }, { value: 'shadow', label: 'Watch only', icon: Contrast }, { value: 'live', label: 'On', icon: Radio }]} />
+                    <p className="text-[13px] leading-relaxed text-(--bc-ink-2)">{PHOTO_SENTENCE[d.ticketPhotos.mode]}</p>
+                </div>
                 <Field htmlFor={`${id}r`} label={<>Draft new sorting rules every day<Was show={T.rulesDaily !== TS.rulesDaily} was={TS.rulesDaily ? 'on' : 'off'} /></>}
                     hint="At 2:45 am, when there are new corrections, the AI drafts short sorting rules and tests them. A draft that passes waits in Review → Tickets; it is only used after you approve it. “Suggest rules now” there works either way.">
                     <Toggle id={`${id}r`} label="Draft new sorting rules every day" checked={T.rulesDaily} onChange={rulesDaily => edit(x => ({ ...x, ticketLearning: { ...x.ticketLearning, rulesDaily } }))} />

@@ -312,3 +312,11 @@ test('the screen shows each ticket\'s similar tickets and why, from its trace', 
     assert.equal(v.learning?.watch?.differed, 1);
     assert.equal(v.learning?.weeks.length, 8);
 });
+
+test('a judged ticket keeps what the AI read in its photo with its learning example', async () => {
+    const w = world() as ReturnType<typeof world> & { ticket_photo_checks: Row[] };
+    w.ticket_photo_checks = [{ ticket_id: TID(1), status: 'read', description: 'Wall switch board with a tripped MCB' }];
+    const { db, tables } = fakeDb(w);
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => {});
+    assert.match(String(tables.ticket_sort_examples[0].ticket_text), /\(photo: Wall switch board with a tripped MCB\)$/);
+});

@@ -6,6 +6,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import sharp from 'sharp';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
+import { slaHoursFor } from '@/backend/lib/ticketing/categorySla';
 import { WhatsAppService, type WhatsAppOptions } from '@/backend/services/WhatsAppService';
 import { getWhatsAppProperties } from './assistant/access';
 import { generateNextTicketNumber } from '@/backend/lib/ticketing/ticketNumberService';
@@ -392,7 +393,8 @@ export async function processIncomingMessage(
                 raised_by_name: userRow.full_name || null,
                 internal: false,
                 is_vague: isVague,
-                sla_hours: slaHours,
+                // 2026-11-19: a category can have a different SLA per priority (Brain → Categories & SLAs).
+                sla_hours: await slaHoursFor(supabaseAdmin, categoryId, finalPriority, slaHours),
                 floor_number: extractFloorNumber(ticketText) ?? undefined,
                 location: extractLocation(ticketText) ?? undefined,
                 issue_code,
@@ -436,6 +438,11 @@ export async function processIncomingMessage(
                     .update({ photo_before_url: photoUrl })
                     .eq('id', ticket.id);
                 if (photoUpdate.error && processingOptions.throwOnError) throw photoUpdate.error;
+                // 2026-11-19: the AI reads the ticket's photo after the reply (backend/lib/ticketing/ticketPhoto.ts). Never throws.
+                if (!photoUpdate.error) {
+                    try { const { checkPhotoAfterResponse } = await import('@/backend/lib/ticketing/ticketPhoto'); await checkPhotoAfterResponse(ticket.id); }
+                    catch (err) { console.warn('[TicketPhoto] not started:', err instanceof Error ? err.message : err); }
+                }
             }
         }
 

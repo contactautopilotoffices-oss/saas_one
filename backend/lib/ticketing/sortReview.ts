@@ -28,6 +28,7 @@ import type { SkillGroup } from './classifyTicket';
 import { learningSetting, removeExample, retireExamples, saveExample } from './sortLearningStore';
 import { learningView, type LearningView, type TicketLearningNote } from './sortLearningView';
 import { rulesView, type RulesView } from './sortRulesStore';
+import { photoDescriptionFor, photoView, type PhotoNote, type PhotoView } from './ticketPhoto';
 
 export const REVIEW_DAYS = 30;
 /** At most this many tickets are looked at for the queue, and this many are sent to the screen. */
@@ -70,6 +71,9 @@ export interface TicketReviewItem {
     choicesKey: string;
     /** 2026-11-19: the similar tickets used and why the confidence is what it is; null without a trace. */
     learning: TicketLearningNote | null;
+    /** 2026-11-19: the ticket's photo (its address in the app) and what the AI read in it; null without a photo. */
+    photoUrl: string | null;
+    photo: PhotoNote | null;
 }
 
 export interface TicketJudgement { ticketId: string | null; at: string; text: string; verdict: 'right' | 'wrong'; chosen: string | null; right: string | null; moved: boolean; canUndo: boolean }
@@ -98,6 +102,8 @@ export interface TicketReviewView {
     learning: LearningView | null;
     /** 2026-11-19: the sorting rules (in use, waiting for approval, runs, history); null when unreadable. */
     rules: RulesView | null;
+    /** 2026-11-19: photo reading (the setting, the photo against the words); null when unreadable. */
+    photos: PhotoView | null;
 }
 
 type Row = Record<string, unknown>;
@@ -140,7 +146,7 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
     const since = new Date(now.getTime() - REVIEW_DAYS * DAY_MS).toISOString();
 
     const read = await admin.from('tickets')
-        .select('id, ticket_number, title, description, created_at, status, priority, confidence_score, classification_source, llm_reasoning, risk_flag, property_id, issue_code, skill_group_code, category:issue_categories(code, name), skill_group:skill_groups(code, name), property:properties(name)')
+        .select('id, ticket_number, title, description, created_at, status, priority, confidence_score, classification_source, llm_reasoning, risk_flag, property_id, issue_code, skill_group_code, photo_before_url, category:issue_categories(code, name), skill_group:skill_groups(code, name), property:properties(name)')
         .eq('organization_id', orgId)
         .gte('created_at', since)
         .or(`classification_source.eq.rule,and(classification_source.eq.llm,confidence_score.lt.${CONFIDENCE_HIGH})`)
@@ -188,6 +194,8 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
             canMove: MOVABLE_STATUSES.includes(String(t.status ?? '')),
             choicesKey: key,
             learning: null,
+            photoUrl: str(t.photo_before_url),
+            photo: null,
         };
     });
 
@@ -227,6 +235,13 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
     try { rules = await rulesView(admin, orgId, setting.rulesDaily !== false); } catch (err) {
         console.warn('[TicketReview] the sorting rules could not be read:', err instanceof Error ? err.message : err);
     }
+    let photos: PhotoView | null = null;
+    try {
+        photos = await photoView(admin, orgId, setting.photos ?? 'off', queue.map(q => q.id), now);
+        for (const q of queue) q.photo = photos.notes[q.id] ?? null;
+    } catch (err) {
+        console.warn('[TicketReview] the photo readings could not be read:', err instanceof Error ? err.message : err);
+    }
 
     return {
         tableMissing,
@@ -237,6 +252,7 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
         recent,
         learning,
         rules,
+        photos,
     };
 }
 
@@ -306,7 +322,9 @@ export async function judgeTicketSort(
     }
     // 2026-11-19: the judgement becomes a learning example (right ones too). Never a reason for the judgement to fail.
     const setting = await learningSetting(orgId, admin);
-    const text = maskIdentity(ticketText(t), 1000) ?? '';
+    // 2026-11-19: what the AI read in the ticket's photo is kept with the example ("port" + a switch board photo).
+    const photoNote = await photoDescriptionFor(admin, ticketId);
+    const text = `${maskIdentity(ticketText(t), 1000) ?? ''}${photoNote ? ` (photo: ${photoNote})` : ''}`;
     const learnCode = right?.code ?? chosenCode;
     if (learnCode) {
         await saveExample({ orgId, propertyId: str(t.property_id), ticketId, text, code: learnCode, team: right ? right.team : asTeam(t.skill_group_code), source: right ? 'judged_wrong' : 'judged_right' }, { admin, meaning: setting.meaning });

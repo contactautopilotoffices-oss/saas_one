@@ -14,6 +14,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { BookCheck, Check, CircleSlash, Eye, Gauge, GitCompare, GraduationCap, History, Scale, ShieldCheck, Sparkles, TriangleAlert, Undo2, X } from 'lucide-react';
 import type { RuleVersionView, RulesView } from '@/backend/lib/ticketing/sortRulesStore';
+import type { PhotoNote, PhotoView } from '@/backend/lib/ticketing/ticketPhoto';
+import { Camera } from 'lucide-react';
 import type { CategoryChoice, TicketReviewItem, TicketReviewView } from '@/backend/lib/ticketing/sortReview';
 import type { ConflictView, LearningView, TicketLearningNote, WeekRow } from '@/backend/lib/ticketing/sortLearningView';
 import { BarSeries } from './charts';
@@ -54,6 +56,7 @@ export default function TicketReview({ onCount }: { onCount: (n: number) => void
                     <Accuracy d={d} />
                     {d.learning && <LearningStatus l={d.learning} />}
                     {d.rules && <RulesCard r={d.rules} names={namesOf(d)} onReplace={replace} />}
+                    {d.photos && <PhotosCard p={d.photos} names={namesOf(d)} />}
                     <div className={cx(s.tab, 'flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-(--bc-ink-2)')}>
                         <span><b className={cx(s.numMd, 'text-(--bc-ink-1)')}>{int(d.waiting)}</b> waiting</span>
                         {d.waiting > d.queue.length && <span className="text-(--bc-ink-3)">showing the newest {int(d.queue.length)}</span>}
@@ -148,6 +151,9 @@ function TicketItem({ t, choices, off, onReplace, names }: { t: TicketReviewItem
             </dl>
             {t.reason && <p className="text-[13px] break-words text-(--bc-ink-2)"><span className="text-(--bc-ink-3)">Why: </span>{t.reason}</p>}
             {t.learning && <TicketLearning n={t.learning} names={names} />}
+            {(t.photoUrl || t.photo) && <TicketPhotoBox url={t.photoUrl} note={t.photo} names={names}
+                canUse={!!t.photo?.photoCode && t.photo.photoCode !== t.categoryCode && options.some(o => o.code === t.photo!.photoCode) && !off}
+                onUse={() => { setWrong(true); setCode(t.photo!.photoCode!); }} />}
             <div className="flex min-w-0 flex-wrap items-center gap-[8px]">
                 <span className="mr-1 text-[13.5px] font-semibold text-(--bc-ink-1)">Was it sorted right?</span>
                 <Btn size="sm" variant="ok" icon={Check} disabled={off || !!busy} onClick={() => judge('right')}>{busy === 'right' ? 'Saving…' : 'Right'}</Btn>
@@ -543,5 +549,87 @@ function OfferedRules({ v, names, busy, onUse, onReject }: { v: RuleVersionView;
                 <Btn size="sm" variant="quiet" icon={X} disabled={!!busy} onClick={onReject}>{busy === 'reject' ? 'Saving…' : 'Reject'}</Btn>
             </div>
         </div>
+    );
+}
+
+// ── ticket photos (2026-11-19) ──────────────────────────────────────────────────────────────────────────────────────
+
+/** The ticket's photo and what the AI read in it. "Use the photo's category" only fills in the Wrong form: a person saves it. */
+function TicketPhotoBox({ url, note, names, canUse, onUse }: { url: string | null; note: PhotoNote | null; names: (code: string | null) => string; canUse: boolean; onUse: () => void }) {
+    return (
+        <div className={cx(s.well, 'flex min-w-0 flex-col gap-[10px] p-[12px] @xl:flex-row')}>
+            {url && (
+                <a href={url} target="_blank" rel="noreferrer" className="shrink-0 self-start">
+                    {/* eslint-disable-next-line @next/next/no-img-element -- the ticket photo behind the session; next/image can't serve it */}
+                    <img src={url} alt="The photo attached to this ticket" className="h-[96px] w-[128px] rounded-[8px] border border-(--bc-line) object-cover" loading="lazy" />
+                </a>
+            )}
+            <div className="flex min-w-0 flex-col gap-1.5 text-[13px]">
+                <span className="flex items-center gap-1.5 font-semibold text-(--bc-ink-1)"><Camera className="h-4 w-4" />What the AI sees in the photo</span>
+                {!note ? <span className="text-(--bc-ink-3)">Not read (photo reading was off, or the photo came later).</span>
+                    : note.status === 'failed' ? <span className="text-(--bc-ink-3)">The photo could not be read.</span>
+                    : note.status === 'unusable' ? <span className="text-(--bc-ink-3)">Nothing to act on in the photo{note.description ? `: ${note.description}` : ''}.</span>
+                    : (
+                        <>
+                            <span className="break-words text-(--bc-ink-2)">“{note.description}”</span>
+                            {note.agrees === true && <span className="text-(--bc-ok-text)">The photo agrees: {names(note.photoCode)}.</span>}
+                            {note.agrees === false && <span className="text-(--bc-warn-text)">The photo points to <b className="font-semibold">{names(note.photoCode)}</b>{note.photoConfidence !== null ? ` (${note.photoConfidence}% sure)` : ''}, not this ticket&apos;s category.</span>}
+                            {note.agrees === null && <span className="text-(--bc-ink-3)">The photo cannot tell which category it is.</span>}
+                            {note.changed.confidence && <span className="text-(--bc-ink-3)">Sent to Review because of the photo.</span>}
+                            {note.changed.priority && <span className="text-(--bc-ink-3)">Priority raised by the photo: {note.changed.priority[0] ?? '—'} → {note.changed.priority[1]}.</span>}
+                            {canUse && <Btn size="sm" variant="ghost" className="self-start" onClick={onUse}>Use the photo&apos;s category</Btn>}
+                        </>
+                    )}
+            </div>
+        </div>
+    );
+}
+
+const PHOTO_MODE: Record<PhotoView['mode'], string> = { off: 'Off', shadow: 'Watch only', live: 'On' };
+
+/** Ticket photos: the setting and, over the last 30 days, the photo against the words. */
+function PhotosCard({ p, names }: { p: PhotoView; names: (code: string | null) => string }) {
+    const { go } = useBrain();
+    const ids = useId();
+    const c = p.comparison;
+    const share = (a: number, b: number) => (b ? `${Math.round((100 * a) / b)}%` : '—');
+    return (
+        <Card as="section" className="@container flex min-w-0 flex-col gap-[12px] p-[16px] @3xl:p-6" aria-labelledby={`${ids}h`}>
+            <CardHead id={`${ids}h`} icon={Camera} label="Ticket photos"
+                hint="The AI reads the photo on a new ticket and checks it against the words. Watch only records it; On sends a ticket whose photo disagrees to Review, and may raise the priority when the photo shows danger."
+                right={<Btn size="sm" variant="quiet" onClick={() => go('switches')}>Change in Switches</Btn>} />
+            <p className="flex flex-wrap items-center gap-2 text-[13px] text-(--bc-ink-2)">
+                <Chip tone={p.mode === 'live' ? 'ok' : p.mode === 'shadow' ? 'warn' : 'neutral'}>{PHOTO_MODE[p.mode]}</Chip>
+                <span>Model: Brain → AI models → “Reading ticket photos”</span>
+            </p>
+            {p.tableMissing && <p className="text-[12.5px] text-(--bc-warn-text)">Photo reading needs migrations 20261119000004 and 20261119000005 to be applied.</p>}
+            {c && (c.read + c.unusable + c.failed === 0
+                ? <p className="text-[13px] text-(--bc-ink-3)">No photo read yet in the last 30 days.</p>
+                : (
+                    <>
+                        <dl className="grid min-w-0 grid-cols-2 gap-x-6 gap-y-3 @xl:grid-cols-4">
+                            <Fact k="Photos read">{int(c.read)}{c.unusable + c.failed ? <span className="text-(--bc-ink-3)"> (+{int(c.unusable)} nothing to act on, {int(c.failed)} failed)</span> : null}</Fact>
+                            <Fact k="Agreed with the words">{int(c.agreed)}</Fact>
+                            <Fact k="Disagreed">{int(c.disagreed)}</Fact>
+                            <Fact k="When they disagreed, right was">{c.known ? <>photo <b>{share(c.photoRight, c.known)}</b> · words {share(c.wordsRight, c.known)} <span className="text-(--bc-ink-3)">of {int(c.known)}</span></> : '—'}</Fact>
+                        </dl>
+                        {p.mode === 'live' && <p className="text-[12.5px] text-(--bc-ink-3)">Sent to Review by a photo: {int(c.sentToReview)} · priority raised by a photo: {int(c.priorityRaised)}</p>}
+                        {c.latest.length > 0 && (
+                            <details className="min-w-0">
+                                <summary className="cursor-pointer text-[13px] font-semibold text-(--bc-ink-1)">Latest disagreements</summary>
+                                <ul className={cx(s.rows, 'mt-2')}>
+                                    {c.latest.map(x => (
+                                        <li key={x.ticketId} className="flex min-w-0 flex-col gap-0.5 py-2 text-[13px]">
+                                            <span className="break-words text-(--bc-ink-2)">“{x.description}”</span>
+                                            <span className={cx(s.tab, 'text-[12px] text-(--bc-ink-3)')}>words: {names(x.ticketCode)} · photo: {names(x.photoCode)} · {dateTimeIN(x.at)}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </details>
+                        )}
+                        <p className="text-[12px] text-(--bc-ink-3)">Tickets nobody re-sorted within 7 days count as right. Switch to On when the photo is right more often than the words when they disagree.</p>
+                    </>
+                ))}
+        </Card>
     );
 }

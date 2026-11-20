@@ -12,6 +12,7 @@ import type { Outcome } from '@/backend/lib/aiLayer/brain/types';
 import type { Capability, ModelInfo, ModelStatus } from '@/task-manager/ai/aiCatalog';
 import type { InventoryRow } from '@/task-manager/ai/aiInventory';
 import type { TicketReviewView } from '@/backend/lib/ticketing/sortReview';
+import type { CategoriesView, CategoryInput } from '@/backend/lib/ticketing/categoryConfig';
 
 /** Review → Tickets (owner 2026-11-15): judge how a ticket was sorted. code = the right category, when wrong. */
 export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; code: string | null }
@@ -23,6 +24,11 @@ export type TicketJudgeBody = { ticketId: string; verdict: 'right' | 'wrong'; co
     | { action: 'rules_use' | 'rules_reject'; versionId: string } | { action: 'rules_stop' };
 /** The judging reply also says what happened to the ticket (moved, not moved because closed, …). */
 export type TicketReviewResult = Result<TicketReviewView> & { message?: string };
+
+/** Categories & SLAs (owner 2026-11-19). Suggestions only on { action: 'suggest' }. */
+export type CategoryBody = ({ action: 'save' } & CategoryInput) | { action: 'switch_off' | 'switch_on'; code: string }
+    | { action: 'suggest' } | { action: 'dismiss' | 'merge'; id: string };
+export type CategoriesReply = { data: CategoriesView; message?: string };
 
 export type Days = 1 | 7 | 30;
 export type Track = 'live' | 'shadow';
@@ -85,6 +91,8 @@ export interface BrainApi {
     aiModels(): Promise<Plain<AiModelsData>>;
     saveAiModels(job: string, models: string[] | null): Promise<Plain<AiSaveReply>>;
     testAiModel(job: string, model: string): Promise<Plain<{ result: AiTestResult }>>;
+    categories(): Promise<Plain<CategoriesReply>>;
+    postCategories(body: CategoryBody): Promise<Plain<CategoriesReply>>;
 }
 
 export const FORBIDDEN = 'This console is for the Tech team only.';
@@ -160,5 +168,7 @@ export function createHttpApi(orgId: string): BrainApi {
         aiModels: () => plainCall(`/api/task-manager/ai-models?${q({})}`),
         saveAiModels: (job, models) => plainCall(`/api/task-manager/ai-models?${q({})}`, json('POST', { action: 'save', job, models })),
         testAiModel: (job, model) => plainCall(`/api/task-manager/ai-models?${q({})}`, json('POST', { action: 'test', job, model })),
+        categories: () => plainCall(`${base}/categories?${q({})}`),
+        postCategories: body => plainCall(`${base}/categories?${q({})}`, json('POST', body)),
     };
 }
