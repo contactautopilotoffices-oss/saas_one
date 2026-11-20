@@ -100,17 +100,21 @@ export function CategoryChip({ label, dark, size = 'md' }: { label: string | nul
 }
 
 /** Marks a widget that shows section 8 sample data because no data hook wires it up yet. */
-export function SampleBadge({ dark, className }: { dark?: boolean; className?: string }) {
+export function SampleBadge({ dark, className, size = 'sm' }: { dark?: boolean; className?: string; size?: 'xs' | 'sm' }) {
     return (
         <span
             title="Sample data. This module is not wired to a data hook yet."
-            className={cx('inline-flex h-5 items-center gap-[4px] whitespace-nowrap rounded-full px-2 text-[10.5px] font-semibold uppercase tracking-[0.06em]', className)}
+            className={cx(
+                'inline-flex items-center gap-[4px] whitespace-nowrap rounded-full font-semibold uppercase',
+                size === 'xs' ? 'h-[16px] px-[5px] text-[9px] tracking-[0.02em]' : 'h-5 px-2 text-[10.5px] tracking-[0.06em]',
+                className,
+            )}
             style={{
                 border: `1px dashed ${dark ? 'rgba(255,255,255,0.55)' : 'var(--lab-text3)'}`,
                 color: dark ? 'rgba(255,255,255,0.9)' : v.text2,
             }}
         >
-            <FlaskConical aria-hidden className="h-3 w-3" />
+            {size === 'sm' && <FlaskConical aria-hidden className="h-3 w-3" />}
             Sample
         </span>
     );
