@@ -2,11 +2,10 @@
 
 import React, { useState, useEffect, useRef, useId, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Timer, Box, Lock, MoreHorizontal, ChevronRight, Tag } from 'lucide-react';
+import { Pencil, Trash2, CheckCircle2, XCircle, Share2, Box, Lock, MoreHorizontal, ChevronRight, Tag, Pause, AlertCircle, ImageOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import ShareModal from './ShareModal';
 import { parseDate } from '@/frontend/utils/date';
-import { SLABadge } from '@/frontend/components/tickets/SLABreachDetailsCard';
 import { useIsDesktop } from '@/frontend/components/task-manager/assign/Sheet';
 
 /**
@@ -211,6 +210,8 @@ export interface TicketCardProps {
     slaBreached?: boolean;
     slaPaused?: boolean;
     slaPauseReason?: string | null;
+    /** The ticket's own status is paused or blocked: its step on the strip turns striped. */
+    workPaused?: boolean;
 
     // Visual hint
     raisedByTenant?: boolean; // yellow border when ticket was raised by a client/tenant (internal === false)
@@ -227,12 +228,45 @@ export interface TicketCardProps {
     onReject?: (e: React.MouseEvent) => void;
 }
 
-const PRIORITY_STYLES = {
-    LOW: 'bg-blue-50 text-blue-700 border-blue-200',
-    MEDIUM: 'bg-amber-50 text-amber-700 border-amber-200',
-    HIGH: 'bg-orange-50 text-orange-700 border-orange-200',
-    CRITICAL: 'bg-rose-50 text-rose-700 border-rose-200',
-} as const;
+/** The 5 fixed steps of the strip on top of the card (owner 2026-11-20). */
+const CARD_STEPS = ['Reported', 'Assigned', 'In progress', 'Validation', 'Resolved'] as const;
+const STEP_TONE = ['text-gray-700', 'text-blue-700', 'text-amber-800', 'text-violet-700', 'text-emerald-700'] as const;
+
+const STATUS_LABEL: Record<string, string> = {
+    OPEN: 'Open',
+    ASSIGNED: 'Assigned',
+    IN_PROGRESS: 'In progress',
+    COMPLETED: 'Completed',
+    PENDING_VALIDATION: 'Pending validation',
+    WAITLISTED: 'Waitlisted',
+};
+
+/**
+ * Owner 2026-11-20: the priority as a road sign on the corner of the photo (approved over text chips, to save space).
+ * Low: blue circle with "i". Medium: amber warning triangle. High: orange diamond. Critical: red stop sign.
+ * The shape changes as well as the colour, so it can be told apart without colour. Screen readers hear the word.
+ */
+const PRIORITY_SIGN: Record<TicketCardProps['priority'], { label: string; shape: React.ReactNode }> = {
+    LOW: { label: 'Low', shape: <><circle cx="12" cy="12" r="10" fill="#3446A8" stroke="#FFFFFF" strokeWidth="2.2" /><circle cx="12" cy="7.4" r="1.6" fill="#FFFFFF" /><path d="M12 11v6.2" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" /></> },
+    MEDIUM: { label: 'Medium', shape: <><path d="M12 2.2 22.6 20.6H1.4z" fill="#9A5800" stroke="#FFFFFF" strokeWidth="2.2" strokeLinejoin="round" /><path d="M12 9.5v5" stroke="#FFFFFF" strokeWidth="2.6" strokeLinecap="round" /><circle cx="12" cy="17.6" r="1.4" fill="#FFFFFF" /></> },
+    HIGH: { label: 'High', shape: <><path d="M12 1.6 22.4 12 12 22.4 1.6 12z" fill="#C4320A" stroke="#FFFFFF" strokeWidth="2.2" strokeLinejoin="round" /><path d="M12 7.4v5.6" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" /><circle cx="12" cy="16.5" r="1.5" fill="#FFFFFF" /></> },
+    CRITICAL: { label: 'Critical', shape: <><path d="M8 1.6h8l6.4 6.4v8L16 22.4H8L1.6 16V8z" fill="#B42318" stroke="#FFFFFF" strokeWidth="2.2" strokeLinejoin="round" /><path d="M12 6.5v7" stroke="#FFFFFF" strokeWidth="2.8" strokeLinecap="round" /><circle cx="12" cy="17.2" r="1.6" fill="#FFFFFF" /></> },
+};
+
+function PrioritySign({ priority }: { priority: TicketCardProps['priority'] }) {
+    const sign = PRIORITY_SIGN[(priority || 'MEDIUM').toUpperCase() as TicketCardProps['priority']] ?? PRIORITY_SIGN.MEDIUM;
+    return (
+        <svg
+            role="img"
+            aria-label={`Priority: ${sign.label}`}
+            viewBox="0 0 24 24"
+            className="pointer-events-none absolute -bottom-1.5 -right-1.5 h-[22px] w-[22px] @sm:h-6 @sm:w-6"
+        >
+            <title>{`${sign.label} priority`}</title>
+            {sign.shape}
+        </svg>
+    );
+}
 
 const STATUS_STYLES = {
     OPEN: 'bg-gray-100 text-gray-700',
@@ -264,6 +298,7 @@ export default function TicketCard({
     slaBreached,
     slaPaused,
     slaPauseReason,
+    workPaused,
     raisedByTenant,
     isInternal,
     onClick,
@@ -364,70 +399,93 @@ export default function TicketCard({
         });
     };
 
-    // Color based on age of active ticket
-    // Same colour steps as before; text one shade darker so the 12px timer stays readable.
-    const timerColor = isResolvedByUs || isFullyClosed
-        ? 'text-violet-700 bg-violet-50'  // Violet for pending validation / closed
-        : elapsedSec < 3600         ? 'text-emerald-700 bg-emerald-50'   // < 1h: green
-        : elapsedSec < 86400        ? 'text-amber-800 bg-amber-50'       // < 1d: yellow
-        : elapsedSec < 86400 * 3   ? 'text-orange-700 bg-orange-50'     // < 3d: orange
-        : 'text-rose-700 bg-rose-50 animate-pulse';                       // > 3d: red pulse
+    // Owner 2026-11-20 (approved design): a strip of 5 fixed steps on top, so every card lines up. The step follows
+    // the ticket's status on its own; a paused or blocked ticket stays on its step, which turns striped amber.
+    const stepNow = isFullyClosed ? 5 : isResolvedByUs ? 4 : normalizedStatus === 'IN_PROGRESS' ? 3 : normalizedStatus === 'ASSIGNED' ? 2 : 1;
+    const isPausedNow = !isFullyClosed && !isResolvedByUs && Boolean(slaPaused || workPaused);
+    const stripText = isFullyClosed
+        ? (computedIsBreached ? 'Resolved · SLA breached' : 'Resolved')
+        : `Step ${stepNow} of 5 · ${CARD_STEPS[stepNow - 1]}${isPausedNow ? ' (paused)' : ''}`;
+    const stripTone = computedIsBreached ? 'text-red-700' : isFullyClosed ? 'text-emerald-700' : isPausedNow ? 'text-amber-800' : STEP_TONE[stepNow - 1];
+    const closedAt = formatEndTime(elapsedData.endTime);
+    // Time open, on the right of the strip. Same colour steps as the old timer chip, as text.
+    const timeTone = isFullyClosed ? (computedIsBreached ? 'text-red-700' : 'text-emerald-700')
+        : isResolvedByUs ? 'text-violet-700'
+        : elapsedSec < 3600 ? 'text-emerald-700'
+        : elapsedSec < 86400 ? 'text-amber-800'
+        : elapsedSec < 86400 * 3 ? 'text-orange-700'
+        : 'text-rose-700';
+    const timeText = isFullyClosed ? `Done in ${formatElapsed(elapsedSec)}` : isResolvedByUs ? 'Awaiting validation' : `Open ${formatElapsed(elapsedSec)}`;
+    const showWithinSla = Boolean(slaDeadline) && !computedIsBreached && !isPausedNow;
 
     const initialsOf = (name: string) => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const showServing = Boolean(assignedTo && status !== 'OPEN');
     // Card contract: never repeat the title as the description.
     const showDescription = Boolean(description && description.trim() && description.trim().toLowerCase() !== (title || '').trim().toLowerCase());
     const chip = 'inline-flex h-6 items-center gap-[4px] rounded-full border px-2.5 text-xs font-bold';
-    const capsChip = `${chip} uppercase tracking-[0.02em]`;
 
     return (
         <motion.div
             id={`ticket-${id}`}
             onClick={onClick}
-            initial={isCritical ? { scale: 1 } : false}
-            animate={isCritical ? {
-                boxShadow: [
-                    '0 0 0 0px rgba(225, 29, 72, 0)',
-                    '0 0 30px 6px rgba(225, 29, 72, 0.6)',
-                    '0 0 0 0px rgba(225, 29, 72, 0)'
-                ],
-                borderColor: ['#e11d48', '#fb7185', '#e11d48'],
-                scale: [1, 1.02, 1]
-            } : {}}
-            transition={isCritical ? {
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut"
-            } : {}}
-            className={`@container relative w-full h-full min-w-0 bg-white rounded-2xl px-3.5 pt-3.5 pb-1 @sm:px-4 @sm:pt-4 @sm:pb-1.5 cursor-pointer transition-shadow hover:shadow-md flex flex-col gap-2.5 ${isCritical ? 'border-2' : ''} ${menuOpen ? 'z-30' : ''}`}
+            className={`@container relative w-full h-full min-w-0 bg-white rounded-2xl px-3.5 pt-3 pb-1 @sm:px-4 @sm:pt-3 @sm:pb-1.5 cursor-pointer transition-shadow hover:shadow-md flex flex-col gap-2.5 ${menuOpen ? 'z-30' : ''}`}
             style={{
                 scrollMarginTop: '100px',
                 ...(isCritical
-                    ? { borderStyle: 'solid' }
+                    ? { border: '1.5px solid #F1A9A2' }
                     : raisedByTenant
                         ? { border: '2px solid #F59E0B', boxShadow: '0 0 0 3px rgba(245,158,11,0.1)' }
                         : { border: '1px solid #e5e7eb' })
             }}
         >
-            {/* Header: photo (in flow, left) + title/description + the one "⋯" actions button */}
+            {/* Progress strip: 5 fixed steps (Reported, Assigned, In progress, Validation, Resolved) and the time open */}
+            <div className="flex flex-col gap-1.5">
+                <div className="grid grid-cols-5 gap-[3px]" aria-hidden="true">
+                    {CARD_STEPS.map((step, i) => {
+                        const done = isFullyClosed || i < stepNow - 1;
+                        const now = !done && i === stepNow - 1;
+                        return (
+                            <span
+                                key={step}
+                                className={`h-1 rounded-full ${done ? 'bg-emerald-600' : now ? (isPausedNow ? '' : 'bg-amber-500') : 'bg-gray-200'}`}
+                                style={now && isPausedNow ? { backgroundImage: 'repeating-linear-gradient(135deg, #E08A00 0 5px, #F7C97A 5px 10px)' } : undefined}
+                            />
+                        );
+                    })}
+                </div>
+                <div className="flex items-center justify-between gap-[8px] text-[12.5px] font-semibold">
+                    <span className={`min-w-0 truncate ${stripTone}`}>{stripText}</span>
+                    <span className={`shrink-0 tabular-nums ${timeTone}`} title={closedAt ? `Closed at ${closedAt}` : undefined}>{timeText}</span>
+                </div>
+            </div>
+
+            {/* Header: photo with the priority sign on its corner + title (and the property) + the one "⋯" actions button */}
             <div className="flex items-start gap-[12px]">
-                {photoUrl && (
-                    // Desktop keeps the hover zoom; it grows to the right/down and stays under the actions menu (z-50).
-                    <div className="relative z-10 h-10 w-10 shrink-0 @sm:h-11 @sm:w-11">
+                <div className="relative z-10 h-11 w-11 shrink-0 @sm:h-12 @sm:w-12">
+                    {photoUrl ? (
+                        // Desktop keeps the hover zoom; it grows to the right/down and stays under the actions menu (z-50).
                         <img
                             src={photoUrl}
                             alt="Site photo"
-                            className="h-full w-full origin-top-left rounded-[8px] border border-gray-200 object-cover transition-transform duration-300 sm:hover:scale-[4] sm:hover:shadow-2xl"
+                            className="h-full w-full origin-top-left rounded-[10px] border border-gray-200 object-cover transition-transform duration-300 sm:hover:scale-[4] sm:hover:shadow-2xl"
                         />
-                    </div>
-                )}
+                    ) : (
+                        <span className="flex h-full w-full items-center justify-center rounded-[10px] border-[1.5px] border-dashed border-gray-300 text-gray-500">
+                            <ImageOff className="h-[18px] w-[18px]" aria-label="No photo" />
+                        </span>
+                    )}
+                    <PrioritySign priority={priority} />
+                </div>
                 <div className="min-w-0 flex-1">
                     {/* A <p role="heading">, not an <h3>: globals.css forces every h3 to weight 500 (and 18px on phones). */}
-                    <p role="heading" aria-level={3} className="line-clamp-3 break-words text-base font-bold leading-[1.3] text-gray-900" title={title}>
+                    <p role="heading" aria-level={3} className="line-clamp-2 break-words text-base font-bold leading-[1.3] text-gray-900" title={title}>
                         {title}
                     </p>
+                    {propertyName && (
+                        <p className="mt-0.5 truncate text-[13px] text-gray-600" title={propertyName}>{propertyName}</p>
+                    )}
                     {showDescription && (
-                        <p className="mt-1 line-clamp-2 break-words text-sm leading-[1.4] text-gray-600" title={description}>
+                        <p className="mt-1 line-clamp-1 break-words text-sm leading-[1.4] text-gray-600" title={description}>
                             {description}
                         </p>
                     )}
@@ -435,37 +493,27 @@ export default function TicketCard({
                 <TicketActionsMenu actions={actions} open={menuOpen} setOpen={setMenuOpen} ticketNumber={ticketNumber} title={title} />
             </div>
 
-            {/* Badges */}
+            {/* Chips: status and flags (the priority is the sign on the photo) */}
             <div className="flex flex-wrap items-center gap-1.5">
-                <span className={`${capsChip} ${PRIORITY_STYLES[priority]}`}>
-                    {priority}
-                </span>
-
-                <span className={`${capsChip} border-transparent ${STATUS_STYLES[normalizedStatus as keyof typeof STATUS_STYLES] || 'bg-gray-100 text-gray-700'}`}>
-                    {status?.replace(/_/g, ' ')}
+                <span className={`${chip} border-transparent ${STATUS_STYLES[normalizedStatus as keyof typeof STATUS_STYLES] || 'bg-gray-100 text-gray-700'}`}>
+                    {STATUS_LABEL[normalizedStatus] ?? status?.replace(/_/g, ' ')}
                 </span>
 
                 {isInternal && (
-                    <span className={`${capsChip} bg-slate-800 text-white border-slate-800`}>
+                    <span className={`${chip} bg-slate-800 text-white border-slate-800`}>
                         <Lock className="h-3 w-3" aria-hidden="true" />
                         Internal
                     </span>
                 )}
 
-                <SLABadge
-                    slaDeadline={slaDeadline ?? null}
-                    isBreached={computedIsBreached}
-                    isPaused={Boolean(slaPaused)}
-                    pauseReason={slaPauseReason}
-                    readable
-                />
+                {showWithinSla && (
+                    <span className={`${chip} bg-emerald-50 text-emerald-700 border-emerald-200`}>Within SLA</span>
+                )}
 
-                {propertyName && (
-                    <span className={`${chip} max-w-full bg-indigo-50 text-indigo-700 border-indigo-200`}>
-                        <svg className="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                        </svg>
-                        <span className="truncate">{propertyName}</span>
+                {isVendorTagged && (
+                    <span className={`${chip} bg-cyan-50 text-cyan-800 border-cyan-200`}>
+                        <Tag className="h-3 w-3" aria-hidden="true" />
+                        Vendor tagged
                     </span>
                 )}
 
@@ -475,14 +523,23 @@ export default function TicketCard({
                         Materials
                     </span>
                 )}
-
-                {isVendorTagged && (
-                    <span className={`${chip} bg-amber-100 text-amber-800 border-amber-200`}>
-                        <Tag className="h-3 w-3" aria-hidden="true" />
-                        Vendor Tagged
-                    </span>
-                )}
             </div>
+
+            {/* SLA messages, in sentence case: why the clock is paused, or that it ran out */}
+            {isPausedNow && slaPaused && (
+                <div className="flex items-start gap-[8px] rounded-[8px] bg-amber-50 px-2.5 py-1.5 text-[13px] leading-[1.4] text-amber-900">
+                    <Pause className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="line-clamp-2 break-words" title={slaPauseReason || undefined}>
+                        <b className="font-bold">SLA paused:</b> {slaPauseReason || 'the SLA clock is on hold'}
+                    </span>
+                </div>
+            )}
+            {computedIsBreached && (
+                <div className="flex items-start gap-[8px] rounded-[8px] bg-red-50 px-2.5 py-1.5 text-[13px] leading-[1.4] text-red-800">
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span><b className="font-bold">SLA breached:</b> {isFullyClosed || isResolvedByUs ? 'closed after the SLA time ran out' : 'the SLA time has run out'}</span>
+                </div>
+            )}
 
             {/* Raised by / Serving: two labelled rows in a narrow card, one line in a wide one */}
             {(raisedBy || showServing) && (
@@ -551,31 +608,11 @@ export default function TicketCard({
                 </div>
             )}
 
-            {/* Footer: ticket number · date and the timer on the left; a slim "View" on the right (same action as the card) */}
+            {/* Footer: ticket number · date on the left; a slim "View" on the right (same action as the card) */}
             <div className="mt-auto flex min-w-0 items-center justify-between gap-[8px] border-t border-slate-100 pt-1">
                 <div className="flex min-w-0 flex-col gap-[3px] py-1.5 @sm:flex-row @sm:flex-wrap @sm:items-center @sm:gap-x-2">
                     <span className="text-xs text-gray-600 @sm:text-[13px]">
                         <span className="font-mono text-gray-700">{ticketNumber}</span> · <span className="tabular-nums">{formattedDate}</span>
-                    </span>
-                    {/* Live elapsed timer */}
-                    <span className={`inline-flex h-[22px] w-fit items-center gap-[4px] rounded-[8px] px-2 text-xs font-bold tabular-nums ${timerColor}`}>
-                        <Timer className="h-3 w-3 shrink-0" aria-hidden="true" />
-                        {(isResolvedByUs || isFullyClosed) ? (
-                            <span>
-                                Closed at {(() => {
-                                    const closeTime = parseDate(resolvedAt || updatedAt || '') || new Date();
-                                    return closeTime.toLocaleString('en-US', {
-                                        month: 'short',
-                                        day: '2-digit',
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                        hour12: true
-                                    });
-                                })()}
-                            </span>
-                        ) : (
-                            formatElapsed(elapsedSec)
-                        )}
                     </span>
                 </div>
 

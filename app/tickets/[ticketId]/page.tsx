@@ -1943,7 +1943,8 @@ export default function TicketDetailPage() {
               })()}
             </div>
           </div>
-          <div className="text-right mt-2 sm:mt-0">
+          {/* Owner 2026-11-20: a little space so the status pill does not touch the classification box above it. */}
+          <div className="text-right mt-3">
             <div
               className={`text-[10px] font-black uppercase tracking-widest mb-1.5 px-4 py-1.5 rounded-full border inline-block ${ticket.status === "closed" || ticket.status === "resolved"
                   ? isDark
