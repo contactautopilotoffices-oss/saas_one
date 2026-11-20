@@ -291,20 +291,27 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
 
     // SLA helpers
     const slaDeadline = parseDate(ticket?.sla_deadline as string);
-    const resolvedAt = parseDate(ticket?.resolved_at as string);
     // Normalize status for comparison
     const normalizedTicketStatus = (ticket?.status as string || '').toLowerCase().replace(/\s+/g, '_');
-    const isResolved = ['resolved', 'closed'].includes(normalizedTicketStatus);
+    const isResolved = ['resolved', 'closed', 'completed'].includes(normalizedTicketStatus);
     const isPendingValidation = normalizedTicketStatus === 'pending_validation';
+    const resolvedAt = parseDate(ticket?.resolved_at as string) || (isResolved ? parseDate(ticket?.updated_at as string) : null);
 
     // For pending_validation, work is done by our side - show resolution info
     // For resolved/closed, use resolved time. For active tickets, use current time.
     const referenceTime = isResolved && resolvedAt ? resolvedAt : (isPendingValidation ? (resolvedAt || new Date()) : new Date());
 
     // SLA is only "active" for open/assigned/in_progress tickets
-    // For pending_validation, show that MST side has completed
-    const isSLABreached = Boolean(ticket?.sla_breached) || (slaDeadline !== null && slaDeadline < referenceTime && !isPendingValidation);
-    const breachMs = slaDeadline && isSLABreached ? referenceTime.getTime() - slaDeadline.getTime() : 0;
+    const isSLABreached = Boolean(ticket?.sla_breached) || (
+        slaDeadline !== null && (
+            isResolved && resolvedAt
+                ? resolvedAt.getTime() > slaDeadline.getTime()
+                : !isPendingValidation && !isResolved && referenceTime.getTime() > slaDeadline.getTime()
+        )
+    );
+    const breachMs = slaDeadline && isSLABreached && referenceTime.getTime() > slaDeadline.getTime()
+        ? referenceTime.getTime() - slaDeadline.getTime()
+        : 0;
 
     const formatDuration = (ms: number): string => {
         const totalMins = Math.floor(ms / 60000);

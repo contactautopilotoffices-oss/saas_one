@@ -351,6 +351,14 @@ export async function evaluateCompletionItemCleanliness({
             title: checklistItem.title,
         });
 
+        // Always include current live capture date so same-day live check-ins are recognized as valid
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const now = new Date();
+        const liveTodayStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
+        if (!allowedDates.includes(liveTodayStr)) {
+            allowedDates.push(liveTodayStr);
+        }
+
         // Programmatic Stale Image Detection: Check photo capture timestamp age
         let isProgrammaticallyStale = false;
         let programmaticStaleReason = '';
@@ -440,8 +448,11 @@ AUDIT STEPS (do every step, in order, do not skip any):
 4. OVERALL RESULT:
    - "overall_score" (0-100) must agree with the parameter and angle results. Any "fail" parameter caps it at 50. Any genuinely "missing" room caps it at 60.
    - "pass": true ONLY if every angle is "matched", every parameter is "pass" or "needs_attention" (none "fail" or "not_visible"), overall_score >= ${passThreshold}, and no stale image.
-   - STALE IMAGE: set "is_stale_image": true ONLY if a visible watermark shows a date not in [${allowedDates.join(', ')}], or the image is a photo of a screen/monitor (moire, bezel). Gallery photos taken on those dates are valid.
-   - "timestamp_detected": the exact watermark text you can read, or "none".
+   - STALE IMAGE & WATERMARK CHECK (STAFF FIELD PHOTOS ONLY):
+     * ABSOLUTE RULE: Check timestamps, watermarks, and dates ONLY on the STAFF FIELD PHOTOS (Image ${benchmarkItems.length + 1} onwards).
+     * NEVER inspect, read, or report watermarks on the REFERENCE ANGLES (Images 1 to ${benchmarkItems.length}). Reference images are historical clean standard templates from setup (e.g., from October 2026) and will naturally have old dates or camera watermarks like "vivo" - completely IGNORE any watermarks, phone brands, or timestamps visible on reference images!
+     * Set "is_stale_image": true ONLY if a visible watermark ON A STAFF FIELD PHOTO shows a date not in [${allowedDates.join(', ')}], or if a field photo is a photo of a screen/monitor (moire, bezel). Field photos without any watermark are valid live captures.
+   - "timestamp_detected": the exact watermark text detected ON A STAFF FIELD PHOTO, or "none". NEVER return watermark text from a reference angle!
 
 5. EXPLANATION FOR STAFF:
    - "overall_reason": strictly 1-2 concise sentences (under 30 words) summarizing key observation or action needed. Keep it crisp.
@@ -636,7 +647,20 @@ Respond ONLY with raw JSON in exactly this shape:
             buffer: fieldBuffer,
         });
 
-        const rawWatermark = parsed?.timestamp_detected;
+        let rawWatermark = parsed?.timestamp_detected;
+        // Defensive check: if model mistakenly read watermark off the reference photo (e.g. vivo, 10/22/2026, 22/10/2026)
+        const isReferenceWatermark = typeof rawWatermark === 'string' && (
+            /vivo|10\/22\/2026|22\/10\/2026|10\/21\/2026|21\/10\/2026|10\/23\/2026|23\/10\/2026/i.test(rawWatermark)
+        );
+        if (isReferenceWatermark) {
+            console.warn(`[AI Score] Discarding watermark "${rawWatermark}" as it was read from reference benchmark.`);
+            rawWatermark = 'none';
+            if (parsed) {
+                parsed.is_stale_image = false;
+                parsed.timestamp_detected = 'none';
+            }
+        }
+
         const hasVisibleWatermark = Boolean(
             rawWatermark &&
             rawWatermark !== 'missing' &&

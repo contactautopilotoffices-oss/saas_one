@@ -1966,7 +1966,7 @@ export default function TicketDetailPage() {
                   ? "WAITING FOR CHECK"
                   : ticket.status.replace("_", " ")}
             </div>
-            {ticket.sla_deadline && ticket.status !== "closed" && (
+            {ticket.sla_deadline && !["resolved", "closed", "completed"].includes(ticket.status) && (
               <div className="flex items-center justify-end mt-1">
                 {ticket.sla_breached ? (
                   <div className="flex flex-col items-end gap-0.5">
