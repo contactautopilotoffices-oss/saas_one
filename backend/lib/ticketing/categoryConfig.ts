@@ -149,7 +149,7 @@ export function categoryViews(l: Loaded, ticketCounts: ReadonlyMap<string, numbe
         const team = asTeam(one(main.skill_group as Row | Row[] | null)?.code);
         const name = str(main.name) ?? code;
         const issues: string[] = [];
-        if (!team) issues.push('No team: tickets in it cannot be assigned automatically.');
+        if (!team) issues.push('No team set: the AI picks one for each ticket. Choose a team so they always go to the same one.');
         if (name === code || /^[a-z0-9_]+$/.test(name)) issues.push('The name is a code: give it a readable name.');
         if (counts.size > 1) issues.push('Not the same at every property.');
         out.push({
@@ -387,7 +387,7 @@ async function poorTickets(db: SupabaseClient, orgId: string, now: Date): Promis
         const conf = typeof t.confidence_score === 'number' ? t.confidence_score : null;
         const how = !code || code === 'other' ? 'no category fitted' : t.classification_source === 'rule' ? `sorted by keywords as ${code}` : conf !== null && conf < 60 ? `the AI guessed ${code} (${conf}%)` : null;
         if (!how) continue;
-        const text = maskIdentity([str(t.title), str(t.description)].filter(Boolean).join(' - '), 400) ?? '';
+        const text = maskIdentity([str(t.title), str(t.description)].filter((x, i, all): x is string => Boolean(x) && all.indexOf(x) === i).join(' - '), 400) ?? '';
         if (text.trim()) out.push({ id: String(t.id), text, code, how });
         if (out.length >= 120) break;
     }

@@ -7,7 +7,7 @@
  * changes until a person accepts a suggestion. Server: backend/lib/ticketing/categoryConfig.ts.
  */
 import React, { useEffect, useId, useState } from 'react';
-import { Lightbulb, Pencil, Plus, Power, RefreshCw, Sparkles, Tags, X } from 'lucide-react';
+import { ChevronDown, Lightbulb, Pencil, Plus, Power, RefreshCw, Sparkles, Tags, X } from 'lucide-react';
 import type { CategoriesView, CategoryView, SuggestionView } from '@/backend/lib/ticketing/categoryConfig';
 import type { CategoriesReply, CategoryBody, Plain } from './api';
 import { useBrain } from './BrainContext';
@@ -77,6 +77,9 @@ function Body({ initial }: { initial: CategoriesView }) {
     const [error, setError] = useState<string | null>(null);
     const [confirm, setConfirm] = useState<{ title: string; text: string; body: CategoryBody } | null>(null);
     const [showOff, setShowOff] = useState(false);
+    // Owner 2026-11-20: all AI suggestions sit in one box that stays closed until opened, so the page stays short.
+    const [suggestOpen, setSuggestOpen] = useState(false);
+    const suggestId = useId();
     useEffect(() => { setView(initial); }, [initial]);
 
     const send = async (body: CategoryBody, key: string): Promise<boolean> => {
@@ -135,17 +138,31 @@ function Body({ initial }: { initial: CategoriesView }) {
             )}
 
             <Card>
-                <CardHead label="AI suggestions" icon={Sparkles}
+                <CardHead label={view.suggestions.length ? `AI suggestions (${view.suggestions.length})` : 'AI suggestions'} icon={Sparkles}
                     hint="The AI reads the last 90 days of tickets that fit the categories badly (no category, a guess, or corrected in Review) and suggests what to add, merge or rename. It runs only when you press the button."
-                    right={<Btn size="sm" variant="primary" icon={Lightbulb} disabled={!!busy || view.columnsMissing} onClick={() => send({ action: 'suggest' }, 'suggest')}>{busy === 'suggest' ? 'Reading tickets…' : 'Suggest categories'}</Btn>} />
+                    right={<Btn size="sm" variant="primary" icon={Lightbulb} disabled={!!busy || view.columnsMissing} onClick={async () => { if (await send({ action: 'suggest' }, 'suggest')) setSuggestOpen(true); }}>{busy === 'suggest' ? 'Reading tickets…' : 'Suggest categories'}</Btn>} />
                 {view.suggestions.length === 0
                     ? <p className="px-5 pb-5 text-[13px] text-(--bc-ink-3)">No suggestions waiting. Press &quot;Suggest categories&quot; when you want some.</p>
-                    : <ul className="flex flex-col divide-y divide-(--bc-line)">{view.suggestions.map(sg => (
-                        <SuggestionRow key={sg.id} sg={sg} view={view} busy={busy}
-                            onUse={() => takeSuggestion(sg)}
-                            onMerge={() => setConfirm({ title: 'Merge these categories?', text: mergeText(sg, view), body: { action: 'merge', id: sg.id } })}
-                            onDismiss={() => send({ action: 'dismiss', id: sg.id }, `dismiss:${sg.id}`)} />
-                    ))}</ul>}
+                    : <>
+                        <button
+                            type="button"
+                            aria-expanded={suggestOpen}
+                            aria-controls={suggestId}
+                            onClick={() => setSuggestOpen(o => !o)}
+                            className="mx-5 mb-4 flex min-h-[44px] items-center justify-between gap-3 rounded-full border border-(--bc-line) px-4 text-left text-[13.5px] font-semibold text-(--bc-ink-1) hover:bg-(--bc-line)/30"
+                        >
+                            <span>{suggestOpen ? 'Hide' : 'Show'} {plural(view.suggestions.length, 'suggestion', 'suggestions')}</span>
+                            <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 transition-transform ${suggestOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                        {suggestOpen && (
+                            <ul id={suggestId} className="flex flex-col divide-y divide-(--bc-line) border-t border-(--bc-line)">{view.suggestions.map(sg => (
+                                <SuggestionRow key={sg.id} sg={sg} view={view} busy={busy}
+                                    onUse={() => takeSuggestion(sg)}
+                                    onMerge={() => setConfirm({ title: 'Merge these categories?', text: mergeText(sg, view), body: { action: 'merge', id: sg.id } })}
+                                    onDismiss={() => send({ action: 'dismiss', id: sg.id }, `dismiss:${sg.id}`)} />
+                            ))}</ul>
+                        )}
+                    </>}
             </Card>
 
             <Card>
@@ -207,7 +224,7 @@ function CategoryRow({ c, total, busy, onEdit, onToggle }: { c: CategoryView; to
                     {c.issues.map(i => <Chip key={i} tone="warn">{i}</Chip>)}
                 </div>
                 <p className="mt-1 text-[12.5px] text-(--bc-ink-2)">
-                    {teamName(c.team)} team · usually {prioName(c.priority)} · SLA {slaText(c)} · {where} · {plural(c.tickets30, 'ticket', 'tickets')} in 30 days
+                    {c.team ? `${teamName(c.team)} team` : 'No team set'} · usually {prioName(c.priority)} · SLA {slaText(c)} · {where} · {plural(c.tickets30, 'ticket', 'tickets')} in 30 days
                 </p>
                 {c.hint && <p className="mt-0.5 text-[12.5px] text-(--bc-ink-3)">For: {c.hint}</p>}
             </div>
