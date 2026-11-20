@@ -132,6 +132,24 @@
  *    the task words correctly [BAA pp.96–98]; read it in Review before widening.
  * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99]. A message only about tasks takes today's path
  *    unchanged, so the risk sits only in mixed messages.
+ *
+ * ### Amendment 2026-11-20: rooms at the same properties as the app (owner: "keep the whatsapp bot consistent with the
+ * fms"; "if the app doesnt allow, dont change the app")
+ * **1.** Still hybrid [BAA p.121]: which properties a person may book rooms at is decided by code from the database
+ *    (scope.ts roomPropertyIds), never by the model. HR, CRM/BD, IT, Design and Tech logins get every property of the
+ *    organisation, the same list the app's Book Meeting Room page offers; everyone else is unchanged.
+ * **2. Context** [BAA p.112]: unchanged, except the room skills see the wider list (skills/rooms.ts roomScope); every
+ *    other skill keeps the narrower propertyIds.
+ * **3. False positive** [BAA p.112]: a booking still needs the person's Yes on a card code built, and the database
+ *    booking function checks access again (migration 20261120000002, same roles) [BAA p.93]. No new write.
+ * **8. Evaluation** [BAA pp.118–119]: brain-room-scope.test.ts; all earlier room tests unchanged. Not re-run with real
+ *    models [BAA pp.96–98].
+ * **10. Laws knowingly violated:** L2 as above [BAA pp.94–95, 99].
+ * Later the same day ("fix both"): such a login with NO property login (the HR team) is served on WhatsApp for rooms
+ *    only (scope.ts roomsOnly; skillsFor offers the room skills alone) [BAA p.112], and only while "Tasks through the
+ *    task assistant" is on, so their task messages still reach the task assistant unchanged [BAA p.116]; with it off
+ *    they are left to the existing bots as before. The context line meeting_rooms_at tells the model where rooms can be
+ *    booked [BAA p.112]; tests in brain-channels.test.ts and brain-room-scope.test.ts [BAA pp.118–119].
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { buildAuditRow, type AuditInput, type AuditStore } from '../../audit';

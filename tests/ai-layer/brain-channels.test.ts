@@ -549,3 +549,31 @@ describe('WhatsApp: swipe-replies (2026-11-18)', () => {
         assert.equal(asked, 0);
     });
 });
+
+// 2026-11-20 (owner: "fix both"): an HR/CRM/IT/Design/Tech login with no property login is served for meeting rooms
+// only, and only while the task assistant answers their tasks, so their task messages reach it exactly as before.
+describe('WhatsApp: a login with no property login, for meeting rooms', () => {
+    const hr = (): ActorContext => ({ ...actor({ propertyIds: [], propertyNames: {} }), roles: ['hr'], roomsOnly: true, roomPropertyIds: [PAREL], roomPropertyNames: { [PAREL]: 'C Mafatlal Chambers' } });
+
+    it('"Tasks through the task assistant" off: left alone, exactly as before', async () => {
+        const model = new ScriptedModel([]);
+        const { w, deps } = world({ actor: hr(), model, settings: brainSettings({ taskEngine: false }) });
+        assert.deepEqual(await claimBrain(deps, msg('book a meeting room at C Mafatlal tomorrow 4 to 5')), { handled: false, why: 'rooms_only_task_engine_off' });
+        assert.equal(model.calls.length, 0);
+        assert.equal(w.sent.length, 0);
+    });
+
+    it('switch on: the brain answers a room question, with only the room tools', async () => {
+        const data = new FakeBrainData(); data.rooms = [{ id: 'r-c1', name: 'Conference room 1', propertyId: PAREL }];
+        const model = new ScriptedModel([call('rooms_list', { property: null }), 'C Mafatlal Chambers has Conference room 1.']);
+        const { w, deps } = world({ actor: hr(), model, data, settings: brainSettings({ taskEngine: true }) });
+        const claim = await claimBrain(deps, msg('which meeting rooms are there'));
+        assert.equal(claim.handled, true);
+        await (claim as { background: () => Promise<void> }).background();
+        const tools = model.calls[0].tools.map(t => t.name);
+        assert.ok(tools.includes('rooms_list') && tools.includes('room_book'));
+        assert.ok(!tools.some(n => n.startsWith('ticket') || n.startsWith('electricity') || n === 'properties_mine'), tools.join(','));
+        assert.match(model.toolResults()[0], /Meeting rooms at C Mafatlal Chambers/);
+        assert.equal(w.sent.length, 1);
+    });
+});

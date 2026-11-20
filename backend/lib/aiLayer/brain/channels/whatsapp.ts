@@ -158,6 +158,10 @@ export async function claimBrain(deps: BrainWhatsAppDeps, input: BrainInbound | 
         const who = await resolvePerson(deps, input.phone);
         if ('why' in who) return no(who.why);
         const { person, actor, settings, aliases, mode } = who;
+        // Owner 2026-11-20: a login with no property login (HR, for example) is served for meeting rooms only, and only
+        // while "Tasks through the task assistant" is on, so their task messages still reach the task assistant exactly
+        // as before. With it off, they are left to the task assistant entirely, as before this change.
+        if (actor.roomsOnly && !taskEngineFor(actor, settings)) return no('rooms_only_task_engine_off');
         if (await deps.importBusy(input.phone)) return no('import_busy');
         // Tasks in the brain: the task assistant's open question ("which task?", a superuser's ping) is answered by it,
         // never taken over half-way. Only checked when the brain does tasks for this person; otherwise as before.

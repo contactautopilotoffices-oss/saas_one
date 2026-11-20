@@ -87,7 +87,10 @@ export function buildContext(c: ContextInput): string {
     const cls = roleClass(actor);
     const props = actor.propertyIds.slice(0, 15).map(id => actor.propertyNames[id] + (c.aliases[id]?.length ? ` (also called ${c.aliases[id].join(', ')})` : ''));
     const more = actor.propertyIds.length - props.length;
-    const who = cls === 'staff'
+    const roomIds = actor.roomPropertyIds ?? [];
+    const roomLine = roomIds.length ? [`meeting_rooms_at (${roomIds.length}): ${roomIds.slice(0, 15).map(id => actor.roomPropertyNames?.[id] ?? actor.propertyNames[id]).join(' | ')}${roomIds.length > 15 ? ` | +${roomIds.length - 15} more` : ''}`] : [];
+    const who = actor.roomsOnly ? `staff member (${actor.roles.join(', ')}) with no property login; here only to book meeting rooms at the properties listed under meeting_rooms_at`
+        : cls === 'staff'
         ? `staff member (${actor.roles.join(', ')}); sees ${actor.orgWide ? 'every property of the organisation' : 'only the properties listed'}`
         : cls === 'client' ? 'client (tenant); sees only records they raised or booked themselves' : 'vendor; sees only tickets assigned to them';
     const handles = Object.entries(c.handles).filter(([, r]) => r.kind !== 'attachment').slice(-12).map(([h, r]) => `${h} = ${r.kind} ${r.label}`);
@@ -106,6 +109,7 @@ export function buildContext(c: ContextInput): string {
         `now: ${indiaNow(c.now)}`,
         `person: ${who}`,
         `properties (${actor.propertyIds.length}): ${props.join(' | ')}${more > 0 ? ` | +${more} more` : ''}`,
+        ...roomLine,
         `reply_language: ${c.lang}`,
         `open_files: ${c.attachments.length ? c.attachments.map(a => attachmentLine(a) + (c.visibleImages.includes(a.handle) ? ' (shown to you below)' : '')).join(' ; ') : 'none'}`,
         `pending: ${pending}`,
