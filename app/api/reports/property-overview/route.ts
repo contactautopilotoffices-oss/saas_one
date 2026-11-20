@@ -36,6 +36,12 @@ const ROW_CAP_ORG = 20000;
 
 const TICKET_CLOSED = ['resolved', 'closed', 'satisfied', 'completed'];
 const TICKET_DEAD = ['cancelled', 'rejected', 'duplicate'];
+/**
+ * Statuses that are NOT open work. `pending_validation` sits here with the closed and dead ones:
+ * the team has finished the job and the ticket is only waiting for the tenant's sign-off, so counting
+ * it as "open now" overstates the queue. It is still reported on its own as `pending_validation`.
+ */
+const TICKET_NOT_OPEN = [...TICKET_CLOSED, ...TICKET_DEAD, 'pending_validation'];
 
 function isDay(v: string | null): v is string {
     if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
@@ -309,10 +315,10 @@ export async function GET(request: NextRequest) {
                 single
                     ? count(supabaseAdmin.from('tickets').select('id', { count: 'exact', head: true })
                         .in('property_id', ids)
-                        .not('status', 'in', `(${[...TICKET_CLOSED, ...TICKET_DEAD].join(',')})`)).then(c => Array.from({ length: c }, () => ({ property_id: ids[0] }) as Row))
+                        .not('status', 'in', `(${TICKET_NOT_OPEN.join(',')})`)).then(c => Array.from({ length: c }, () => ({ property_id: ids[0] }) as Row))
                     : rows(supabaseAdmin.from('tickets').select('id, property_id')
                         .in('property_id', ids)
-                        .not('status', 'in', `(${[...TICKET_CLOSED, ...TICKET_DEAD].join(',')})`)
+                        .not('status', 'in', `(${TICKET_NOT_OPEN.join(',')})`)
                         .range(0, ROW_CAP - 1)),
             ]);
             const isClosed = (t: Row) => TICKET_CLOSED.includes(str(t.status));
