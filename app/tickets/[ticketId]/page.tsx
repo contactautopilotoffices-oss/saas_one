@@ -1839,17 +1839,7 @@ export default function TicketDetailPage() {
 
             {/* Bottom Row: Title & Status */}
             <div className="space-y-5">
-              {(ticket as any).risk_flag && (
-                <div
-                  className={`flex items-center gap-2 px-3 py-2 ${isDark ? "bg-error/20 border-error/30 text-error" : "bg-error/5 border-error/20 text-error"} border rounded-xl text-xs font-bold`}
-                >
-                  <AlertTriangle className="w-4 h-4" />
-                  <span className="uppercase tracking-wide">
-                    Critical Risk: {(ticket as any).risk_flag}
-                  </span>
-                </div>
-              )}
-
+              {/* Owner 2026-11-20: the AI's "Critical Risk" banner is not shown on the ticket page any more. */}
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <h1
@@ -1925,7 +1915,10 @@ export default function TicketDetailPage() {
                           {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                          ({ticket.skill_group?.name || "Technical"} Skill Group)
+                          {/* Owner 2026-11-20: the technical team is shown as "Multi-skill technician (MST)". */}
+                          {!ticket.skill_group?.name || ticket.skill_group.code === "technical"
+                            ? "Multi-skill technician (MST)"
+                            : `(${ticket.skill_group?.name} Skill Group)`}
                         </span>
                         {badge && (
                           <span className="px-1.5 py-0.2 rounded text-[10px] font-bold tracking-wide tabular-nums bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
