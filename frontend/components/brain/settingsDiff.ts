@@ -33,6 +33,7 @@ export function describeChanges(before: BrainSettings, after: BrainSettings, ski
     say('Ticket sorting learns', learnWord[before.ticketLearning.mode], learnWord[after.ticketLearning.mode]);
     say('Find similar tickets by meaning', onOff(before.ticketLearning.meaning), onOff(after.ticketLearning.meaning));
     say('Draft new sorting rules every day', onOff(before.ticketLearning.rulesDaily), onOff(after.ticketLearning.rulesDaily));
+    say('Read ticket photos', learnWord[before.ticketPhotos.mode], learnWord[after.ticketPhotos.mode]);
     for (const s of skills) {
         const was = skillModeOf(before, s), now = skillModeOf(after, s);
         if (was !== now) out.push(`Skill ${s.id}: ${SKILL_MODE_LABEL[was].toLowerCase()} → ${SKILL_MODE_LABEL[now].toLowerCase()}`);

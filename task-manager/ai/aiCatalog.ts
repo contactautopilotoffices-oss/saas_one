@@ -35,7 +35,11 @@ export type AiJob =
     // Owner 2026-11-16: the Recruitment Calls tab (a recorded screening call: speech to text, then the reading)
     | 'call_transcribe' | 'call_analyse'
     // Owner 2026-11-19: ticket sorting rules, drafted from the team's corrections (backend/lib/ticketing/sortRulesStore.ts)
-    | 'ticket_rules_draft';
+    | 'ticket_rules_draft'
+    // Owner 2026-11-19: the AI reads a ticket's photo (backend/lib/ticketing/ticketPhoto.ts)
+    | 'ticket_photo'
+    // Owner 2026-11-19: categories to add / merge / rename, suggested on the button (backend/lib/ticketing/categoryConfig.ts)
+    | 'ticket_category_suggest';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai' | 'sarvam';
@@ -72,8 +76,9 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'openai:gpt-5.6-luna', label: 'GPT 5.6 Luna (OpenAI)', provider: 'openai', can: ['chat'] },
     { id: 'openai:gpt-5.6-terra', label: 'GPT 5.6 Terra (OpenAI)', provider: 'openai', can: ['chat'] },
     { id: 'openai:gpt-5.6-sol', label: 'GPT 5.6 Sol (OpenAI)', provider: 'openai', can: ['chat'] },
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', can: ['chat'] },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini', can: ['chat'] },
+    // 2026-11-19: images through task-manager/brain/geminiLlm.ts geminiVision (only "Reading ticket photos" calls Gemini with an image).
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', can: ['chat', 'vision'] },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini', can: ['chat', 'vision'] },
     // 2026-11-15 (owner): the other Gemini models on the key. Text only until each has read a picture here.
     { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', provider: 'gemini', can: ['chat'] },
@@ -173,6 +178,10 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'ticket_classify', label: 'Sorting new tickets', hint: 'Sorts every new ticket: picks the category from your category list, the team, the priority (it can only raise a category\'s usual priority) and a safety risk. The first model that answers is used; the rest are backups. If all fail, the old keyword rules decide', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-haiku-5-5', 'glm-5.3-flash'] },
     // Owner 2026-11-19: "improve the prompt for learning loop ... daily automatic as well as on button click".
     { key: 'ticket_rules_draft', label: 'Ticket sorting rules', hint: 'Once a day and on the "Suggest rules now" button, reads the team\'s recent ticket corrections and drafts short sorting rules. A draft is tested on judged tickets and only used after a person approves it in Review → Tickets', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
+    // Owner 2026-11-19: "link the uploaded image with query raised in the ticket", configurable here.
+    { key: 'ticket_photo', label: 'Reading ticket photos', hint: 'When a ticket has a photo, reads what the photo shows (the equipment and the problem, never people) and which category it points to. Watch only: recorded, nothing changes. On: a photo that disagrees with the ticket\'s category sends the ticket to Review, and a photo showing danger can raise the priority. The first model that answers is used; the rest are backups', group: 'Tickets', needs: 'vision', providers: ['anthropic', 'engy', 'gemini'], defaults: ['anthropic:claude-haiku-5-5', 'glm-5.3-flash'] },
+    // Owner 2026-11-19: "ai based suggestions based on past tickets on what categories must be added" (manual only).
+    { key: 'ticket_category_suggest', label: 'Suggesting ticket categories', hint: 'Only when a Tech person presses "Suggest categories" in Brain → Categories & SLAs: reads the tickets that fit the categories badly and suggests categories to add, merge or rename. Nothing changes until a person accepts a suggestion', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
     { key: 'admin_chatbot', label: 'Master admin chatbot', hint: 'Turns a master admin\'s question into a read-only database query and words the result', group: 'Admin', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
     { key: 'coaching_feedback', label: 'Call coaching feedback', hint: 'Scores a recorded sales call and writes the coaching notes', group: 'CRM', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
     { key: 'mailbox_digest', label: 'Purchase mailbox digest', hint: 'Sorts purchase mailbox threads for the daily digest (only when the digest\'s AI step is switched on)', group: 'Procurement', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-terra'], single: true, defaultEnv: 'MAILBOX_DIGEST_MODEL', defaultPrefix: 'openai:' },

@@ -52,6 +52,17 @@ export const brainSettingsSchema = z.object({
         meaning: z.boolean().default(false),
         rulesDaily: z.boolean().default(true),
     }).strict().default({ mode: 'off', meaning: false, rulesDaily: true }),
+    /**
+     * 2026-11-19 (owner: "link the uploaded image with query raised in the ticket"; "for a few days i just wanna test it
+     * first ... just monitoring"): the AI reads a ticket's photo (backend/lib/ticketing/ticketPhoto.ts).
+     *   off    = photos are not read.
+     *   shadow = watch only (the starting setting): the photo is read and recorded next to the ticket; nothing changes.
+     *   live   = a photo that points to a different category sends the ticket to Review (owner: "the AI must put the
+     *            tickets in the review"); it is never moved by the photo. A photo showing danger can raise the priority.
+     */
+    ticketPhotos: z.object({
+        mode: skillMode.default('shadow'),
+    }).strict().default({ mode: 'shadow' }),
     /** role → module → level. A role with no row here gets the default for its kind of role (see defaultLevel). */
     grid: z.record(z.string().min(1).max(64), moduleGrid).default({}),
     /** skill id → off / shadow / live. Missing = the skill's own default. */

@@ -25,7 +25,7 @@ async function adminOf(admin?: SupabaseClient): Promise<SupabaseClient> {
 
 // ── the setting ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface LearningSetting { mode: 'off' | 'shadow' | 'live'; meaning: boolean; /** Draft sorting rules every day (sortRulesStore.ts). */ rulesDaily?: boolean }
+export interface LearningSetting { mode: 'off' | 'shadow' | 'live'; meaning: boolean; /** Draft sorting rules every day (sortRulesStore.ts). */ rulesDaily?: boolean; /** Read ticket photos (ticketPhoto.ts). */ photos?: 'off' | 'shadow' | 'live' }
 export const LEARNING_OFF: LearningSetting = { mode: 'off', meaning: false };
 const settingCache = new Map<string, { at: number; value: LearningSetting }>();
 const SETTING_MS = 60_000;
@@ -42,7 +42,7 @@ export async function learningSetting(orgId: string | null | undefined, admin?: 
         const read = (async () => {
             const { loadBrainSettings } = await import('@/backend/lib/aiLayer/brain/server');
             const { settings } = await loadBrainSettings(await adminOf(admin), orgId);
-            return { mode: settings.ticketLearning.mode, meaning: settings.ticketLearning.meaning, rulesDaily: settings.ticketLearning.rulesDaily } as LearningSetting;
+            return { mode: settings.ticketLearning.mode, meaning: settings.ticketLearning.meaning, rulesDaily: settings.ticketLearning.rulesDaily, photos: settings.ticketPhotos.mode } as LearningSetting;
         })();
         // A person is waiting for their ticket: a slow read means "off" this time, never a slower ticket.
         value = await Promise.race([read, new Promise<LearningSetting>((_, no) => { timer = setTimeout(() => no(new Error('timed out')), SETTING_READ_MS); })]);
