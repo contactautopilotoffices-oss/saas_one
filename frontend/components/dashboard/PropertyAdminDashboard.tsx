@@ -1558,7 +1558,7 @@ const OverviewTab = memo(function OverviewTab({
                 let resolvedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['resolved', 'closed', 'satisfied', 'pending_validation']);
                 let totalQuery = supabase.from('tickets').select('id', { count: 'exact', head: true });
                 let pendingValQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('status', 'pending_validation');
-                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied")');
+                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied","pending_validation")');
                 let slaBreachedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).or(`sla_deadline.lt.${new Date().toISOString()},sla_breached.eq.true`).not('status', 'in', '("resolved","closed")');
                 let recentsQuery = supabase.from('tickets').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(5);
 

@@ -381,7 +381,9 @@ export default function RequestsReportPage() {
         tickets.forEach(t => {
             const cat = t.category || 'Other';
             if (!catMap[cat]) catMap[cat] = { open: 0, closed: 0 };
-            if (['closed', 'resolved'].includes(t.status)) catMap[cat].closed++;
+            // pending_validation is closed from our side (work done, awaiting tenant sign-off), so it
+            // counts as closed here — the same split the KPI tiles use.
+            if (['closed', 'resolved', 'pending_validation'].includes(t.status)) catMap[cat].closed++;
             else catMap[cat].open++;
         });
         const catRows = Object.entries(catMap)
@@ -665,7 +667,8 @@ export default function RequestsReportPage() {
         tickets.forEach(t => {
             const cat = t.category || 'Other';
             if (!selCatMap[cat]) selCatMap[cat] = { open: 0, closed: 0 };
-            const isClosedStatus = t.status === 'closed' || t.status === 'resolved';
+            // pending_validation is closed from our side (work done, awaiting tenant sign-off).
+            const isClosedStatus = ['closed', 'resolved', 'pending_validation'].includes(t.status);
             if (isClosedStatus) selCatMap[cat].closed++;
             else selCatMap[cat].open++;
         });

@@ -60,7 +60,9 @@ export type EnrichedAsset = AssetRow & {
     total_cost: number;
 };
 
-const OPEN_TICKET_STATUSES = ['open', 'assigned', 'in_progress', 'blocked', 'waitlist', 'pending_validation'];
+// `pending_validation` is deliberately absent: the work on the asset is finished and the ticket is only
+// waiting for the tenant's sign-off, so it is not open work against the asset.
+const OPEN_TICKET_STATUSES = ['open', 'assigned', 'in_progress', 'blocked', 'waitlist'];
 
 /**
  * Attach live signals (open tickets, overdue PPM, AMC) and the computed grade
