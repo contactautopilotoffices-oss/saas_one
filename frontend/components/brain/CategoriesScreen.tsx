@@ -15,7 +15,7 @@ import { plural } from './labels';
 import { Btn, Card, CardHead, Chip, Dialog, Empty, ErrorState, Field, LoadingScreen, Screen, Segmented, cx, s } from './ui';
 
 // Kept here (not imported) so no server code reaches the browser.
-const TEAMS = [['technical', 'Technical'], ['plumbing', 'Plumbing'], ['soft_services', 'Soft services'], ['vendor', 'Vendor']] as const;
+const TEAMS = [['technical', 'Technical'], ['plumbing', 'Plumbing'], ['soft_services', 'Soft services'], ['vendor', 'Vendor'], ['it', 'IT']] as const;
 const PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['urgent', 'Urgent']] as const;
 const teamName = (t: string | null | undefined) => TEAMS.find(x => x[0] === t)?.[1] ?? 'No team';
 const prioName = (p: string | null | undefined) => PRIORITIES.find(x => x[0] === p)?.[1] ?? 'Not set';

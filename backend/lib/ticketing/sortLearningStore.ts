@@ -13,7 +13,7 @@ type Row = Record<string, unknown>;
 const MISSING = new Set(['42P01', 'PGRST205', 'PGRST202', '42703', 'PGRST204', '42883']);
 export const isMissing = (e: { code?: string } | null | undefined) => !!e && MISSING.has(String(e.code ?? ''));
 const str = (x: unknown): string | null => (typeof x === 'string' && x.trim() ? x : null);
-const TEAMS = ['technical', 'plumbing', 'vendor', 'soft_services'];
+const TEAMS = ['technical', 'plumbing', 'vendor', 'soft_services', 'it'];
 const asTeam = (x: unknown): SkillGroup | null => (TEAMS.includes(String(x)) ? (x as SkillGroup) : null);
 const DAY_MS = 86_400_000;
 

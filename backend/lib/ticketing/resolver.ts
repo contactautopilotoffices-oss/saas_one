@@ -17,6 +17,7 @@ import { emitWebhook } from './webhooks';
 import { settingFor, sortNewWay, type LearningDeps, type NewWayResult } from './sortLearningRun';
 import { writeTrace, type LearningTrace } from './sortLearningStore';
 import { activeRulesText } from './sortRulesStore';
+import { getOrgItMembers, itRuleFor, withoutIt, IT_TEAM, type ItMember } from './itRule';
 
 export type DecisionSource = 'rule' | 'llm' | 'human';
 
@@ -105,6 +106,8 @@ export interface ResolveOptions {
     learning?: LearningDeps;
     /** For tests: the organisation's approved sorting rules (sortRules.ts). Default: read from the database. */
     rules?: string | null;
+    /** For tests: the organisation's IT-role members (itRule.ts). Default: read from the database when needed. */
+    itMembers?: ItMember[];
 }
 
 /** Watch only: after the old way has sorted the ticket, the new way may take at most this much longer. */
@@ -137,15 +140,42 @@ export async function resolveClassification(ticketText: string, options?: string
         confidenceAnalysis,
     };
 
+    // Owner 2026-11-20: the IT rule comes first (itRule.ts). A ticket that tags the IT person goes to the
+    // IT team: one IT category, or the AI chooses among the IT categories only. Every other ticket is sorted by the AI
+    // without the IT categories, so nothing else lands in IT.
+    let allCategories: CategoryOption[] = [];
+    try { allCategories = opts.categories ?? await loadCategoryOptions(opts.propertyId); } catch { allCategories = []; }
+    const it = await itRuleFor(ticketText, allCategories, opts.propertyId, opts.itMembers);
+    if (it) {
+        finalResult.issue_code = it.fallback.code;
+        finalResult.skill_group = IT_TEAM;
+        finalResult.confidence = 'high';
+        finalResult.llm_reasoning = it.reason;
+        if (it.categories.length > 1) {
+            try {
+                const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
+                const corrections = opts.corrections ?? await loadCorrections(opts.organizationId);
+                const sorted = await classifyWithAi(ticketText, it.categories, opts.deps, corrections, rules);
+                applyAi(finalResult, sorted.verdict, sorted.model, sorted.latencyMs, sorted.tokensIn, sorted.tokensOut);
+                finalResult.issue_code = sorted.verdict.code ?? it.fallback.code;
+                finalResult.llm_reasoning = `${it.reason} ${sorted.verdict.reason}`.trim();
+            } catch (err) {
+                console.warn('[Resolver] AI could not choose the IT category; using the default one:', err instanceof Error ? err.message.slice(0, 300) : err);
+            }
+        }
+        finalResult.skill_group = IT_TEAM;
+        return finalResult;
+    }
+
     // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
-    let categories: CategoryOption[] = [];
+    let categories: CategoryOption[] = withoutIt(allCategories);
     // 2026-11-19: the organisation's approved sorting rules (none until a person approves a version).
     const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
     /** Today's way: the newest corrections, the AI's own rating. Returns the verdict it applied, or null. */
     const oldWay = async (): Promise<AiVerdict | null> => {
         try {
             const [cats, corrections] = await Promise.all([
-                categories.length ? Promise.resolve(categories) : opts.categories ?? loadCategoryOptions(opts.propertyId),
+                categories.length ? Promise.resolve(categories) : (opts.categories ? Promise.resolve(opts.categories) : loadCategoryOptions(opts.propertyId)).then(withoutIt),
                 opts.corrections ?? loadCorrections(opts.organizationId),
             ]);
             const sorted = await classifyWithAi(ticketText, cats, opts.deps, corrections, rules);
@@ -166,7 +196,7 @@ export async function resolveClassification(ticketText: string, options?: string
         return finalResult;
     }
 
-    try { categories = opts.categories ?? await loadCategoryOptions(opts.propertyId); } catch { categories = []; }
+    if (!categories.length) { try { categories = withoutIt(opts.categories ?? await loadCategoryOptions(opts.propertyId)); } catch { categories = []; } }
     const started = Date.now();
     const newWay = sortNewWay(ticketText, categories, orgId, setting, opts.deps, opts.learning, rules)
         .catch(err => { console.warn('[Resolver] the learning way failed:', err instanceof Error ? err.message.slice(0, 300) : err); return 'failed' as const; });
@@ -277,8 +307,27 @@ export async function resolveImportRows(texts: readonly string[], options: Resol
         console.warn('[Resolver] category list unavailable for bulk import:', err instanceof Error ? err.message : err);
     }
     const rules = options.rules !== undefined ? options.rules : await activeRulesText(options.organizationId);
-    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections, rules);
+    // Owner 2026-11-20: rows that tag the IT person go to the IT team (itRule.ts), sorted among the IT
+    // categories only; the AI sorts the other rows without the IT categories.
+    const members = options.itMembers ?? (texts.some(t => t.includes('@')) && options.propertyId ? await getOrgItMembers(options.propertyId) : []);
+    const itRows = await Promise.all(texts.map(t => itRuleFor(t, categories, options.propertyId, members)));
+    const itIdx = texts.map((_, i) => i).filter(i => itRows[i]);
+    const otherIdx = texts.map((_, i) => i).filter(i => !itRows[i]);
+    const ai: Array<{ verdict: AiVerdict; model: string } | null> = texts.map(() => null);
+    const others = await classifyManyWithAi(otherIdx.map(i => texts[i]), withoutIt(categories), options.deps, corrections, rules);
+    otherIdx.forEach((i, k) => { ai[i] = others[k]; });
+    const itChoice = itRows.find(r => r && r.categories.length > 1)?.categories ?? [];
+    if (itIdx.length && itChoice.length > 1) {
+        const its = await classifyManyWithAi(itIdx.map(i => texts[i]), itChoice, options.deps, corrections, rules);
+        itIdx.forEach((i, k) => { ai[i] = its[k]; });
+    }
     return texts.map((text, i) => {
+        const itRow = itRows[i];
+        if (itRow) {
+            const v = ai[i]?.verdict;
+            if (v?.code) return { issue_code: v.code, skill_group: IT_TEAM, confidence: v.vague ? 'low' as const : 'high' as const, priority: v.priority, risk_flag: v.risk, reasoning: `${itRow.reason} ${v.reason}`.trim(), confidenceScore: v.confidence, source: 'llm' as const };
+            return { issue_code: itRow.fallback.code, skill_group: IT_TEAM, confidence: 'high' as const, priority: null, risk_flag: null, reasoning: itRow.reason, confidenceScore: null, source: 'rule' as const };
+        }
         const hit = ai[i];
         if (hit) {
             const v = hit.verdict;

@@ -377,7 +377,7 @@ export async function judgeTicketSort(
     return { ok: true, message: 'Marked wrong. The ticket moved to the right team and the AI learns from it.' };
 }
 
-const asTeam = (x: unknown): SkillGroup | null => (['technical', 'plumbing', 'vendor', 'soft_services'].includes(String(x)) ? (x as SkillGroup) : null);
+const asTeam = (x: unknown): SkillGroup | null => (['technical', 'plumbing', 'vendor', 'soft_services', 'it'].includes(String(x)) ? (x as SkillGroup) : null);
 
 // ── undoing a judgement (2026-11-19) ────────────────────────────────────────────────────────────────────────────────
 

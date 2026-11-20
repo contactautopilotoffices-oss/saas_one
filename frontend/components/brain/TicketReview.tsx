@@ -24,7 +24,7 @@ import { useBrain, useView } from './BrainContext';
 import { dateTimeIN, int, type Tone } from './labels';
 import { Btn, Card, CardHead, Chip, Empty, ErrorState, LoadingScreen, Num, cx, s } from './ui';
 
-const TEAM_LABEL: Record<string, string> = { soft_services: 'Soft services', technical: 'Technical', plumbing: 'Plumbing', vendor: 'Vendor' };
+const TEAM_LABEL: Record<string, string> = { soft_services: 'Soft services', technical: 'Technical', plumbing: 'Plumbing', vendor: 'Vendor', it: 'IT' };
 const teamLabel = (t: string | null | undefined): string | null => (t ? TEAM_LABEL[t] ?? words(t) : null);
 /** "in_progress" → "In progress": a status or priority code in plain words. */
 const words = (code: string): string => { const t = code.replace(/_/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };

@@ -70,6 +70,23 @@
  *    confidence and why, the similar tickets used, latency.
  * **10. Laws knowingly violated**: L5 tool axis N/A (no tools). L6 still not used (exact labels). Watch-only costs a
  *    second model call per ticket while it is on; that is the price of L2 on live traffic, and it is off by default.
+ *
+ * ### Amendment 2026-11-20 — the IT team is decided by a fixed rule (owner: "only the ones who tag @Rahul Ramjiyawan
+ * in the ticket or specifically mention IT in the ticket must go to this"; "create IT as a team and not as category")
+ * **1. Workflow or agent?** still a workflow `[BAA p.104]`; a deterministic step runs before the model `[BAA p.121]`:
+ *    itRule.ts sends a ticket that tags an IT-role member to the IT team. With one IT category (team IT in
+ *    Brain → Categories & SLAs) there is no model call; with several, the model chooses among the IT categories only.
+ * **2. Context** `[BAA p.112]`: for every other ticket the model's list has no IT category (withoutIt), and the model
+ *    can never choose the IT team itself (asTeam has no 'it'; only a category's stored team can be IT, asRowTeam);
+ *    an answer naming a category not on the list is refused by checkVerdict `[BAA p.93]`.
+ * **3. Cost of a false positive** `[BAA p.112]`: low; an IT ticket goes to the IT person, who can re-sort it. Only a tag of
+ *    an IT-role person counts: the word "IT" alone was dropped the same day (owner: "SBI Dhruva IT Store cleaning" is
+ *    not an IT ticket), so an untagged IT problem is sorted among the other categories and moved by hand.
+ * **6. Guardrails** `[BAA p.93]`: if the model cannot choose an IT category, the starter one (it_support) is used.
+ * **8. Evaluation** `[BAA pp.118–119]`: the rule's reason is saved as the ticket's reasoning; a ticket the rule alone
+ *    sorted is classification_source 'rule' and shows in Brain → Review → Tickets; tests/ticketing/it-rule.test.ts.
+ * **10. Laws knowingly violated**: none added; the rule is the owner's exact condition, so no model judgement is needed
+ *    to pick the team.
  */
 import type { BrainLlm } from '@/task-manager/brain/llm';
 import type { SkillGroup } from './classifyTicket';
@@ -144,6 +161,8 @@ export function normalPriority(p: unknown): Priority | null {
 }
 
 const asTeam = (s: unknown): SkillGroup | null => (TEAMS as readonly unknown[]).includes(s) ? (s as SkillGroup) : null;
+/** A category's stored team, which may also be the IT team (itRule.ts). The model itself can never choose IT (asTeam). */
+const asRowTeam = (s: unknown): SkillGroup | null => (s === 'it' ? 'it' : asTeam(s));
 
 interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_active?: unknown; property_id?: unknown; ai_hint?: unknown; skill_group?: { code?: unknown } | null }
 
@@ -166,7 +185,7 @@ export function categoryOptionsFrom(rows: readonly CategoryRow[], propertyId?: s
     return [...byCode.entries()].map(([code, r]) => ({
         code,
         name: String(r.name ?? code).trim() || code,
-        team: asTeam(r.skill_group?.code) ?? asTeam(active.find(o => o.code === code && asTeam(o.skill_group?.code))?.skill_group?.code),
+        team: asRowTeam(r.skill_group?.code) ?? asRowTeam(active.find(o => o.code === code && asRowTeam(o.skill_group?.code))?.skill_group?.code),
         priority: normalPriority(r.priority),
         ...(typeof r.ai_hint === 'string' && r.ai_hint.trim() ? { hint: r.ai_hint.trim().slice(0, 300) } : {}),
     }));

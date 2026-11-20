@@ -1916,7 +1916,9 @@ export default function TicketDetailPage() {
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400">
                           {/* Owner 2026-11-20: the technical team is shown as "Multi-skill technician (MST)". */}
-                          {!ticket.skill_group?.name || ticket.skill_group.code === "technical"
+                          {ticket.skill_group?.code === "it"
+                            ? "IT team"
+                            : !ticket.skill_group?.name || ticket.skill_group.code === "technical"
                             ? "Multi-skill technician (MST)"
                             : `(${ticket.skill_group?.name} Skill Group)`}
                         </span>
