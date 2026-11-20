@@ -428,11 +428,27 @@ export default function TicketCard({
         <motion.div
             id={`ticket-${id}`}
             onClick={onClick}
-            className={`@container relative w-full h-full min-w-0 bg-white rounded-2xl px-3.5 pt-3 pb-1 @sm:px-4 @sm:pt-3 @sm:pb-1.5 cursor-pointer transition-shadow hover:shadow-md flex flex-col gap-2.5 ${menuOpen ? 'z-30' : ''}`}
+            // Owner 2026-11-20: critical tickets keep their red pulse (glow, flashing border, slight grow) until closed.
+            initial={isCritical ? { scale: 1 } : false}
+            animate={isCritical ? {
+                boxShadow: [
+                    '0 0 0 0px rgba(225, 29, 72, 0)',
+                    '0 0 30px 6px rgba(225, 29, 72, 0.6)',
+                    '0 0 0 0px rgba(225, 29, 72, 0)'
+                ],
+                borderColor: ['#e11d48', '#fb7185', '#e11d48'],
+                scale: [1, 1.02, 1]
+            } : {}}
+            transition={isCritical ? {
+                duration: 2,
+                repeat: Infinity,
+                ease: "easeInOut"
+            } : {}}
+            className={`@container relative w-full h-full min-w-0 bg-white rounded-2xl px-3.5 pt-3 pb-1 @sm:px-4 @sm:pt-3 @sm:pb-1.5 cursor-pointer transition-shadow hover:shadow-md flex flex-col gap-2.5 ${isCritical ? 'border-2' : ''} ${menuOpen ? 'z-30' : ''}`}
             style={{
                 scrollMarginTop: '100px',
                 ...(isCritical
-                    ? { border: '1.5px solid #F1A9A2' }
+                    ? { borderStyle: 'solid' }
                     : raisedByTenant
                         ? { border: '2px solid #F59E0B', boxShadow: '0 0 0 3px rgba(245,158,11,0.1)' }
                         : { border: '1px solid #e5e7eb' })
@@ -478,7 +494,9 @@ export default function TicketCard({
                 </div>
                 <div className="min-w-0 flex-1">
                     {/* A <p role="heading">, not an <h3>: globals.css forces every h3 to weight 500 (and 18px on phones). */}
-                    <p role="heading" aria-level={3} className="line-clamp-2 break-words text-base font-bold leading-[1.3] text-gray-900" title={title}>
+                    {/* Owner 2026-11-20: no cut-off titles on phones. The size follows the card's width (14.5px on a narrow
+                        phone card up to 16px), and up to 3 lines show before anything is cut. */}
+                    <p role="heading" aria-level={3} className="line-clamp-3 break-words text-[clamp(14.5px,4.6cqi,16px)] font-bold leading-[1.3] text-gray-900" title={title}>
                         {title}
                     </p>
                     {propertyName && (
