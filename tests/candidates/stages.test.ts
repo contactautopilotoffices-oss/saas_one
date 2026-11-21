@@ -13,7 +13,7 @@ import { listActions, resetHistoryCheck } from "../../backend/lib/candidates/act
 import { addMembers, createPosition, listMembers, moveMember } from "../../backend/lib/candidates/positions";
 import { createRecord } from "../../backend/lib/candidates/records";
 import {
-  boardColumns, DEFAULT_STAGES, describeChanges, nextRoundStage, oneLine, parseStageList, rejectStageFor, STAGE_KIND_LABELS, STAGE_KINDS, StageListError, toStageKind, type StageDef, type StageInput,
+  boardColumns, DEFAULT_STAGES, describeChanges, nextRoundStage, oneLine, parseStageList, reasonNeeded, rejectStageFor, withReason, STAGE_KIND_LABELS, STAGE_KINDS, StageListError, toStageKind, type StageDef, type StageInput,
 } from "../../backend/lib/candidates/stage-list";
 import { loadStages, saveStages } from "../../backend/lib/candidates/stages";
 
@@ -48,6 +48,16 @@ describe("the stage list (pure)", () => {
     const base = input(DEFAULT_STAGES);
     assert.equal(parseStageList([{ ...base[0], kind: "selected" }])[0].kind, "progress");
     assert.ok(DEFAULT_STAGES.every((s) => STAGE_KINDS.includes(s.kind)));
+  });
+
+  it("asks a reason to reject, and to move someone back a round (owner 2026-11-21)", () => {
+    assert.equal(reasonNeeded(DEFAULT_STAGES, "l1_pending", "l1_reject"), "reject");
+    assert.equal(reasonNeeded(DEFAULT_STAGES, "l2_pending", "l1_pending"), "back");
+    assert.equal(reasonNeeded(DEFAULT_STAGES, "l1_pending", "l2_pending"), null);
+    assert.equal(reasonNeeded(DEFAULT_STAGES, "l1_pending", "backout"), null, "out of the flow is not a round");
+    assert.equal(reasonNeeded(DEFAULT_STAGES, "l1_pending", "l1_pending"), null);
+    assert.equal(withReason("Salary mismatch", "  asked 40k "), "Salary mismatch — asked 40k");
+    assert.equal(withReason("Other", " "), "Other");
   });
 
   it("refuses a list HR could not work with, in plain words", () => {
@@ -185,5 +195,16 @@ describe("stages before and after the migration", () => {
     await addMembers(client, ORG, ME, positionId, [record.id]);
     const esha = (await listMembers(client, ORG, positionId)).find((m) => m.candidateId === record.candidateId)!;
     assert.equal(esha.stage, "screening_pending");
+
+    // Owner 2026-11-21 (spec): rejecting needs a reason; so does moving back a round; moving forward does not.
+    const { stages: now } = await loadStages(client, ORG);
+    const reject = rejectStageFor(now, "screening_pending")!;
+    await assert.rejects(moveMember(client, ORG, ME, positionId, esha.id, reject.key, null), /reason|remark is required/);
+    const next = nextRoundStage(now, "screening_pending")!;
+    await moveMember(client, ORG, ME, positionId, esha.id, next.key, null);
+    await assert.rejects(moveMember(client, ORG, ME, positionId, esha.id, "screening_pending", null), /needs a reason/);
+    await moveMember(client, ORG, ME, positionId, esha.id, "screening_pending", "Interviewer asked for a second screening.");
+    const rejected = await moveMember(client, ORG, ME, positionId, esha.id, reject.key, "Salary mismatch");
+    assert.equal(rejected.stage, reject.key);
   });
 });

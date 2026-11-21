@@ -89,8 +89,10 @@ export const INTERVIEWS_MIGRATION = readFileSync(path.join("supabase", "migratio
 export const REQUISITION_FOLLOWUPS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000001_recruitment_requisition_followups.sql"), "utf8");
 /** Connected trackers (owner 2026-11-21): Google Sheet / Excel links synced into the candidate database. */
 export const TRACKERS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000002_candidate_tracker_connections.sql"), "utf8");
+/** The hiring flow after booking (owner 2026-11-21): interviews, scorecards, offers. */
+export const HIRING_FLOW_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000003_recruitment_hiring_flow.sql"), "utf8");
 
-export async function freshDb(options: { resumeFields?: boolean; stages?: boolean; interviews?: boolean; requisitionFollowups?: boolean; trackers?: boolean } = {}): Promise<PGlite> {
+export async function freshDb(options: { resumeFields?: boolean; stages?: boolean; interviews?: boolean; requisitionFollowups?: boolean; trackers?: boolean; hiringFlow?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(STUBS);
   await db.exec(MIGRATION);
@@ -115,6 +117,7 @@ export async function freshDb(options: { resumeFields?: boolean; stages?: boolea
   if (options.resumeFields !== false) { await db.exec(REQUISITIONS_STUBS); await db.exec(REQUISITIONS_MIGRATION); }
   if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_FOLLOWUPS_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKERS_MIGRATION);
+  if (options.resumeFields !== false && options.hiringFlow !== false) await db.exec(HIRING_FLOW_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false) await db.exec(STAGES_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false && options.interviews !== false) await db.exec(INTERVIEWS_MIGRATION);
   return db;

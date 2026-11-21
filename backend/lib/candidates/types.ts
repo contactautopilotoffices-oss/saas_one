@@ -1041,6 +1041,13 @@ export interface Interview {
   meeting: { status: string; summary: { summary: string; decisions: string[]; openQuestions: string[] } | null } | null;
   byName: string | null;
   createdAt: string;
+  /** The follow-up's id (the interview as filed by migration 20261121000003); null for one booked before it. */
+  followUpId?: string | null;
+  /** Owner 2026-11-21 (migration 20261121000003): done, no-show, cancelled; "scheduled" before it or until marked. */
+  status?: InterviewStatus;
+  statusReason?: string | null;
+  /** The panel's scorecards (HR sees all of them). */
+  scorecards?: Scorecard[];
 }
 
 /** What scheduling sent, for the form to say. */
@@ -1095,6 +1102,10 @@ export interface RecruitmentConfig {
    * not approve anything. Set in the Tech dashboard's HR Configs tab. Departments match ignoring case.
    */
   departmentHeads: { department: string; userId: string }[];
+  /** Owner 2026-11-21: the rejection reasons HR picks from (Recruitment -> Configurations). */
+  rejectionReasons: string[];
+  /** Owner 2026-11-21: the offer letter template ({{candidate_name}}, {{role}}, {{ctc}}, {{joining_date}}, …). Empty: the default. */
+  offerLetter: string;
 }
 
 export interface Requisition {
@@ -1269,4 +1280,84 @@ export interface TrackerPreview {
   blocks: number;
   /** Each column's distinct values (up to 60; columns with more are left out), for matching statuses to stages. */
   distinct: Record<string, string[]>;
+}
+
+// The hiring flow after booking (owner 2026-11-21; migration 20261121000003): interview follow-up, scorecards, the
+// offer, joining, the dashboard. ------------------------------------------------------------------------------------
+
+export const INTERVIEW_STATUSES = ["scheduled", "done", "no_show", "cancelled"] as const;
+export type InterviewStatus = (typeof INTERVIEW_STATUSES)[number];
+export const INTERVIEW_STATUS_LABELS: Record<InterviewStatus, string> = { scheduled: "Scheduled", done: "Done", no_show: "No-show", cancelled: "Cancelled" };
+
+/** The skills a scorecard rates 1-5 (owner 2026-11-21, defaults). */
+export const SCORECARD_SKILLS = ["Technical skill", "Communication", "Attitude", "Relevant experience"] as const;
+export const RECOMMENDATIONS = ["proceed", "hold", "reject"] as const;
+export type Recommendation = (typeof RECOMMENDATIONS)[number];
+export const RECOMMENDATION_LABELS: Record<Recommendation, string> = { proceed: "Proceed", hold: "Hold", reject: "Reject" };
+
+export interface Scorecard {
+  id: string;
+  interviewId: string;
+  panelName: string | null;
+  ratings: Record<string, number>;
+  overall: number | null;
+  recommendation: Recommendation | null;
+  comments: string | null;
+  submittedAt: string | null;
+}
+
+export const OFFER_STATUSES = ["pending", "approved", "rejected", "released", "accepted", "declined", "joined", "dropped", "withdrawn"] as const;
+export type OfferStatus = (typeof OFFER_STATUSES)[number];
+export const OFFER_STATUS_LABELS: Record<OfferStatus, string> = {
+  pending: "Awaiting approval", approved: "Approved: ready to release", rejected: "Not approved", released: "Released: awaiting answer",
+  accepted: "Accepted: joining", declined: "Declined", joined: "Joined", dropped: "Dropped before joining", withdrawn: "Withdrawn",
+};
+
+export interface Offer {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  requisitionNo: string | null;
+  /** Rupees per year (CTC). */
+  proposedCtc: number;
+  bandMin: number | null;
+  bandMax: number | null;
+  /** How far above the band's top, in percent (null when within it or no band). */
+  variancePct: number | null;
+  breakup: Record<string, number>;
+  joiningDate: string | null;
+  status: OfferStatus;
+  currentLevel: "hr_head" | "director" | null;
+  currentApproverName: string | null;
+  needsDirector: boolean;
+  letter: string | null;
+  /** Blanks still in the letter ("{{joining_date}}"): release is blocked until there are none. */
+  letterGaps: string[];
+  releasedAt: string | null;
+  responseAt: string | null;
+  responseReason: string | null;
+  joinedAt: string | null;
+  droppedReason: string | null;
+  lastContactAt: string | null;
+  selectedNote: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  events: { action: string; level: string | null; reason: string | null; byName: string | null; at: string }[];
+  /** What the signed-in person may do with it now. */
+  canDecide?: boolean;
+}
+
+/** The dashboard (spec: Today, Roles, Funnel). */
+export interface RecruitmentDashboard {
+  today: {
+    interviews: { id: string; candidateName: string; round: string | null; positionTitle: string | null; at: string; mode: string | null; status: InterviewStatus }[];
+    scorecardsPending: { interviewId: string; candidateName: string; panelName: string | null; round: string | null; at: string }[];
+    waiting: { candidateName: string; positionTitle: string; stageName: string; days: number }[];
+    offersAwaiting: { id: string; candidateName: string; positionTitle: string | null; status: OfferStatus; days: number }[];
+  };
+  roles: { id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string }[];
+  funnel: { column: string; count: number; rejected: number }[];
 }

@@ -180,6 +180,28 @@ export function columnIndexOf(stages: readonly StageDef[], key: Stage): number {
   return boardColumns(stages, (x) => x.key === key).findIndex((c) => c.stages.some((x) => x.key === key));
 }
 
+/**
+ * Owner 2026-11-21 (spec: "reason required to reject"; "changing a stage always asks for a reason when moving backwards
+ * or exiting"). The reasons are a fixed list HR edits in Configurations, so the reports can count them.
+ */
+export const DEFAULT_REJECTION_REASONS = [
+  "Not suitable", "Salary mismatch", "Notice period too long", "Location", "Candidate withdrew", "No response", "Failed interview", "Other",
+] as const;
+
+/** Why a move needs a reason: to a Rejected stage ("reject"), or back to an earlier round ("back"); else null. */
+export function reasonNeeded(stages: readonly StageDef[], from: Stage, to: Stage): "reject" | "back" | null {
+  if (from === to) return null;
+  const target = findStage(stages, to);
+  if (!target) return null;
+  if (target.kind === "rejected") return "reject";
+  const a = columnIndexOf(stages, from);
+  const b = columnIndexOf(stages, to);
+  return a >= 0 && b >= 0 && b < a ? "back" : null;
+}
+
+/** "Salary mismatch — asked 40k, band 30k": the reason with an optional note, as the remark. */
+export const withReason = (reason: string, note: string) => (note.trim() ? `${reason} — ${note.trim()}` : reason);
+
 /** "Next round": the first stage of the next column. */
 export function nextRoundStage(stages: readonly StageDef[], key: Stage): StageDef | null {
   const columns = boardColumns(stages);

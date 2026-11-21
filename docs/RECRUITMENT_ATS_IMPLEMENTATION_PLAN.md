@@ -57,6 +57,27 @@
   - **duplicates are flagged**: the same person and role twice in the tracker (the last row is used and flagged for review), and a person already in the database (the import's "already in the database" flag).
 
   A tab that **repeats its header row** (the owner's tracker has 116 blocks with columns in different orders) is read block by block. Code: `backend/lib/candidates/trackers.ts`, `/api/candidates/trackers*`, hourly cron `/api/cron/tracker-sync` (vercel.json), `TrackerConnections.tsx`. **Migration `20261121000002_candidate_tracker_connections.sql`, to be applied by a person.** Tests: `tests/candidates/trackers.test.ts`.
+- **21 Nov 2026, Phase 1 steps 1–6 (owner: "go on with all the steps").** Everything is by email; WhatsApp is parked.
+  1. **Rejection reasons.** A fixed list in Configurations (HR edits it). A rejection asks for a reason; moving someone back a round asks for a remark. This is enforced on the server too.
+  2. **Interview follow-up.**
+     - Mark done, no-show or cancelled; reschedule. Cancelling and rescheduling email the candidate and the panel.
+     - Reminders 24 h and about 2 h before, sent by the hourly job.
+     - Once the time has passed, the person who booked it is asked to mark it; the HR Head is told the next day.
+  3. **Scorecards.**
+     - One per interviewer, from a one-time link in their invite, with no login.
+     - Four skills rated 1–5, an overall rating, proceed / hold / reject. Comments are required to reject.
+     - The other interviewers' ratings are shown only after submitting. Chasers go at 24 h and 48 h, and the HR Head at 72 h.
+  4. **Selection and offer** (Interviews tab → "Select and make an offer"; the new **Offers** tab).
+     - The CTC is checked against the request's band. The HR Head approves, and the Director too when above the band; the proposer never approves.
+     - The letter comes from HR's template (Configurations), and release is blocked while a `{{blank}}` is unfilled.
+     - HR releases it by email and records the answer. Chasers cover A14–A17.
+  5. **Joining.**
+     - Weekly call reminders, and the HR team is told 7 days before.
+     - Joined: the person moves to Joined, and the position closes when every opening is filled.
+     - Dropped: the position reopens, and the HR Head and Director are told.
+  6. **Dashboard tab.** Today, Roles and Funnel, each with an Excel (CSV) export.
+
+  **Migration `20261121000003_recruitment_hiring_flow.sql`, to be applied by a person.** Code: `backend/lib/candidates/hiring.ts`, `recruitment-dashboard.ts`, `/api/candidates/{interviews/follow-up,scorecards/[token],offers,offer-letter,dashboard,rejection-reasons}`. Tests: `tests/candidates/hiring.test.ts`.
 - Tables (migration `20261117000003_recruitment_requisitions.sql`, applied by a person): `recruitment_requisitions`, `recruitment_requisition_approvals` (insert-only), `recruitment_requisition_notices`, `recruitment_requisition_counters`. Code: `backend/lib/candidates/requisitions.ts`, `requisition-notify.ts`, `app/api/recruitment/*`. Tests: `tests/candidates/requisitions.test.ts`.
 
 ---

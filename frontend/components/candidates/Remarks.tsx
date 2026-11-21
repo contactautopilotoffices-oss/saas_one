@@ -7,6 +7,7 @@ import {
     BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, CALL_FACT_LABELS, REMARK_REQUIRED_STATUSES, STATUS_LABELS,
     type Blacklist, type BlacklistReason, type CallFactKey, type CandidateRecord, type RecordStatus,
 } from '@/backend/lib/candidates/types';
+import { withReason } from '@/backend/lib/candidates/stage-list';
 import { api, qs } from './api';
 import { formatDate, formatInr } from './format';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
@@ -27,15 +28,19 @@ export const BTN_DANGER_FILLED =
 export const statusNeedsRemark = (status: RecordStatus) => REMARK_REQUIRED_STATUSES.includes(status);
 
 /** One remark box. `required` disables Save until something is typed. */
-export function RemarkDialog({ open, title, description, placeholder, required, busy, confirmLabel = 'Save', onClose, onSubmit }: {
+export function RemarkDialog({ open, title, description, placeholder, required, busy, confirmLabel = 'Save', reasons, onClose, onSubmit }: {
     open: boolean; title: React.ReactNode; description?: React.ReactNode; placeholder?: string; required: boolean; busy: boolean;
-    confirmLabel?: string; onClose: () => void; onSubmit: (remark: string) => void;
+    confirmLabel?: string;
+    /** Owner 2026-11-21: a rejection: the reason is picked from HR's list (required) and the remark becomes optional. */
+    reasons?: string[];
+    onClose: () => void; onSubmit: (remark: string) => void;
 }) {
     const [text, setText] = useState('');
+    const [reason, setReason] = useState('');
     // A fresh box each time it opens (the render-time reset the other inputs in this folder use).
     const [seenOpen, setSeenOpen] = useState(open);
-    if (open !== seenOpen) { setSeenOpen(open); if (open) setText(''); }
-    const value = text.trim();
+    if (open !== seenOpen) { setSeenOpen(open); if (open) { setText(''); setReason(''); } }
+    const value = reasons ? (reason ? withReason(reason, text) : '') : text.trim();
     return (
         <Dialog
             open={open}
@@ -50,7 +55,16 @@ export function RemarkDialog({ open, title, description, placeholder, required, 
                 </>
             }
         >
-            <label htmlFor="cand-remark" className="block text-sm font-semibold text-text-primary">Remark{required ? '' : ' (optional)'}</label>
+            {reasons && (
+                <>
+                    <label htmlFor="cand-reason" className="block text-sm font-semibold text-text-primary">Reason <span className="text-error">*</span></label>
+                    <select id="cand-reason" value={reason} onChange={e => setReason(e.target.value)} className={`${INPUT} mb-3 mt-1.5`}>
+                        <option value="">Pick a reason…</option>
+                        {reasons.map(r => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                </>
+            )}
+            <label htmlFor="cand-remark" className="block text-sm font-semibold text-text-primary">{reasons ? 'Note (optional)' : `Remark${required ? '' : ' (optional)'}`}</label>
             <textarea
                 id="cand-remark" rows={3} maxLength={REMARK_MAX} value={text} onChange={e => setText(e.target.value)} autoFocus
                 placeholder={placeholder} className={`${INPUT} mt-1.5 h-auto min-h-[84px] resize-y py-2.5 leading-relaxed`}
