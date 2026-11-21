@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     if (isPettyCashAccessError(access)) return access;
     const page = Math.max(1, Number(request.nextUrl.searchParams.get('page')) || 1);
     const spendMode = request.nextUrl.searchParams.get('spend_mode');
-    let query = supabaseAdmin.rpc('pc_my_expenses', { actor: access.user.id, org: access.organizationId }, { count: 'exact' }).select('*,request:petty_cash_requests!request_id(id,request_no),property:properties!property_id(id,name),documents:petty_cash_documents!expense_id(id,file_name,file_type,superseded_by)');
+    let query = supabaseAdmin.rpc('pc_my_expenses', { actor: access.user.id, org: access.organizationId }, { count: 'exact' }).select('*,request:petty_cash_requests!request_id(id,request_no),property:properties!property_id(id,name),reviewer:users!reviewed_by(id,full_name,email),documents:petty_cash_documents!expense_id(id,file_name,file_type,superseded_by)');
     if (spendMode && ['Operation', 'Client'].includes(spendMode)) {
         query = query.eq('spend_mode', spendMode);
     }

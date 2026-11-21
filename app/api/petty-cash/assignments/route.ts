@@ -18,9 +18,14 @@ export async function PUT(request: NextRequest) {
     if (!property) return NextResponse.json({ error: 'Forbidden property' }, { status: 403 });
     const allocatorBackups = body.allocator_backups ?? [];
     const approverBackups = body.approver_backups ?? [];
-    if (![allocatorBackups, approverBackups].every(ids => Array.isArray(ids) && ids.length <= 25 && ids.every(isUuid) && new Set(ids).size === ids.length)) {
+    const expenseApproverBackups = body.expense_approver_backups ?? [];
+    if (![allocatorBackups, approverBackups, expenseApproverBackups].every(ids => Array.isArray(ids) && ids.length <= 25 && ids.every(isUuid) && new Set(ids).size === ids.length)) {
         return NextResponse.json({ error: 'Select up to 25 distinct eligible backups per stage' }, { status: 400 });
     }
+    // The expense approver stage is optional: cleared means accounts keep reviewing expenses.
+    const expenseApprover = body.expense_approver_id ? String(body.expense_approver_id) : null;
+    if (expenseApprover !== null && !isUuid(expenseApprover)) return NextResponse.json({ error: 'Invalid expense approver' }, { status: 400 });
+    if (expenseApprover === null && expenseApproverBackups.length) return NextResponse.json({ error: 'Choose an expense approver before adding its backups' }, { status: 400 });
     const proofThreshold = body.proof_threshold !== undefined && body.proof_threshold !== '' && body.proof_threshold !== null
         ? Math.max(0, Number(body.proof_threshold))
         : null;
@@ -31,7 +36,9 @@ export async function PUT(request: NextRequest) {
         approver: body.approver_id,
         allocator_backups: allocatorBackups,
         approver_backups: approverBackups,
-        proof_threshold: proofThreshold
+        proof_threshold: proofThreshold,
+        expense_approver: expenseApprover,
+        expense_approver_backups: expenseApproverBackups
     });
     return error ? pcError(error) : NextResponse.json({ routing: data });
 }

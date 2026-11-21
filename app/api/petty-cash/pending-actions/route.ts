@@ -178,7 +178,60 @@ export async function GET(request: NextRequest) {
         }
     }
 
-    // 3. Check if Requester has any rejected expenses needing bill replacement
+    // 3. Expenses routed to this user as the property's configured expense approver.
+    //    Accounts still see expenses on properties with no expense approver configured.
+    const { data: approvalProperties } = await supabaseAdmin
+        .from('petty_cash_property_assignments')
+        .select('property_id')
+        .eq('user_id', user.id)
+        .eq('kind', 'expense_approver')
+        .eq('is_active', true);
+
+    const expenseApproverProperties = [...new Set((approvalProperties || []).map(a => a.property_id))];
+
+    if (expenseApproverProperties.length) {
+        const { data: toApprove } = await supabaseAdmin
+            .from('petty_cash_expenses')
+            .select(`
+                id, request_id, organization_id, property_id, amount, vendor, description, category,
+                expense_date, created_at, no_bill_reason, assigned_expense_approver_id,
+                request:petty_cash_requests(request_no, property:properties(name)),
+                requester:users!petty_cash_expenses_requester_id_fkey(full_name, email)
+            `)
+            .in('organization_id', targetOrgs)
+            .in('property_id', expenseApproverProperties)
+            .eq('assigned_expense_approver_id', user.id)
+            .eq('review_status', 'pending')
+            .neq('requester_id', user.id)
+            .order('expense_date', { ascending: true })
+            .limit(25);
+
+        for (const e of toApprove || []) {
+            const embeddedRequest = e.request as unknown as { request_no?: string; property?: { name?: string } | null } | null;
+            const embeddedRequester = e.requester as unknown as { full_name?: string; email?: string } | null;
+            const reqNo = embeddedRequest?.request_no || 'Petty Cash';
+            const propName = embeddedRequest?.property?.name || 'Property';
+            const spender = embeddedRequester?.full_name || embeddedRequester?.email || 'Staff';
+            actions.push({
+                id: `pc-exp-appr-${e.id}`,
+                source: 'petty_cash',
+                title: `Petty Cash: Approve Expense #${reqNo}`,
+                subtitle: `${propName} • Spent by ${spender}`,
+                description: `₹${Number(e.amount).toLocaleString('en-IN')} • ${e.vendor || 'Vendor'} • ${e.description || e.category || 'Expense'}${e.no_bill_reason ? ' • No bill declared' : ''}`,
+                badgeLabel: 'Expense Approval Pending',
+                badgeVariant: 'purple',
+                ticketNumber: reqNo,
+                created_at: e.created_at,
+                deepLink: `/${e.organization_id}/petty-cash?request_id=${e.request_id}`,
+                actions: [
+                    { label: 'Review Expense', actionKey: 'view', variant: 'primary', isQuickAction: false }
+                ],
+                rawPettyCash: e
+            });
+        }
+    }
+
+    // 4. Check if Requester has any rejected expenses needing bill replacement
     const { data: rejectedExpenses } = await supabaseAdmin
         .from('petty_cash_expenses')
         .select(`

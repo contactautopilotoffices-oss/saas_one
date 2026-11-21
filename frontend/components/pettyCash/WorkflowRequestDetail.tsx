@@ -128,6 +128,9 @@ export default function WorkflowRequestDetail({
     const canAllocate = r?.workflow_version === 2 && r.status === 'submitted' && r.assigned_allocator_id === context.user_id && !owner;
     const canApprove = r?.workflow_version === 2 && r.status === 'pending_approval' && r?.assigned_approver_id === context.user_id && !owner;
     const finance = context.caps.canDisburse && r && !owner;
+    // The property's configured expense approver decides on its uploaded spends too; the
+    // database (pc_review_expense) is still what allows or refuses each decision.
+    const expenseApprover = !!r && !owner && context.routes.some(route => route.kind === 'expense_approver' && route.property_id === r.property_id && route.user_id === context.user_id);
     const funded = !!r && ['paid', 'settlement_submitted', 'closed'].includes(r.status);
     const missingCredit = !!(r?.workflow_version === 2 && funded && Number(r.paid_amount) > 0 && detail?.wallet && detail.wallet.received === 0);
     const cancelPending = !!(r?.cancel_requested_at && r.status === 'paid');
@@ -1107,7 +1110,7 @@ export default function WorkflowRequestDetail({
                                     setBusy(false);
                                 }
                             } : undefined}
-                            onReview={finance && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
+                            onReview={(finance || expenseApprover) && r?.status !== 'closed' ? async (expenseId, reviewStatus) => {
                                 const remark = reviewStatus === 'rejected' ? window.prompt('Reason for rejecting proof') : undefined;
                                 if (reviewStatus === 'rejected' && !remark?.trim()) return;
                                 setBusy(true);

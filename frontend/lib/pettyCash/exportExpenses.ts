@@ -9,6 +9,12 @@ function escapeCsvField(value: unknown): string {
     return str;
 }
 
+/** Who cleared the expense — the configured expense approver or accounts. Blank while pending. */
+function reviewerName(exp: Expense): string {
+    if (exp.review_status !== 'accepted' && exp.review_status !== 'rejected') return '';
+    return exp.reviewer?.full_name || exp.reviewer?.email || '';
+}
+
 export function generateCsvContent(expenses: Expense[]): string {
     const headers = [
         'Expense Date',
@@ -25,6 +31,8 @@ export function generateCsvContent(expenses: Expense[]): string {
         'Receipt Links',
         'No Bill Reason',
         'Review Status',
+        'Approved / Rejected By',
+        'Reviewed On',
         'Review Remarks'
     ];
 
@@ -50,6 +58,8 @@ export function generateCsvContent(expenses: Expense[]): string {
             receiptLinks,
             exp.no_bill_reason || '',
             exp.review_status || 'pending',
+            reviewerName(exp),
+            exp.reviewed_at ? exp.reviewed_at.slice(0, 10) : '',
             exp.review_remarks || ''
         ];
     });
@@ -78,6 +88,8 @@ export function generateExcelHtml(expenses: Expense[]): string {
         'Bills Attached',
         'No Bill Reason',
         'Review Status',
+        'Approved / Rejected By',
+        'Reviewed On',
         'Review Remarks'
     ];
 
@@ -107,6 +119,8 @@ export function generateExcelHtml(expenses: Expense[]): string {
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${billsHtml}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.no_bill_reason || '—'}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0; text-transform: capitalize;">${(exp.review_status || 'pending').replace('_', ' ')}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; font-weight: 500;">${reviewerName(exp) || '—'}</td>
+            <td style="padding: 8px 12px; border: 1px solid #e2e8f0; white-space: nowrap;">${exp.reviewed_at ? exp.reviewed_at.slice(0, 10) : '—'}</td>
             <td style="padding: 8px 12px; border: 1px solid #e2e8f0;">${exp.review_remarks || ''}</td>
         </tr>`;
     }).join('\n');

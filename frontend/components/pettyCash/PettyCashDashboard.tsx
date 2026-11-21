@@ -10,6 +10,7 @@ import NewRequestModal from './NewRequestModal';
 import WorkflowRequestDetail from './WorkflowRequestDetail';
 import PropertyRoutingSettings from './PropertyRoutingSettings';
 import ExpenseHistory from './ExpenseHistory';
+import ExpenseApprovals from './ExpenseApprovals';
 import { createClient } from '@/frontend/utils/supabase/client';
 import ConsolidatedOverview from './ConsolidatedOverview';
 import VisionUsageAudit from './VisionUsageAudit';
@@ -47,7 +48,7 @@ export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: strin
     const [loading,setLoading]=useState(true);const [contextLoading,setContextLoading]=useState(true);const [contextError,setContextError]=useState('');const [requestError,setRequestError]=useState('');const [requestsOrg,setRequestsOrg]=useState('');
     const contextSequence=useRef(0);const requestSequence=useRef(0);
     const loadContext=useCallback(async(signal?:AbortSignal)=>{const sequence=++contextSequence.current;setContextLoading(true);setContextError('');try{const data=await pcFetch<Context>(`/api/petty-cash/context?org_id=${orgId}`,{signal});if(!signal?.aborted&&sequence===contextSequence.current)setContext(data);}catch(reason){if(!signal?.aborted&&sequence===contextSequence.current){setContext(undefined);setContextError(reason instanceof Error?reason.message:'Could not load wallet and permissions');}}finally{if(!signal?.aborted&&sequence===contextSequence.current)setContextLoading(false);}},[orgId]);
-    const loadRequests=useCallback(async(signal?:AbortSignal)=>{const sequence=++requestSequence.current;setRequestError('');if(!context || ['routing','overview','expenses','vision_usage'].includes(tab)){setLoading(false);return;}setLoading(true);try{const data=await pcFetch<{requests:PettyCashRequest[];pagination:{total_pages:number}}>(`/api/petty-cash?org_id=${orgId}&tab=${tab}&page=${page}`,{signal});if(!signal?.aborted&&sequence===requestSequence.current){setRequests(data.requests);setRequestsOrg(orgId);setPages(Math.max(1,data.pagination.total_pages));}}catch(reason){if(!signal?.aborted&&sequence===requestSequence.current){setRequests([]);setRequestsOrg('');setRequestError(reason instanceof Error?reason.message:'Could not load requests');}}finally{if(!signal?.aborted&&sequence===requestSequence.current)setLoading(false);}},[orgId,tab,page,Boolean(context)]);
+    const loadRequests=useCallback(async(signal?:AbortSignal)=>{const sequence=++requestSequence.current;setRequestError('');if(!context || ['routing','overview','expenses','expense_approvals','vision_usage'].includes(tab)){setLoading(false);return;}setLoading(true);try{const data=await pcFetch<{requests:PettyCashRequest[];pagination:{total_pages:number}}>(`/api/petty-cash?org_id=${orgId}&tab=${tab}&page=${page}`,{signal});if(!signal?.aborted&&sequence===requestSequence.current){setRequests(data.requests);setRequestsOrg(orgId);setPages(Math.max(1,data.pagination.total_pages));}}catch(reason){if(!signal?.aborted&&sequence===requestSequence.current){setRequests([]);setRequestsOrg('');setRequestError(reason instanceof Error?reason.message:'Could not load requests');}}finally{if(!signal?.aborted&&sequence===requestSequence.current)setLoading(false);}},[orgId,tab,page,Boolean(context)]);
     useEffect(()=>{const controller=new AbortController();setContext(undefined);setError('');setRequests([]);setRequestsOrg('');setSelected([]);setTab(null);setPage(1);void loadContext(controller.signal);return()=>{controller.abort();contextSequence.current++;};},[loadContext]);
     useEffect(()=>{const controller=new AbortController();void loadRequests(controller.signal);return()=>{controller.abort();requestSequence.current++;};},[loadRequests]);
     const refresh=useCallback(async()=>{setError('');await Promise.all([loadContext(),loadRequests()]);setRevision(n=>n+1);},[loadContext,loadRequests]);
@@ -62,6 +63,7 @@ export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: strin
     const tabs = [...(context?.caps.isAdmin ? [{key:'overview',label:'Overview'}] : []),{ key: 'mine', label: 'My Wallet & Requests' }, { key: 'expenses', label: 'My Expenses' },
         ...(context?.caps.canAllocate ? [{ key: 'allocations', label: 'To Allocate' }] : []),
         ...(context?.caps.canApprove ? [{ key: 'approvals', label: 'To Approve' }] : []),
+        ...(context?.caps.canApproveExpenses ? [{ key: 'expense_approvals', label: 'Expenses To Approve' }] : []),
         ...(context?.caps.canAllocate || context?.caps.canApprove ? [{ key: 'assigned', label: 'Assigned Requests & Spends' }] : []),
         ...(context?.caps.canDisburse ? [{ key: 'disbursements', label: 'To Pay' }, { key: 'reconciliation', label: 'Reconciliation' }] : []),
         ...(context?.caps.isAdmin ? [{ key: 'all', label: 'All Requests' }, { key: 'vision_usage', label: 'Vision AI Usage' }] : []),
@@ -164,7 +166,7 @@ export default function PettyCashDashboard({ orgId: propOrgId }: { orgId?: strin
                     </button>
                 ))}
             </nav>
-            {tab === 'routing' && context ? <PropertyRoutingSettings context={context} onSaved={() => { void loadContext(); }} /> : tab === 'expenses' ? <ExpenseHistory key={revision} org={orgId} onOpen={setDetailId} /> : tab === 'overview' ? <ConsolidatedOverview key={revision} countsIssue={context?.counts_error||undefined} org={orgId} onOpen={setDetailId} context={context} /> : tab === 'vision_usage' ? <VisionUsageAudit key={revision} org={orgId} onOpenRequest={setDetailId} /> : <>
+            {tab === 'routing' && context ? <PropertyRoutingSettings context={context} onSaved={() => { void loadContext(); }} /> : tab === 'expenses' ? <ExpenseHistory key={revision} org={orgId} onOpen={setDetailId} /> : tab === 'expense_approvals' ? <ExpenseApprovals key={revision} org={orgId} onOpen={setDetailId} onReviewed={() => { void loadContext(); }} /> : tab === 'overview' ? <ConsolidatedOverview key={revision} countsIssue={context?.counts_error||undefined} org={orgId} onOpen={setDetailId} context={context} /> : tab === 'vision_usage' ? <VisionUsageAudit key={revision} org={orgId} onOpenRequest={setDetailId} /> : <>
                 {isBulk && <div className="pc-panel p-4 flex flex-wrap gap-3 items-end rounded-2xl bg-white dark:bg-[#161b22] border border-slate-100 dark:border-[#30363d] shadow-sm">
                     <label className="flex-1 min-w-56 text-xs font-bold text-slate-700 dark:text-slate-300">Remarks (optional, saved on each request you process)
                         <input className="pc-input mt-1.5" value={bulkRemark} maxLength={500} disabled={busy} onChange={e => setBulkRemark(e.target.value)} placeholder={tab === 'disbursements' ? 'e.g. Paid from site cash box' : 'e.g. Within monthly norm'} />

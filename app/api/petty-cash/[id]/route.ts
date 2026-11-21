@@ -14,7 +14,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         const [docs, activity, expenses, ledger, reconciliation] = await Promise.all([
             supabaseAdmin.from('petty_cash_documents').select('*').eq('request_id', id),
             supabaseAdmin.from('petty_cash_activity').select('*,actor:users(full_name)').eq('request_id', id).order('created_at'),
-            supabaseAdmin.from('petty_cash_expenses').select('*').eq('request_id', id).order('expense_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }),
+            supabaseAdmin.from('petty_cash_expenses').select('*,reviewer:users!reviewed_by(id,full_name,email)').eq('request_id', id).order('expense_date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }),
             supabaseAdmin.from('petty_cash_wallet_entries').select('*').eq('request_id', id),
             supabaseAdmin.from('petty_cash_settlement_status').select('*').eq('request_id', id).maybeSingle(),
         ]);

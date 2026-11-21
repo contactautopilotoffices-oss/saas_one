@@ -11,6 +11,8 @@ export interface PettyCashAccess {
     canManageRouting: boolean;
     canAllocate: boolean;
     canApprove: boolean;
+    /** Routed the expense-approval stage for at least one property, or accounts (who review expenses today). */
+    canApproveExpenses: boolean;
     canDisburse: boolean;
     propertyIds: string[];
     roles: string[];
@@ -72,6 +74,7 @@ export async function resolvePettyCashAccessForUser(user: { id: string; email?: 
         user, organizationId, roles, propertyIds, isMasterAdmin: master, isAdmin, canManageRouting,
         canAllocate: Boolean(assignments.data?.some(a => a.kind === 'allocator') || assigned.data?.some(a => a.assigned_allocator_id === user.id)),
         canApprove: Boolean(assignments.data?.some(a => a.kind === 'approver') || assigned.data?.some(a => a.assigned_approver_id === user.id)),
+        canApproveExpenses: Boolean(assignments.data?.some(a => a.kind === 'expense_approver')) || roles.includes('accounts'),
         canDisburse: roles.includes('accounts'),
     };
 }

@@ -3,17 +3,18 @@ import { FileText, ReceiptText, MessageSquareText } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import { inr } from '@/frontend/lib/pettyCash/roles';
 import { pettyCashDate, type Expense } from './workflowTypes';
-export default function ExpenseTable({ expenses, org, showRequest = true, onOpen, onReview, onCorrect, onWithdraw, busy = false }: {
-    expenses: Expense[]; org: string; showRequest?: boolean; onOpen?: (id: string) => void;
+export default function ExpenseTable({ expenses, org, showRequest = true, showRequester = false, onOpen, onReview, onCorrect, onWithdraw, busy = false }: {
+    expenses: Expense[]; org: string; showRequest?: boolean; showRequester?: boolean; onOpen?: (id: string) => void;
     onReview?: (id: string, status: 'accepted' | 'rejected') => void; onCorrect?: (expense: Expense) => void;
     onWithdraw?: (expense: Expense) => void; busy?: boolean;
 }) {
     if (!expenses.length) return <div className="pc-empty"><ReceiptText size={24} /><h3>No expenses recorded</h3><p>Record any amount up to the remaining cash. Add bills or receipts if available.</p></div>;
     return <div className="pc-table-wrap"><table aria-label="Expense history" className="min-w-[850px]">
-        <thead><tr>{['Expense date', ...(showRequest ? ['Request', 'Property'] : []), 'Mode', 'Payee / purpose', 'Category', 'Amount', 'Payment', 'Bills / receipts / proofs', 'Review', ...(onOpen ? ['Details'] : [])].map(heading => <th key={heading}>{heading}</th>)}</tr></thead>
+        <thead><tr>{['Expense date', ...(showRequest ? ['Request', 'Property'] : []), ...(showRequester ? ['Spent by'] : []), 'Mode', 'Payee / purpose', 'Category', 'Amount', 'Payment', 'Bills / receipts / proofs', 'Review', ...(onOpen ? ['Details'] : [])].map(heading => <th key={heading}>{heading}</th>)}</tr></thead>
         <tbody>{expenses.map(expense => <tr key={expense.id}>
             <td className="whitespace-nowrap"><time dateTime={expense.expense_date.slice(0, 10)}>{pettyCashDate(expense.expense_date)}</time></td>
             {showRequest && <><td className="whitespace-nowrap font-medium">{expense.request?.request_no || '—'}</td><td>{expense.property?.name || '—'}</td></>}
+            {showRequester && <td className="min-w-32"><p className="font-medium break-words">{expense.requester?.full_name || expense.requester?.email || '—'}</p></td>}
             <td className="whitespace-nowrap">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
                     expense.spend_mode === 'Client'
@@ -64,7 +65,15 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
                     )}
                 </div>
             </td>
-            <td className="min-w-32"><span className="pc-status capitalize" data-status={expense.review_status}>{expense.review_status.replaceAll('_', ' ')}</span>{expense.review_remarks && <p className="text-xs text-text-secondary mt-2 max-w-48 break-words">{expense.review_remarks}</p>}
+            <td className="min-w-32"><span className="pc-status capitalize" data-status={expense.review_status}>{expense.review_status.replaceAll('_', ' ')}</span>
+                {(expense.review_status === 'accepted' || expense.review_status === 'rejected') && (expense.reviewer?.full_name || expense.reviewer?.email || expense.reviewed_at) && (
+                    <p className="text-[11px] text-text-secondary mt-1.5 max-w-48 break-words">
+                        {expense.review_status === 'accepted' ? 'Approved by ' : 'Rejected by '}
+                        <span className="font-semibold">{expense.reviewer?.full_name || expense.reviewer?.email || 'reviewer'}</span>
+                        {expense.reviewed_at ? ` · ${pettyCashDate(expense.reviewed_at)}` : ''}
+                    </p>
+                )}
+                {expense.review_remarks && <p className="text-xs text-text-secondary mt-2 max-w-48 break-words">{expense.review_remarks}</p>}
                 {onReview && expense.review_status !== 'withdrawn' && (
                     <div className="flex flex-wrap gap-2 mt-3">
                         <button type="button" className="pc-button pc-button-secondary" disabled={busy} onClick={() => onReview(expense.id, 'accepted')}>
