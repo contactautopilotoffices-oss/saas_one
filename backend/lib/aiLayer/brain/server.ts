@@ -18,7 +18,12 @@ import type { TurnDeps, TurnOutput } from './loop/turn';
 import { liveBrainModel } from './providers/router';
 import type { AttachmentRef, BookingRow, BrainChannel, BrainData, EpisodeRow, MemoryFact, RoomRow, StagedFile, TicketDetail } from './types';
 
-const CLOSED_STATUSES = ['resolved', 'completed', 'closed'];
+/**
+ * Work that is finished on our side. `pending_validation` belongs here, not with open: the team has
+ * done the job and the ticket is only waiting for the tenant's sign-off, so an open-only list must
+ * not include it. Same split the dashboards and reports use.
+ */
+const CLOSED_STATUSES = ['resolved', 'completed', 'closed', 'pending_validation'];
 /** Staged files share the Task Manager's private bucket, under their own folder. */
 export const STAGING_BUCKET = 'task-attachments';
 export const STAGING_PREFIX = 'brain-staging';
