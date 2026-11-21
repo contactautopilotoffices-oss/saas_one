@@ -38,9 +38,10 @@ import { _clearCategoryCache, normalPriority, type Priority } from './aiClassifi
 import { asSlaPlan, SLA_PRIORITIES, type SlaPlan } from './categorySla';
 
 type Row = Record<string, unknown>;
-export const TEAMS = ['technical', 'plumbing', 'soft_services', 'vendor'] as const;
+// 'it' (owner 2026-11-20): the IT team; only tickets that tag the IT person reach its categories (itRule.ts).
+export const TEAMS = ['technical', 'plumbing', 'soft_services', 'vendor', 'it'] as const;
 export type Team = (typeof TEAMS)[number];
-export const TEAM_LABEL: Record<Team, string> = { technical: 'Technical', plumbing: 'Plumbing', soft_services: 'Soft services', vendor: 'Vendor' };
+export const TEAM_LABEL: Record<Team, string> = { technical: 'Technical', plumbing: 'Plumbing', soft_services: 'Soft services', vendor: 'Vendor', it: 'IT' };
 const MISSING = new Set(['42P01', 'PGRST205', '42703', 'PGRST204']);
 const isMissing = (e: { code?: string } | null | undefined) => !!e && MISSING.has(String(e.code ?? ''));
 const str = (x: unknown): string | null => (typeof x === 'string' && x.trim() ? x.trim() : null);

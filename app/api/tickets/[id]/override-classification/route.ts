@@ -104,7 +104,7 @@ async function learnFromOverride(t: Record<string, unknown>, skillGroupId: strin
         await saveExample({
             orgId, propertyId: typeof t.property_id === 'string' ? t.property_id : null, ticketId: String(t.id),
             text: maskIdentity(ticketText(t), 1000) ?? '', code,
-            team: (['technical', 'plumbing', 'vendor', 'soft_services'].includes(String(team)) ? team : null) as never,
+            team: (['technical', 'plumbing', 'vendor', 'soft_services', 'it'].includes(String(team)) ? team : null) as never,
             source: 'override',
         }, { admin: supabaseAdmin, meaning: setting.meaning });
     } catch (err) {

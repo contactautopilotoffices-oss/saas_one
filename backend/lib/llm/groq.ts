@@ -303,6 +303,7 @@ export function skillGroupToDisplayName(sg: SkillGroup): string {
         plumbing: 'Plumbing',
         vendor: 'Vendor',
         soft_services: 'Soft Services',
+        it: 'IT',
     };
     return names[sg];
 }
