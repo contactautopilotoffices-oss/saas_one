@@ -8,8 +8,9 @@ import {
     UserCheck, X, Building, Search, UserPlus, ChevronDown,
     User, Ticket, Wrench, Clock, FileText, Truck, Layers,
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
-    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode
+    Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode, Briefcase
 } from 'lucide-react';
+import RecruitmentApproverSettings from './RecruitmentApproverSettings';
 import { createClient } from '@/frontend/utils/supabase/client';
 import WhatsAppServiceSettings from './WhatsAppServiceSettings';
 import PettyCashDeliveryStatus from './PettyCashDeliveryStatus';
@@ -92,6 +93,11 @@ const getRoleStyle = (roleId: string) => {
         case 'property_admin':
         case 'org_admin':
             return 'bg-purple-50 text-purple-700 border-purple-200';
+        case 'soft_service_staff':
+        case 'soft_service_manager':
+        case 'soft_service_supervisor':
+        case 'soft_services':
+            return 'bg-teal-50 text-teal-700 border-teal-200';
         case 'staff':
         case 'mst':
         case 'security':
@@ -112,6 +118,10 @@ const formatRoleLabel = (roleId: string) => {
     if (r === 'master_admin') return 'Master Admin';
     if (r === 'staff') return 'Staff';
     if (r === 'mst') return 'MST';
+    if (r === 'soft_service_staff') return 'Soft Service Staff';
+    if (r === 'soft_service_manager') return 'Soft Service Manager';
+    if (r === 'soft_service_supervisor') return 'Soft Service Supervisor';
+    if (r === 'soft_services') return 'Soft Services';
     if (r === 'sales') return 'Sales Executive';
     if (r === 'hr') return 'HR Admin';
     if (r === 'hr_head') return 'HR Head';
@@ -245,6 +255,22 @@ export interface ModuleMeta {
 }
 
 const MODULES_META: ModuleMeta[] = [
+    // Owner 2026-11-17: hiring requests (manpower requisitions), Stage 2 of the Recruitment Module spec. The approver
+    // the request waits on is always told; these rules add who else is told, and on which channel.
+    {
+        id: 'recruitment',
+        name: 'Recruitment: hiring requests',
+        description: 'A manager raises a hiring request; the HR Head, then the Director, approve it. Who else is told of each step, and the reminders and escalation.',
+        icon: Briefcase,
+        color: 'text-amber-700 bg-amber-50 border-amber-100',
+        events: [
+            { key: 'requisition_awaiting_approval', name: 'Request awaiting approval (to the approver)', description: 'Sent to the HR Head or Director the request waits on, with a one-time decision link. Add anyone else who should know.', hasContextual: { approver: true } },
+            { key: 'requisition_reminder', name: 'Reminder at 24 h and 48 h (to the approver)', description: 'Sent when the request has waited a day, and again at two days, at each level.', hasContextual: { approver: true }, isReminder: true, reminderLabel: '24 h and 48 h' },
+            { key: 'requisition_escalated', name: 'Escalation at 72 h', description: "Sent to the Director (when the HR Head has not decided) or the Director's backup, plus anyone chosen here.", hasContextual: { approver: true } },
+            { key: 'requisition_decided', name: 'Decision (to the manager who raised it)', description: 'Approved, rejected, sent back, put on hold or resumed: the manager is told, with the reason.', hasContextual: { requester: true } },
+            { key: 'requisition_director_informed', name: 'In-plan approval (Director informed)', description: 'When the HR Head approves an in-plan role, the Director is notified for information.', hasContextual: { approver: true } },
+        ]
+    },
     {id:'petty_cash',name:'Petty Cash',description:'Allocation, approval, payment and expense review.',icon:ShoppingBag,color:'text-teal-600 bg-teal-50 border-teal-100',events:PC_NOTIFICATION_EVENTS},
     {
         id: 'hr_tickets',
@@ -641,20 +667,20 @@ const MODULES_META: ModuleMeta[] = [
     },
     {
         id: 'facility_requests',
-        name: 'Facility QR Requests',
-        description: 'Instant multi-channel alerts sent to internal maintenance staff and managers when an issue is reported via facility QR code.',
+        name: 'Client Support (QR Requests)',
+        description: 'Instant multi-channel alerts sent to property admins, MST, and soft services staff when an issue is reported via client support QR code.',
         icon: QrCode,
         color: 'text-sky-600 bg-sky-50 border-sky-100',
         events: [
             {
                 key: 'facility_request_created',
-                name: 'New Facility Request (QR Scanned)',
-                description: 'Sent immediately to designated maintenance staff, MST, and property admins to dispatch resolution.',
+                name: 'New Client Support Ticket (QR Scanned)',
+                description: 'Sent immediately to designated property admins, MST, and soft services staff to dispatch resolution.',
             },
             {
                 key: 'facility_request_resolved',
-                name: 'Facility Request Resolved',
-                description: 'Sent to designated property managers when an on-ground staff member marks the facility request as resolved.',
+                name: 'Client Support Ticket Resolved',
+                description: 'Sent to designated property managers when an on-ground staff member marks the client support request as resolved.',
             }
         ]
     },
@@ -688,6 +714,13 @@ const MODULES_META: ModuleMeta[] = [
 ];
 
 const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
+    recruitment: {
+        requisition_awaiting_approval: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_reminder: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_escalated: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_approver: true },
+        requisition_decided: { channels: { email: true, whatsapp: true, push: false }, roles: [], user_ids: [], notify_requester: true },
+        requisition_director_informed: { channels: { email: true, whatsapp: false, push: false }, roles: [], user_ids: [], notify_approver: true },
+    },
     petty_cash: PC_DEFAULT_RULES,
     hr_tickets: {
         hr_ticket_created_submitter_v2: { channels: { email: true, whatsapp: true, push: true, voice: false }, roles: ['hr', 'hr_head', 'org_super_admin'], user_ids: [], notify_assignee: false, notify_requester: true },
@@ -761,7 +794,7 @@ const DEFAULT_NOTIFICATION_MATRIX: NotificationMatrix = {
         user_approved: { channels: { email: true, whatsapp: true, push: true }, roles: [], user_ids: [], notify_requester: true }
     },
     facility_requests: {
-        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'staff', 'mst'], user_ids: [], notify_assignee: true },
+        facility_request_created: { channels: { email: true, whatsapp: true, push: true }, roles: ['property_admin', 'mst', 'staff', 'soft_service_staff'], user_ids: [], notify_assignee: true },
         facility_request_resolved: { channels: { email: false, whatsapp: true, push: true }, roles: ['property_admin'], user_ids: [] }
     },
     visitor_management: {
@@ -999,7 +1032,10 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
                 }
             }
 
-            const baseRoles = ['org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales'];
+            const baseRoles = [
+                'org_super_admin', 'procurement', 'property_admin', 'staff', 'mst', 'sales',
+                'soft_service_staff', 'soft_service_manager', 'soft_service_supervisor', 'soft_services'
+            ];
             baseRoles.forEach(r => rolesSet.add(r));
 
             setAvailableRoles(
@@ -1545,6 +1581,7 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             {/* TAB VIEW: Voice Telephony Analytics */}
             {(mainTab === 'rules' || mainTab === 'templates') && <><nav aria-label="Notification modules" className="flex gap-2 overflow-x-auto py-2">{[...MODULES_META].sort((a,b)=>a.id==='tickets'?-1:b.id==='tickets'?1:0).map(module=><button type="button" key={module.id} aria-pressed={activeModuleTab===module.id} onClick={()=>setActiveModuleTab(module.id)} className={`shrink-0 rounded-lg border px-3 py-2 text-xs ${activeModuleTab===module.id?'bg-primary text-white':'bg-white text-slate-700'}`}>{module.id==='tickets'?'Tickets':module.name}</button>)}</nav><div className="flex gap-2"><button type="button" onClick={()=>setMainTab('rules')} aria-pressed={mainTab==='rules'} className="rounded-lg border px-3 py-2 text-xs">Channel & recipient rules</button><button type="button" onClick={()=>setMainTab('templates')} aria-pressed={mainTab==='templates'} className="rounded-lg border px-3 py-2 text-xs">Templates</button></div></>}
             {mainTab === 'templates' && <WhatsAppServiceSettings organizationId={organizationId} moduleId={activeModuleTab} featureKeys={MODULES_META.find(module => module.id === activeModuleTab)?.events.map(event => event.key)} />}
+            {mainTab === 'rules' && activeModuleTab === 'recruitment' && <RecruitmentApproverSettings organizationId={organizationId} users={allUsersList} />}
             {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email, WhatsApp or Push and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
             {mainTab === 'voice_analytics' && (
                 <VoiceAnomalyDashboard

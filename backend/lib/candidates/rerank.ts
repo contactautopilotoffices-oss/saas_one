@@ -6,7 +6,9 @@
  *
  * The overall match is the weighted mean of the criteria that apply (config.CRITERION_WEIGHTS), so a search that
  * never mentions salary is not scored on salary. The model sees no name, email or phone: only work facts, under
- * short ids (c1, c2, ...) that are mapped back here, so it cannot invent a record.
+ * short ids (c1, c2, ...) that are mapped back here, so it cannot invent a record. From 2026-11-17 (owner) the work
+ * facts include what the resume says (skills, past roles, education, industry, the summary with the name and contacts
+ * taken out) and the search keywords found, so "not stated" means on neither the record nor the resume.
  */
 import { z } from "zod";
 
@@ -56,7 +58,40 @@ export const RERANK_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 /** One record as the model sees it. */
+/** Caps on what one record adds to the ranking prompt (owner 2026-11-17: the resume's facts go in too). */
+const LINE_SKILLS = 20;
+const LINE_PAST_ROLES = 3;
+const LINE_SUMMARY_CHARS = 300;
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The resume summary as the model may see it: the person's name, emails and phone numbers taken out (the summary was
+ * written from the resume, and a resume starts with the name). Whole words only, so "Rao" does not touch "Raopur".
+ */
+export function scrubPersonal(text: string, fullName: string): string {
+  let out = text
+    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, "[email]")
+    .replace(/\+?\d[\d\s-]{8,}\d/g, "[phone]");
+  const name = fullName.trim();
+  const words = name ? [name, ...name.split(/\s+/).map((w) => w.replace(/[^\p{L}'-]/gu, "")).filter((w) => w.length >= 3)] : [];
+  for (const word of words) out = out.replace(new RegExp(`(?<![\\p{L}])${escapeRe(word)}(?![\\p{L}])`, "giu"), "the candidate");
+  return out
+    .replace(/\s+/g, " ")
+    // "Dattaram Muknak" -> one "the candidate", not two; capital at the start of a sentence.
+    .replace(/the candidate(?:\s+the candidate)+/gi, "the candidate")
+    .replace(/(^|[.!?]\s+)the candidate/g, (_, lead: string) => `${lead}The candidate`)
+    .trim();
+}
+
+const WHERE_LABEL = { profile: "record", resume: "resume", both: "record + resume" } as const;
+
 export function recordLine(id: string, r: CandidateRecord): string {
+  const x = r.extras;
+  const education = x ? [x.ugQualification, x.pgQualification, x.ppgQualification].filter((q) => q && q.toLowerCase() !== "none").join(", ") : "";
+  const pastRoles = x?.pastCompanies?.slice(0, LINE_PAST_ROLES).map((c) => (c.designation ? `${c.designation} at ${c.company}` : c.company)).join("; ") ?? "";
+  const summary = x?.resumeSummary ? scrubPersonal(x.resumeSummary, r.fullName).slice(0, LINE_SUMMARY_CHARS) : "";
+  const found = (r.keywordHits ?? []).map((h) => `${h.text} (${WHERE_LABEL[h.where]})`).join(", ");
   const parts: [string, string | null][] = [
     ["role sourced for", r.role],
     ["current designation", r.currentDesignation],
@@ -68,25 +103,34 @@ export function recordLine(id: string, r: CandidateRecord): string {
     ["expected in-hand", r.expectedInhand === null ? null : `${formatRupees(r.expectedInhand)}/month`],
     ["status", STATUS_LABELS[r.status]],
     ["remark", r.remark],
+    // Owner 2026-11-17: what the resume says, so a skill on the CV is not reported as "not stated".
+    ["skills", x?.skills?.length ? x.skills.slice(0, LINE_SKILLS).join(", ") : null],
+    ["past roles", pastRoles || null],
+    ["education", [education, x?.institute].filter(Boolean).join(" · ") || null],
+    ["industry", x?.industry ?? null],
+    ["resume summary", summary || null],
+    ["search keywords found", found || null],
   ];
   return `${id} | ${parts.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(" | ")}`;
 }
 
 export const RERANK_SYSTEM = `You are a careful recruitment screener. You score candidate records against a recruiter's request, using ONLY what each record says.
 
+A record is everything on its line: the role sourced for, designation, organisation, experience, notice, pay, status and remark, and, when the candidate has a resume, the skills, past roles, education, industry and resume summary read from it, and the search keywords found in the record or the resume.
+
 Follow these steps in order for EVERY record. Do not skip any record or step.
-1. role (0-100): how well the role sourced for, current designation and organisation fit the requested job. Same job = 85-100; closely related job (e.g. MEP engineer for a BMS operator post) = 50-80; unrelated = 0-30.
+1. role (0-100): how well the role sourced for, current designation, past roles and skills fit the requested job. Same job = 85-100; closely related job (e.g. MEP engineer for a BMS operator post) = 50-80; unrelated = 0-30.
 2. experience (0-100): how well the relevant (and total) experience fits the level the request implies. Unknown experience = 40.
-3. domain (0-100): how well the background (organisation type, designation, remark) fits the request's industry or domain. Unknown = 40.
-4. reasons: up to 2 short facts FROM THE RECORD that support the match (e.g. "5 years as BMS operator at BuildMyInfra").
-5. missing: up to 2 things the recruiter must check because the record does not say them (e.g. "HVAC experience not stated"). Mention a past rejection or "not responding" remark here.
+3. domain (0-100): how well the background (organisation type, industry, past roles, education, resume summary, remark) fits the request's industry or domain. Unknown = 40.
+4. reasons: up to 2 short facts FROM THE RECORD that support the match (e.g. "5 years as BMS operator at BuildMyInfra", "Python and OpenCV in the resume").
+5. missing: up to 2 things the recruiter must check because NOTHING on the record says them (e.g. "HVAC experience not stated"). A skill listed under skills or search keywords found IS stated: never list it here. Mention a past rejection or "not responding" remark here.
 6. summary: one sentence, at most 20 words, on the fit.
 Never invent skills, certifications, companies or numbers that are not in the record. Never use names, gender, age or religion (they are not given). Use the record ids exactly as given.
 
 Reply with JSON only: {"ranking": [{"id": "c1", "role": 0, "experience": 0, "domain": 0, "reasons": [], "missing": [], "summary": ""}, ...]} with one entry per record.
 
-Example record: c1 | role sourced for: BMS Operator | current designation: BMS Operator | current organisation: BuildMyInfra | location: Noida | total experience: 5 years | relevant experience: 5 years | notice: 30 days | status: Not responding | remark: Not responding
-Example entry for a request "BMS operator, 3+ years": {"id": "c1", "role": 95, "experience": 90, "domain": 70, "reasons": ["Current BMS operator at BuildMyInfra", "5 years relevant experience"], "missing": ["Was not responding to earlier calls"], "summary": "Strong direct fit with ample BMS experience; recheck availability."}`;
+Example record: c1 | role sourced for: BMS Operator | current designation: BMS Operator | current organisation: BuildMyInfra | location: Noida | total experience: 5 years | relevant experience: 5 years | notice: 30 days | status: Not responding | remark: Not responding | skills: BMS, Honeywell EBI, HVAC, Chillers | search keywords found: BMS (record + resume), Honeywell (resume)
+Example entry for a request "BMS operator, 3+ years, Honeywell": {"id": "c1", "role": 95, "experience": 90, "domain": 70, "reasons": ["Current BMS operator at BuildMyInfra", "Honeywell EBI in the resume"], "missing": ["Was not responding to earlier calls"], "summary": "Strong direct fit with ample BMS and Honeywell experience; recheck availability."}`;
 
 export function rerankUserPrompt(query: string, spec: SearchSpec, lines: string[]): string {
   return `Recruiter's request: ${query.slice(0, 2500)}

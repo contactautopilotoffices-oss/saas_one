@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { hideMentions, judgeTicketSort, ticketReviewView, ticketText, type Reassign } from '@/backend/lib/ticketing/sortReview';
+import { hideMentions, judgeTicketSort, keepExample, ticketReviewView, ticketText, undoTicketJudgement, type Reassign } from '@/backend/lib/ticketing/sortReview';
 import { confidenceLabel, confidenceWord } from '@/backend/lib/ticketing/confidenceWord';
 import { userPrompt, type CategoryOption } from '@/backend/lib/ticketing/aiClassifier';
 
@@ -31,7 +31,7 @@ function fakeDb(tables: Record<string, Row[]>, opts: { missing?: string[]; failU
     };
     const from = (table: string) => {
         const filters: Array<(r: Row) => boolean> = [];
-        let head = false, limitN = Infinity, mode: 'select' | 'insert' | 'update' | 'delete' = 'select';
+        let head = false, limitN = Infinity, mode: 'select' | 'insert' | 'update' | 'delete' | 'upsert' = 'select';
         let payload: Row = {};
         const rows = () => (tables[table] ??= []);
         const result = () => {
@@ -40,6 +40,14 @@ function fakeDb(tables: Record<string, Row[]>, opts: { missing?: string[]; failU
                 if (table === 'ticket_sort_reviews' && rows().some(r => r.ticket_id === payload.ticket_id)) return { data: null, error: { code: '23505', message: 'dup' } };
                 const row = { id: `id-${rows().length + 1}`, created_at: new Date().toISOString(), ...payload };
                 rows().push(row); writes.push({ table, op: 'insert', row });
+                return { data: row, error: null };
+            }
+            if (mode === 'upsert') {
+                // onConflict ticket_id: replace the row with the same ticket, else add one
+                const had = rows().find(r => r.ticket_id === payload.ticket_id);
+                const row = had ? Object.assign(had, payload) : { id: `00000000-0000-4000-9000-${String(rows().length + 1).padStart(12, '0')}`, created_at: new Date().toISOString(), ...payload };
+                if (!had) rows().push(row);
+                writes.push({ table, op: 'upsert', row });
                 return { data: row, error: null };
             }
             if (mode === 'update') opts.beforeUpdate?.(table);
@@ -53,6 +61,8 @@ function fakeDb(tables: Record<string, Row[]>, opts: { missing?: string[]; failU
             select: (_c?: string, o?: { head?: boolean }) => { head = !!o?.head; return q; },
             insert: (row: Row) => { mode = 'insert'; payload = row; return q; },
             update: (row: Row) => { mode = 'update'; payload = row; return q; },
+            upsert: (row: Row) => { mode = 'upsert'; payload = row; return q; },
+            is: (c: string, v: unknown) => { filters.push(r => (r[c] ?? null) === v); return q; },
             delete: () => { mode = 'delete'; return q; },
             eq: (c: string, v: unknown) => { filters.push(r => r[c] === v); return q; },
             gte: (c: string, v: string) => { filters.push(r => String(r[c]) >= v); return q; },
@@ -221,4 +231,92 @@ test('an assignment that fails after the move is said', async () => {
     const { db } = fakeDb(world());
     const r = await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => { throw new Error('no staff'); });
     assert.match((r as { message: string }).message, /could not be assigned again/);
+});
+
+// ── 2026-11-19: learning from judgements ────────────────────────────────────────────────────────────────────────────
+
+test('every judgement becomes a learning example, right ones too, with the masked words and the right answer', async () => {
+    const { db, tables } = fakeDb(world());
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => {});
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(3), verdict: 'right' }, noReassign);
+    const ex = tables.ticket_sort_examples;
+    assert.equal(ex.length, 2);
+    const wrong = ex.find(e => e.ticket_id === TID(1))!;
+    assert.deepEqual([wrong.organization_id, wrong.property_id, wrong.code, wrong.team, wrong.source], [ORG, PROP, 'power_outage', 'technical', 'judged_wrong']);
+    assert.ok(!String(wrong.ticket_text).includes('Anil') && !String(wrong.ticket_text).includes('9876543210'), String(wrong.ticket_text));
+    const right = ex.find(e => e.ticket_id === TID(3))!;
+    assert.deepEqual([right.code, right.team, right.source], ['desk_alignment', 'soft_services', 'judged_right']);
+});
+
+test('undo: a moved ticket goes back to its first category and team, is assigned again, and the AI stops learning from it', async () => {
+    const { db, tables } = fakeDb(world());
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => {});
+    const again: unknown[] = [];
+    const r = await undoTicketJudgement(db, ORG, 'tech-1', { ticketId: TID(1) }, async t => { again.push(t); });
+    assert.equal(r.ok, true);
+    assert.match((r as { message: string }).message, /went back/);
+    const t = tables.tickets.find(x => x.id === TID(1))!;
+    assert.deepEqual([t.category_id, t.issue_code, t.skill_group_code, t.classification_source], ['cat-fire', 'fire_alarm', 'vendor', 'llm']);
+    assert.equal((again[0] as { skill_group_code: string }).skill_group_code, 'vendor');
+    assert.equal(tables.ticket_sort_reviews.length, 0);
+    assert.equal(tables.ticket_sort_examples.length, 0);
+    const v = await ticketReviewView(db, ORG);
+    assert.ok(v.queue.some(q => q.number === 'T-1'), 'back in the queue');
+});
+
+test('undo: refused after 7 days, for another organisation, and for a judgement that does not exist', async () => {
+    const { db, tables } = fakeDb(world());
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(3), verdict: 'right' }, noReassign);
+    assert.equal((await undoTicketJudgement(db, OTHER_ORG, 't', { ticketId: TID(3) }, noReassign) as { status: number }).status, 404);
+    assert.equal((await undoTicketJudgement(db, ORG, 't', { ticketId: TID(2) }, noReassign) as { status: number }).status, 404);
+    tables.ticket_sort_reviews[0].created_at = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    assert.match((await undoTicketJudgement(db, ORG, 't', { ticketId: TID(3) }, noReassign) as { error: string }).error, /within 7 days/);
+    assert.equal(tables.ticket_sort_reviews.length, 1);
+});
+
+test('undo: a moved ticket someone has started since is left where it is, and that is said', async () => {
+    const { db, tables } = fakeDb(world());
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => {});
+    tables.tickets.find(x => x.id === TID(1))!.status = 'in_progress';
+    const r = await undoTicketJudgement(db, ORG, 'tech-1', { ticketId: TID(1) }, noReassign);
+    assert.match((r as { message: string }).message, /not moved back/);
+    assert.equal(tables.tickets.find(x => x.id === TID(1))!.issue_code, 'power_outage');
+    assert.equal(tables.ticket_sort_examples.length, 0);
+});
+
+test('examples that disagree: listed on the screen, and keeping one retires the other (this organisation only)', async () => {
+    const w = world() as ReturnType<typeof world> & { ticket_sort_examples: Row[] };
+    const ex = (n: number, org: string, text: string, code: string): Row => ({ id: `00000000-0000-4000-a000-00000000000${n}`, organization_id: org, ticket_id: null, ticket_text: text, code, team: null, source: 'judged_wrong', created_at: recent, retired_at: null });
+    w.ticket_sort_examples = [ex(1, ORG, 'water dripping from ceiling near pantry', 'water_leakage'), ex(2, ORG, 'water dripping from ceiling near pantry', 'ac_breakdown'), ex(3, OTHER_ORG, 'x y z', 'fire_alarm')];
+    const { db, tables } = fakeDb(w);
+    const v = await ticketReviewView(db, ORG);
+    assert.equal(v.learning?.conflicts.length, 1);
+    assert.equal(v.learning?.examples, 2);
+    assert.equal((await keepExample(db, ORG, { keep: String(w.ticket_sort_examples[0].id), drop: String(w.ticket_sort_examples[2].id) }) as { status: number }).status, 404, 'not another organisation\'s');
+    const r = await keepExample(db, ORG, { keep: String(w.ticket_sort_examples[0].id), drop: String(w.ticket_sort_examples[1].id) });
+    assert.equal(r.ok, true);
+    assert.ok(tables.ticket_sort_examples[1].retired_at, 'the other one is retired');
+    assert.equal(tables.ticket_sort_examples[0].retired_at, null);
+    assert.equal((await ticketReviewView(db, ORG)).learning?.conflicts.length, 0);
+});
+
+test('the screen shows each ticket\'s similar tickets and why, from its trace', async () => {
+    const w = world() as ReturnType<typeof world> & { ticket_sort_traces: Row[] };
+    w.ticket_sort_traces = [{ ticket_id: TID(1), organization_id: ORG, mode: 'shadow', method: 'ai', search: 'words', old_code: 'fire_alarm', old_confidence: 52, new_code: 'power_outage', model_confidence: 70, new_confidence: 81, why: 'The AI said 70%.', neighbours: [{ id: 'e1', text: 'MCB tripping', code: 'power_outage', source: 'judged_wrong', strength: 0.6, by: 'words' }], created_at: recent }];
+    const { db } = fakeDb(w);
+    const v = await ticketReviewView(db, ORG);
+    const t1 = v.queue.find(q => q.number === 'T-1')!;
+    assert.equal(t1.learning?.newCode, 'power_outage');
+    assert.equal(t1.learning?.neighbours[0].text, 'MCB tripping');
+    assert.equal(v.queue.find(q => q.number === 'T-3')!.learning, null);
+    assert.equal(v.learning?.watch?.differed, 1);
+    assert.equal(v.learning?.weeks.length, 8);
+});
+
+test('a judged ticket keeps what the AI read in its photo with its learning example', async () => {
+    const w = world() as ReturnType<typeof world> & { ticket_photo_checks: Row[] };
+    w.ticket_photo_checks = [{ ticket_id: TID(1), status: 'read', description: 'Wall switch board with a tripped MCB' }];
+    const { db, tables } = fakeDb(w);
+    await judgeTicketSort(db, ORG, 'tech-1', { ticketId: TID(1), verdict: 'wrong', code: 'power_outage' }, async () => {});
+    assert.match(String(tables.ticket_sort_examples[0].ticket_text), /\(photo: Wall switch board with a tripped MCB\)$/);
 });

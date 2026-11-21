@@ -12,7 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     Blocks, BrainCircuit, ClipboardCheck, Coins, Compass, Contrast, Cpu, Database, FlaskConical, ListChecks, MessagesSquare, OctagonAlert, Radar, RotateCw,
-    ShieldAlert, SlidersHorizontal, TriangleAlert, Undo2,
+    ShieldAlert, SlidersHorizontal, Tags, TriangleAlert, Undo2,
 } from 'lucide-react';
 import { createHttpApi, type BrainApi } from './api';
 import { BrainProvider, useBrain, type ScreenId } from './BrainContext';
@@ -28,6 +28,7 @@ import GuidanceScreen from './GuidanceScreen';
 import MemoryScreen from './MemoryScreen';
 import CostScreen from './CostScreen';
 import ModelsScreen from './ModelsScreen';
+import CategoriesScreen from './CategoriesScreen';
 import ScorecardScreen from './ScorecardScreen';
 
 const SCREENS: Array<{ id: ScreenId; label: string; icon: React.ComponentType<{ className?: string }>; Component: React.ComponentType }> = [
@@ -41,6 +42,7 @@ const SCREENS: Array<{ id: ScreenId; label: string; icon: React.ComponentType<{ 
     { id: 'memory', label: 'Memory', icon: Database, Component: MemoryScreen },
     { id: 'cost', label: 'Cost and keys', icon: Coins, Component: CostScreen },
     { id: 'models', label: 'AI models', icon: Cpu, Component: ModelsScreen },
+    { id: 'categories', label: 'Categories & SLAs', icon: Tags, Component: CategoriesScreen },
     { id: 'scorecard', label: 'Scorecard', icon: ClipboardCheck, Component: ScorecardScreen },
 ];
 const isScreen = (v: string | null): v is ScreenId => !!v && SCREENS.some(x => x.id === v);

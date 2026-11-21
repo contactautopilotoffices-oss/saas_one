@@ -198,7 +198,7 @@ const dependencies = {
 };
 
 /** Unified Brain (backend/lib/aiLayer/brain/server.ts, 2026-11-14): the same room reads and the same booking function. */
-export const assistantRoomServices = { rooms, availableRooms, bookRange: dependencies.bookRange };
+export const assistantRoomServices = { rooms, slots, availableRooms, bookRange: dependencies.bookRange };
 
 export async function enqueueAssistantMessage(payload: Record<string, unknown>) {
     return rpc('whatsapp_assistant_enqueue', { p_payload: payload });

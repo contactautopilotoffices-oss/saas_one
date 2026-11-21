@@ -7,8 +7,8 @@ import { CALL_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../../_lib/auth";
 
 export const runtime = "nodejs";
-/** The recording is transcribed and read right after the response (after()): up to a minute or two for a long call. */
-export const maxDuration = 120;
+/** The recording is transcribed and read right after the response (after()): Sarvam waits up to 2 minutes, then Whisper, then the reading. */
+export const maxDuration = 300;
 
 type Params = { params: Promise<{ id: string }> };
 

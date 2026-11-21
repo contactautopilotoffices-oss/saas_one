@@ -1839,17 +1839,7 @@ export default function TicketDetailPage() {
 
             {/* Bottom Row: Title & Status */}
             <div className="space-y-5">
-              {(ticket as any).risk_flag && (
-                <div
-                  className={`flex items-center gap-2 px-3 py-2 ${isDark ? "bg-error/20 border-error/30 text-error" : "bg-error/5 border-error/20 text-error"} border rounded-xl text-xs font-bold`}
-                >
-                  <AlertTriangle className="w-4 h-4" />
-                  <span className="uppercase tracking-wide">
-                    Critical Risk: {(ticket as any).risk_flag}
-                  </span>
-                </div>
-              )}
-
+              {/* Owner 2026-11-20: the AI's "Critical Risk" banner is not shown on the ticket page any more. */}
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <h1
@@ -1925,7 +1915,10 @@ export default function TicketDetailPage() {
                           {ticket.category?.name || ticket.category?.code || (ticket as any)?.department || "General Issue"}
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                          ({ticket.skill_group?.name || "Technical"} Skill Group)
+                          {/* Owner 2026-11-20: the technical team is shown as "Multi-skill technician (MST)". */}
+                          {!ticket.skill_group?.name || ticket.skill_group.code === "technical"
+                            ? "Multi-skill technician (MST)"
+                            : `(${ticket.skill_group?.name} Skill Group)`}
                         </span>
                         {badge && (
                           <span className="px-1.5 py-0.2 rounded text-[10px] font-bold tracking-wide tabular-nums bg-indigo-500/10 text-indigo-500 border border-indigo-500/20">
@@ -1943,7 +1936,8 @@ export default function TicketDetailPage() {
               })()}
             </div>
           </div>
-          <div className="text-right mt-2 sm:mt-0">
+          {/* Owner 2026-11-20: a little space so the status pill does not touch the classification box above it. */}
+          <div className="text-right mt-3">
             <div
               className={`text-[10px] font-black uppercase tracking-widest mb-1.5 px-4 py-1.5 rounded-full border inline-block ${ticket.status === "closed" || ticket.status === "resolved"
                   ? isDark
@@ -1972,7 +1966,7 @@ export default function TicketDetailPage() {
                   ? "WAITING FOR CHECK"
                   : ticket.status.replace("_", " ")}
             </div>
-            {ticket.sla_deadline && ticket.status !== "closed" && (
+            {ticket.sla_deadline && !["resolved", "closed", "completed"].includes(ticket.status) && (
               <div className="flex items-center justify-end mt-1">
                 {ticket.sla_breached ? (
                   <div className="flex flex-col items-end gap-0.5">
@@ -2239,6 +2233,36 @@ export default function TicketDetailPage() {
                       : "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300"
                     }`}>
                     {(ticket as any)?.vendor_procurement_status === "vendor_arranged" ? "Arranged" : "Pending Vendor"}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* SLA Paused Banner */}
+            {Boolean((ticket as any)?.sla_paused) && (
+              <div
+                className={`p-6 rounded-3xl border shadow-sm transition-all ${
+                  isDark
+                    ? "bg-amber-950/20 border-amber-800/40 text-amber-200"
+                    : "bg-amber-50/80 border-amber-200 text-amber-900"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-2.5 rounded-2xl bg-amber-500 text-white shrink-0">
+                      <PauseCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-sm uppercase tracking-wider">
+                        ⏸️ SLA Timer Paused {(ticket as any)?.sla_pause_reason ? `— ${(ticket as any)?.sla_pause_reason}` : ""}
+                      </h4>
+                      <p className="text-xs mt-1 opacity-90 leading-relaxed font-medium">
+                        Target SLA deadline will automatically extend when materials are delivered or vendor is arranged.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 text-[10px] font-black uppercase tracking-widest rounded-lg border bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-300 whitespace-nowrap">
+                    Paused
                   </span>
                 </div>
               </div>

@@ -94,7 +94,7 @@ describe('the skill registry', () => {
         const a = toolDefs(skillsFor(actor(), brainSettings())).map(t => t.name);
         const b = toolDefs(skillsFor(actor(), brainSettings())).map(t => t.name);
         assert.deepEqual(a, b);
-        assert.deepEqual(a.slice(-2), ['ask_user', 'handoff']);
+        assert.deepEqual(a.slice(-3), ['ask_user', 'handoff', 'close_topic']);
     });
 });
 

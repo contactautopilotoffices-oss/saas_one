@@ -3,6 +3,7 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { pauseTicketSLA, checkAndResumeTicketSLA } from '@/backend/lib/ticketing/slaPauseService';
 
 /**
  * POST /api/tickets/[id]/tag-vendor
@@ -93,6 +94,14 @@ export async function POST(
             notes: isEdit ? `Updated vendor request note: "${note.trim()}"` : `Tagged Procurement for vendor: "${note.trim()}"`
         });
 
+        // 3b. Automatically pause SLA while waiting for vendor procurement
+        await pauseTicketSLA(
+            adminSupabase,
+            ticketId,
+            `Vendor Tagged: ${note.trim().slice(0, 50) || 'Procurement Needed'}`,
+            user.id
+        );
+
         // 4. Resolve procurement recipients to notify via Email Service Settings
         const orgId = ticket.property?.organization_id || ticket.organization_id;
 
@@ -181,6 +190,9 @@ export async function DELETE(
             action: 'vendor_procurement_removed',
             notes: 'Cancelled/removed vendor procurement request'
         });
+
+        // 3. Automatically resume SLA if no other blockers (e.g. materials)
+        await checkAndResumeTicketSLA(adminSupabase, ticketId, user.id);
 
         return NextResponse.json({
             success: true,

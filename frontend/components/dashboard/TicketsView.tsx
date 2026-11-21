@@ -35,7 +35,7 @@ function FilterDropdown({
                 onClick={() => setOpen(p => !p)}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary' : 'border-slate-300 text-slate-700'}`}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-full hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary' : 'border-slate-300 text-slate-700'}`}
             >
                 {icon && <span className={isActive ? 'text-primary' : 'text-slate-400'}>{icon}</span>}
                 <span>{selected?.label ?? placeholder}</span>
@@ -49,7 +49,7 @@ function FilterDropdown({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 4, scale: 0.97 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[180px] max-w-[240px] bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden"
+                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[180px] max-w-[240px] bg-white border border-slate-200 rounded-[20px] shadow-xl overflow-hidden"
                     >
                         <div className="max-h-60 overflow-y-auto py-1.5">
                             {options.map(opt => (
@@ -83,9 +83,11 @@ function parseInitialStatuses(searchParams: { get: (k: string) => string | null 
     const internal = searchParams.get('isInternal');
     const raisedByRole = searchParams.get('raisedByRole');
     const materials = searchParams.get('materialsRequired');
+    const vendor = searchParams.get('vendorTagged');
     const statusParam = searchParams.get('status');
 
     if (sla === 'true') selected.push('sla_breached');
+    if (vendor === 'true') selected.push('vendor_tagged');
     if (internal === 'true') selected.push('internal');
     if (raisedByRole === 'tenant') selected.push('tenant_raised');
     if (materials === 'true') selected.push('materials_required');
@@ -96,6 +98,8 @@ function parseInitialStatuses(searchParams: { get: (k: string) => string | null 
         for (const token of tokens) {
             if (token === 'sla_breached') {
                 if (!selected.includes('sla_breached')) selected.push('sla_breached');
+            } else if (token === 'vendor_tagged') {
+                if (!selected.includes('vendor_tagged')) selected.push('vendor_tagged');
             } else if (token === 'internal') {
                 if (!selected.includes('internal')) selected.push('internal');
             } else if (token === 'tenant_raised') {
@@ -196,7 +200,7 @@ function MultiSelectStatusDropdown({
                 onClick={() => setOpen(p => !p)}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary bg-primary/5' : 'border-slate-300 text-slate-700'}`}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-full hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary bg-primary/5' : 'border-slate-300 text-slate-700'}`}
             >
                 <span>{buttonLabel}</span>
                 {isActive && (
@@ -214,7 +218,7 @@ function MultiSelectStatusDropdown({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 4, scale: 0.97 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[220px] max-w-[280px] bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-2"
+                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[220px] max-w-[280px] bg-white border border-slate-200 rounded-[20px] shadow-xl overflow-hidden p-2"
                     >
                         <div className="flex items-center justify-between px-2 py-1.5 border-b border-slate-100 text-xs font-semibold text-slate-500">
                             <span>Filter Status</span>
@@ -399,6 +403,8 @@ interface Ticket {
     photo_before_url?: string;
     photo_after_url?: string;
     sla_deadline?: string | null;
+    sla_paused?: boolean;
+    sla_pause_reason?: string | null;
     internal?: boolean;
     ticket_escalation_logs?: { from_level: number; to_level: number | null; escalated_at: string; from_employee?: { full_name: string; user_photo_url?: string | null } | null; to_employee?: { full_name: string; user_photo_url?: string | null } | null }[];
 }
@@ -569,13 +575,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
         // Status & Special flags URL syncing
         setOrDelete('slaBreached', selectedStatuses.includes('sla_breached') ? 'true' : '', '');
+        setOrDelete('vendorTagged', selectedStatuses.includes('vendor_tagged') ? 'true' : '', '');
         setOrDelete('isInternal', selectedStatuses.includes('internal') ? 'true' : '', '');
         setOrDelete('raisedByRole', selectedStatuses.includes('tenant_raised') ? 'tenant' : '', '');
         setOrDelete('materialsRequired', selectedStatuses.includes('materials_required') ? 'true' : '', '');
 
         const statusVals: string[] = [];
         for (const s of selectedStatuses) {
-            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+            if (!['sla_breached', 'vendor_tagged', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
                 statusVals.push(...s.split(',').map(x => x.trim()));
             }
         }
@@ -662,13 +669,14 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         const params = new URLSearchParams();
 
         if (selectedStatuses.includes('sla_breached')) params.set('slaBreached', 'true');
+        if (selectedStatuses.includes('vendor_tagged')) params.set('vendorTagged', 'true');
         if (selectedStatuses.includes('materials_required')) params.set('materialsRequired', 'true');
         if (selectedStatuses.includes('tenant_raised')) params.set('raisedByRole', 'tenant');
         if (selectedStatuses.includes('internal')) params.set('isInternal', 'true');
 
         const statusValues: string[] = [];
         for (const s of selectedStatuses) {
-            if (!['sla_breached', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
+            if (!['sla_breached', 'vendor_tagged', 'materials_required', 'tenant_raised', 'internal', 'all'].includes(s)) {
                 statusValues.push(...s.split(',').map(x => x.trim()));
             }
         }
@@ -977,6 +985,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
         { value: 'waitlist', label: 'Waitlist', group: 'status' },
         { value: 'resolved,closed,pending_validation', label: 'Completed', group: 'status' },
         { value: 'sla_breached', label: 'SLA breached', group: 'flag' },
+        { value: 'vendor_tagged', label: 'Vendor tagged', group: 'flag' },
         { value: 'materials_required', label: isHighAdmin ? 'Material requested' : 'Material assigned', group: 'flag' },
         { value: 'tenant_raised', label: 'Client raised', group: 'flag' },
         { value: 'internal', label: 'Internal', group: 'flag' },
@@ -1002,7 +1011,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const flowMapButton = showFlowMap && (
         <button
             onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
-            className="flex h-10 shrink-0 items-center justify-center gap-[8px] rounded-[12px] border border-secondary/20 bg-secondary/10 px-3.5 text-sm font-bold text-secondary transition-colors hover:bg-secondary/20"
+            className="flex h-10 shrink-0 items-center justify-center gap-[8px] rounded-full border border-secondary/20 bg-secondary/10 px-3.5 text-sm font-bold text-secondary transition-colors hover:bg-secondary/20"
             title="View Operational Flow Map"
         >
             <Activity className="h-4 w-4" /> <span className="whitespace-nowrap">Live Flow Map</span>
@@ -1012,7 +1021,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const newRequestButton = onNewRequest && (
         <button
             onClick={onNewRequest}
-            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#56737a] px-4 text-sm font-bold text-white transition-colors hover:bg-[#4a646a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56737a] focus-visible:ring-offset-2"
+            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-[#56737a] px-4 text-sm font-bold text-white transition-colors hover:bg-[#4a646a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56737a] focus-visible:ring-offset-2"
         >
             <Plus className="h-4 w-4" strokeWidth={2.5} /> <span className="whitespace-nowrap">New request</span>
         </button>
@@ -1044,10 +1053,10 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Search by ticket ID"
                             aria-label="Search by ticket ID"
-                            className="h-11 w-full rounded-[12px] border border-gray-300 bg-white pl-10 pr-10 text-base text-gray-900 placeholder:text-gray-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                            className="h-11 w-full rounded-full border border-gray-300 bg-white pl-10 pr-10 text-base text-gray-900 placeholder:text-gray-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                         />
                         {searchQuery && (
-                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-[8px] text-gray-500 hover:text-gray-900">
+                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full text-gray-500 hover:text-gray-900">
                                 <X className="h-4 w-4" />
                             </button>
                         )}
@@ -1058,7 +1067,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         onClick={() => setFiltersOpen(true)}
                         aria-haspopup="dialog"
                         aria-expanded={filtersOpen}
-                        className="flex h-11 shrink-0 items-center gap-[8px] rounded-[12px] border border-gray-300 bg-white px-3.5 text-[15px] font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                        className="flex h-11 shrink-0 items-center gap-[8px] rounded-full border border-gray-300 bg-white px-3.5 text-[15px] font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                     >
                         <SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden="true" />
                         Filters
@@ -1090,7 +1099,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Search by ticket ID"
                             aria-label="Search by ticket ID"
-                            className="h-10 w-56 rounded-[12px] border border-slate-300 bg-white pl-9 pr-8 text-sm text-slate-900 placeholder:text-slate-500 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="h-10 w-56 rounded-full border border-slate-300 bg-white pl-9 pr-8 text-sm text-slate-900 placeholder:text-slate-500 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         {searchQuery && (
                             <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900">
@@ -1117,7 +1126,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         aria-label="Team"
-                        className="h-10 rounded-[12px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="h-10 rounded-full border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                     >
                         {TEAM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
@@ -1130,7 +1139,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     />
 
                     {/* Date From */}
-                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateFrom ? 'border-primary/50' : 'border-slate-300'}`}>
+                    <div className={`flex h-10 items-center gap-[8px] rounded-full border bg-white px-3 transition-colors hover:border-slate-400 ${dateFrom ? 'border-primary/50' : 'border-slate-300'}`}>
                         <Calendar className={`h-4 w-4 shrink-0 ${dateFrom ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
                         <input
                             type="date"
@@ -1142,7 +1151,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     </div>
 
                     {/* Date To */}
-                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateTo ? 'border-primary/50' : 'border-slate-300'}`}>
+                    <div className={`flex h-10 items-center gap-[8px] rounded-full border bg-white px-3 transition-colors hover:border-slate-400 ${dateTo ? 'border-primary/50' : 'border-slate-300'}`}>
                         <Calendar className={`h-4 w-4 shrink-0 ${dateTo ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
                         <input
                             type="date"
@@ -1155,7 +1164,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
                     {/* Raised By User Filter */}
                     {!propertyId ? (
-                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-full border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
                             <User className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span>Raised by: pick a property</span>
                         </div>
@@ -1173,7 +1182,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
                     {/* Assigned To Filter (hidden in the IT console's assignee-only view) */}
                     {lockedAssigneeId ? null : !propertyId ? (
-                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-full border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
                             <User className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span>Assigned to: pick a property</span>
                         </div>
@@ -1203,7 +1212,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     {hasActiveFilters && (
                         <button
                             onClick={clearFilters}
-                            className="h-10 rounded-[12px] border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50"
+                            className="h-10 rounded-full border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50"
                         >
                             Clear filters
                         </button>
@@ -1268,7 +1277,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         <p id="tickets-filter-dates" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Dates</p>
                         <div className="flex gap-[8px]">
                             {([['From', dateFrom, setDateFrom], ['To', dateTo, setDateTo]] as const).map(([label, val, set]) => (
-                                <div key={label} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 rounded-[12px] border border-gray-300 px-2.5 focus-within:ring-2 focus-within:ring-blue-600">
+                                <div key={label} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-gray-300 px-2.5 focus-within:ring-2 focus-within:ring-blue-600">
                                     <span className="shrink-0 text-sm text-gray-600">{label}</span>
                                     <input
                                         type="date"
@@ -1367,9 +1376,13 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     assignedTo={ticket.assignee?.full_name}
                                     assigneePhotoUrl={ticket.assignee?.user_photo_url}
                                     photoUrl={ticket.photo_before_url}
-                                    propertyName={ticket.property?.name}
+                                    // Owner 2026-11-20: one property chosen, so its name on every card adds nothing.
+                                    propertyName={propertyId ? undefined : ticket.property?.name}
+                                    workPaused={['paused', 'blocked'].includes(ticket.status)}
                                     slaDeadline={ticket.sla_deadline}
                                     slaBreached={ticket.sla_breached}
+                                    slaPaused={ticket.sla_paused}
+                                    slaPauseReason={ticket.sla_pause_reason}
                                     escalationChain={(() => {
 
                                         const logs = ticket.ticket_escalation_logs;
@@ -1388,6 +1401,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     onEdit={canEditTicket(ticket) ? (e) => handleEditClick(e, ticket) : undefined}
                                     onDelete={canDelete ? (e) => handleDelete(e, ticket.id) : undefined}
                                     hasMaterialRequest={Boolean((ticket.material_requests?.length ?? 0) > 0)}
+                                    isVendorTagged={Boolean(ticket.needs_vendor_procurement)}
                                 />
                             </div>
                         ))}

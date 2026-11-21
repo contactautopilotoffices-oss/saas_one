@@ -9,7 +9,7 @@ import { checkRateLimit } from '@/frontend/utils/rate-limiter';
 import { loadActor } from '../../scope';
 import { liveTurnDeps, loadAliases, loadBrainSettings, recordTurn, supabaseAttachmentStore, supabaseThreadStore, sweepBrain } from '../server';
 import { stageInbound } from './media';
-import { sendBrainReply } from './send';
+import { sendBrainReply, sendBrainReplyTracked } from './send';
 import { claimBrain, type BrainClaim, type BrainInbound, type BrainPerson, type BrainWhatsAppDeps } from './whatsapp';
 
 async function orgsForUser(userId: string): Promise<string[]> {
@@ -89,6 +89,18 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         },
         loadThread: (orgId, userId, shadow) => threads.load(orgId, userId, shadow),
         saveThread: (orgId, userId, shadow, state) => threads.save(orgId, userId, shadow, state),
+        saveThreadIf: (orgId, userId, shadow, state, expectedRev) => threads.saveIf(orgId, userId, shadow, state, expectedRev),
+        // Batching (2026-11-18): the inbox Smart chat already uses. Switch: AI_BRAIN_BATCHING=false turns it off.
+        async batch(input) {
+            if (process.env.AI_BRAIN_BATCHING === 'false') return { kind: 'unavailable' };
+            const { collectBatch, defaultInboxIO, inboxMaybeAvailable } = await import('@/task-manager/SmartChatInbox');
+            if (!inboxMaybeAvailable()) return { kind: 'unavailable' };
+            return collectBatch({ phone: input.phone, messageId: input.messageId, text: input.text, io: await defaultInboxIO() });
+        },
+        async finishBatch(token) {
+            const { defaultInboxIO } = await import('@/task-manager/SmartChatInbox');
+            await (await defaultInboxIO()).finish(token);
+        },
         listOpenFiles: (orgId, userId) => files.listOpen(orgId, userId),
         async stage(input) {
             const { fetchMediaSafely, sniffKind } = await import('@/task-manager/TaskImportInbound');
@@ -105,6 +117,17 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         }),
         record: r => recordTurn(supabaseAdmin, { ...r, channel: 'whatsapp' }),
         sendReply: (phone, text) => sendBrainReply(phone, text),
+        sendReplyTracked: (phone, text) => sendBrainReplyTracked(phone, text),
+        // 2026-11-18 task engine: the task assistant itself answers the task words of a mixed message, with its own
+        // rules (confirm, undo, wording, team settings); its replies to this person are handed back, not sent.
+        async askTaskAssistant(input) {
+            const { bodyWithText, claimSmartChat } = await import('@/task-manager/brain/live');
+            const replies: string[] = [];
+            const claim = await claimSmartChat(bodyWithText(null, input.phone, input.messageId, input.text), undefined, { noBatch: true, capture: t => { replies.push(t); } });
+            if (!claim.handled) return { taken: false, replies: [] };
+            await claim.background?.();
+            return { taken: true, replies };
+        },
         sweep: (orgId, settings) => sweepBrain(supabaseAdmin, orgId, settings),
         seenBefore: id => { const at = taken.get(id); return at !== undefined && Date.now() - at < TAKEN_MS; },
         markSeen: id => { if (taken.size > 5000) taken.clear(); taken.set(id, Date.now()); },

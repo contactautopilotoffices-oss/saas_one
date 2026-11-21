@@ -48,3 +48,27 @@ export function geminiLlm(key: string | null = geminiKey(), timeoutMs = 45_000):
         },
     };
 }
+
+/** Image types Gemini accepts inline, and the inline request limit we keep under (base64 is ~4/3 of this). */
+const GEMINI_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+const GEMINI_IMAGE_MAX_BYTES = 3_750_000;
+
+/**
+ * Owner 2026-11-19: read one image with Gemini (ticket photos, backend/lib/ticketing/ticketPhoto.ts), so a Gemini Flash
+ * model can be chosen for "Reading ticket photos" in Brain → AI models. The shared Gemini keys in turn, like geminiLlm;
+ * never logged. Throws on any problem (no key, wrong type, too big, error, empty), so the caller moves on to its backup.
+ */
+export async function geminiVision(input: { model: string; image: Buffer; mimeType: string; instruction: string; maxTokens: number; timeoutMs: number }): Promise<{ text: string; tokensIn: number; tokensOut: number }> {
+    if (!geminiKeys().length) throw new Error('GEMINI_API_KEY is not set');
+    const mime = input.mimeType.toLowerCase().split(';')[0].trim();
+    if (!GEMINI_IMAGE_TYPES.has(mime)) throw new Error(`Gemini cannot read ${mime || 'this file type'}`);
+    if (input.image.length > GEMINI_IMAGE_MAX_BYTES) throw new Error('the image is too large for Gemini');
+    const thinkingOff = /^gemini-2\.5-flash/.test(input.model) ? { thinkingConfig: { thinkingBudget: 0 } } : {};
+    const res = await withProviderKeys('gemini', k => new GoogleGenerativeAI(k)
+        .getGenerativeModel({ model: input.model, generationConfig: { maxOutputTokens: input.maxTokens, responseMimeType: 'application/json', ...thinkingOff } as GenerationConfig }, { timeout: input.timeoutMs })
+        .generateContent([{ inlineData: { data: input.image.toString('base64'), mimeType: mime } }, { text: input.instruction }]));
+    const text = res.response.text();
+    if (!text || !text.trim()) throw new Error(`${input.model}: empty reply`);
+    const u = res.response.usageMetadata;
+    return { text, tokensIn: u?.promptTokenCount ?? 0, tokensOut: u?.candidatesTokenCount ?? 0 };
+}

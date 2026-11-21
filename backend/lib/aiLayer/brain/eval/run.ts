@@ -36,7 +36,7 @@ const FIXTURES: Record<Fixture, (data: EvalData, who: { propertyIds: string[] })
     ticket_of_other: d => { d.tickets.push(ticket({ id: '77777777-7777-4777-8777-777777777555', number: 'TKT-555', title: 'Projector not working in Huddle 2', raisedBy: OTHER_USER, assignedTo: null, category: 'IT' })); },
     ticket_assigned: d => { d.tickets.push(ticket({ id: '77777777-7777-4777-8777-777777777301', number: 'TKT-301', title: 'Replace tube light, 2nd floor', raisedBy: OTHER_USER, assignedTo: USER, category: 'Electrical' })); },
     room_taken: d => { d.taken.add(ROOM_A); },
-    booking: d => { d.bookings.push({ id: 'b0000000-0000-4000-8000-000000000001', roomName: 'Board Room', propertyId: ANDHERI, date: '2026-11-05', startTime: '15:00', endTime: '16:00', status: 'confirmed' }); },
+    booking: d => { d.bookings.push({ id: 'b0000000-0000-4000-8000-000000000001', roomName: 'Board Room', propertyId: ANDHERI, date: '2026-11-05', startTime: '15:00', endTime: '16:00', status: 'confirmed', roomId: ROOM_A }); },
     memory_room: d => { d.memory.push(fact('preferred_room', 'Board Room')); },
     memory_floor: d => { d.memory.push(fact('usual_location', '3rd floor, cabin 304')); },
     episode: d => { d.episodes.push({ at: '2026-10-28T06:00:00Z', summary: "Raised ticket TKT-88 'Printer jam' at Work Square Andheri" }); },

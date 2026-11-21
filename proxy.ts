@@ -70,6 +70,17 @@ function applySecurityHeaders(res: NextResponse): NextResponse {
     return res;
 }
 
+/**
+ * Copies the Supabase session cookies that getUser() may have just renewed (written onto `from` by setAll below)
+ * onto a redirect/rewrite response we build ourselves. Without this the renewed tokens are dropped, the browser keeps
+ * a refresh token the server has already spent, browser and server disagree about the login, and the page keeps
+ * bouncing/reloading until site data is cleared. Supabase docs: copy the cookies onto any new response object.
+ */
+function withSessionCookies(from: NextResponse, to: NextResponse): NextResponse {
+    from.cookies.getAll().forEach((cookie) => to.cookies.set(cookie));
+    return to;
+}
+
 export async function proxy(request: NextRequest) {
     const pathname = request.nextUrl.pathname
 
@@ -143,6 +154,8 @@ export async function proxy(request: NextRequest) {
                        // startsWith, and a bare '/a' would also unlock /<orgId>/... for any
                        // org id beginning with "a".
         '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
+        '/guest/',     // Meeting Assistant guest links (/guest/<secret>) — people without a login ask to join an
+                       // online meeting; staff let them in (stage 2, owner 2026-11-18). Keep the trailing slash.
         '/api',        // API routes handle their own auth
         '/.well-known/oauth-protected-resource', // MCP sign-in discovery (RFC 9728); public metadata, no data
         '/kiosk',
@@ -219,14 +232,14 @@ export async function proxy(request: NextRequest) {
         const loginUrl = new URL('/login', request.url)
         const fullPath = request.nextUrl.pathname + request.nextUrl.search
         loginUrl.searchParams.set('redirect', fullPath)
-        return NextResponse.redirect(loginUrl)
+        return withSessionCookies(response, NextResponse.redirect(loginUrl))
     }
 
     // If user is authenticated and tries to access login/signup, redirect to home
     if (user && (pathname === '/login' || pathname === '/signup')) {
         const mode = request.nextUrl.searchParams.get('mode')
         if (!mode) {
-            return NextResponse.redirect(new URL('/', request.url))
+            return withSessionCookies(response, NextResponse.redirect(new URL('/', request.url)))
         }
     }
 
@@ -250,7 +263,7 @@ export async function proxy(request: NextRequest) {
 
         if (orgId) {
             const rewriteUrl = new URL(`/${orgId}${pathname}${request.nextUrl.search}`, request.url);
-            const rewriteResponse = applySecurityHeaders(NextResponse.rewrite(rewriteUrl, { request }));
+            const rewriteResponse = withSessionCookies(response, applySecurityHeaders(NextResponse.rewrite(rewriteUrl, { request })));
             rewriteResponse.cookies.set('saas_org_id', orgId, { path: '/', maxAge: 2592000, sameSite: 'lax' });
             return rewriteResponse;
         }

@@ -291,20 +291,27 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
 
     // SLA helpers
     const slaDeadline = parseDate(ticket?.sla_deadline as string);
-    const resolvedAt = parseDate(ticket?.resolved_at as string);
     // Normalize status for comparison
     const normalizedTicketStatus = (ticket?.status as string || '').toLowerCase().replace(/\s+/g, '_');
-    const isResolved = ['resolved', 'closed'].includes(normalizedTicketStatus);
+    const isResolved = ['resolved', 'closed', 'completed'].includes(normalizedTicketStatus);
     const isPendingValidation = normalizedTicketStatus === 'pending_validation';
+    const resolvedAt = parseDate(ticket?.resolved_at as string) || (isResolved ? parseDate(ticket?.updated_at as string) : null);
 
     // For pending_validation, work is done by our side - show resolution info
     // For resolved/closed, use resolved time. For active tickets, use current time.
     const referenceTime = isResolved && resolvedAt ? resolvedAt : (isPendingValidation ? (resolvedAt || new Date()) : new Date());
 
     // SLA is only "active" for open/assigned/in_progress tickets
-    // For pending_validation, show that MST side has completed
-    const isSLABreached = Boolean(ticket?.sla_breached) || (slaDeadline !== null && slaDeadline < referenceTime && !isPendingValidation);
-    const breachMs = slaDeadline && isSLABreached ? referenceTime.getTime() - slaDeadline.getTime() : 0;
+    const isSLABreached = Boolean(ticket?.sla_breached) || (
+        slaDeadline !== null && (
+            isResolved && resolvedAt
+                ? resolvedAt.getTime() > slaDeadline.getTime()
+                : !isPendingValidation && !isResolved && referenceTime.getTime() > slaDeadline.getTime()
+        )
+    );
+    const breachMs = slaDeadline && isSLABreached && referenceTime.getTime() > slaDeadline.getTime()
+        ? referenceTime.getTime() - slaDeadline.getTime()
+        : 0;
 
     const formatDuration = (ms: number): string => {
         const totalMins = Math.floor(ms / 60000);
@@ -478,6 +485,28 @@ export default function TicketDetail({ ticketId, onBack, isAdmin = false }: Tick
                         </div>
                         <span className="text-[10px] uppercase font-bold tracking-wider opacity-75 whitespace-nowrap">
                             {ticket.vendor_procurement_status === 'vendor_arranged' ? 'Arranged' : 'Pending Vendor'}
+                        </span>
+                    </div>
+                )}
+
+                {/* SLA Paused Banner */}
+                {Boolean(ticket.sla_paused) && (
+                    <div className="border border-amber-500/30 bg-amber-500/10 rounded-xl p-4 flex items-center justify-between gap-4 text-amber-300">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 rounded-lg bg-amber-500/20">
+                                <Pause className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <span className="font-bold text-sm">
+                                    ⏸️ SLA Timer Paused {ticket.sla_pause_reason ? `— ${ticket.sla_pause_reason}` : ''}
+                                </span>
+                                <p className="text-xs mt-0.5 text-gray-300">
+                                    Target SLA deadline will automatically extend when materials are delivered or vendor is arranged.
+                                </p>
+                            </div>
+                        </div>
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 whitespace-nowrap">
+                            Paused
                         </span>
                     </div>
                 )}

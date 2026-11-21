@@ -13,6 +13,10 @@
 
 **Outreach (16 Nov 2026, owner: "ok to send WhatsApp messages for this demo").** Built: the WhatsApp update to the candidate after Shortlisted / Rejected (the pipeline's prompt and the panel's "Send update"), two Meta templates to approve (`docs/whatsapp_templates_hr.md` §1b), migration `20261116000003` (`candidate_outreach` + the `outreach_sent` history action, to be applied by a person), the checks (blacklist, phone, once per position, role) and the history entry. Candidates only receive; the footer says not to reply. Hiring-manager and recruiter notifications stay in §6.
 
+**16 Nov 2026, later.** Owner asks after the first look: the module marked **Beta**; a **"Search for"** dropdown in Search (a saved position with its JD, or a role people were sourced for); and **"already in the database"** (owner: keep and flag, sheets too, the source dropdown optional): a vendor's resume or sheet row for a person the team already had is kept, flagged on the file / row and in the person's history with where the copy came from and how the person was first sourced, with a filter and an export for vendor disputes. Migration `20261116000004` (to be applied by a person) also fixes the permanent deletes, which the insert-only history had been refusing. Details: `docs/features/candidate_search.md`.
+
+**16 Nov 2026, the position as a job record.** Owner, after pasting a long JD: "only 3 parameters were extracted … this is definitely not how a tier 1 company would work"; the reader had in fact found 11, but a position was only a saved search, with nowhere for the job's own details. Built (owner: "go ahead with the create position form, no approvals for now"): the **Create / Edit position form** with the JD, the basics, the requirements and a summary, filled from the JD by two readers and checked by HR; migration `20261116000005` (to be applied by a person). "Search for" now lists only the positions created there. Requisition approval (§6 Phase 1) stays out for now.
+
 ---
 
 ## 1. What the meeting decided (and how it shapes this plan)

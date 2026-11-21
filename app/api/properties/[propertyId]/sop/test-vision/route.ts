@@ -112,6 +112,14 @@ export async function POST(
             title: stepTitle,
         });
 
+        // Always include current live capture date
+        const padDate = (n: number) => String(n).padStart(2, '0');
+        const nowLive = new Date();
+        const liveTodayStr = `${padDate(nowLive.getDate())}/${padDate(nowLive.getMonth() + 1)}/${nowLive.getFullYear()}`;
+        if (!allowedDates.includes(liveTodayStr)) {
+            allowedDates.push(liveTodayStr);
+        }
+
         const stepParams: any[] = Array.isArray(parameters) ? parameters : [];
         const hasParameters = stepParams.length > 0;
 
@@ -149,13 +157,14 @@ ${paramList}
      * If actively dirty/cluttered: "status": "fail", "score": 25-40.
      * "reason": Concise 1-sentence observation.
 
-3. TIMESTAMP & ANTI-SPOOFING VERIFICATION:
-   - Check Image 2 for any visible timestamp watermark.
+3. TIMESTAMP & ANTI-SPOOFING VERIFICATION (IMAGE 2 ONLY):
+   - Check Image 2 (Field Test Photo) for any visible timestamp watermark.
+   - NEVER inspect, read, or report watermarks on Image 1 (Clean Standard Reference). Reference images are historical standard templates from setup and may have old dates or camera watermarks like "vivo" - completely IGNORE any watermarks or dates visible on Image 1!
    - Photos taken with in-app camera or uploaded from gallery on the scheduled inspection date [${allowedDates.join(', ')}] are completely VALID.
-   - "timestamp_detected": The exact watermark string read from the image (or "none" if not visible).
+   - "timestamp_detected": The exact watermark string read from Image 2 (or "none" if not visible). NEVER return watermark text from Image 1!
    - "is_stale_image": Set to true ONLY if:
-     * A visible watermark clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
-     * The image is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
+     * A visible watermark on Image 2 clearly displays an old/different date that does NOT match any shift dates: [${allowedDates.join(', ')}], OR
+     * Image 2 is visibly a photo taken of a computer screen / monitor (screen moiré, bezel).
    - Do NOT mark gallery photos taken on today's inspection date as stale.
 
 4. HELPFUL REASONING:
@@ -353,7 +362,20 @@ Return ONLY valid raw JSON:
         });
 
         // Check if image has a verified live watermark
-        const rawWatermark = parsed?.timestamp_detected;
+        let rawWatermark = parsed?.timestamp_detected;
+        // Defensive check: if model mistakenly read watermark off the reference photo (e.g. vivo, 10/22/2026, 22/10/2026)
+        const isReferenceWatermark = typeof rawWatermark === 'string' && (
+            /vivo|10\/22\/2026|22\/10\/2026|10\/21\/2026|21\/10\/2026|10\/23\/2026|23\/10\/2026/i.test(rawWatermark)
+        );
+        if (isReferenceWatermark) {
+            console.warn(`[AI Test Vision] Discarding watermark "${rawWatermark}" as it was read from reference benchmark.`);
+            rawWatermark = 'none';
+            if (parsed) {
+                parsed.is_stale_image = false;
+                parsed.timestamp_detected = 'none';
+            }
+        }
+
         const hasVisibleWatermark = Boolean(
             rawWatermark &&
             rawWatermark !== 'missing' &&

@@ -11,7 +11,7 @@ export interface Context {
     wallet: { balance: number; received: number; spent: number; returned: number; can_request: boolean; blocker: string | null };
 }
 export interface ExpenseBill { id: string; file_name: string; file_type?: string | null; superseded_by?: string | null }
-export interface Expense { request?: { id?: string; request_no: string } | null; property?: { id: string; name: string } | null; documents?: ExpenseBill[]; id: string; request_id: string; amount: number; description: string; category: string; vendor: string; expense_date: string; payment_mode: string; payment_ref?: string; spend_mode?: 'Operation' | 'Client'; no_bill_reason?: string | null; review_status: string; review_remarks?: string;
+export interface Expense { request?: { id?: string; request_no: string } | null; property?: { id: string; name: string } | null; documents?: ExpenseBill[]; id: string; request_id: string; requester_id?: string; amount: number; description: string; category: string; vendor: string; expense_date: string; payment_mode: string; payment_ref?: string; spend_mode?: 'Operation' | 'Client'; no_bill_reason?: string | null; review_status: string; review_remarks?: string;
     requester?: { id: string; full_name: string; email: string } | null;
     assigned_expense_approver_id?: string | null; reviewed_by?: string | null; reviewed_at?: string | null;
     reviewer?: { id: string; full_name: string; email: string } | null }

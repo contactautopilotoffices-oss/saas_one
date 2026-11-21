@@ -325,6 +325,30 @@ const OrgAdminDashboard = () => {
         ? null
         : properties.find(p => p.id === selectedPropertyId);
 
+    // Property search state for dropdown
+    const [propertySearchQuery, setPropertySearchQuery] = useState('');
+    const propertySearchInputRef = useRef<HTMLInputElement>(null);
+
+    // Auto-focus search input when property selector opens, reset on close
+    useEffect(() => {
+        if (isSelectorOpen) {
+            setTimeout(() => propertySearchInputRef.current?.focus(), 50);
+        } else {
+            setPropertySearchQuery('');
+        }
+    }, [isSelectorOpen]);
+
+    const filteredProperties = useMemo(() => {
+        if (!propertySearchQuery.trim()) return properties;
+        const q = propertySearchQuery.toLowerCase().trim();
+        return properties.filter(p =>
+            (p.name && p.name.toLowerCase().includes(q)) ||
+            (p.code && p.code.toLowerCase().includes(q))
+        );
+    }, [properties, propertySearchQuery]);
+
+    const showAllOption = !propertySearchQuery.trim() || 'all properties'.includes(propertySearchQuery.toLowerCase().trim());
+
     // Property selector pill + dropdown — shared between the per-tab header and the
     // Dashboard/Overview header, so both scope the same way and never drift apart.
     const renderPropertySelector = () => properties.length > 0 && (
@@ -357,42 +381,102 @@ const OrgAdminDashboard = () => {
                             initial={{ opacity: 0, y: 10, scale: 0.95 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute right-0 mt-2 w-72 bg-surface-elevated rounded-2xl shadow-2xl border border-border z-[70] overflow-hidden"
+                            className="absolute right-0 mt-2 w-80 bg-surface-elevated rounded-2xl shadow-2xl border border-border z-[70] overflow-hidden"
                         >
-                            <div className="p-2 border-b border-border">
-                                <button
-                                    onClick={() => { handlePropertyChange('all'); setIsSelectorOpen(false); }}
-                                    className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
-                                >
-                                    <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center">
-                                        <LayoutDashboard className="w-4 h-4" />
-                                    </div>
-                                    <div className="text-left">
-                                        <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
-                                        <p className="text-[10px] text-text-tertiary font-body font-medium">{properties.length} Locations</p>
-                                    </div>
-                                </button>
+                            {/* Search Header */}
+                            <div className="p-3 bg-surface-elevated border-b border-border space-y-2">
+                                <div className="flex items-center justify-between px-1">
+                                    <span className="text-[10px] font-black uppercase tracking-widest text-text-tertiary">Select Property</span>
+                                    <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                        {properties.length} total
+                                    </span>
+                                </div>
+                                <div className="relative">
+                                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary" />
+                                    <input
+                                        ref={propertySearchInputRef}
+                                        type="text"
+                                        placeholder={`Search ${properties.length} properties...`}
+                                        value={propertySearchQuery}
+                                        onChange={(e) => setPropertySearchQuery(e.target.value)}
+                                        className="w-full pl-8 pr-7 py-1.5 bg-background border border-border rounded-xl text-xs font-semibold text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                                    />
+                                    {propertySearchQuery && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setPropertySearchQuery('')}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            <div className="max-h-64 overflow-y-auto p-2 space-y-1">
-                                {properties.map(prop => (
+
+                            {/* All Properties Option */}
+                            {showAllOption && (
+                                <div className="p-2 border-b border-border">
                                     <button
-                                        key={prop.id}
-                                        onClick={() => { handlePropertyChange(prop.id); setIsSelectorOpen(false); }}
-                                        className={`w-full flex items-center gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === prop.id ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                        onClick={() => { handlePropertyChange('all'); setIsSelectorOpen(false); }}
+                                        className={`w-full flex items-center justify-between gap-3 p-2 rounded-xl transition-colors ${selectedPropertyId === 'all' ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
                                     >
-                                        <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center overflow-hidden">
-                                            {prop.image_url ? (
-                                                <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
-                                            ) : (
-                                                <Building2 className="w-4 h-4 text-slate-400" />
-                                            )}
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-background flex items-center justify-center">
+                                                <LayoutDashboard className="w-4 h-4" />
+                                            </div>
+                                            <div className="text-left">
+                                                <p className="text-xs font-black uppercase tracking-tight">All Properties</p>
+                                                <p className="text-[10px] text-text-tertiary font-body font-medium">{properties.length} Locations</p>
+                                            </div>
                                         </div>
-                                        <div className="text-left overflow-hidden">
-                                            <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
-                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{prop.code}</p>
-                                        </div>
+                                        {selectedPropertyId === 'all' && (
+                                            <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center mr-1">
+                                                <Check className="w-3 h-3 text-text-inverse font-bold" />
+                                            </div>
+                                        )}
                                     </button>
-                                ))}
+                                </div>
+                            )}
+
+                            {/* Property List */}
+                            <div className="max-h-72 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+                                {filteredProperties.length === 0 ? (
+                                    <div className="p-4 text-center text-xs font-semibold text-text-tertiary">
+                                        No properties match &quot;{propertySearchQuery}&quot;
+                                    </div>
+                                ) : (
+                                    filteredProperties.map(prop => {
+                                        const isSelected = selectedPropertyId === prop.id;
+                                        return (
+                                            <button
+                                                key={prop.id}
+                                                onClick={() => { handlePropertyChange(prop.id); setIsSelectorOpen(false); }}
+                                                className={`w-full flex items-center justify-between gap-3 p-2 rounded-xl transition-colors ${isSelected ? 'bg-primary text-text-inverse' : 'text-text-secondary hover:bg-background'}`}
+                                            >
+                                                <div className="flex items-center gap-3 min-w-0">
+                                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0 ${isSelected ? 'bg-white/20' : 'bg-background'}`}>
+                                                        {prop.image_url ? (
+                                                            <img src={prop.image_url} alt="" className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <Building2 className={`w-4 h-4 ${isSelected ? 'text-text-inverse' : 'text-text-tertiary'}`} />
+                                                        )}
+                                                    </div>
+                                                    <div className="text-left overflow-hidden min-w-0">
+                                                        <p className="text-xs font-black uppercase tracking-tight truncate">{prop.name}</p>
+                                                        {prop.code && (
+                                                            <p className={`text-[10px] font-bold uppercase tracking-widest ${isSelected ? 'text-text-inverse/80' : 'text-text-tertiary'}`}>{prop.code}</p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {isSelected && (
+                                                    <div className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center mr-1 flex-shrink-0">
+                                                        <Check className="w-3 h-3 text-text-inverse font-bold" />
+                                                    </div>
+                                                )}
+                                            </button>
+                                        );
+                                    })
+                                )}
                             </div>
                         </motion.div>
                     </>

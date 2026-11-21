@@ -2,15 +2,16 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, Download, FileText, Loader2, Lock, MessageCircle, Mic, Pencil, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, X,
+    AlertTriangle, ArrowLeft, AudioLines, Check, CheckCircle2, ChevronDown, Circle, CircleHelp, Copy, Download, FileText, Link2, Loader2, Lock, MessageCircle, Mic, NotebookText, Pencil, PhoneOff, Plus, RotateCcw, Send, Sparkles, Trash2, UserPlus, Video, X,
 } from 'lucide-react';
 import {
-    PROCESSING, STATUS_LABEL, call, clock, meetingUrl, niceDate, type MeetingDetail, type MeetingPerson, type MeetingTask, type MeetingSpace, type SendAs,
+    PROCESSING, STATUS_LABEL, call, clock, joinLink, meetingUrl, niceDate, niceDateTime, type MeetingDetail, type MeetingPerson, type MeetingStatus, type MeetingTask, type MeetingSpace, type SendAs,
 } from './api';
 import { exportPdf, exportWord } from './exportNotes';
 import { SKIP_REASON_TEXT } from '../voice/voiceApi';
 import PendingUploads from './PendingUploads';
 import AttendeesEditor from './AttendeesEditor';
+import GuestPanel from './GuestPanel';
 import { forgetMeeting } from './pieceStore';
 
 /**
@@ -22,6 +23,12 @@ import { forgetMeeting } from './pieceStore';
 type Data = { meeting: MeetingDetail; tasks: MeetingTask[]; people: MeetingPerson[]; me: { name: string; department: string } };
 const IN_MEETING = 'In this meeting';
 const POLL_MS = 4_000;
+/**
+ * How soon to ask again: while processing, and (owner 2026-11-18) while an online call is live, every few seconds; a
+ * scheduled online meeting a little more slowly, to notice when someone joins or a guest is waiting (stage 2);
+ * anything else not at all.
+ */
+const pollDelay = (status: MeetingStatus) => (PROCESSING.includes(status) || status === 'live' ? POLL_MS : status === 'scheduled' ? 6_000 : null);
 const input = 'w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
 export default function MeetingReview({ space, meetingId, people: peopleWithVoice = [], onBack, onContinueRecording }: {
@@ -71,7 +78,8 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
         let timer: ReturnType<typeof setTimeout> | null = null;
         const tick = async () => {
             const status = await load();
-            if (alive.current && status && PROCESSING.includes(status)) timer = setTimeout(tick, POLL_MS);
+            const wait = status ? pollDelay(status) : null;
+            if (alive.current && wait) timer = setTimeout(tick, wait);
         };
         void tick();
         return () => { alive.current = false; if (timer) clearTimeout(timer); };
@@ -281,6 +289,69 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
             )}
             {error && <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">{error}</p>}
 
+            {/* Owner 2026-11-18: an online meeting before or during the call — the link, Join, and End for everyone */}
+            {m.kind === 'online' && m.online && (m.status === 'scheduled' || m.status === 'live') && (
+                <Panel>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        {m.status === 'live' ? (
+                            <span className="flex items-center gap-1.5 text-sm font-black text-red-600 dark:text-red-400">
+                                <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" aria-hidden /> {m.online.endedAt ? 'Call ended: saving the sound for the notes' : 'Live now, sound being recorded'}
+                            </span>
+                        ) : (
+                            <span className="text-sm font-black text-zinc-800 dark:text-zinc-200">{m.scheduledFor ? `Scheduled for ${niceDateTime(m.scheduledFor)}` : 'Ready to start'}</span>
+                        )}
+                        {m.online.joinedCount > 0 && <span className="text-xs font-semibold text-zinc-500">{m.online.joinedCount} {m.online.joinedCount === 1 ? 'person has' : 'people have'} joined</span>}
+                    </div>
+                    {!m.online.endedAt && (
+                        <>
+                            <div className="mt-3 flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-800/60">
+                                <Link2 className="h-4 w-4 shrink-0 text-zinc-400" />
+                                <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-700 dark:text-zinc-300">{joinLink(m.online.joinPath)}</span>
+                                <button type="button"
+                                    onClick={() => { void navigator.clipboard?.writeText(joinLink(m.online!.joinPath)).then(() => setFlash('Link copied. Anyone can use it: people from the team go straight in, others wait until someone lets them in.'), () => setFlash('Could not copy. Select the link and copy it by hand.')); }}
+                                    className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
+                                    <Copy className="h-3.5 w-3.5" /> Copy
+                                </button>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <a href={m.online.joinPath} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black text-white hover:bg-indigo-700">
+                                    <Video className="h-4 w-4" /> Join the call
+                                </a>
+                                {m.mine && (
+                                    <button type="button" disabled={!!busy}
+                                        onClick={() => { if (window.confirm(m.status === 'live' ? 'End the call for everyone? The notes are made from the recording.' : 'Close this meeting? Nobody has joined yet, so there will be no notes.')) void act('end_call', { action: 'end_call' }); }}
+                                        className="flex items-center gap-2 rounded-xl border border-zinc-300 px-4 py-2.5 text-sm font-bold text-zinc-700 hover:bg-red-50 hover:text-red-700 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-red-950/40">
+                                        {busy === 'end_call' ? <Loader2 className="h-4 w-4 animate-spin" /> : <PhoneOff className="h-4 w-4" />} {m.status === 'live' ? 'End for everyone' : 'Close meeting'}
+                                    </button>
+                                )}
+                            </div>
+                            {/* Stage 2: the people waiting to be let in (the one link above is for everyone) */}
+                            {m.online.guests && (
+                                <div className="mt-3">
+                                    <GuestPanel guests={m.online.guests} onAction={async body => {
+                                        const r = await call(meetingUrl(meetingId, space), body);
+                                        if (!r.ok) return r.error;
+                                        await load();
+                                        return null;
+                                    }} />
+                                </div>
+                            )}
+                        </>
+                    )}
+                    {m.online.problem && (
+                        <p className="mt-3 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {m.online.problem}
+                        </p>
+                    )}
+                    <p className="mt-3 text-xs text-zinc-500">
+                        {m.online.endedAt
+                            ? 'The notes start by themselves as soon as the recording is saved. You can close this page.'
+                            : 'Share the link with the people you picked. When the call ends, the notes are made by themselves.'}
+                    </p>
+                </Panel>
+            )}
+
             {/* Still recording (e.g. the page was reloaded) */}
             {m.status === 'recording' && (
                 <>
@@ -341,24 +412,28 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
             {/* Ready */}
             {m.status === 'ready' && m.summary && (
                 <>
-                    <Panel title="Summary">
-                        <p className="whitespace-pre-line text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">{m.summary.summary}</p>
-                    </Panel>
-                    <div className="grid gap-5 md:grid-cols-2">
-                        {m.summary.decisions.length > 0 && <Panel title="Decisions"><Bullets items={m.summary.decisions} /></Panel>}
-                        {m.summary.openQuestions.length > 0 && <Panel title="Open questions"><Bullets items={m.summary.openQuestions} /></Panel>}
+                    {/* Owner 2026-11-19: colour-coded notes (option B: white cards with a colour band; numbered decisions and questions) */}
+                    <NotesCard tone="summary" title="Summary">
+                        <p className="whitespace-pre-line text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200">{m.summary.summary}</p>
+                    </NotesCard>
+                    <div className="grid items-start gap-5 md:grid-cols-2">
+                        {m.summary.decisions.length > 0 && <NotesCard tone="decisions" title="Decisions" count={m.summary.decisions.length}><Numbered tone="decisions" items={m.summary.decisions} /></NotesCard>}
+                        {m.summary.openQuestions.length > 0 && <NotesCard tone="questions" title="Open questions" count={m.summary.openQuestions.length}><Numbered tone="questions" items={m.summary.openQuestions} /></NotesCard>}
                     </div>
                     {m.summary.notes.length > 0 && (
-                        <Panel title="Notes">
+                        <NotesCard tone="notes" title="Notes" count={m.summary.notes.length} countLabel={m.summary.notes.length === 1 ? 'topic' : 'topics'}>
                             <div className="space-y-4">
-                                {m.summary.notes.map((n, i) => (
-                                    <div key={i}>
-                                        <p className="text-sm font-black text-zinc-800 dark:text-zinc-200">{n.topic}</p>
-                                        <Bullets items={n.points} />
-                                    </div>
-                                ))}
+                                {m.summary.notes.map((n, i) => {
+                                    const c = TOPIC_COLOURS[i % TOPIC_COLOURS.length];
+                                    return (
+                                        <div key={i}>
+                                            <p className="flex items-center gap-2 text-[15px] font-black text-zinc-900 dark:text-zinc-100"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${c.dot}`} aria-hidden />{n.topic}</p>
+                                            <ul className={`mt-1.5 list-disc space-y-1 pl-5 text-[15px] leading-relaxed text-zinc-700 dark:text-zinc-300 ${c.marker}`}>{n.points.map((x, j) => <li key={j}>{x}</li>)}</ul>
+                                        </div>
+                                    );
+                                })}
                             </div>
-                        </Panel>
+                        </NotesCard>
                     )}
 
                     {/* Tasks */}
@@ -410,7 +485,9 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
                                 ))}
                             </div>
                         )}
-                        {tasks.length === 0 && <Panel><p className="text-sm text-zinc-500">No tasks were found in this meeting. Use &ldquo;Add task&rdquo; if something was missed.</p></Panel>}
+                        {tasks.length === 0 && <Panel><p className="text-sm text-zinc-500">{m.findTasks === false
+                            ? <>Tasks were not pulled out for this meeting. Use &ldquo;Add task&rdquo; to add one by hand.</>
+                            : <>No tasks were found in this meeting. Use &ldquo;Add task&rdquo; if something was missed.</>}</p></Panel>}
                         {tasks.length > 0 && toSend.length === 0 && (
                             <Panel><p className="text-sm text-zinc-500">Every task has been sent. See the &ldquo;Sent&rdquo; tab for the record.</p></Panel>
                         )}
@@ -463,7 +540,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
 
     async function pollAgain() {
         let status = await load();
-        while (alive.current && status && PROCESSING.includes(status)) {
+        while (alive.current && status && (PROCESSING.includes(status) || status === 'live')) {
             await new Promise(r => setTimeout(r, POLL_MS));
             status = await load();
         }
@@ -487,8 +564,53 @@ function Panel({ title, children }: { title?: string; children: React.ReactNode 
     );
 }
 
-function Bullets({ items }: { items: string[] }) {
-    return <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-zinc-700 dark:text-zinc-300">{items.map((x, i) => <li key={i}>{x}</li>)}</ul>;
+/**
+ * Owner 2026-11-19 (option B): the notes as white cards with a colour band along the top; the heading, its icon and the
+ * markers in the section's colour. Summary purple, decisions green, open questions amber, notes blue.
+ */
+type NotesTone = 'summary' | 'decisions' | 'questions' | 'notes';
+const TONES: Record<NotesTone, { band: string; title: string; badge: string; icon: typeof Sparkles }> = {
+    summary: { band: 'border-t-indigo-500 dark:border-t-indigo-400', title: 'text-indigo-700 dark:text-indigo-300', badge: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-300', icon: Sparkles },
+    decisions: { band: 'border-t-emerald-500 dark:border-t-emerald-400', title: 'text-emerald-700 dark:text-emerald-300', badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300', icon: CheckCircle2 },
+    questions: { band: 'border-t-amber-500 dark:border-t-amber-400', title: 'text-amber-700 dark:text-amber-300', badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300', icon: CircleHelp },
+    notes: { band: 'border-t-sky-500 dark:border-t-sky-400', title: 'text-sky-700 dark:text-sky-300', badge: 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300', icon: NotebookText },
+};
+/** Each notes topic gets its own colour (dot and bullets), in turn */
+const TOPIC_COLOURS = [
+    { dot: 'bg-violet-500', marker: 'marker:text-violet-500' },
+    { dot: 'bg-pink-500', marker: 'marker:text-pink-500' },
+    { dot: 'bg-cyan-500', marker: 'marker:text-cyan-500' },
+    { dot: 'bg-orange-500', marker: 'marker:text-orange-500' },
+];
+
+function NotesCard({ tone, title, count, countLabel, children }: { tone: NotesTone; title: string; count?: number; countLabel?: string; children: React.ReactNode }) {
+    const t = TONES[tone];
+    const Icon = t.icon;
+    return (
+        <section className={`rounded-3xl border border-t-[5px] border-zinc-200 bg-white p-5 shadow-sm sm:p-6 dark:border-zinc-800 dark:bg-zinc-900 ${t.band}`}>
+            <div className="mb-3 flex items-center gap-2.5">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${t.badge}`}><Icon className="h-4 w-4" /></span>
+                <h3 className={`text-sm font-black tracking-wide ${t.title}`}>{title}</h3>
+                {count !== undefined && <span className={`ml-auto rounded-full px-2.5 py-0.5 text-xs font-black ${t.badge}`}>{count}{countLabel ? ` ${countLabel}` : ''}</span>}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+/** Owner 2026-11-19: decisions and open questions are numbered, each number in the section's colour. */
+function Numbered({ tone, items }: { tone: NotesTone; items: string[] }) {
+    const badge = TONES[tone].badge;
+    return (
+        <ol className="space-y-2.5">
+            {items.map((x, i) => (
+                <li key={i} className="flex gap-2.5 text-[15px] leading-relaxed text-zinc-800 dark:text-zinc-200">
+                    <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs font-black tabular-nums ${badge}`}>{i + 1}</span>
+                    <span className="min-w-0">{x}</span>
+                </li>
+            ))}
+        </ol>
+    );
 }
 
 function Steps({ status, withVoice }: { status: MeetingDetail['status']; withVoice: boolean }) {

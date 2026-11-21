@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
         const propertyId = searchParams.get('property_id');
         const fromDate = searchParams.get('from_date');
         const toDate = searchParams.get('to_date');
+        const location = searchParams.get('location');
 
         if (!organizationId || !fromDate || !toDate) {
             return NextResponse.json({ error: 'organization_id, from_date, to_date are required' }, { status: 400 });
@@ -32,6 +33,7 @@ export async function GET(request: NextRequest) {
             .order('planned_date', { ascending: true });
 
         if (propertyId) query = query.eq('property_id', propertyId);
+        if (location && location !== 'all') query = query.eq('location', location);
 
         const { data: tasks, error } = await query;
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -87,11 +89,21 @@ export async function GET(request: NextRequest) {
                 return dateA.getTime() - dateB.getTime();
             });
 
+        // Available locations for filter
+        let locQuery = supabaseAdmin
+            .from('ppm_schedules')
+            .select('location')
+            .eq('organization_id', organizationId);
+        if (propertyId) locQuery = locQuery.eq('property_id', propertyId);
+        const { data: locRows } = await locQuery;
+        const locations = Array.from(new Set((locRows || []).map((r: any) => r.location).filter(Boolean))).sort();
+
         return NextResponse.json({
             summary: { total, done, pending, postponed, skipped, compliance_pct },
             by_system,
             by_month,
             tasks: allTasks,
+            locations,
         });
     } catch (err) {
         console.error('PPM reports error:', err);

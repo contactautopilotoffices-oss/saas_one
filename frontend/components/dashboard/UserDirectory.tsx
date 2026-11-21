@@ -143,7 +143,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         // while the dashboard is still resolving its organization/property.
         invalidateUsersRequest();
         const requestId = usersRequestId.current;
-        if (!orgId && !propertyId) {
+        if (!orgId && (!propertyId || propertyId === 'all')) {
             shownCacheKey.current = null;
             setUsers([]);
             setLoadError(null);
@@ -151,7 +151,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
             return;
         }
 
-        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId === 'all' ? undefined : propertyId);
         const controller = new AbortController();
         usersAbortController.current = controller;
         if (!quiet) setLoadStatus('loading');
@@ -159,7 +159,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
 
         try {
             const params = new URLSearchParams();
-            if (propertyId) params.set('propertyId', propertyId);
+            if (propertyId && propertyId !== 'all') params.set('propertyId', propertyId);
             if (orgId) params.set('orgId', orgId);
 
             const response = await fetch(`/api/users/list?${params.toString()}`, { signal: controller.signal });
@@ -189,7 +189,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
     }, [orgId, propertyId, invalidateUsersRequest]);
 
     useEffect(() => {
-        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId);
+        const cacheKey = directoryCacheKey(authUserIdRef.current, orgId, propertyId === 'all' ? undefined : propertyId);
         let saved = cacheKey ? directoryCache.get(cacheKey) : undefined;
         if (saved && Date.now() - saved.at > DIRECTORY_CACHE_TTL_MS) {
             directoryCache.delete(cacheKey!);

@@ -3,6 +3,7 @@ import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { EmailService } from '@/backend/services/EmailService';
 import { EmailRecipientResolver } from '@/backend/services/EmailRecipientResolver';
+import { checkAndResumeTicketSLA } from '@/backend/lib/ticketing/slaPauseService';
 
 /**
  * POST /api/tickets/[id]/vendor-arranged
@@ -70,6 +71,9 @@ export async function POST(
             action: isEdit ? 'vendor_procurement_arranged_updated' : 'vendor_procurement_arranged',
             notes: isEdit ? `Updated vendor details: "${arrangedNote}"` : `Vendor arranged by Procurement: "${arrangedNote}"`
         });
+
+        // 3b. Automatically resume SLA if no other blockers (e.g. materials)
+        await checkAndResumeTicketSLA(adminSupabase, ticketId, user.id);
 
         // 4. Return success response (Notifications are handled asynchronously via event_outbox trigger)
         return NextResponse.json({

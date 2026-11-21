@@ -84,10 +84,12 @@ CREATE OR REPLACE FUNCTION public.pc_can_read(u uuid,rid uuid) RETURNS boolean L
 
 -- ---------------------------------------------------------------- review
 
--- Same as 2026-10-30 (audit fixes) except the configured expense approver may also decide,
--- and the activity row records which hat the actor wore for reconciliation.
+-- Same as 2026-11-16 (edit and withdraw pending) except the configured expense approver may
+-- also decide, and the activity row records which hat the actor wore for reconciliation.
+-- That migration's super-admin reviewer is kept: this file is applied after it, so dropping
+-- it here would silently revoke it.
 CREATE OR REPLACE FUNCTION public.pc_review_expense(actor uuid,eid uuid,result text,remark text) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE e petty_cash_expenses; r petty_cash_requests; routed boolean; finance boolean;
+DECLARE e petty_cash_expenses; r petty_cash_requests; routed boolean; finance boolean; super boolean;
 BEGIN
  SELECT * INTO e FROM petty_cash_expenses WHERE id=eid;
  IF e.id IS NULL THEN RAISE EXCEPTION 'Forbidden'; END IF;
@@ -97,8 +99,9 @@ BEGIN
  SELECT * INTO e FROM petty_cash_expenses WHERE id=eid FOR UPDATE;
  IF e.id IS NULL THEN RAISE EXCEPTION 'Forbidden'; END IF;
  finance:=pc_finance(actor,e.organization_id,e.property_id);
+ super:=pc_super(actor,e.organization_id);
  routed:=pc_expense_approver(actor,e.organization_id,e.property_id);
- IF e.requester_id=actor OR NOT (finance OR routed) THEN RAISE EXCEPTION 'Forbidden'; END IF;
+ IF e.requester_id=actor OR NOT (finance OR super OR routed) THEN RAISE EXCEPTION 'Forbidden'; END IF;
  IF e.review_status='withdrawn' THEN RAISE EXCEPTION 'A withdrawn expense cannot be reviewed'; END IF;
  IF result NOT IN ('accepted','rejected') OR (result='rejected' AND length(trim(coalesce(remark,'')))=0) THEN RAISE EXCEPTION 'Valid review and rejection reason required'; END IF;
  IF e.review_status=result AND e.review_remarks IS NOT DISTINCT FROM remark THEN RETURN to_jsonb(e); END IF;
@@ -106,7 +109,7 @@ BEGIN
  UPDATE petty_cash_requests SET version=version+1,updated_at=now() WHERE id=e.request_id;
  INSERT INTO petty_cash_activity(request_id,organization_id,actor_id,action,remark,metadata)
  VALUES(e.request_id,e.organization_id,actor,'expense_'||result,remark,
-  jsonb_build_object('expense_id',eid,'reviewer_role',CASE WHEN routed THEN 'expense_approver' ELSE 'accounts' END));
+  jsonb_build_object('expense_id',eid,'reviewer_role',CASE WHEN routed THEN 'expense_approver' WHEN finance THEN 'accounts' ELSE 'super_admin' END));
  RETURN to_jsonb(e);
 END; $$;
 

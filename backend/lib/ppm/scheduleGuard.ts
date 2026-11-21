@@ -12,7 +12,7 @@ import {
 } from '@/backend/lib/auth/callerAccess';
 
 /** Property-level roles permitted to bulk-replace or clear a property's PPM schedules. */
-export const PPM_PROPERTY_ADMIN_ROLES = ['property_admin', 'admin', 'owner', ...ORG_ADMIN_ROLES];
+export const PPM_PROPERTY_ADMIN_ROLES = ['property_admin', 'admin', 'owner', 'ops_super_admin', ...ORG_ADMIN_ROLES];
 
 export interface PpmScheduleSummary {
     total: number;
@@ -32,6 +32,7 @@ export function canAdministerPpmProperty(
     propertyId: string,
 ): boolean {
     if (isOrgAdmin(caller, organizationId)) return true;
+    if (caller.orgMemberships.some(m => m.organization_id === organizationId && (m.role === 'ops_super_admin' || m.role === 'admin' || m.role === 'owner'))) return true;
     return caller.propertyMemberships.some(
         m => m.property_id === propertyId && PPM_PROPERTY_ADMIN_ROLES.includes(m.role),
     );

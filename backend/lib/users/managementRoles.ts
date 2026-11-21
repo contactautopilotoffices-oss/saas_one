@@ -12,5 +12,5 @@ export function canAssignProperties(role?: string | null): boolean {
 }
 
 export function isOrganizationWideUserRole(role: string): boolean {
-    return ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head', 'super_tenant', 'tech', 'it', 'design'].includes(role);
+    return ['org_super_admin', 'ops_super_admin', 'procurement', 'accounts', 'hr', 'hr_head', 'super_tenant', 'tech', 'it', 'design', 'bd_rep', 'bd_admin'].includes(role);
 }

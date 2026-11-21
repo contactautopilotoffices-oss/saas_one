@@ -72,15 +72,17 @@ class Closed extends Error { constructor(public readonly why: 'finished' | 'gone
 const uploaders = new Map<string, Uploader>();
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-/** The one uploader for a meeting (made on first use). */
-export function getUploader(meetingId: string, space: MeetingSpace): Uploader {
+/**
+ * The one uploader for a meeting (made on first use). Owner 2026-11-19: an online call's recording browser has no
+ * dashboard space, so it passes its own address (`url`, the call's join API) instead.
+ */
+export function getUploader(meetingId: string, space: MeetingSpace | null, url?: string): Uploader {
     let u = uploaders.get(meetingId);
-    if (!u) { u = makeUploader(meetingId, space); uploaders.set(meetingId, u); }
+    if (!u) { u = makeUploader(meetingId, url ?? meetingUrl(meetingId, space ?? 'tech')); uploaders.set(meetingId, u); }
     return u;
 }
 
-function makeUploader(meetingId: string, space: MeetingSpace): Uploader {
-    const url = meetingUrl(meetingId, space);
+function makeUploader(meetingId: string, url: string): Uploader {
     let queue: StoredPiece[] = [];
     let loaded = false;
     let running = false;

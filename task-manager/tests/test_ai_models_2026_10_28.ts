@@ -110,6 +110,8 @@ async function run() {
     check('WhatsApp bot: understand / reply / tidy each read their own setting', /chainFor\('wa_understand'\), chainFor\('wa_reply'\), chainFor\('wa_tidy'\)/.test(live) && /brain: \{ llm, promptSections, interpretModels, replyModels, rewriteModels \}/.test(live));
     const voice = read('task-manager/voice/VoiceIntake.ts');
     check('voice notes: speech to text and clean-up read their settings', /chainFor\('voice_transcribe'\)/.test(voice) && /chainFor\('voice_cleanup'\)/.test(voice));
+    // Owner 2026-11-17: recruitment calls start on Sarvam; Whisper stays offered as the backup
+    check('recruitment calls: Sarvam is the default, both Whisper models stay as backups and can be chosen', C.jobInfo('call_transcribe')?.defaults.join(',') === 'sarvam:saaras:v4,whisper-large-v3,whisper-large-v3-turbo' && ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'].every(id => C.modelStatus('call_transcribe', id, () => true).status === 'ready'));
     check('duplicate check reads its setting', /chainFor\('duplicate_check'\)/.test(read('task-manager/WorkspaceService.ts')));
     check('Gemini picks go to Google, not Engy', /startsWith\(GEMINI_PREFIX\)/.test(read('task-manager/brain/llm.ts')));
     const route = read('app/api/task-manager/ai-models/route.ts');
@@ -119,7 +121,8 @@ async function run() {
     // 2026-11-02: the Candidate Search jobs are allowed by the follow-up migration that widens the job list
     // 2026-11-15: the newest migration restates the whole list (every earlier job plus the rest of the application's)
     // 2026-11-16: the Recruitment calls' two jobs (call_transcribe, call_analyse) make the newest list this one
-    const sqlJobs = read('supabase/migrations/20261116000002_ai_models_call_jobs.sql');
+    // 2026-11-19: ticket_rules_draft, then ticket_photo, then ticket_category_suggest make the newest list this one
+    const sqlJobs = read('supabase/migrations/20261119000007_ai_models_ticket_category_job.sql');
     check('every job in the catalog is allowed by the newest job list (which replaces the earlier ones)', C.AI_JOBS.every(j => sqlJobs.includes(`'${j.key}'`)));
     const earlier = [...read('supabase/migrations/20261114000001_unified_brain_ai_model_job.sql').matchAll(/'([a-z_]+)'/g)].map(m => m[1]).filter(j => /^(wa_|voice_|import_|superuser_|learning_|duplicate_|candidate_|brain_)/.test(j));
     check('and every job that could be saved before can still be saved', earlier.length >= 16 && earlier.every(j => sqlJobs.includes(`'${j}'`)), earlier.filter(j => !sqlJobs.includes(`'${j}'`)));
@@ -242,6 +245,9 @@ async function run() {
     console.log('\n11. Each call site reads its choice and keeps today\'s model as the fallback');
     const SITES: Array<[string, RegExp]> = [
         ['backend/lib/ticketing/aiClassifier.ts', /chainFor\('ticket_classify'\)/],
+        ['backend/lib/ticketing/categoryConfig.ts', /chainFor\('ticket_category_suggest'\)[\s\S]*withModelFallback\(chain, async model => \{\s+const res = await llm\.complete\(\{ model,/],
+        ['backend/lib/ticketing/ticketPhoto.ts', /chainFor\('ticket_photo'\)[\s\S]*withModelFallback\(chain, async m => checkPhotoVerdict\(extractJson\(await \(o\.deps\?\.read \?\? readWithModel\)\(m,/],
+        ['backend/lib/ticketing/sortRulesStore.ts', /chainFor\('ticket_rules_draft'\)[\s\S]*withModelFallback\(chain, async model => \{\s+const res = await llm\.complete\(\{ model,/],
         ['backend/lib/coaching/groqCoach.ts', /modelFor\('coaching_feedback', GROQ_MODEL\)[\s\S]*markFailed\('coaching_feedback'\);\s+return scoreWith\(GROQ_MODEL, input\)/],
         ['app/api/master-admin-chatbot/route.ts', /runWithModel\('admin_chatbot', MODEL,/],
         ['backend/lib/documentBank/ocr.ts', /modelFor\('document_ocr', MODEL\)[\s\S]*callGroqWith\(MODEL, content\)/],

@@ -21,12 +21,13 @@ import {
   MAX_RESUME_BYTES, RESUME_BATCH, RESUME_BUCKET, RESUME_DELETE_BATCH, RESUME_EXPORT_MAX, RESUME_LINK_BATCH, RESUME_LINK_SECONDS,
   RESUME_LIST_PAGE_SIZE, RESUME_TYPES,
 } from "./config";
+import { firstSourcing, flagKnownPeople, sourceColumns, sourceColumnsMissing } from "./known";
 import { CandidateActionError } from "./records";
 import { fileExtension } from "./resume-pick";
 import {
-  MATCH_REASON_LABELS, TEXT_STATUS_LABELS,
+  MATCH_REASON_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
   type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse,
-  type ResumeExtractStatus, type ResumeManifestResponse, type ResumeMatchReason, type ResumeSummary, type ResumeTextStatus,
+  type ResumeExtractStatus, type ResumeManifestResponse, type ResumeMatchReason, type ResumeRepeat, type ResumeSummary, type ResumeTextStatus, type SourceKind,
 } from "./types";
 
 const TABLE = "candidate_resume_files";
@@ -74,11 +75,17 @@ interface ResumeRow {
   // Migration 20261111000002 (phase 4).
   extract_status?: ResumeExtractStatus;
   extract_error?: string | null;
+  // Migration 20261116000004 (owner 2026-11-16): where the upload came from, and a second CV of the same person.
+  source_kind?: SourceKind | null;
+  source_name?: string | null;
+  duplicate_state?: "pending" | "updated" | null;
 }
 
 const COLUMNS =
   "id, file_name, file_type, file_size, storage_path, status, downloaded_at, device_label, folder_path, uploaded_by_email, created_at, updated_at, " +
   "text_status, text_error, candidate_id, match_reason, extract_status, extract_error";
+/** Read with COLUMNS when migration 20261116000004 is applied; the read is repeated without them when it is not. */
+const SOURCE_COLUMNS = ", source_kind, source_name, duplicate_state";
 
 /** Timestamps arrive as strings from PostgREST and as Dates from PGlite (tests). */
 function iso(value: unknown): string | null {
@@ -106,7 +113,69 @@ function toFile(row: ResumeRow, names: Map<string, string> = new Map()): ResumeF
     candidateId: row.candidate_id ?? null,
     candidateName: row.candidate_id ? names.get(row.candidate_id) ?? null : null,
     matchReason: row.match_reason ?? null,
+    sourceKind: row.source_kind ?? null,
+    sourceName: row.source_name ?? null,
+    duplicateState: row.duplicate_state ?? null,
+    alreadyKnown: null,
   };
+}
+
+/**
+ * Fills `alreadyKnown` on the second CVs waiting for HR (owner 2026-11-16): how the person was first sourced, and the
+ * CV that was on file before this one. Never fails the list.
+ */
+async function attachAlreadyKnown(client: SupabaseClient, orgId: string, files: ResumeFile[]): Promise<void> {
+  const known = files.filter((f) => f.candidateId && f.duplicateState === "pending");
+  if (!known.length) return;
+  const ids = [...new Set(known.map((f) => f.candidateId as string))];
+  try {
+    const [first, { data: earlier }] = await Promise.all([
+      firstSourcing(client, orgId, ids),
+      client.from(TABLE).select("id, candidate_id, file_name, device_label, created_at").eq("organization_id", orgId).eq("status", "ready").in("candidate_id", ids).order("created_at"),
+    ]);
+    const all = ((earlier ?? []) as { id: string; candidate_id: string; file_name: string; device_label: string | null; created_at: unknown }[])
+      .map((r) => ({ ...r, at: iso(r.created_at) ?? "" }));
+    for (const f of known) {
+      const s = first.get(f.candidateId as string);
+      const before = all.filter((r) => r.candidate_id === f.candidateId && r.id !== f.id && (r.at < f.createdAt || (r.at === f.createdAt && r.id < f.id)));
+      const prev = before[before.length - 1];
+      f.alreadyKnown = {
+        sourcedAt: s?.at ?? null,
+        sourcedFrom: s?.from ?? null,
+        sourcedBy: s?.byName ?? null,
+        previous: prev ? { id: prev.id, fileName: prev.file_name, uploadedAt: prev.at || null, uploadedBy: prev.device_label } : null,
+      };
+    }
+  } catch (error) {
+    console.error("[candidates] already-known lookup failed", error);
+  }
+}
+
+/**
+ * HR's answer to a second CV (owner 2026-11-16): "update" makes this file the person's CV from now on (the earlier one
+ * stays as an older version; the candidate's panel lists the newest upload first), "delete" removes this copy (its
+ * bytes and its row). Either way the person's history says so.
+ */
+export async function resolveDuplicate(client: SupabaseClient, storage: ResumeStorage, orgId: string, by: { id: string; name: string | null }, id: unknown, action: unknown): Promise<void> {
+  if (action !== "update" && action !== "delete") throw new CandidateActionError(400, 'Say what to do: "update" or "delete".');
+  const row = await getRow(client, orgId, id, false);
+  const { data, error } = await client.from(TABLE).select("id, candidate_id, file_name, duplicate_state").eq("organization_id", orgId).eq("id", row.id).maybeSingle();
+  if (error) {
+    if (sourceColumnsMissing(error)) throw new CandidateActionError(503, "This needs a database update first: run 20261116000004_sourcing_duplicates.sql in Supabase.");
+    fail("load the file", error);
+  }
+  const file = data as { id: string; candidate_id: string | null; file_name: string; duplicate_state: string | null } | null;
+  if (!file || file.duplicate_state !== "pending") throw new CandidateActionError(409, "This file is no longer waiting for a decision.");
+  const { recordAction } = await import("./actions");
+  if (action === "update") {
+    const now = new Date().toISOString();
+    const { error: upErr } = await client.from(TABLE).update({ duplicate_state: "updated", duplicate_resolved_by: by.id, duplicate_resolved_at: now, updated_at: now }).eq("organization_id", orgId).eq("id", file.id);
+    if (upErr) fail("update the CV", upErr);
+    if (file.candidate_id) await recordAction(client, orgId, by, { candidateId: file.candidate_id, action: "resume_attached", toValue: `CV updated: ${file.file_name}`, meta: { fileId: file.id, duplicate: "updated" } });
+    return;
+  }
+  await deleteResumeFile(client, storage, orgId, file.id);
+  if (file.candidate_id) await recordAction(client, orgId, by, { candidateId: file.candidate_id, action: "remark", remark: `Second CV deleted (${file.file_name}); the CV on file was kept.`, meta: { fileId: file.id, duplicate: "deleted" } });
 }
 
 /** The names of these candidates, for the list and the Excel. */
@@ -198,6 +267,8 @@ function parseIds(value: unknown, max: number): string[] {
 
 const PrepareInput = z.object({
   device: z.string().max(200).nullish(),
+  /** Owner 2026-11-16: where these resumes came from (optional). */
+  source: z.object({ kind: z.enum(SOURCE_KINDS).nullable(), name: z.string().max(200).nullable() }).nullish(),
   files: z
     .array(
       z.object({
@@ -261,20 +332,25 @@ export async function prepareResumeUploads(
   // which used to fail that person's batch of up to 50 files. The one refused now reads the rows again, finds the
   // other person's row and goes round once more, so nothing of its batch is lost and the file is stored once.
   const now = new Date().toISOString();
+  // Owner 2026-11-16: where the upload came from, on every row of it (nothing when the upload did not say).
+  const source = sourceColumns(parsed.data.source ? { kind: parsed.data.source.kind, name: parsed.data.source.name } : null);
   let slots: { index: number; id: string; path: string; contentType: string }[] = [];
+  let repeats: Repeat[] = [];
   for (let round = 1; ; round += 1) {
     // Owner 2026-11-15: keep_as_resume (migration 20261115000002) lets a file removed as not a resume come back; before
     // the migration the column is missing and the rows are read without it.
+    type ExistingRow = { id: string; sha256: string; status: string; keep_as_resume?: boolean | null; file_name?: string; candidate_id?: string | null; created_at?: unknown; device_label?: string | null; uploaded_by?: string | null };
     const existingQuery = (columns: string) => client.from(TABLE).select(columns).eq("organization_id", orgId).in("sha256", wanted.map((f) => f.sha256));
-    let { data: existingRows, error } = await existingQuery("id, sha256, status, keep_as_resume");
-    if (error && /keep_as_resume/.test(error.message ?? "")) ({ data: existingRows, error } = await existingQuery("id, sha256, status"));
+    let { data: existingRows, error } = await existingQuery("id, sha256, status, keep_as_resume, file_name, candidate_id, created_at, device_label, uploaded_by");
+    if (error && /keep_as_resume/.test(error.message ?? "")) ({ data: existingRows, error } = await existingQuery("id, sha256, status, file_name, candidate_id, created_at, device_label, uploaded_by"));
     if (error) fail("prepare the upload", error);
-    const existing = new Map(
-      ((existingRows ?? []) as unknown as { id: string; sha256: string; status: string; keep_as_resume?: boolean | null }[]).map((r) => [r.sha256, r]),
-    );
+    const existing = new Map(((existingRows ?? []) as unknown as ExistingRow[]).map((r) => [r.sha256, r]));
+    // Whose copy it is, so the upload summary can say "already there: Prakash Menon" rather than only a count.
+    const names = await candidateNames(client, orgId, [...existing.values()].map((r) => r.candidate_id));
 
     const inserts: Record<string, unknown>[] = [];
     const duplicates: PreparedUpload[] = [];
+    repeats = [];
     slots = [];
     for (const f of wanted) {
       const ext = fileExtension(f.name);
@@ -284,7 +360,17 @@ export async function prepareResumeUploads(
       // again, unless HR allowed the removed file back ("Allow re-upload"): then its row is reused and read afresh.
       const comingBack = row?.status === "rejected" && row.keep_as_resume === true;
       if ((row?.status === "ready" || row?.status === "rejected" || row?.status === "other") && !comingBack) {
-        duplicates.push({ index: f.index, outcome: "duplicate", id: row.id });
+        duplicates.push({
+          index: f.index,
+          outcome: "duplicate",
+          id: row.id,
+          existing: { fileName: row.file_name ?? f.name, candidateName: row.candidate_id ? names.get(row.candidate_id) ?? null : null, uploadedAt: iso(row.created_at), uploadedBy: row.device_label ?? null },
+        });
+        // Owner 2026-11-16: a CV someone ELSE uploaded first is noted for HR. The same person re-running their own folder
+        // (a retry the screen says is safe) is not.
+        if (row.status === "ready" && row.uploaded_by && row.uploaded_by !== user.id) {
+          repeats.push({ fileId: row.id, fileName: row.file_name ?? f.name, candidateId: row.candidate_id ?? null, firstAt: iso(row.created_at), firstBy: row.device_label ?? null });
+        }
         continue;
       }
       const id = row?.id ?? randomUUID();
@@ -301,11 +387,13 @@ export async function prepareResumeUploads(
         uploaded_by: user.id,
         uploaded_by_email: user.email,
         updated_at: now,
+        ...source,
       };
       if (row) {
         // A removed file coming back is read again from the start (its old verdict and text are gone).
         const reset = comingBack ? { text_status: "pending", text_error: null, text_attempts: 0, resume_text: null, extract_status: "pending", extract_error: null, candidate_id: null, match_reason: null, matched_at: null } : {};
-        const { error: upErr } = await client.from(TABLE).update({ ...values, ...reset }).eq("id", id).eq("organization_id", orgId);
+        let { error: upErr } = await client.from(TABLE).update({ ...values, ...reset }).eq("id", id).eq("organization_id", orgId);
+        if (upErr && sourceColumnsMissing(upErr)) ({ error: upErr } = await client.from(TABLE).update({ ...withoutSource(values), ...reset }).eq("id", id).eq("organization_id", orgId));
         if (upErr) fail("prepare the upload", upErr);
       } else {
         inserts.push({ id, organization_id: orgId, sha256: f.sha256, created_at: now, ...values });
@@ -314,13 +402,16 @@ export async function prepareResumeUploads(
     }
     if (inserts.length) {
       // One statement: either every row is in, or none is, so going round again starts clean.
-      const { error: insErr } = await client.from(TABLE).insert(inserts);
+      let { error: insErr } = await client.from(TABLE).insert(inserts);
+      // Before migration 20261116000004 the source columns do not exist: the rows go in without them.
+      if (insErr && sourceColumnsMissing(insErr)) ({ error: insErr } = await client.from(TABLE).insert(inserts.map(withoutSource)));
       if (insErr && (insErr as { code?: string }).code === UNIQUE_VIOLATION && round < PREPARE_ROUNDS) continue;
       if (insErr) fail("prepare the upload", insErr);
     }
     out.push(...duplicates);
     break;
   }
+  if (repeats.length) await recordRepeats(client, orgId, { id: user.id, name: device }, repeats);
 
   await Promise.all(
     slots.map(async (slot) => {
@@ -339,6 +430,91 @@ export async function prepareResumeUploads(
 
 function byIndex(files: PreparedUpload[]): PreparedUpload[] {
   return [...files].sort((a, b) => a.index - b.index);
+}
+
+// The same CV uploaded again by someone else (owner 2026-11-16) -----------------------------------------------------------
+
+const REPEATS = "candidate_resume_repeats";
+interface Repeat { fileId: string; fileName: string; candidateId: string | null; firstAt: string | null; firstBy: string | null }
+
+const repeatsMissing = (error: { code?: string; message?: string } | null | undefined) =>
+  Boolean(error) && (["42P01", "PGRST205", "42703", "PGRST204"].includes(error?.code ?? "") || /candidate_resume_repeats/.test(error?.message ?? ""));
+
+/**
+ * Notes each repeat for HR (one open entry per file and person: the unique index refuses a second) and, for a file
+ * linked to a candidate, in the person's history. Never fails the upload: before migration 20261116000004 there is
+ * nowhere to note it, and the upload summary still names whose copy it was.
+ */
+async function recordRepeats(client: SupabaseClient, orgId: string, by: { id: string; name: string | null }, repeats: Repeat[]): Promise<void> {
+  try {
+    const noted: Repeat[] = [];
+    for (const r of repeats) {
+      const { error } = await client.from(REPEATS).insert({ organization_id: orgId, file_id: r.fileId, candidate_id: r.candidateId, uploaded_by: by.id, uploaded_by_name: by.name });
+      if (!error) { noted.push(r); continue; }
+      if ((error as { code?: string }).code === "23505") continue; // already noted and not dismissed yet
+      if (repeatsMissing(error)) return;
+      throw error;
+    }
+    await flagKnownPeople(client, orgId, noted.filter((r) => r.candidateId).map((r) => ({
+      candidateId: r.candidateId as string,
+      by,
+      meta: { source: "same_file", fileId: r.fileId, fileName: r.fileName, firstAt: r.firstAt, firstBy: r.firstBy },
+    })));
+  } catch (error) {
+    console.error("[candidates] repeat upload not noted", error);
+  }
+}
+
+/** The repeats still open, newest first, for the "Already in the database" section. */
+export async function listRepeats(client: SupabaseClient, orgId: string, limit = 20): Promise<{ repeats: ResumeRepeat[]; total: number }> {
+  const { data, error, count } = await client
+    .from(REPEATS)
+    .select("id, file_id, candidate_id, uploaded_by_name, created_at", { count: "exact" })
+    .eq("organization_id", orgId)
+    .is("dismissed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    if (repeatsMissing(error)) return { repeats: [], total: 0 };
+    fail("load the repeated uploads", error);
+  }
+  const rows = (data ?? []) as unknown as { id: string; file_id: string; candidate_id: string | null; uploaded_by_name: string | null; created_at: unknown }[];
+  const fileIds = [...new Set(rows.map((r) => r.file_id))];
+  const files = new Map<string, { file_name: string; created_at: unknown; device_label: string | null }>();
+  if (fileIds.length) {
+    const { data: fileRows } = await client.from(TABLE).select("id, file_name, created_at, device_label").eq("organization_id", orgId).in("id", fileIds);
+    for (const f of (fileRows ?? []) as unknown as { id: string; file_name: string; created_at: unknown; device_label: string | null }[]) files.set(f.id, f);
+  }
+  const names = await candidateNames(client, orgId, rows.map((r) => r.candidate_id));
+  return {
+    repeats: rows.map((r) => {
+      const f = files.get(r.file_id);
+      return {
+        id: r.id, fileId: r.file_id, fileName: f?.file_name ?? "file", candidateId: r.candidate_id, candidateName: r.candidate_id ? names.get(r.candidate_id) ?? null : null,
+        againBy: r.uploaded_by_name, againAt: iso(r.created_at) ?? "", firstBy: f?.device_label ?? null, firstAt: iso(f?.created_at),
+      };
+    }),
+    total: count ?? rows.length,
+  };
+}
+
+/** HR has seen the repeat: it leaves the section (the history entry stays). */
+export async function dismissRepeat(client: SupabaseClient, orgId: string, userId: string, id: unknown): Promise<void> {
+  if (typeof id !== "string" || !UUID.test(id)) throw new CandidateActionError(400, "id must be a uuid.");
+  const now = new Date().toISOString();
+  const { data, error } = await client.from(REPEATS).update({ dismissed_at: now, dismissed_by: userId }).eq("organization_id", orgId).eq("id", id).is("dismissed_at", null).select("id");
+  if (error) {
+    if (repeatsMissing(error)) throw new CandidateActionError(503, "This needs a database update first: run 20261116000004_sourcing_duplicates.sql in Supabase.");
+    fail("dismiss the entry", error);
+  }
+  if (!data?.length) throw new CandidateActionError(404, "That entry is already dismissed.");
+}
+
+/** The same row without the source columns (migration 20261116000004 not applied). */
+function withoutSource<T extends Record<string, unknown>>(row: T): Omit<T, "source_kind" | "source_name"> {
+  const { source_kind: _k, source_name: _n, ...rest } = row;
+  void _k; void _n;
+  return rest;
 }
 
 /** The browser says these uploads finished: each object is looked for in storage before its row becomes 'ready'. */
@@ -399,8 +575,11 @@ export interface ResumeListQuery {
   device: string | null;
   /** Files of one candidate (phase 2). */
   candidateId: string | null;
-  /** Linked to a candidate or not (phase 2); "rejected" lists the files removed as not resumes, "other" the kept documents. */
-  link: "" | "linked" | "unlinked" | "rejected" | "other" | "attention";
+  /**
+   * Linked to a candidate or not (phase 2); "rejected" lists the files removed as not resumes, "other" the kept
+   * documents; "duplicate" (owner 2026-11-16) the files that matched a person already in the database.
+   */
+  link: "" | "linked" | "unlinked" | "rejected" | "other" | "attention" | "duplicate";
   page: number;
   pageSize: number;
 }
@@ -418,7 +597,7 @@ export function parseResumeQuery(params: URLSearchParams): ResumeListQuery {
     q: (params.get("q") ?? "").trim().slice(0, 120),
     device: cleanDevice(params.get("device")),
     candidateId: candidateId && UUID.test(candidateId) ? candidateId.toLowerCase() : null,
-    link: link === "linked" || link === "unlinked" || link === "rejected" || link === "other" || link === "attention" ? link : "",
+    link: link === "linked" || link === "unlinked" || link === "rejected" || link === "other" || link === "attention" || link === "duplicate" ? link : "",
     page,
     pageSize,
   };
@@ -449,6 +628,8 @@ function applyQuery<Q extends Filterable<Q>>(query: Q, q: ResumeListQuery): Q {
   else if (q.link === "unlinked") query = query.is("candidate_id", null);
   // Owner 2026-11-11: the files HR has to look at: text that could not be read, or details that could not.
   else if (q.link === "attention") query = query.or("text_status.eq.unreadable,text_status.eq.failed,extract_status.eq.failed");
+  // Owner 2026-11-16: a second CV for a person who already had one, waiting for HR (Update the CV or delete it).
+  else if (q.link === "duplicate") query = query.eq("duplicate_state", "pending");
   return query;
 }
 
@@ -457,15 +638,23 @@ const statusFor = (q: ResumeListQuery) => (q.link === "rejected" || q.link === "
 
 export async function listResumeFiles(client: SupabaseClient, orgId: string, q: ResumeListQuery): Promise<ResumeFilesResponse> {
   const from = (q.page - 1) * q.pageSize;
-  const base = client.from(TABLE).select(COLUMNS, { count: "exact" }).eq("organization_id", orgId).eq("status", statusFor(q));
-  const { data, error, count } = await applyQuery(base, q)
-    .order("downloaded_at", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false })
-    .range(from, from + q.pageSize - 1);
+  // One person's files (the candidate's panel): the newest upload first, so an updated CV is the one shown
+  // (owner 2026-11-16). The library: newest download first, as before.
+  const run = (columns: string) => {
+    const base = applyQuery(client.from(TABLE).select(columns, { count: "exact" }).eq("organization_id", orgId).eq("status", statusFor(q)), q);
+    const ordered = q.candidateId
+      ? base.order("created_at", { ascending: false })
+      : base.order("downloaded_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
+    return ordered.range(from, from + q.pageSize - 1);
+  };
+  let { data, error, count } = await run(COLUMNS + SOURCE_COLUMNS);
+  if (error && sourceColumnsMissing(error)) ({ data, error, count } = await run(COLUMNS));
   if (error) fail("load the resumes", error);
   const rows = (data ?? []) as unknown as ResumeRow[];
   const names = await candidateNames(client, orgId, rows.map((r) => r.candidate_id));
-  return { files: rows.map((row) => toFile(row, names)), total: count ?? 0, page: q.page, pageSize: q.pageSize };
+  const files = rows.map((row) => toFile(row, names));
+  await attachAlreadyKnown(client, orgId, files);
+  return { files, total: count ?? 0, page: q.page, pageSize: q.pageSize };
 }
 
 /** Files, bytes and dates per laptop, in all, and how many are linked, unlinked, still being read or unreadable. */

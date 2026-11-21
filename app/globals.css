@@ -1433,6 +1433,24 @@
   animation: custom-loader-rotate 1.5s linear infinite;
 }
 
+/* "Tap to reload" link on the root Loading screen. Pure CSS so it appears even when the
+   page's JavaScript never ran (the stuck home-screen app case). Hidden for the first 10 s. */
+@keyframes loader-reload-reveal {
+  from {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+.loader-reload-hint {
+  animation: loader-reload-reveal 0.4s ease-out 10s both;
+}
+
 /* Custom Scrollbar Utility */
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;

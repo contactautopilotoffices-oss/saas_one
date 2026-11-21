@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
+import { checkAndResumeTicketSLA } from '@/backend/lib/ticketing/slaPauseService';
 
 export async function PATCH(
     request: NextRequest,
@@ -147,6 +148,11 @@ export async function PATCH(
                 p_amount: quoted_price
             });
             if (budgetError) console.error('Error updating budget:', budgetError);
+        }
+
+        // 5b. SLA Auto-Resume on Delivery
+        if (status === 'delivered' && mRequest.ticket_id) {
+            await checkAndResumeTicketSLA(adminSupabase, mRequest.ticket_id, user.id);
         }
 
         // 6. Trigger Notifications

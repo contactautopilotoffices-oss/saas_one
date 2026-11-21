@@ -46,7 +46,7 @@ export function keyReady(provider: Provider, job: AiJob, env: Env = process.env)
 }
 
 const PROVIDER_LABEL: Record<Provider, string> = {
-    anthropic: 'Anthropic (Claude)', engy: 'Engy (GLM, Qwen, DeepSeek, Kimi)', groq: 'Groq (text, pictures and speech; used in turn)', gemini: 'Google Gemini (used in turn)', groq_speech: 'Groq speech-to-text', sarvam: 'Sarvam (speech-to-text: voice notes and meeting notes)',
+    anthropic: 'Anthropic (Claude)', engy: 'Engy (GLM, Qwen, DeepSeek, Kimi)', groq: 'Groq (text, pictures and speech; used in turn)', gemini: 'Google Gemini (used in turn)', groq_speech: 'Groq speech-to-text', sarvam: 'Sarvam (speech-to-text: voice notes, meeting notes and recruitment calls)',
     openai: 'OpenAI',
 };
 

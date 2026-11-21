@@ -41,6 +41,7 @@ interface ReportData {
     by_system: SystemRow[];
     by_month: MonthRow[];
     tasks: Record<string, unknown>[];
+    locations?: string[];
 }
 
 const currentYear = new Date().getFullYear();
@@ -56,6 +57,7 @@ function getDefaultTo() {
 export default function PPMReports({ organizationId, propertyId, properties = [] }: Props) {
     const [fromDate, setFromDate] = useState(getDefaultFrom);
     const [toDate, setToDate] = useState(getDefaultTo);
+    const [selectedLocation, setSelectedLocation] = useState<string>('all');
     const [reportData, setReportData] = useState<ReportData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
 
@@ -69,6 +71,7 @@ export default function PPMReports({ organizationId, propertyId, properties = []
                 to_date: toDate,
             });
             if (propertyId) params.set('property_id', propertyId);
+            if (selectedLocation && selectedLocation !== 'all') params.set('location', selectedLocation);
             const res = await fetch(`/api/ppm/reports?${params}`);
             if (res.ok) {
                 const data = await res.json();
@@ -77,7 +80,7 @@ export default function PPMReports({ organizationId, propertyId, properties = []
         } finally {
             setIsLoading(false);
         }
-    }, [organizationId, fromDate, toDate, propertyId]);
+    }, [organizationId, fromDate, toDate, propertyId, selectedLocation]);
 
     useEffect(() => { fetchReport(); }, [fetchReport]);
 
@@ -96,6 +99,7 @@ export default function PPMReports({ organizationId, propertyId, properties = []
             ['Compliance %', `${reportData.summary.compliance_pct}%`],
             ['From Date', fromDate],
             ['To Date', toDate],
+            ['Floor / Location', selectedLocation === 'all' ? 'All Floors' : selectedLocation],
         ];
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
 
@@ -122,7 +126,8 @@ export default function PPMReports({ organizationId, propertyId, properties = []
         ]);
         XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([taskHeaders, ...taskRows]), 'All Tasks');
 
-        XLSX.writeFile(wb, `Maintenance_Report_${fromDate}_to_${toDate}.xlsx`);
+        const locPrefix = selectedLocation !== 'all' ? `${selectedLocation.replace(/\s+/g, '_')}_` : '';
+        XLSX.writeFile(wb, `Maintenance_Report_${locPrefix}${fromDate}_to_${toDate}.xlsx`);
     };
 
     const summary = reportData?.summary;
@@ -148,6 +153,19 @@ export default function PPMReports({ organizationId, propertyId, properties = []
                         onChange={e => setToDate(e.target.value)}
                         className="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
+                </div>
+                <div>
+                    <label className="text-xs font-black text-slate-600 uppercase tracking-widest block mb-1">Floor / Location</label>
+                    <select
+                        value={selectedLocation}
+                        onChange={e => setSelectedLocation(e.target.value)}
+                        className="px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer font-medium"
+                    >
+                        <option value="all">All Locations / Floors</option>
+                        {(reportData?.locations || []).map((loc: string) => (
+                            <option key={loc} value={loc}>{loc}</option>
+                        ))}
+                    </select>
                 </div>
                 {/* Property selector removed — managed by global layout */}
                 <button

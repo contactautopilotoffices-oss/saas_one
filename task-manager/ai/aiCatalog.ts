@@ -33,7 +33,13 @@ export type AiJob =
     | 'mailbox_digest' | 'satej_fast' | 'satej_smart'
     | 'council_default'
     // Owner 2026-11-16: the Recruitment Calls tab (a recorded screening call: speech to text, then the reading)
-    | 'call_transcribe' | 'call_analyse';
+    | 'call_transcribe' | 'call_analyse'
+    // Owner 2026-11-19: ticket sorting rules, drafted from the team's corrections (backend/lib/ticketing/sortRulesStore.ts)
+    | 'ticket_rules_draft'
+    // Owner 2026-11-19: the AI reads a ticket's photo (backend/lib/ticketing/ticketPhoto.ts)
+    | 'ticket_photo'
+    // Owner 2026-11-19: categories to add / merge / rename, suggested on the button (backend/lib/ticketing/categoryConfig.ts)
+    | 'ticket_category_suggest';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai' | 'sarvam';
@@ -52,6 +58,7 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'glm-5.3-flash', label: 'GLM 5.3 Flash (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'qwen3.8-27b', label: 'Qwen 3.8 27B (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'qwen3.6-35b-a3b', label: 'Qwen 3.6 35B A3B (Engy)', provider: 'engy', can: ['chat'] },
+    { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash (Engy)', provider: 'engy', can: ['chat', 'vision'] },
     { id: 'deepseek-v4-flash-0731', label: 'DeepSeek V4 Flash (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'glm-5.2', label: 'GLM 5.2 (Engy)', provider: 'engy', can: ['chat'] },
     { id: 'glm-5.3', label: 'GLM 5.3 (Engy)', provider: 'engy', can: ['chat'] },
@@ -69,15 +76,17 @@ export const AI_MODELS: readonly ModelInfo[] = [
     { id: 'openai:gpt-5.6-luna', label: 'GPT 5.6 Luna (OpenAI)', provider: 'openai', can: ['chat'] },
     { id: 'openai:gpt-5.6-terra', label: 'GPT 5.6 Terra (OpenAI)', provider: 'openai', can: ['chat'] },
     { id: 'openai:gpt-5.6-sol', label: 'GPT 5.6 Sol (OpenAI)', provider: 'openai', can: ['chat'] },
-    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', can: ['chat'] },
-    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini', can: ['chat'] },
+    // 2026-11-19: images through task-manager/brain/geminiLlm.ts geminiVision (only "Reading ticket photos" calls Gemini with an image).
+    { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', provider: 'gemini', can: ['chat', 'vision'] },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'gemini', can: ['chat', 'vision'] },
     // 2026-11-15 (owner): the other Gemini models on the key. Text only until each has read a picture here.
     { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash Preview', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-4-hydrogen', label: 'Gemini 4 Hydrogen', provider: 'gemini', can: ['chat'] },
     { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', provider: 'gemini', can: ['chat'] },
     // 2026-11-15 (owner: "sarvam goes first"): built for Indian languages. Voice notes up to 30 s; longer ones go to Whisper.
-    { id: 'sarvam:saaras:v4', label: 'Sarvam Saaras v4', provider: 'sarvam', can: ['speech'], note: 'Indian languages; notes up to 30 s' },
+    // 2026-11-17 (owner): also the recruitment calls' default, through Sarvam's batch job (any length).
+    { id: 'sarvam:saaras:v4', label: 'Sarvam Saaras v4', provider: 'sarvam', can: ['speech'], note: 'Indian languages; voice notes up to 30 s, calls any length' },
     { id: 'whisper-large-v3', label: 'Whisper Large v3 (Groq)', provider: 'groq_speech', can: ['speech'], note: 'better on Hindi / Hinglish' },
     { id: 'whisper-large-v3-turbo', label: 'Whisper Large v3 Turbo (Groq)', provider: 'groq_speech', can: ['speech'], note: 'faster' },
 ];
@@ -123,11 +132,11 @@ const CANDIDATE_EXTRACT_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:clau
 const BRAIN_TURN_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-haiku-5-5', 'glm-5.3-flash'] as const;
 /**
  * Owner 2026-11-16: a call's reading sits next to a decision about a person, so a wrong "not interested" costs a lot
- * (doctrine L10): the larger tier first, Sonnet as the backup. The transcription chain is the voice notes' (large-v3
- * first: better on Hindi / Hinglish).
+ * (doctrine L10): the larger tier first, Sonnet as the backup. Owner 2026-11-17: the transcription starts on Sarvam
+ * (built for Indian languages and Hinglish, the voice notes' choice too), Whisper large-v3 then turbo as the backups.
  */
 const CALL_ANALYSE_DEFAULT = ['anthropic:claude-opus-5-5', 'anthropic:claude-sonnet-5-5'] as const;
-const CALL_TRANSCRIBE_DEFAULT = ['whisper-large-v3', 'whisper-large-v3-turbo'] as const;
+const CALL_TRANSCRIBE_DEFAULT = ['sarvam:saaras:v4', 'whisper-large-v3', 'whisper-large-v3-turbo'] as const;
 
 
 export const AI_JOBS: readonly JobInfo[] = [
@@ -147,7 +156,7 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
     { key: 'brain_turn', label: 'The brain turn', hint: 'Reads the message, looks things up with its skills, and answers or proposes an action (tickets, rooms, readings, wiki, memory). The first model that answers is used; the rest are backups', group: 'Unified brain', needs: 'chat', providers: ['anthropic', 'engy', 'groq'], defaults: BRAIN_TURN_DEFAULT },
     { key: 'candidate_extract', label: 'Reading resumes', hint: 'Reads education, industry, skills and employers out of each uploaded resume into the candidate\'s empty fields; one call per resume. A scanned PDF is typed out first by the Claude model in this list', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_EXTRACT_DEFAULT },
-    { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
+    { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['sarvam', 'groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
     { key: 'call_analyse', label: 'Calls: reading the call', hint: 'Reads a screening call\'s transcript for sentiment, interest, the concerns raised and the facts heard (pay, notice, location), each with a quote. Advisory only: a person applies each fact. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CALL_ANALYSE_DEFAULT },
 
     // ── Owner 2026-11-15: the rest of the application (Brain → AI models) ──
@@ -162,11 +171,17 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'bill_ocr', label: 'Reading electricity bills', hint: 'Reads units, amounts and dates out of an electricity bill PDF', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'meter_ocr', label: 'Reading meter photos', hint: 'Reads the number off a photo of an electricity meter', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.8-27b'], single: true },
     { key: 'electricity_explain', label: 'Electricity "Explain"', hint: 'Writes the plain-words explanation of a month\'s electricity figures', group: 'Facilities', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-luna'], single: true, defaultEnv: 'ELECTRICITY_EXPLAIN_MODEL', defaultPrefix: 'openai:' },
-    { key: 'sop_photo', label: 'Scoring SOP photos', hint: 'Compares a checklist photo with its reference photo. If this model fails, the second model already in the code takes over', group: 'Facilities', needs: 'vision', providers: ['engy'], defaults: ['qwen3.8-27b'], single: true },
+    { key: 'sop_photo', label: 'Scoring SOP photos', hint: 'Compares a checklist photo with its reference photo. If this model fails, the second model already in the code takes over', group: 'Facilities', needs: 'vision', providers: ['engy'], defaults: ['deepseek-v4.1-flash', 'glm-5.3-flash'], single: true },
     { key: 'sop_layout', label: 'Reading SOP floor plans', hint: 'Finds the areas on an uploaded floor plan', group: 'Facilities', needs: 'vision', providers: ['groq'], defaults: ['groq:qwen/qwen3.6-27b'], single: true },
     // Owner 2026-11-15: "everything to go to the llm model ... configurable from the brain". Every ticket (app, WhatsApp,
     // re-sort, Snags upload) is sorted by this chain (backend/lib/ticketing/aiClassifier.ts); main first, then backups.
     { key: 'ticket_classify', label: 'Sorting new tickets', hint: 'Sorts every new ticket: picks the category from your category list, the team, the priority (it can only raise a category\'s usual priority) and a safety risk. The first model that answers is used; the rest are backups. If all fail, the old keyword rules decide', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-haiku-5-5', 'glm-5.3-flash'] },
+    // Owner 2026-11-19: "improve the prompt for learning loop ... daily automatic as well as on button click".
+    { key: 'ticket_rules_draft', label: 'Ticket sorting rules', hint: 'Once a day and on the "Suggest rules now" button, reads the team\'s recent ticket corrections and drafts short sorting rules. A draft is tested on judged tickets and only used after a person approves it in Review → Tickets', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
+    // Owner 2026-11-19: "link the uploaded image with query raised in the ticket", configurable here.
+    { key: 'ticket_photo', label: 'Reading ticket photos', hint: 'When a ticket has a photo, reads what the photo shows (the equipment and the problem, never people) and which category it points to. Watch only: recorded, nothing changes. On: a photo that disagrees with the ticket\'s category sends the ticket to Review, and a photo showing danger can raise the priority. The first model that answers is used; the rest are backups', group: 'Tickets', needs: 'vision', providers: ['anthropic', 'engy', 'gemini'], defaults: ['anthropic:claude-haiku-5-5', 'glm-5.3-flash'] },
+    // Owner 2026-11-19: "ai based suggestions based on past tickets on what categories must be added" (manual only).
+    { key: 'ticket_category_suggest', label: 'Suggesting ticket categories', hint: 'Only when a Tech person presses "Suggest categories" in Brain → Categories & SLAs: reads the tickets that fit the categories badly and suggests categories to add, merge or rename. Nothing changes until a person accepts a suggestion', group: 'Tickets', needs: 'chat', providers: CHAT_PROVIDERS, defaults: ['anthropic:claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-2.5-flash', 'glm-5.3-flash'] },
     { key: 'admin_chatbot', label: 'Master admin chatbot', hint: 'Turns a master admin\'s question into a read-only database query and words the result', group: 'Admin', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
     { key: 'coaching_feedback', label: 'Call coaching feedback', hint: 'Scores a recorded sales call and writes the coaching notes', group: 'CRM', needs: 'chat', providers: ['groq'], defaults: ['groq:llama-3.3-70b-versatile'], single: true },
     { key: 'mailbox_digest', label: 'Purchase mailbox digest', hint: 'Sorts purchase mailbox threads for the daily digest (only when the digest\'s AI step is switched on)', group: 'Procurement', needs: 'chat', providers: ['openai'], defaults: ['openai:gpt-5.6-terra'], single: true, defaultEnv: 'MAILBOX_DIGEST_MODEL', defaultPrefix: 'openai:' },

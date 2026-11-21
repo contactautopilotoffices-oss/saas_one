@@ -19,6 +19,7 @@ const LATER_MIGRATIONS = [
     '20261030000001_petty_cash_audit_fixes.sql',
     '20261030000002_petty_cash_cancel_after_payout.sql',
     '20261113000005_petty_cash_chat_proof_no_bill.sql',
+    '20261116000001_petty_cash_edit_and_withdraw_pending.sql',
     '20261120000001_petty_cash_expense_approver.sql',
 ];
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -131,6 +132,17 @@ test('accounts keep reviewing expenses whether or not an expense approver is con
     assert.equal((await call(db, 'pc_review_expense', [id(14), unrouted.id, 'accepted', ''])).review_status, 'accepted');
 }));
 
+// Guards the interaction with 20261116000001, which is applied before this migration: that
+// one added the super-admin reviewer, so redefining pc_review_expense here must keep it.
+test('a super admin can still review an expense once a property has an expense approver', () => run(async db => {
+    await route(db, { expenseApprover: id(16) });
+    const r = await funded(db);
+    const e = await expense(db, r);
+    const reviewed = await call(db, 'pc_review_expense', [id(10), e.id, 'accepted', '']);
+    assert.equal(reviewed.reviewed_by, id(10));
+    assert.equal((await db.query("select metadata from petty_cash_activity where action='expense_accepted' order by created_at desc limit 1")).rows[0].metadata.reviewer_role, 'super_admin');
+}));
+
 test('a user who is not routed the expense and is not accounts cannot review it', () => run(async db => {
     await route(db, { expenseApprover: id(16) });
     const r = await funded(db);
@@ -159,6 +171,23 @@ test('rejection still needs a reason, and a withdrawn expense cannot be reviewed
     await call(db, 'pc_review_expense', [id(16), e.id, 'rejected', 'Bill does not match the amount']);
     await call(db, 'pc_withdraw_expense', [id(11), e.id, 'Claiming it on the next advance instead']);
     await assert.rejects(call(db, 'pc_review_expense', [id(16), e.id, 'accepted', '']), /withdrawn expense cannot be reviewed/);
+}));
+
+// Guards the rest of 20261116000001 with this migration applied on top of it: reverting a
+// pending expense and editing its details must still work once approval routing exists.
+test('a routed pending expense can still be reverted and edited', () => run(async db => {
+    await route(db, { expenseApprover: id(16) });
+    const r = await funded(db);
+    const editable = await expense(db, r, { amount: 160, description: 'Water cans' });
+    const updated = await call(db, 'pc_update_expense', [id(11), editable.id, { description: 'Drinking water cans for pantry', category: 'Pantry' }]);
+    assert.equal(updated.description, 'Drinking water cans for pantry');
+    assert.equal((await expenseRow(db, editable.id)).assigned_expense_approver_id, id(16));
+
+    const reverted = await expense(db, r, { amount: 55, description: 'Wrong entry' });
+    await call(db, 'pc_withdraw_expense', [id(11), reverted.id, 'Uploaded wrong transaction by mistake']);
+    assert.equal((await expenseRow(db, reverted.id)).review_status, 'withdrawn');
+    // A reverted expense leaves the approver's queue.
+    assert.deepEqual(await queue(db, 16), [editable.id]);
 }));
 
 // ---------------------------------------------------------------- queues

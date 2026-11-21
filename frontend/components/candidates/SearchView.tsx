@@ -19,6 +19,7 @@ import KeywordBar from './KeywordBar';
 import JdStrip from './JdStrip';
 import { AddToPositionSelect, PositionDialog } from './PipelineView';
 import { preferLabels } from './PositionsView';
+import SearchFor from './SearchFor';
 import QuickView from './QuickView';
 import { RemarkDialog, statusNeedsRemark, useStatusRemark } from './Remarks';
 import RecordForm from './RecordForm';
@@ -251,11 +252,9 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         setConflicts(cs => cs.filter((_, i) => i !== index));
     };
 
-    // A position opened from the Positions tab: its filters, preferences and JD replace what is in the search.
-    const loadNonce = loadPosition?.nonce ?? 0;
-    useEffect(() => {
-        if (!loadPosition) return;
-        const p = loadPosition.position;
+    // A position opened from the Positions tab, or picked in "Search for" (owner 2026-11-16): its filters, preferences
+    // and JD replace what is in the search.
+    const applyPosition = (p: Position) => {
         update({ ...EMPTY_FILTERS, ...p.filters });
         setPrefer(p.prefer ?? {});
         setPreferred(preferLabels(p.prefer ?? {}));
@@ -265,6 +264,10 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         setPositionTitle(p.title);
         setRanked(null);
         setJobNote(`Loaded the position ${p.title}. Check the filters and change anything you need.`);
+    };
+    const loadNonce = loadPosition?.nonce ?? 0;
+    useEffect(() => {
+        if (loadPosition) applyPosition(loadPosition.position);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loadNonce]);
 
@@ -414,6 +417,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                 onSaved={p => { setPositionOpen(false); setPositionTitle(p.title); onDataChanged(); }}
             />
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
+            <SearchFor orgId={orgId} dataVersion={dataVersion} onPosition={applyPosition} />
             {jobText && (
                 <JdStrip
                     filters={filters}
