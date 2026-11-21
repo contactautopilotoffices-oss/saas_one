@@ -37,6 +37,8 @@ export interface AvailableSkill { skill: Skill; mode: Exclude<SkillMode, 'off'> 
 export function skillsFor(actor: ActorContext, settings: BrainSettings): AvailableSkill[] {
     const out: AvailableSkill[] = [];
     for (const skill of SKILLS) {
+        // 2026-11-20: a login with no property login is here for meeting rooms only (scope.ts roomsOnly).
+        if (actor.roomsOnly && skill.module !== 'rooms') continue;
         if (!skill.allowed(actor)) continue;
         // The property list (2026-11-18) is needed for tickets AND rooms: it is on when either of them is.
         const tickets = brainLevelFor(actor, settings, skill.module);

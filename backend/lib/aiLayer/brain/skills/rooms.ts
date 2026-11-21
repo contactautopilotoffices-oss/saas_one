@@ -15,6 +15,18 @@ import { checkWindow, clip, dayLabel, nullableStr, pickProperty, schema, scopePr
 
 const MAX_SCAN = 30;
 
+/**
+ * Owner 2026-11-20 ("keep the whatsapp bot consistent with the fms"): the properties a person may book rooms at are
+ * the ones the app's Book Meeting Room page offers them. For HR, CRM/BD, IT, Design and Tech logins that is every
+ * property of the organisation (ActorContext.roomPropertyIds, scope.ts); for everyone else it is their own properties,
+ * as before. Every room skill starts from this view; the booking function in the database checks access again.
+ */
+export function roomScope(ctx: SkillContext): SkillContext {
+    const ids = ctx.actor.roomPropertyIds;
+    if (!ids?.length) return ctx;
+    return { ...ctx, actor: { ...ctx.actor, propertyIds: ids, propertyNames: { ...ctx.actor.propertyNames, ...ctx.actor.roomPropertyNames } } };
+}
+
 /** The person's properties that have at least one active meeting room (at most 30 looked at). */
 async function propertiesWithRooms(ctx: SkillContext): Promise<string[]> {
     const ids = ctx.actor.propertyIds.slice(0, MAX_SCAN);
@@ -71,8 +83,9 @@ export const roomsAvailabilitySkill: ReadSkill<z.infer<typeof availabilityArgs>>
     args: availabilityArgs,
     examples: ['is any meeting room free at 4 today', 'kal 10 se 11 koi room khali hai', 'rooms available tomorrow afternoon at Lower Parel'],
     ability: { en: 'check free meeting rooms', hi: 'खाली मीटिंग रूम देखना', hinglish: 'free meeting rooms dekhna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async run(ctx, a) {
+        ctx = roomScope(ctx);
         const bad = checkWindow(ctx.now, a.date, a.start_time, a.end_time);
         if (bad) return { text: `Cannot check: ${bad}.` };
         const prop = await roomProperty(ctx, a.property);
@@ -101,8 +114,9 @@ export const roomsMyBookingsSkill: ReadSkill<z.infer<typeof bookingsArgs>> = {
     args: bookingsArgs,
     examples: ['what have I booked this week', 'meri bookings dikhao', 'which room did I have yesterday'],
     ability: { en: 'see my room bookings', hi: 'मेरी रूम बुकिंग देखना', hinglish: 'meri room bookings dekhna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async run(ctx, a) {
+        ctx = roomScope(ctx);
         const scope = scopeProperties(ctx, a.property);
         if (!scope.ok) return { text: scope.problem };
         const from = istDate(new Date(ctx.now.getTime() - 14 * 86_400_000));
@@ -153,8 +167,9 @@ export const roomBookSkill: WriteSkill<z.infer<typeof bookArgs>, z.infer<typeof 
     payload: bookPayload,
     examples: ['book the board room tomorrow 3 to 4', 'kal 11 baje ek ghante ke liye room book kar do', 'book the same room as yesterday at 4'],
     ability: { en: 'book a meeting room', hi: 'मीटिंग रूम बुक करना', hinglish: 'meeting room book karna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async prepare(ctx, a) {
+        ctx = roomScope(ctx);
         const bad = checkWindow(ctx.now, a.date, a.start_time, a.end_time);
         if (bad) return { ok: false, problem: `Cannot book: ${bad}. Fix it or call ask_user.` };
         const found = await findRoom(ctx, a.room, a.property);
@@ -173,6 +188,7 @@ export const roomBookSkill: WriteSkill<z.infer<typeof bookArgs>, z.infer<typeof 
         };
     },
     async execute(ctx, p, opId) {
+        ctx = roomScope(ctx);
         if (!ctx.actor.propertyIds.includes(p.propertyId)) return { ok: false, reply: bt('access_changed', ctx.lang) };
         const bad = checkWindow(ctx.now, p.date, p.startTime, p.endTime);
         if (bad) return { ok: false, reply: bt('expired', ctx.lang) };
@@ -206,8 +222,9 @@ export const roomsListSkill: ReadSkill<z.infer<typeof listArgs>> = {
     args: listArgs,
     examples: ['what meeting rooms are there', 'Andheri mein kaun se rooms hain', 'is there a room for 10 people at Lower Parel'],
     ability: { en: 'see the meeting rooms', hi: 'मीटिंग रूम देखना', hinglish: 'meeting rooms dekhna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async run(ctx, a) {
+        ctx = roomScope(ctx);
         const prop = await roomProperty(ctx, a.property);
         if (!prop.ok) return { text: prop.problem };
         const rooms = await ctx.data.listRooms(prop.propertyId);
@@ -235,8 +252,9 @@ export const roomsFreeSlotsSkill: ReadSkill<z.infer<typeof slotsArgs>> = {
     args: slotsArgs,
     examples: ['when is the board room free today', 'kal kaun sa room kab free hai', 'what time is the next available slot'],
     ability: { en: 'see free meeting room times', hi: 'मीटिंग रूम का खाली समय देखना', hinglish: 'meeting room ka free time dekhna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async run(ctx, a) {
+        ctx = roomScope(ctx);
         const bad = checkWindow(ctx.now, a.date, '23:58', '23:59');
         if (bad && !/start time has already passed/.test(bad)) return { text: `Cannot check: ${bad}.` };
         let rooms: RoomRow[];
@@ -297,8 +315,9 @@ export const roomCancelSkill: WriteSkill<z.infer<typeof cancelArgs>, z.infer<typ
     payload: cancelPayload,
     examples: ['cancel my board room booking tomorrow', 'kal wali booking cancel kar do', 'I don\'t need the room at 3 anymore'],
     ability: { en: 'cancel my room booking', hi: 'मेरी रूम बुकिंग रद्द करना', hinglish: 'meri room booking cancel karna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async prepare(ctx, a) {
+        ctx = roomScope(ctx);
         const own = await ownBooking(ctx, a.booking);
         if (!own.ok) return own;
         const b = own.booking;
@@ -311,6 +330,7 @@ export const roomCancelSkill: WriteSkill<z.infer<typeof cancelArgs>, z.infer<typ
         };
     },
     async execute(ctx, p) {
+        ctx = roomScope(ctx);
         if (!ctx.actor.propertyIds.includes(p.propertyId)) return { ok: false, reply: bt('access_changed', ctx.lang) };
         const out = await ctx.data.cancelBooking({ bookingId: p.bookingId, userId: ctx.actor.userId });
         if (out.ok) return { ok: true, resultRef: p.bookingId, reply: bt('room_cancelled', ctx.lang, { room: p.roomName, date: dayLabel(p.date), start: p.startTime, end: p.endTime }), episode: `Cancelled ${p.roomName} on ${p.date} ${p.startTime}-${p.endTime}` };
@@ -349,8 +369,9 @@ export const roomMoveSkill: WriteSkill<z.infer<typeof moveArgs>, z.infer<typeof 
     payload: movePayload,
     examples: ['move my 3 pm booking to 5', 'kal wali booking parso kar do', 'shift my board room booking to Huddle 2'],
     ability: { en: 'move my room booking', hi: 'मेरी रूम बुकिंग बदलना', hinglish: 'meri room booking shift karna' },
-    allowed: actor => actor.propertyIds.length > 0 && actor.recordRule !== 'assigned_to_me',
+    allowed: actor => (actor.roomPropertyIds ?? actor.propertyIds).length > 0 && actor.recordRule !== 'assigned_to_me',
     async prepare(ctx, a) {
+        ctx = roomScope(ctx);
         const bad = checkWindow(ctx.now, a.date, a.start_time, a.end_time);
         if (bad) return { ok: false, problem: `Cannot move it there: ${bad}. Fix it or call ask_user.` };
         const own = await ownBooking(ctx, a.booking);
@@ -384,6 +405,7 @@ export const roomMoveSkill: WriteSkill<z.infer<typeof moveArgs>, z.infer<typeof 
         };
     },
     async execute(ctx, p, opId) {
+        ctx = roomScope(ctx);
         if (!ctx.actor.propertyIds.includes(p.propertyId)) return { ok: false, reply: bt('access_changed', ctx.lang) };
         if (checkWindow(ctx.now, p.date, p.startTime, p.endTime)) return { ok: false, reply: bt('expired', ctx.lang) };
         const to = bookingLine(ctx, { roomName: p.roomName, propertyId: p.propertyId, date: p.date, startTime: p.startTime, endTime: p.endTime });

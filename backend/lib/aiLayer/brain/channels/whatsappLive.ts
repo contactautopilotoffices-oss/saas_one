@@ -63,7 +63,8 @@ export function liveBrainWhatsAppDeps(): BrainWhatsAppDeps {
         anyOrgOn,
         findUser: phone => findWhatsAppUser(phone),
         orgsForUser,
-        loadActor: (userId, orgId) => loadActor(supabaseAdmin, userId, orgId),
+        // 2026-11-20: also HR/CRM/IT/Design/Tech logins with no property login, for meeting rooms only (scope.ts).
+        loadActor: (userId, orgId) => loadActor(supabaseAdmin, userId, orgId, { roomsOnlyLogins: true }),
         loadSettings: async orgId => {
             const [brain, aliases] = await Promise.all([loadBrainSettings(supabaseAdmin, orgId), loadAliases(supabaseAdmin, orgId)]);
             return { settings: brain.settings, aliases };
