@@ -759,6 +759,58 @@ export class WorkspaceService {
     }
 
     /**
+     * Owner 2026-11-21, WhatsApp "undo": give back a task this person handed over in the last 10 minutes. Only the same
+     * hand-over (the audit row names this actor, this task and this receiver), only while the receiver still holds it and has
+     * not finished it, and in one conditional update. Nobody is told here (the caller decides what to say).
+     */
+    static async undoHandOver(actorUserId: string, input: { taskId?: string; toUserId?: string; since?: string }): Promise<void> {
+        if (!isUuid(input.taskId) || !isUuid(input.toUserId)) throw new WorkspaceError(400, 'That task or person is not valid.');
+        const actor = await this.requireUnlockedActor(actorUserId);
+        const since = new Date(Math.max(Date.now() - 10 * 60_000, new Date(input.since || 0).getTime() - 10_000)).toISOString();
+        const { data: log } = await supabaseAdmin.from('task_audit_logs').select('details')
+            .eq('event_type', 'task_handed_over').eq('actor_id', actor.id).eq('task_id', input.taskId).gte('created_at', since)
+            .order('created_at', { ascending: false }).limit(1);
+        const d = (log?.[0]?.details ?? null) as { toUserId?: string; fromStatus?: string; note?: string } | null;
+        if (!d || d.toUserId !== input.toUserId) throw new WorkspaceError(409, 'That hand-over is too old to undo here.', 'TOO_OLD');
+        const { data: row } = await supabaseAdmin.from('task_assignments').select('status, description').eq('id', input.taskId).maybeSingle();
+        // Only "to do": once they have started or finished it, it is theirs (the conditional update below checks it again).
+        if (!row || row.status !== 'pending') throw new WorkspaceError(409, 'They have already started or finished it.', 'CHANGED');
+        // Take off what the hand-over added to the card: the last "Given by …" line and its note.
+        const lines = String(row.description || '').split('\n');
+        const drop = (match: (l: string) => boolean) => { for (let i = lines.length - 1; i >= 0; i--) if (match(lines[i].trim())) { lines.splice(i, 1); return; } };
+        drop(l => l.startsWith(HANDOVER_NOTE_PREFIX));
+        if (d.note) drop(l => l === `Remark: ${d.note}`);
+        const status = d.fromStatus === 'in_progress' ? 'in_progress' : 'pending';
+        const { data: back, error } = await supabaseAdmin.from('task_assignments')
+            .update({ employee_id: actor.id, status, description: lines.join('\n').trim() || null, updated_at: new Date().toISOString() })
+            .eq('id', input.taskId).eq('employee_id', input.toUserId).eq('status', 'pending').select('id').maybeSingle();
+        if (error) {
+            if ((error as { code?: string }).code === '23505') throw new WorkspaceError(409, 'You already have this same task for that day.', 'ALREADY_THERE');
+            throw new WorkspaceError(500, 'Could not take the task back just now.');
+        }
+        if (!back) throw new WorkspaceError(409, 'They have already started or finished it.', 'CHANGED');
+        await TaskDatabaseService.logAudit({ eventType: 'task_handover_undone', actorId: actor.id, targetEmployeeId: input.toUserId, taskId: input.taskId, details: { via: 'whatsapp_undo' } });
+    }
+
+    /** Owner 2026-11-21, WhatsApp "undo": take off the "Remark: …" line this person just added (same rule as adding it). */
+    static async removeNote(actorUserId: string, input: { taskId?: string; note?: string }): Promise<void> {
+        if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
+        const line = `Remark: ${String(input.note ?? '').replace(/\s+/g, ' ').trim()}`;
+        const actor = await this.requireUnlockedActor(actorUserId);
+        const { data: row, error } = await supabaseAdmin.from('task_assignments').select('*').eq('id', input.taskId).maybeSingle();
+        if (error || !row) throw new WorkspaceError(404, 'Task not found.');
+        if (row.assigned_by !== actor.id) await PermissionService.assertCanCompleteTask(actor.id, row as TaskAssignment);
+        const lines = String(row.description || '').split('\n');
+        const at = lines.map(l => l.trim()).lastIndexOf(line);
+        if (at < 0) throw new WorkspaceError(409, 'That note was already changed.', 'CHANGED');
+        lines.splice(at, 1);
+        const description = lines.join('\n').trim() || null;
+        const { error: upError } = await supabaseAdmin.from('task_assignments').update({ description, updated_at: new Date().toISOString() }).eq('id', row.id);
+        if (upError) throw new WorkspaceError(500, 'Could not remove the note just now.');
+        await TaskDatabaseService.logAudit({ eventType: 'task_note_removed', actorId: actor.id, targetEmployeeId: row.employee_id, taskId: row.id, details: { title: row.title, note: input.note, via: 'whatsapp_undo' } });
+    }
+
+    /**
      * Renames a task (WhatsApp "rename task 2 to …", owner request 2026-10-13). The SAME rule as deleting: your own task, a
      * task of someone below you, a superuser, or a task you gave. A task that repeats every working day is refused (its
      * name comes from the repeating task; unlock it first), exactly like delete.
@@ -1051,7 +1103,8 @@ export class WorkspaceService {
      * giver may assign to and who can use the Task Manager; they are told like any new task, and the old holder gets a bell.
      */
     /** Owner 2026-10-27: `dueDate` undefined = keep the deadline; null or '' = remove it; `dueTime` goes with it. */
-    static async editTask(actorUserId: string, input: { taskId?: string; title?: string; description?: string; date?: string; targetUserId?: string; via?: string; dueDate?: unknown; dueTime?: unknown }): Promise<{ id: string }> {
+    static async editTask(actorUserId: string, input: { taskId?: string; title?: string; description?: string; date?: string; targetUserId?: string; via?: string; dueDate?: unknown; dueTime?: unknown;
+        /** Owner 2026-11-21: WhatsApp "undo" puts a change back without telling anyone again. */ quiet?: boolean }): Promise<{ id: string }> {
         if (!input.taskId) throw new WorkspaceError(400, 'Missing task.');
         // Owner 2026-10-26: a name or details not sent stay as they are (WhatsApp changes only the date or the person)
         const keepTitle = input.title === undefined, keepDetails = input.description === undefined;
@@ -1131,6 +1184,7 @@ export class WorkspaceService {
             },
         });
 
+        if (input.quiet) return { id: row.id as string };
         if (target) {
             // The new person is told like any new task (approved template; gated, so nothing is sent in Pretend Mode)
             if (target.id !== actor.id) {

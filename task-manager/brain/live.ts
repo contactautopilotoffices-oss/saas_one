@@ -9,7 +9,7 @@ import { shadowDetails } from './shadow';
 import { addDays, clip, isGrounded, splitLongReply } from './text';
 import { FIND_MAX_ROWS, type FoundTask } from './findTasks';
 import { DEFAULT_CONFIRM_POLICY, DRAFT_TTL_MIN, MAX_NOTE_LENGTH, type Action, type BrainContext, type ClarifyReason, type ConfirmPolicy, type PendingState } from './types';
-import { AI_DOWN_HELP, ExactPlan, LastChange, UNDO_HINT, UndoIO, changeFromAction, normalizeChange, parseExactCommand, planExact, runUndo } from './frontDoor';
+import { AI_DOWN_HELP, ExactPlan, HOLD_HINT, LastChange, UNDO_HINT, UndoIO, changeFromAction, normalizeChange, parseExactCommand, planExact, runUndo, tellsOthers } from './frontDoor';
 import { isExplicitTaskCommand } from '@/backend/lib/whatsapp/interpreter/coordinator.mjs';
 import { tasksDomainWithTeam } from './tasksDomain';
 import { facilityDomain } from './facilityDomain';
@@ -512,7 +512,8 @@ export async function claimSmartChat(body: unknown, io?: LiveIO, opts: LiveOptio
 
 /** The confirmation rules for a live turn: with "One front door" ON (it provides undo) own completions and new tasks go straight through. */
 function livePolicy(io: LiveIO, frontDoor: boolean | undefined): ConfirmPolicy {
-    return { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !frontDoor, confirmCreates: !frontDoor };
+    // Owner 2026-11-21: with undo (One front door ON), only deleting still asks first.
+    return { ...DEFAULT_CONFIRM_POLICY, ...(io.brain.policy || {}), confirmCompletions: !frontDoor, confirmCreates: !frontDoor, onlyDeletesAsk: !!frontDoor };
 }
 
 interface Turn {
@@ -656,10 +657,11 @@ async function respondExact(t: {
             const exec = await executeAction(plan.action, ctx, io.exec);
             executed = exec?.summary ?? null;
             reply = [exec?.summary, exec?.values?.details, change ? UNDO_HINT : null].filter(Boolean).join('\n\n') || 'Done.';
+            reply = withHoldHint(reply, { outcome: 'ACT', action: plan.action }, ctx, io);
             next = { ...EMPTY, recent: state.recent, ...carry(state, change) };
             kind = plan.action.type;
         } else if (plan.kind === 'undo') {
-            const r = io.undo ? await runUndo(state.lastChange ?? null, employee.id, io.undo) : { text: "There's nothing to undo right now.", undone: 0 };
+            const r = io.undo ? await runUndo(state.lastChange ?? null, employee.id, { ...io.undo, nameOf: id => ctx.people.find(p => p.id === id)?.name ?? null }) : { text: "There's nothing to undo right now.", undone: 0 };
             reply = r.text; executed = r.undone ? `Undid ${r.undone}` : null;
             next = { ...EMPTY, recent: state.recent, lastChange: null };   // an undo is used up, whatever happened
             kind = 'undo';
@@ -701,6 +703,13 @@ async function respond(t: Turn): Promise<void> {
 
 const GENERIC_LOST = 'Sorry, I lost track of what we were doing. What would you like to do?';
 
+/** Owner 2026-11-21: after the undo hint, "anyone else is told after 1 minute" when the change tells someone and messages
+ *  really wait (the table exists). Never twice. */
+function withHoldHint(text: string, decision: { outcome: string; action?: Action }, ctx: BrainContext, io: LiveIO): string {
+    if (!io.exec.holdsMessages || decision.outcome !== 'ACT' || !decision.action || !text.includes(UNDO_HINT) || text.includes(HOLD_HINT)) return text;
+    return tellsOthers(changeFromAction(decision.action, ctx), ctx.sender.id) ? text.replace(UNDO_HINT, `${UNDO_HINT} ${HOLD_HINT}`) : text;
+}
+
 /**
  * 2026-11-02: a plain reply sent outside `say` (e.g. "please reply yes") still answers any message that joined this turn while
  * it was running (old in-memory merge). Before, those messages were marked seen and never answered.
@@ -736,6 +745,8 @@ async function handle(t: Turn): Promise<void> {
             finalNext = drained.nextState;
         }
         if (inFlight) inFlight.closing = true;
+        // Owner 2026-11-21: a change that tells someone else says that they are told after 1 minute (only when it really waits).
+        if (finalReplyText) finalReplyText = withHoldHint(finalReplyText, result.decision!, ctx, io);
 
         // Owner 2026-10-19: remember the exact question asked, so the next reply is read as its answer.
         if (finalNext !== 'clear' && finalNext.pending?.kind === 'draft' && !finalNext.pending.question && finalReplyText) {
@@ -914,23 +925,26 @@ export async function defaultLiveIO(): Promise<LiveIO> {
 
     const STATUS: Record<string, string> = { pending: 'To do', in_progress: 'In progress', completed: 'Done' };
 
+    // Owner 2026-11-21: every change runs with messages to other people parked for 1 minute, so "undo" can stop them.
+    const { withHold, holdReady, cancelHeldSince } = await import('../heldMessages');
     const exec: ExecIO = {
-        async setStatus(actorId, taskId, status, opts) { await WorkspaceService.setStatus(actorId, { taskId, status, notifyGiver: opts?.notifyGiver, remark: opts?.remark }); },
-        async notifyCompleted(_actorId, taskIds) { await WorkspaceService.notifyCompleted(taskIds); },
+        holdsMessages: await holdReady(),
+        async setStatus(actorId, taskId, status, opts) { await withHold(actorId, () => WorkspaceService.setStatus(actorId, { taskId, status, notifyGiver: opts?.notifyGiver, remark: opts?.remark })); },
+        async notifyCompleted(actorId, taskIds) { await withHold(actorId, () => WorkspaceService.notifyCompleted(taskIds)); },
         async assign(actorId, i) {
-            const task = await WorkspaceService.assign(actorId, { targetUserId: i.targetUserId, title: i.title, description: i.description, date: i.date, notify: i.notify, note: i.note });
+            const task = await withHold(actorId, () => WorkspaceService.assign(actorId, { targetUserId: i.targetUserId, title: i.title, description: i.description, date: i.date, notify: i.notify, note: i.note }));
             // Owner 2026-10-26: "follow up on task 2: …" — the task exists either way; the link is skipped until the migration runs
             if (i.followUpOf) await linkTasks([task.id], { followUpOf: i.followUpOf });
         },
-        async alertAssigned(actorId, targetUserId, titles, date) { await WorkspaceService.alertAssigned(actorId, targetUserId, titles, date); },
-        async handOver(actorId, taskId, toId, note) { const r = await WorkspaceService.handOver(actorId, { taskId, targetUserId: toId, note }); return { toName: r.toName }; },
+        async alertAssigned(actorId, targetUserId, titles, date) { await withHold(actorId, () => WorkspaceService.alertAssigned(actorId, targetUserId, titles, date)); },
+        async handOver(actorId, taskId, toId, note) { const r = await withHold(actorId, () => WorkspaceService.handOver(actorId, { taskId, targetUserId: toId, note })); return { toName: r.toName }; },
         async deleteTask(actorId, taskId) { await WorkspaceService.deleteTask(actorId, { taskId, via: 'whatsapp' }); },
-        async renameTask(actorId, taskId, title) { await WorkspaceService.renameTask(actorId, { taskId, title, via: 'whatsapp' }); },
-        async addNote(actorId, taskId, note, opts) { await WorkspaceService.addNote(actorId, { taskId, note, via: 'whatsapp', tellGiver: opts?.tellGiver }); },
-        async answerRequest(actorId, requestId, accept, why) { await CollaborationService.respond(actorId, { requestId, accept, reason: why ?? undefined, via: 'whatsapp' }); },
-        async changeTask(actorId, taskId, change) { await WorkspaceService.editTask(actorId, { taskId, date: change.date, targetUserId: change.toId, via: 'whatsapp' }); },
-        remindTasks: (actorId, taskIds) => WorkspaceService.remindTasks(actorId, { taskIds, via: 'whatsapp' }),
-        async setLocked(actorId, taskId, locked) { await WorkspaceService.setLocked(actorId, { taskId, locked }); },
+        async renameTask(actorId, taskId, title) { await withHold(actorId, () => WorkspaceService.renameTask(actorId, { taskId, title, via: 'whatsapp' })); },
+        async addNote(actorId, taskId, note, opts) { await withHold(actorId, () => WorkspaceService.addNote(actorId, { taskId, note, via: 'whatsapp', tellGiver: opts?.tellGiver })); },
+        async answerRequest(actorId, requestId, accept, why) { await withHold(actorId, () => CollaborationService.respond(actorId, { requestId, accept, reason: why ?? undefined, via: 'whatsapp' })); },
+        async changeTask(actorId, taskId, change) { await withHold(actorId, () => WorkspaceService.editTask(actorId, { taskId, date: change.date, targetUserId: change.toId, via: 'whatsapp' })); },
+        remindTasks: (actorId, taskIds) => withHold(actorId, () => WorkspaceService.remindTasks(actorId, { taskIds, via: 'whatsapp' })),
+        async setLocked(actorId, taskId, locked) { await withHold(actorId, () => WorkspaceService.setLocked(actorId, { taskId, locked })); },
         async readPerson(actorId, personId) {
             const [actor, target] = await Promise.all([TaskDatabaseService.getEmployeeById(actorId), TaskDatabaseService.getEmployeeById(personId)]);
             if (!actor || !target) return null;
@@ -988,7 +1002,7 @@ export async function defaultLiveIO(): Promise<LiveIO> {
         },
         async relay(actorId, input) {
             const actor = await relayIO.getPerson(actorId);
-            return actor ? relayToAssigners({ actor, ...input }, relayIO) : { told: [], couldNot: [] };
+            return actor ? withHold(actorId, () => relayToAssigners({ actor, ...input }, relayIO)) : { told: [], couldNot: [] };
         },
     };
 
@@ -1032,6 +1046,23 @@ export async function defaultLiveIO(): Promise<LiveIO> {
             async setStatus(actorId, taskId, status) { await WorkspaceService.setStatus(actorId, { taskId, status }); },
             findCreated: (actorId, assigneeId, title, date, since) => WorkspaceService.findRecentlyCreated(actorId, assigneeId, title, date, since),
             async deleteTask(actorId, taskId) { await WorkspaceService.deleteTask(actorId, { taskId }); },
+            // Owner 2026-11-21: undo for everything that no longer asks first. Each is checked again on the server.
+            cancelHeld: (actorId, since) => cancelHeldSince(actorId, since),
+            async undoHandOver(actorId, taskId, toId, since) { await WorkspaceService.undoHandOver(actorId, { taskId, toUserId: toId, since }); },
+            async changeBack(actorId, taskId, to) { await WorkspaceService.editTask(actorId, { taskId, date: to.date, targetUserId: to.ownerId, via: 'whatsapp_undo', quiet: true }); },
+            async renameTask(actorId, taskId, title) { await WorkspaceService.renameTask(actorId, { taskId, title, via: 'whatsapp_undo' }); },
+            async removeNote(actorId, taskId, note) { await WorkspaceService.removeNote(actorId, { taskId, note }); },
+            async setLocked(actorId, taskId, locked) { await WorkspaceService.setLocked(actorId, { taskId, locked }); },
+            async undoAnswer(actorId, requestId, since) { await CollaborationService.undoRespond(actorId, { requestId, since }); },
+            async tellTakenBack(actorId, userId, title) {
+                const [actor, person] = await Promise.all([TaskDatabaseService.getEmployeeById(actorId), TaskDatabaseService.getEmployeeById(userId)]);
+                if (!actor || !person) return;
+                const { taskBell } = await import('../taskBell');
+                const text = `${actor.name} took back the task "${title}". It was sent to you by mistake, so you don't need to do it.`;
+                await taskBell({ userId: person.id, kind: 'TASK_CHANGED', title: `${actor.name} took back a task`, message: text, departmentName: person.department_name });
+                // Plain text only: it reaches WhatsApp when their chat window is open; otherwise the app bell above carries it.
+                if (person.phone_number) await TaskMessagingService.sendMessage(person.phone_number, text, { freeformOnly: true, messageType: 'task_taken_back', departmentId: person.department_id || undefined });
+            },
         },
         brain: { llm, promptSections, interpretModels, replyModels, rewriteModels },
         beginLearning: beginObservation,

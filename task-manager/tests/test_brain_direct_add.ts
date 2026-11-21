@@ -100,10 +100,12 @@ async function run() {
     await turn(w, 'vidya');
     check('"vidya" → saved for Vidya without a second question', JSON.stringify(saved(w)) === JSON.stringify(['Audit→u2']) && !w.state?.data?.pending, { exec: w.exec, state: w.state?.data });
 
-    console.log('\n4. Someone named who cannot get the work → still asks first (never silently left out)');
+    // Owner 2026-11-21: "ask for a yes only for a Delete option. nothing else" → saved for Vidya at once; the reply always
+    // says Neha was left out (a fixed line, never left to the AI), so nobody is silently left out.
+    console.log('\n4. Someone named who cannot get the work → the rest is saved, and the reply says who was left out');
     w = mk();
     await turn(w, 'assign neha and vidya to collect id proofs');
-    check('a preview naming Neha, nothing saved yet', saved(w).length === 0 && /Neha/.test(last(w)) && w.state?.data.pending?.kind === 'confirm', { sent: last(w), state: w.state?.data });
+    check('saved for Vidya only, no Yes card, the reply names Neha as not done', !saved(w).some((x: string) => /→u(?!2)/.test(x)) && saved(w).length >= 1 && !w.state?.data.pending && /Not done: .*Neha/.test(last(w)) && /undo/i.test(last(w)), { sent: last(w), exec: w.exec, state: w.state?.data });
 
     console.log('\n5. "One front door" OFF (no undo) → the yes/no stays');
     w = mk(false);

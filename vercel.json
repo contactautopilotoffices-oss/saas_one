@@ -164,6 +164,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/task-held-messages",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/task-manager?action=auto",
       "schedule": "*/15 * * * *"
     },

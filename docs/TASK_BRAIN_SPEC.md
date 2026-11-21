@@ -669,3 +669,60 @@ unsure answers, 11 low confidence, 10 "nothing is waiting"). Median 5.8 s per re
      user part. `tokensIn` still counts the cached part; `cachedIn` reports it. Cache hit rate not yet measured live.
    - The 7 real failures were NOT added to the paid eval set (owner 2026-10-22: 20 cases maximum); they are covered by the
      offline test `test_brain_fixes_2026_11_02.ts` (65 checks).
+
+## Agent Spec — only deleting asks for a Yes; everything else happens at once with undo (owner 2026-11-21)
+
+Owner, verbatim: "for these -rename, change, remind, give to someone, don't ask for a yes confirmation. just perform and give
+an undo option." then "A, Also ask for a yes only for a Delete option. nothing else." Option A: the change happens at once;
+messages to other people wait 1 minute; an undo inside the minute means nobody is told; after it, undo still reverses the
+change (10 minutes) and the person who was told gets a "taken back" note.
+
+**1. Workflow or agent?**  workflow (unchanged: understand → decide in code → do → reply). Justification (a) `[BAA p.115]`.
+   Only the decide rule moves: `ConfirmPolicy.onlyDeletesAsk` (on with the "One front door" switch) turns CONFIRM into ACT
+   for hand-over, rename, change day/person, remind, note, lock, answer a request, create (also with a similar task or a
+   person left out) and combined messages. `delete_tasks` and any message containing a delete still CONFIRM `[BAA p.112]`.
+
+**2. Context** `[BAA p.112]`  Unchanged. The undo record (`frontDoor.ChangeItem`) now keeps what is needed to reverse each
+   kind: old title, old person and day, the receiver of a hand-over, who a reminder went to, the note text, the request id.
+
+**3. Cost of a false positive** `[BAA p.112]`
+   - Every change except delete: **low**, because it is reversible for 10 minutes and nobody else hears for 1 minute.
+     A middling confidence (0.5–0.8) now acts too; a doubt the AI wrote down is still ONE question (CLARIFY), never a guess.
+   - Delete: **high** → always a Yes card (a deleted task cannot be brought back from WhatsApp).
+   - Below 0.5 (`SOFT_CHANGE_CONFIDENCE_MIN`): always asks (unchanged).
+   - Someone named who may not get the work: the rest is saved and a fixed line "Not done: …" is inserted by code, never
+     left to the AI (`leftOut` value) `[BAA p.105]`.
+
+**4. Tools** `[BAA pp.105–106]`  None exposed to the model (unchanged). New code-only steps:
+   - `task-manager/heldMessages.ts`: inside a task-assistant change (`withHold`), every WhatsApp send
+     (`TaskMessagingService.sendMessage`) and app bell (`taskBell`) is parked in `task_held_messages` for 60 s; the cron
+     `/api/cron/task-held-messages` (every minute, `CRON_SECRET`) sends what is due, 3 tries, then `failed`. If the table is
+     missing or the insert fails, the message is sent at once, as before (fails open) `[BAA p.94]`. Deletes are not held.
+   - Reversal functions, each re-checking permission on the server: `WorkspaceService.undoHandOver` (only while the task is
+     still "to do" with the receiver), `removeNote`, `editTask({quiet:true})` for rename / change back,
+     `CollaborationService.undoRespond` (an accepted request's task is removed only while untouched). MCP: no `[BAA p.106]`.
+
+**5. Prompt** `[BAA pp.105, 114]`  Unchanged. Reply wording is code: "will be told in a minute", "The reminder to X goes out
+   in a minute", and the hint "Anyone else is told after 1 minute, so an undo before then means they never hear about it."
+
+**6. Memory** `[BAA pp.100–103]`  Unchanged (no write tool). The held-message table is an outbox, not memory.
+
+**7. Multi-agent?** `[BAA p.116]`  Single.
+
+**8. Evaluation** `[BAA pp.118–119]`
+   Quality assurance: offline `task-manager/tests/test_only_deletes_ask.ts` (decisions per kind, delete still asks, undo of
+   each kind inside and after the minute, wording, the hold and the release cron with a fake sender).
+   `test_brain_direct_add.ts` updated: a person left out no longer blocks the others; the reply must say "Not done: …".
+   **Live-model run not done.** No rubric (L6 gap unchanged). Tool interaction: n/a.
+   System: messages to others arrive about 60–120 s later (cron runs once a minute).
+
+**9. Trace** `[BAA pp.119–120]`  New audit actions: `task_handover_undone`, `task_note_removed`, `task_support_answer_undone`.
+   Held messages keep status, attempts and last error per row.
+
+**10. Laws knowingly violated, and why:**
+   - **L2** `[BAA pp.94–95]`: not A/B-tested on the live model; the change is in code rules, not the model.
+   - **L6** `[BAA pp.96–98]`: no rubric grader (unchanged gap).
+   - Known limits, stated to the owner: a reminder or alert that already went out cannot be pulled back from WhatsApp; the
+     "taken back" note goes by app bell, and by WhatsApp only inside the person's 24-hour chat window (no approved template).
+   - **Migration** `20261121000001_task_held_messages.sql` must be applied by a person; until then messages go at once and
+     undo still reverses the change, but cannot stop the message.

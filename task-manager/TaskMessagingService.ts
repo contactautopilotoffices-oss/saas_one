@@ -8,6 +8,7 @@ import { markReplied } from './InboundLedger';
 import { appendTurn } from './ConversationMemory';
 import { primeBotSwitches } from './BotSwitches';
 import { clearAnsweredObservations } from './BotLearningService';
+import { holdIfScoped } from './heldMessages';
 
 const PROJECT_API_BASE = 'https://apis.aisensy.com/project-apis/v1/project';
 
@@ -381,6 +382,9 @@ export class TaskMessagingService {
             templateOnly?: boolean;
         }
     ): Promise<boolean> {
+        // Owner 2026-11-21: a message caused by a WhatsApp task-assistant change waits 1 minute, so "undo" can stop it
+        // (heldMessages.ts). Outside such a change, or before the table exists, this does nothing and returns false.
+        if (await holdIfScoped('whatsapp', { phone, text, options: options ?? null })) return true;
         const gate = await this.resolveSendMode(options);
 
         if (gate.mode === 'blocked') {
