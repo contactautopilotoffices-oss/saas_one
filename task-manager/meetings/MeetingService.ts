@@ -191,13 +191,17 @@ export class MeetingService {
     static async list(userId: string, space: MeetingSpace) {
         await this.sweep().catch(err => console.warn('[MeetingService] sweep failed:', err instanceof Error ? err.message : err));
         const BASE = 'id, title, meeting_date, created_by, attendee_ids, extra_names, confidential, status, error, duration_seconds, created_at';
-        const query = (cols: string) => supabaseAdmin.from('meeting_notes').select(cols)
-            .eq('workspace', space)
-            .neq('status', 'discarded').or(`confidential.eq.false,created_by.eq.${userId}`)
-            .order('created_at', { ascending: false }).limit(60);
+        const query = (cols: string, hideInterviews = true) => {
+            let q = supabaseAdmin.from('meeting_notes').select(cols).eq('workspace', space);
+            // Owner 2026-11-19: interviews made from Recruitment live there only ("hide it"; column from migration 20261119000002)
+            if (hideInterviews) q = q.is('purpose', null);
+            return q.neq('status', 'discarded').or(`confidential.eq.false,created_by.eq.${userId}`)
+                .order('created_at', { ascending: false }).limit(60);
+        };
         // Owner 2026-11-18: online meetings carry their kind and planned time (columns from migration 20261118000001)
         let { data, error } = await query(`${BASE}, kind, scheduled_for`);
-        if (error && isMissingSchema(error)) ({ data, error } = await query(BASE));
+        if (error && isMissingSchema(error)) ({ data, error } = await query(`${BASE}, kind, scheduled_for`, false));
+        if (error && isMissingSchema(error)) ({ data, error } = await query(BASE, false));
         if (error) dbFail(error, 'Could not load meetings');
         const rows = (data ?? []) as unknown as Array<Pick<MeetingRow, 'id' | 'title' | 'meeting_date' | 'created_by' | 'attendee_ids' | 'extra_names' | 'confidential' | 'status' | 'error' | 'duration_seconds' | 'created_at' | 'kind' | 'scheduled_for'>>;
         const ids = rows.map(r => r.id);
@@ -367,7 +371,7 @@ export class MeetingService {
      * Owner 2026-11-18: `kind` 'online' makes a video call with its own link instead of a phone recording; it may be
      * planned for later (`scheduledFor`, an ISO date-time). It starts as 'scheduled' and goes live when someone joins.
      */
-    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown }, space: MeetingSpace) {
+    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown; purpose?: unknown }, space: MeetingSpace) {
         const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : '';
         if (title.length < 1 || title.length > 150) throw new MeetingError(400, 'Give the meeting a name (up to 150 characters).');
         const online = input.kind === 'online';
@@ -383,13 +387,18 @@ export class MeetingService {
         const id = randomUUID();
         // Owner 2026-11-18: the meeting's one link — a secret nobody can guess, made with the meeting
         const linkSecret = online ? randomBytes(24).toString('base64url') : null;
-        const { data, error } = await supabaseAdmin.from('meeting_notes').insert({
+        const row = {
             id, title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
             meeting_date: meetingDate, status: online ? 'scheduled' : 'recording', workspace: space,
             // Owner 2026-11-19: "Find tasks in this meeting" (ticked by default); kept in `llm`, which the notes step keeps
             ...(input.findTasks === false ? { llm: { findTasks: false } } : {}),
             ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret } satisfies OnlineState } : {}),
-        }).select('id').single();
+        };
+        // Owner 2026-11-19: an interview made from Recruitment is not listed in the Meeting Assistant (`purpose`,
+        // migration 20261119000002; before it, the meeting is made without it and shows in the list as before)
+        const insert = (values: Record<string, unknown>) => supabaseAdmin.from('meeting_notes').insert(values).select('id').single();
+        let { data, error } = await insert(input.purpose === 'interview' ? { ...row, purpose: 'interview' } : row);
+        if (error && input.purpose === 'interview' && isMissingSchema(error)) ({ data, error } = await insert(row));
         if (error || !data) dbFail(error, 'Could not start the meeting');
         await TaskDatabaseService.logAudit({ eventType: 'meeting_created', actorId: userId, details: { meetingId: data.id, people: attendeeIds.length + extraNames.length, kind: online ? 'online' : 'room' } });
         return { id: data.id as string, joinPath: online ? meetingLinkPath(data.id as string, linkSecret) : null };

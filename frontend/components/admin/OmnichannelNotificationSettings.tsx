@@ -10,7 +10,6 @@ import {
     ClipboardCheck, BarChart3, ShoppingBag, Eye, Copy,
     Phone, PhoneCall, Volume2, Sparkles, Play, ShieldAlert, Activity, QrCode, Briefcase
 } from 'lucide-react';
-import RecruitmentApproverSettings from './RecruitmentApproverSettings';
 import { createClient } from '@/frontend/utils/supabase/client';
 import WhatsAppServiceSettings from './WhatsAppServiceSettings';
 import PettyCashDeliveryStatus from './PettyCashDeliveryStatus';
@@ -1581,7 +1580,8 @@ export default function OmnichannelNotificationSettings({ organizationId }: Omni
             {/* TAB VIEW: Voice Telephony Analytics */}
             {(mainTab === 'rules' || mainTab === 'templates') && <><nav aria-label="Notification modules" className="flex gap-2 overflow-x-auto py-2">{[...MODULES_META].sort((a,b)=>a.id==='tickets'?-1:b.id==='tickets'?1:0).map(module=><button type="button" key={module.id} aria-pressed={activeModuleTab===module.id} onClick={()=>setActiveModuleTab(module.id)} className={`shrink-0 rounded-lg border px-3 py-2 text-xs ${activeModuleTab===module.id?'bg-primary text-white':'bg-white text-slate-700'}`}>{module.id==='tickets'?'Tickets':module.name}</button>)}</nav><div className="flex gap-2"><button type="button" onClick={()=>setMainTab('rules')} aria-pressed={mainTab==='rules'} className="rounded-lg border px-3 py-2 text-xs">Channel & recipient rules</button><button type="button" onClick={()=>setMainTab('templates')} aria-pressed={mainTab==='templates'} className="rounded-lg border px-3 py-2 text-xs">Templates</button></div></>}
             {mainTab === 'templates' && <WhatsAppServiceSettings organizationId={organizationId} moduleId={activeModuleTab} featureKeys={MODULES_META.find(module => module.id === activeModuleTab)?.events.map(event => event.key)} />}
-            {mainTab === 'rules' && activeModuleTab === 'recruitment' && <RecruitmentApproverSettings organizationId={organizationId} users={allUsersList} />}
+            {/* Owner 2026-11-20: not in Settings any more — who raises is in the Tech sidebar's HR Configs, who approves in Recruitment -> Configurations */}
+            {mainTab === 'rules' && activeModuleTab === 'recruitment' && <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-700">Who can raise hiring requests and who approves them (with the CTC level and the target days) are set in <span className="font-semibold">HR Configs</span> in the Tech dashboard sidebar.</p>}
             {mainTab === 'rules' && activeModuleTab === 'petty_cash' && <><p className="rounded-lg bg-teal-50 p-3 text-xs text-teal-900">Select Email, WhatsApp or Push and choose roles, specific internal users, or the assigned allocator/approver/requester. Only eligible users with current request access receive notifications. Save your choices; campaign import does not enable channels.</p><PettyCashDeliveryStatus organizationId={organizationId} /></>}
             {mainTab === 'voice_analytics' && (
                 <VoiceAnomalyDashboard

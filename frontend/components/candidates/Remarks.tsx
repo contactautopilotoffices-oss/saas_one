@@ -193,7 +193,9 @@ function describe(a: CandidateAction): React.ReactNode {
         case 'outreach_sent': {
             const position = typeof a.meta.position === 'string' ? a.meta.position : null;
             const phone = typeof a.meta.phone === 'string' ? a.meta.phone : null;
-            return <>{a.toValue ?? ''}{position ? ` · ${position}` : ''}{phone ? <span className="text-text-secondary"> · to {phone}</span> : null}</>;
+            // Owner 2026-11-19: a stage update keeps the text HR sent.
+            const message = typeof a.meta.message === 'string' ? a.meta.message : null;
+            return <>{a.toValue ?? ''}{position ? ` · ${position}` : ''}{phone ? <span className="text-text-secondary"> · to {phone}</span> : null}{message ? <span className="block italic text-text-secondary">“{message}”</span> : null}</>;
         }
         case 'call_logged': {
             const position = typeof a.meta.position === 'string' ? a.meta.position : null;
@@ -226,7 +228,7 @@ function factValue(field: string, value: unknown): string {
     return String(value);
 }
 
-const MODE_LABEL: Record<string, string> ={ in_person: 'In person', video: 'Video call', phone: 'Phone' };
+const MODE_LABEL: Record<string, string> ={ in_person: 'In person', video: 'Video call', phone: 'Phone', online: 'Video call', hybrid: 'Hybrid' };
 const RECOMMENDATION_LABEL: Record<string, string> = { move_ahead: 'Move ahead', hold: 'Hold', reject: 'Reject' };
 const NOTE_LABEL: Record<string, string> = { interview: 'Interview scheduled', feedback: 'Interview feedback' };
 /** The entry's heading: an interview or feedback note reads as such, not as "Remark". */

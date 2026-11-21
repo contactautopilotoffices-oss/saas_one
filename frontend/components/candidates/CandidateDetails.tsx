@@ -5,13 +5,16 @@ import { Ban, Download, ExternalLink, FileText, Paperclip, PencilLine, ScanText,
 import { DEFENCE_OPTIONS, EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import { markKeywords } from '@/backend/lib/candidates/snippet';
 import {
-    BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, MATCH_REASON_LABELS, originLabel, RECORD_STATUSES, STAGE_LABELS, STATUS_LABELS, TEXT_STATUS_LABELS,
+    BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, MATCH_REASON_LABELS, originLabel, RECORD_STATUSES, STATUS_LABELS, TEXT_STATUS_LABELS,
     type BlacklistReason, type CandidateRecord, type Position, type RecordStatus, type ResumeFile, type ResumeFilesResponse, type Stage,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CallsTab from './CallsTab';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
+import { InterviewsList } from './InterviewScheduler';
 import { OutreachSection } from './OutreachPanel';
+import { StageChip, useStages } from './stage-ui';
+import { findStage, unlistedStage } from '@/backend/lib/candidates/stage-list';
 import { PipelineStrip, PositionFitCard, type PipelineContext } from './PipelineContext';
 import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
@@ -28,7 +31,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
-type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'calls';
+type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls';
 /** The inline form open under the header, if any. */
 type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach';
 /** The mockup's small header buttons (36 px, 13 px text). */
@@ -227,7 +230,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 )}
             </div>
             <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap">
-                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['calls', 'Calls', null]] as const).map(([id, label, n]) => (
+                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['interviews', 'Interviews', null], ['calls', 'Calls', null]] as const).map(([id, label, n]) => (
                     <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => goTo(id)}
                         className={`-mb-px mr-5 h-10 border-b-2 px-0.5 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
                         {label}{n ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n}</span> : null}
@@ -244,7 +247,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
             resize={{ storeKey: 'candidate-details-width', initial: 640, min: 520 }}
         >
             <div className="@container space-y-4">
-                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
+                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} tab={tab} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
 
                 {/* Change status */}
                 {statusOpen && (
@@ -363,6 +366,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
+                {/* Owner 2026-11-19: the interviews scheduled, their links and, after the call, the notes */}
+                {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} />}
 
                 {tab === 'calls' && open && (
                     <CallsTab orgId={orgId} record={r}
@@ -425,6 +430,7 @@ function MembershipsList({ orgId, record, nonce }: { orgId: string; record: Cand
         return () => ctrl.abort();
     }, [orgId, record.id, reportError, nonce]);
     const rows = state?.id === record.id ? state.rows : null;
+    const stages = useStages(orgId)?.stages ?? [];
     return (
         <section aria-label="Positions">
             {rows === null ? (
@@ -439,7 +445,7 @@ function MembershipsList({ orgId, record, nonce }: { orgId: string; record: Cand
                                 <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{position.title}{position.location ? <span className="font-normal text-text-secondary"> · {position.location}</span> : null}</span>
                                 <Tag tone={position.status === 'open' ? 'success' : 'neutral'}>{position.status === 'open' ? 'Open' : 'Closed'}</Tag>
                             </div>
-                            <p className="mt-1 text-xs text-text-secondary">Stage <span className="font-semibold text-text-primary">{STAGE_LABELS[member.stage]}</span> since {formatDate(member.stageChangedAt)}</p>
+                            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-text-secondary"><StageChip stage={findStage(stages, member.stage) ?? unlistedStage(member.stage)} /> since {formatDate(member.stageChangedAt)}</p>
                             {member.remark && <p className="mt-0.5 text-xs italic text-text-secondary">“{member.remark}”</p>}
                         </li>
                     ))}

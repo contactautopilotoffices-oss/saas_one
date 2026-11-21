@@ -1,30 +1,36 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Download, FileText, Plus, X } from 'lucide-react';
-import { FLOW_STAGES, recordOrigin, SIDE_STAGES, STAGE_LABELS, STAGE_REMARK_REQUIRED, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
+import { ChevronDown, ChevronRight, Download, FileText, Plus, X } from 'lucide-react';
+import { boardColumns, findStage, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
+import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CandidateDetails from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate } from './format';
-import { OutreachDialog, outreachKindFor } from './OutreachPanel';
+import { OutreachDialog } from './OutreachPanel';
 import type { PipelineContext } from './PipelineContext';
 import PositionForm, { type PositionSeed } from './PositionForm';
 import RecordForm from './RecordForm';
 import { RemarkDialog } from './Remarks';
+import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useStages } from './stage-ui';
 import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The pipeline per position (owner 2026-11-15, to the mockup). One position at a time: the numbers a recruiter acts
- * on today, then a column per stage of the flow (three cards each, "+N more" opens the rest), then the four
- * out-of-the-flow boxes. A card is dragged to another column or box; "Others" asks for a remark. Every move is in
- * the candidate's history. The record's own status is not touched.
+ * on today, then the board, then the out-of-the-flow boxes. Every move is in the candidate's history. The record's
+ * own status is not touched.
+ *
+ * Owner 2026-11-19: the stages are HR's list (Recruitment -> Configurations). The board has one column per round
+ * (Screening, L1, L2 …), scrolling sideways, and each status of that round is an area inside the column that a card
+ * is dropped on (L1 Pending, L1 Select, L1 Reject). Rejected areas stay folded to a count until opened. A stage marked
+ * "remark needed" asks for a remark; one marked for WhatsApp offers to send the candidate an update.
  */
 
-/** A person waiting this long at Sourced or Screening is counted as waiting. */
+/** A person waiting this long in the first two rounds is counted as waiting. */
 const WAITING_DAYS = 2;
-/** Cards shown per column before "+N more". */
-const COLUMN_SHOWN = 3;
+/** Cards shown per status area before "+N more". */
+const ZONE_SHOWN = 4;
 
 const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
@@ -77,14 +83,14 @@ export function AddToPositionSelect({ orgId, applicationIds, disabled, onAdded, 
     );
 }
 
-function MemberCard({ member, busy, onRemove, onOpen, onDragStart }: {
-    member: PositionMember; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
+function MemberCard({ member, stage, early, busy, onRemove, onOpen, onDragStart }: {
+    member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
 }) {
     const r = member.record;
     const name = r?.fullName ?? 'Record removed';
     const where = r ? [[r.currentDesignation, r.currentOrganization].filter(Boolean).join(' @ '), r.location].filter(Boolean).join(' · ') : '';
     const days = daysSince(member.stageChangedAt);
-    const late = days > WAITING_DAYS && (member.stage === 'sourced' || member.stage === 'screening');
+    const late = days > WAITING_DAYS && early && stage.kind === 'progress';
     return (
         <li draggable={!busy} onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', member.id); onDragStart(member); }}
             className={`${CARD} group cursor-grab px-3 py-2.5 active:cursor-grabbing ${late ? 'ring-1 ring-inset ring-error/60' : ''}`}>
@@ -95,7 +101,8 @@ function MemberCard({ member, busy, onRemove, onOpen, onDragStart }: {
             </div>
             {where && <p className="mt-1.5 text-[13px] leading-snug text-text-secondary">{where}</p>}
             {member.remark && <p className="mt-1.5 text-[13px] italic leading-snug text-text-secondary">“{member.remark}”</p>}
-            <div className="mt-2 flex items-center gap-x-2">
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <StageChip stage={stage} />
                 {r?.hasResume === true && <Tag tone="success">Resume</Tag>}
                 {r?.hasResume === false && <Tag tone="warn">No resume</Tag>}
                 {member.stageChangedByName && <span className="min-w-0 truncate text-[13px] text-text-secondary">{member.stageChangedByName}</span>}
@@ -128,9 +135,10 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [members, setMembers] = useState<{ id: string; list: PositionMember[] } | null>(null);
     const [nonce, setNonce] = useState(0);
     const [busy, setBusy] = useState(false);
-    const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: Stage } | null>(null);
-    // Owner 2026-11-16: right after a drop on Shortlisted or Rejected, offer to tell the candidate on WhatsApp.
-    const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; kind: 'shortlisted' | 'not_shortlisted'; remark: string | null; open: boolean } | null>(null);
+    const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: StageDef } | null>(null);
+    // Owner 2026-11-16: right after a drop on a stage marked for WhatsApp (Configurations), offer to tell the candidate.
+    const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; stageName: string; remark: string | null; open: boolean } | null>(null);
+    const stageList = useStages(orgId);
     // Owner 2026-11-17: the panel knows which person of the pipeline it shows and the people it walks through (the
     // stage the card was opened in, or the whole table), so the arrows step through them; `record` is kept for when
     // the person leaves the position while the panel is open.
@@ -141,6 +149,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [view, setView] = useState<'board' | 'table'>('board');
     const [dragging, setDragging] = useState<PositionMember | null>(null);
     const [over, setOver] = useState<Stage | null>(null);
+    // Rejected areas and the out-of-the-flow boxes are folded until opened; other areas show ZONE_SHOWN until "+N more".
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
     const selectNonce = selectPosition?.nonce ?? 0;
@@ -174,18 +183,21 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const list = members?.id === selectedId ? members.list : null;
     const refresh = () => { setNonce(n => n + 1); onDataChanged(); };
 
-    const move = async (member: PositionMember, stage: Stage, remark: string | null = null) => {
-        if (stage === member.stage || !position) return;
-        if (STAGE_REMARK_REQUIRED.includes(stage) && !remark) { setPendingMove({ member, stage }); return; }
+    const move = async (member: PositionMember, stageKey: Stage, remark: string | null = null) => {
+        const stage = findStage(stageList?.stages ?? [], stageKey);
+        if (!stage || stageKey === member.stage || !position) return;
+        if (stage.needsRemark && !remark) { setPendingMove({ member, stage }); return; }
         setBusy(true);
-        const res = await api<{ member: PositionMember }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage, ...(remark ? { remark } : {}) } });
+        const res = await api<{ member: PositionMember }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setPendingMove(null);
-        notify(`${member.record?.fullName ?? 'Candidate'} → ${STAGE_LABELS[stage]}`, 'success');
+        notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}`, 'success');
         refresh();
-        const kind = outreachKindFor(stage);
-        if (kind && member.record) setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, kind, remark, open: true });
+        // The editable update needs the stages migration (stage_update); before it, nothing is offered.
+        if (stage.whatsapp && member.record && !member.record.blacklisted && stageList?.source !== 'legacy') {
+            setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, stageName: stage.name, remark, open: true });
+        }
     };
     const remove = async (member: PositionMember) => {
         if (!position) return;
@@ -203,11 +215,29 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     };
 
     const inStage = (stage: Stage) => (list ?? []).filter(m => m.stage === stage);
-    const sideCount = SIDE_STAGES.reduce((n, s) => n + inStage(s).length, 0);
-    const waiting = (list ?? []).filter(m => (m.stage === 'sourced' || m.stage === 'screening') && daysSince(m.stageChangedAt) > WAITING_DAYS).length;
+    // The board's stages: HR's list, plus any stage people are in that is no longer on it (shown until they move).
+    const listed = stageList?.stages ?? [];
+    const allStages: StageDef[] = [...listed, ...[...new Set((list ?? []).map(m => m.stage))].filter(k => !findStage(listed, k)).map(unlistedStage)];
+    const hasPeople = (s: StageDef) => inStage(s.key).length > 0;
+    const columns = boardColumns(allStages, hasPeople);
+    const side = sideStages(allStages, hasPeople);
+    const stageOf = (m: PositionMember): StageDef => findStage(allStages, m.stage) ?? unlistedStage(m.stage);
+    const columnOf = new Map(columns.flatMap((c, i) => c.stages.map(s => [s.key, i] as const)));
+    const inColumns = (from: number, to: number, kinds: StageDef['kind'][] = ['progress']) => (list ?? []).filter(m => {
+        const at = columnOf.get(m.stage);
+        return at !== undefined && at >= from && at <= to && kinds.includes(stageOf(m).kind);
+    });
+    const isEarly = (m: PositionMember) => (columnOf.get(m.stage) ?? 99) < 2;
+    const sideCount = side.reduce((n, s) => n + inStage(s.key).length, 0);
+    const early = inColumns(0, 1);
+    const waiting = early.filter(m => daysSince(m.stageChangedAt) > WAITING_DAYS).length;
+    const rounds = columns.length > 4 ? inColumns(2, columns.length - 3) : [];
+    const rejectedCount = (list ?? []).filter(m => stageOf(m).kind === 'rejected').length;
+    const lastTwo = columns.length >= 2 ? inColumns(columns.length - 2, columns.length - 1) : [];
+    const lastColumn = columns[columns.length - 1];
+    const inLast = lastColumn ? inColumns(columns.length - 1, columns.length - 1).length : 0;
     const fromDatabase = (list ?? []).filter(m => m.record && recordOrigin(m.record) === 'sheet').length;
     const addedThisWeek = (list ?? []).filter(m => daysSince(m.addedAt) <= 7).length;
-    const offersWaiting = inStage('offer').filter(m => daysSince(m.stageChangedAt) >= 3).length;
 
     // Drag and drop between columns and boxes: the browser's own events, no library.
     const dragProps = (stage: Stage) => ({
@@ -216,7 +246,9 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         onDrop: (e: React.DragEvent) => { e.preventDefault(); setOver(null); const m = dragging; setDragging(null); if (m) void move(m, stage); },
     });
     const openMember = (m: PositionMember, ids: string[], scopeLabel: string) => { if (m.record) setDetails({ memberId: m.id, record: m.record, ids, scopeLabel, open: true }); };
-    const cardProps = { busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (m: PositionMember) => openMember(m, inStage(m.stage).map(x => x.id), STAGE_LABELS[m.stage]), onDragStart: setDragging };
+    const cardProps = { busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (m: PositionMember) => openMember(m, inStage(m.stage).map(x => x.id), stageOf(m).name), onDragStart: setDragging };
+    const card = (m: PositionMember) => <MemberCard key={m.id} member={m} stage={stageOf(m)} early={isEarly(m)} {...cardProps} />;
+    const groups = stageGroups(listed);
 
     // The panel's place in the pipeline: the person as the board has them now, and the neighbours still there.
     const shownMember = details ? (list ?? []).find(m => m.id === details.memberId) ?? null : null;
@@ -243,14 +275,14 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         <div className="space-y-4">
             <RemarkDialog
                 open={!!pendingMove} required busy={busy}
-                title={pendingMove ? `${pendingMove.member.record?.fullName ?? 'Candidate'}: ${STAGE_LABELS[pendingMove.stage]}` : ''}
-                description={pendingMove ? `"${STAGE_LABELS[pendingMove.stage]}" needs a remark, so the next person knows what it means.` : undefined}
+                title={pendingMove ? `${pendingMove.member.record?.fullName ?? 'Candidate'}: ${pendingMove.stage.name}` : ''}
+                description={pendingMove ? `"${pendingMove.stage.name}" needs a remark, so the next person knows what it means.` : undefined}
                 onClose={() => { if (!busy) setPendingMove(null); }}
-                onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage, remark); }}
+                onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage.key, remark); }}
             />
             <OutreachDialog
                 orgId={orgId} open={!!outreach?.open} record={outreach?.record ?? null}
-                positionId={outreach?.positionId ?? null} positionTitle={outreach?.positionTitle ?? null} kind={outreach?.kind ?? 'shortlisted'} movedRemark={outreach?.remark ?? null}
+                positionId={outreach?.positionId ?? null} positionTitle={outreach?.positionTitle ?? null} stageName={outreach?.stageName ?? ''} movedRemark={outreach?.remark ?? null}
                 onClose={() => setOutreach(o => (o ? { ...o, open: false } : o))}
                 onSent={() => { setOutreach(o => (o ? { ...o, open: false } : o)); refresh(); }}
             />
@@ -284,7 +316,12 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                 </span>
             </div>
 
-            {positions === null ? (
+            {positions !== null && positions.length > 0 && !stageList && stagesFailed(orgId) ? (
+                <div className={`${CARD} px-5 py-4`}>
+                    <p role="alert" className="text-sm text-error">Couldn&rsquo;t load the pipeline&rsquo;s stages.</p>
+                    <button type="button" onClick={() => retryStages(orgId)} className={`${BTN_GHOST} mt-1`}>Try again</button>
+                </div>
+            ) : positions === null || (positions.length > 0 && !stageList) ? (
                 <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
             ) : !position ? (
                 <div className={CARD}><EmptyState icon={FileText} title="No positions yet">Save a job description as a position from Search or the Positions tab, then tick candidates in the results and add them to it.</EmptyState></div>
@@ -293,62 +330,94 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                     {/* The numbers a recruiter acts on today */}
                     <section className={`${CARD} flex flex-wrap`} aria-label="This position at a glance">
                         <Kpi label="In pipeline" value={formatCount(list?.length ?? 0)} hint={addedThisWeek ? `+${formatCount(addedThisWeek)} this week` : 'nobody added this week'} />
-                        <Kpi label="Awaiting screening" value={formatCount(inStage('sourced').length + inStage('screening').length)} hint={waiting ? `${formatCount(waiting)} waiting over ${WAITING_DAYS} days` : 'none waiting long'} alert={waiting > 0} />
-                        <Kpi label="Interviews" value={formatCount(inStage('interview').length)} hint={inStage('shortlisted').length ? `${formatCount(inStage('shortlisted').length)} shortlisted to schedule` : 'nobody shortlisted'} />
-                        <Kpi label="Offers out" value={formatCount(inStage('offer').length)} hint={offersWaiting ? `${formatCount(offersWaiting)} no reply for 3 days` : inStage('joined').length ? `${formatCount(inStage('joined').length)} joined` : 'none joined yet'} alert={offersWaiting > 0} />
+                        <Kpi label={columns.slice(0, 2).map(c => c.name).join(' & ') || 'Early stages'} value={formatCount(early.length)} hint={waiting ? `${formatCount(waiting)} waiting over ${WAITING_DAYS} days` : 'none waiting long'} alert={waiting > 0} />
+                        {columns.length > 4 && <Kpi label="In interview rounds" value={formatCount(rounds.length)} hint={rejectedCount ? `${formatCount(rejectedCount)} rejected so far` : 'nobody rejected'} />}
+                        {columns.length > 2 && <Kpi label={columns.slice(-2).map(c => c.name).join(' & ')} value={formatCount(lastTwo.length)} hint={lastColumn ? `${formatCount(inLast)} ${lastColumn.name.toLowerCase()}` : ''} />}
                         <Kpi label="Days open" value={position.daysOpen} hint={`target ${position.targetDays}`} alert={position.status === 'open' && position.daysOpen > position.targetDays} />
                         <Kpi label="From the database" value={<>{formatCount(fromDatabase)} <span className="font-body text-sm font-medium text-text-secondary">of {formatCount(list?.length ?? 0)}</span></>} hint="found without new sourcing" />
                     </section>
 
                     {view === 'board' ? (
                         <>
-                            <div className="grid gap-x-3 gap-y-3 md:grid-cols-3 xl:grid-cols-6" aria-label="Pipeline board">
-                                {FLOW_STAGES.map(stage => {
-                                    const items = inStage(stage);
-                                    const shown = expanded[stage] ? items : items.slice(0, COLUMN_SHOWN);
-                                    return (
-                                        <section key={stage} aria-label={STAGE_LABELS[stage]} {...dragProps(stage)} className={`min-h-[180px] rounded-xl px-0.5 py-0.5 transition-shadow ${over === stage ? 'ring-2 ring-inset ring-primary' : ''}`}>
-                                            <header className="flex items-center gap-x-2 px-1.5 pb-2.5 pt-1">
-                                                <span className="font-display text-[15px] font-semibold text-text-primary">{STAGE_LABELS[stage]}</span>
-                                                <span className={`${NUM_SM} ml-auto rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary ring-1 ring-inset ring-border`}>{items.length}</span>
-                                            </header>
-                                            {list === null ? <p className="px-1.5 text-xs text-text-tertiary">Loading</p> : (
-                                                <ul className="space-y-2.5">
-                                                    {shown.map(m => <MemberCard key={m.id} member={m} {...cardProps} />)}
-                                                    {items.length > COLUMN_SHOWN && (
-                                                        <li>
-                                                            <button type="button" onClick={() => setExpanded(e => ({ ...e, [stage]: !e[stage] }))} className={`${WELL} block w-full px-3 py-3 text-left text-sm text-text-secondary hover:text-text-primary`}>
-                                                                {expanded[stage] ? 'Show fewer' : `+${formatCount(items.length - COLUMN_SHOWN)} more`}
-                                                            </button>
-                                                        </li>
-                                                    )}
-                                                </ul>
-                                            )}
-                                        </section>
-                                    );
-                                })}
-                            </div>
-
-                            <section aria-label="Out of the flow" className="space-y-2">
-                                <p className={LABEL}>Out of the flow <span className="font-normal text-text-tertiary">· still in the database, still searchable · drop a card here to record why · {sideCount}</span></p>
-                                <div className="grid gap-x-3 gap-y-3 md:grid-cols-2 xl:grid-cols-4">
-                                    {SIDE_STAGES.map(stage => {
-                                        const items = inStage(stage);
-                                        const isOpen = !!expanded[stage];
+                            {/* Owner 2026-11-19: one column per round, scrolling sideways; each status is an area to drop on */}
+                            <div className="-mx-1 overflow-x-auto px-1 pb-2" aria-label="Pipeline board (scrolls sideways)">
+                                <div className="flex min-w-min items-start gap-x-3">
+                                    {columns.map(column => {
+                                        const active = column.stages.filter(st => st.kind !== 'rejected').reduce((n, st) => n + inStage(st.key).length, 0);
+                                        const rejected = column.stages.filter(st => st.kind === 'rejected').reduce((n, st) => n + inStage(st.key).length, 0);
                                         return (
-                                            <section key={stage} aria-label={STAGE_LABELS[stage]} {...dragProps(stage)} className={`rounded-xl border border-dashed border-border bg-surface px-3 py-2.5 transition-shadow ${over === stage ? 'ring-2 ring-inset ring-primary' : ''}`}>
-                                                <button type="button" onClick={() => items.length && setExpanded(e => ({ ...e, [stage]: !e[stage] }))} aria-expanded={isOpen} className="flex w-full items-center gap-x-2 text-left">
-                                                    <span className={`h-2 w-2 shrink-0 rounded-full ${stage === 'on_hold' ? 'bg-warning' : stage === 'rejected' ? 'bg-error' : stage === 'others' ? 'bg-secondary-dark' : 'bg-text-tertiary'}`} aria-hidden />
-                                                    <span className="font-semibold text-text-primary">{STAGE_LABELS[stage]}</span>
-                                                    {stage === 'others' && <span className="text-xs text-text-tertiary">· remark required</span>}
-                                                    <span className={`${NUM_SM} ml-auto text-sm text-text-secondary`}>{items.length}</span>
-                                                </button>
-                                                {isOpen && items.length > 0 && <ul className="mt-2.5 space-y-2">{items.map(m => <MemberCard key={m.id} member={m} {...cardProps} />)}</ul>}
+                                            <section key={column.name} aria-label={column.name} className={`${WELL} flex w-[264px] shrink-0 flex-col gap-y-2 px-2 py-2 ring-1 ring-inset ring-border-subtle`}>
+                                                <header className="flex items-baseline gap-x-2 px-1.5 pt-1">
+                                                    <span className="min-w-0 truncate font-display text-[15px] font-semibold text-text-primary" title={column.name}>{column.name}</span>
+                                                    {rejected > 0 && <span className="shrink-0 text-xs text-text-tertiary">{formatCount(rejected)} rejected</span>}
+                                                    <span className={`${NUM_SM} ml-auto shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary ring-1 ring-inset ring-border`}>{formatCount(active)}</span>
+                                                </header>
+                                                {column.stages.map(st => {
+                                                    const items = inStage(st.key);
+                                                    const folds = st.kind === 'rejected';
+                                                    const open = !folds || !!expanded[st.key];
+                                                    const shown = folds || expanded[`more:${st.key}`] ? items : items.slice(0, ZONE_SHOWN);
+                                                    return (
+                                                        <div key={st.key} {...dragProps(st.key)} aria-label={st.name}
+                                                            className={`rounded-lg border-[1.5px] border-dashed px-1.5 py-1.5 transition-colors ${over === st.key ? 'border-primary bg-primary/[.06]' : 'border-transparent'}`}>
+                                                            {folds ? (
+                                                                <button type="button" onClick={() => items.length && setExpanded(e => ({ ...e, [st.key]: !e[st.key] }))} disabled={!items.length} aria-expanded={open}
+                                                                    className="flex w-full items-center gap-x-2 rounded-md px-1 py-0.5 text-left disabled:cursor-default">
+                                                                    <StageChip stage={st} />
+                                                                    <span className={`${NUM_SM} ml-auto text-xs text-text-secondary`}>{items.length}</span>
+                                                                    {items.length > 0 && (open ? <ChevronDown className="h-3.5 w-3.5 text-text-tertiary" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5 text-text-tertiary" aria-hidden />)}
+                                                                </button>
+                                                            ) : (
+                                                                <div className="flex items-center gap-x-2 px-1 py-0.5">
+                                                                    <StageChip stage={st} title={st.hidden ? 'Hidden in Configurations: nobody new can be moved here' : undefined} />
+                                                                    <span className={`${NUM_SM} ml-auto text-xs text-text-secondary`}>{items.length}</span>
+                                                                </div>
+                                                            )}
+                                                            {list === null ? <p className="px-1 pt-1 text-xs text-text-tertiary">Loading</p> : open && (
+                                                                <ul className="mt-1.5 space-y-2">
+                                                                    {shown.map(card)}
+                                                                    {!items.length && <li className="px-1 pb-1 text-xs text-text-tertiary">Drop a card here</li>}
+                                                                    {!folds && items.length > ZONE_SHOWN && (
+                                                                        <li>
+                                                                            <button type="button" onClick={() => setExpanded(e => ({ ...e, [`more:${st.key}`]: !e[`more:${st.key}`] }))} className={`${WELL} block w-full bg-surface px-3 py-2.5 text-left text-sm text-text-secondary hover:text-text-primary`}>
+                                                                                {expanded[`more:${st.key}`] ? 'Show fewer' : `+${formatCount(items.length - ZONE_SHOWN)} more`}
+                                                                            </button>
+                                                                        </li>
+                                                                    )}
+                                                                </ul>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </section>
                                         );
                                     })}
                                 </div>
-                            </section>
+                            </div>
+
+                            {side.length > 0 && (
+                                <section aria-label="Out of the flow" className="space-y-2">
+                                    <p className={LABEL}>Out of the flow <span className="font-normal text-text-tertiary">· still in the database, still searchable · drop a card here to move it · {sideCount}</span></p>
+                                    <div className="grid gap-x-3 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+                                        {side.map(st => {
+                                            const items = inStage(st.key);
+                                            const isOpen = !!expanded[st.key];
+                                            return (
+                                                <section key={st.key} aria-label={st.name} {...dragProps(st.key)} className={`rounded-xl border border-dashed border-border bg-surface px-3 py-2.5 transition-shadow ${over === st.key ? 'ring-2 ring-inset ring-primary' : ''}`}>
+                                                    <button type="button" onClick={() => items.length && setExpanded(e => ({ ...e, [st.key]: !e[st.key] }))} aria-expanded={isOpen} className="flex w-full items-center gap-x-2 text-left">
+                                                        <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_DOT[st.tone]}`} aria-hidden />
+                                                        <span className="min-w-0 truncate font-semibold text-text-primary">{st.name}</span>
+                                                        {st.needsRemark && <span className="shrink-0 text-xs text-text-tertiary">· remark required</span>}
+                                                        {(st.unlisted || st.hidden) && <span className="shrink-0 text-xs text-text-tertiary">· {st.unlisted ? 'not on the list' : 'hidden'}</span>}
+                                                        <span className={`${NUM_SM} ml-auto text-sm text-text-secondary`}>{items.length}</span>
+                                                    </button>
+                                                    {isOpen && items.length > 0 && <ul className="mt-2.5 space-y-2">{items.map(card)}</ul>}
+                                                </section>
+                                            );
+                                        })}
+                                    </div>
+                                </section>
+                            )}
                         </>
                     ) : (
                         <section className={`${CARD} overflow-x-auto`} aria-label="Pipeline table">
@@ -366,9 +435,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                                 <td className="px-4 py-2"><button type="button" disabled={!r} onClick={() => openMember(m, (list ?? []).map(x => x.id), 'this position')} className="font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{r?.fullName ?? 'Record removed'}</button></td>
                                                 <td className="max-w-[260px] truncate px-3 py-2 text-text-secondary">{r ? [r.currentDesignation, r.currentOrganization, r.location].filter(Boolean).join(' · ') : ''}</td>
                                                 <td className="px-3 py-2">
-                                                    <select aria-label={`Stage of ${r?.fullName ?? 'candidate'}`} value={m.stage} disabled={busy} onChange={e => void move(m, e.target.value as Stage)} className="h-8 cursor-pointer rounded-lg border border-border bg-surface px-1.5 text-sm font-semibold text-text-primary outline-none focus:border-primary disabled:opacity-60">
-                                                        <optgroup label="Flow">{FLOW_STAGES.map(s => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}</optgroup>
-                                                        <optgroup label="Out of the flow">{SIDE_STAGES.map(s => <option key={s} value={s}>{STAGE_LABELS[s]}</option>)}</optgroup>
+                                                    <select aria-label={`Stage of ${r?.fullName ?? 'candidate'}`} value={m.stage} disabled={busy} onChange={e => void move(m, e.target.value)} className="h-8 max-w-[240px] cursor-pointer rounded-lg border border-border bg-surface px-1.5 text-sm font-semibold text-text-primary outline-none focus:border-primary disabled:opacity-60">
+                                                        <StageOptions groups={groups} current={stageOf(m)} />
                                                     </select>
                                                 </td>
                                                 <td className={`${NUM_SM} px-3 py-2 text-right text-text-primary`}>{daysSince(m.stageChangedAt)}</td>

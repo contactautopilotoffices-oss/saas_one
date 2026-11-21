@@ -2,9 +2,9 @@
  * Positions and their pipelines (owner 2026-11-15, migration 20261115000002).
  *
  *   candidate_positions        : a saved job description (title, where, the text, the filters HR confirmed), open or closed
- *   candidate_position_members : one row per person per position, at a stage. The flow is
- *                                sourced -> screening -> shortlisted -> interview -> offer -> joined; a person can also be
- *                                out of the flow (on hold, not responding, rejected, others). "Others" needs a remark.
+ *   candidate_position_members : one row per person per position, at a stage. Owner 2026-11-19: the stages are the
+ *                                list HR keeps in Recruitment -> Configurations (stages.ts); a move to a stage marked
+ *                                "remark needed" needs a remark, and new people start at the list's first stage.
  * Every add, move and removal is written to candidate_actions (actions.ts). A person's record status is NOT changed
  * by a stage move: the record is the database view of the person, the stage is this position's view.
  *
@@ -20,13 +20,15 @@ import { jdLinksFor } from "./jd-library";
 import type { SearchFilters } from "./filters";
 import { PreferSchema, type Preferences } from "./query-spec";
 import { CandidateActionError, getRecordRows, markResumes, toRecord } from "./records";
+import { findStage, firstStage, stageName, type StageDef } from "./stage-list";
+import { loadStages } from "./stages";
 import {
-  EMPLOYMENT_TYPES, POSITION_PRIORITIES, STAGE_LABELS, STAGE_REMARK_REQUIRED, STAGES,
+  EMPLOYMENT_TYPES, POSITION_PRIORITIES,
   type CandidateRecord, type EmploymentType, type Position, type PositionMember, type PositionPriority, type Stage,
 } from "./types";
 
-// The stage constants and the Position / PositionMember shapes are in types.ts (pure, shared with the client).
-export { FLOW_STAGES, SIDE_STAGES, STAGE_LABELS, STAGE_REMARK_REQUIRED, STAGES, type Position, type PositionMember, type Stage } from "./types";
+// The Position / PositionMember shapes are in types.ts (pure, shared with the client).
+export { type Position, type PositionMember, type Stage } from "./types";
 
 const POSITION_COLUMNS = "id, title, department, location, jd_file_name, filters, prefer, status, target_days, recruiter_id, created_at, updated_at, closed_at";
 /** The job's details (migration 20261116000005, owner 2026-11-16); read and written only once the migration is applied. */
@@ -50,12 +52,13 @@ function fail(what: string, error: { code?: string; message?: string }): never {
   throw new CandidateActionError(500, `Couldn't ${what}. Please try again.`);
 }
 
-const emptyCounts = (): Record<Stage, number> => Object.fromEntries(STAGES.map((s) => [s, 0])) as Record<Stage, number>;
+const emptyCounts = (): Record<Stage, number> => ({});
 
 const daysBetween = (from: string, to: string | null) => Math.max(0, Math.floor((new Date(to ?? Date.now()).getTime() - new Date(from).getTime()) / 86_400_000));
 
 function toPosition(row: Record<string, unknown>, counts: Record<Stage, number>, withText = false, names: Map<string, string | null> = new Map()): Position {
   return {
+    recruiterId: (row.recruiter_id as string | null) ?? null,
     recruiterName: row.recruiter_id ? (names.get(row.recruiter_id as string) ?? null) : null,
     id: row.id as string,
     title: row.title as string,
@@ -92,7 +95,7 @@ async function countsFor(client: SupabaseClient, orgId: string, positionIds: str
   if (error) fail("count the pipeline", error);
   for (const row of (data ?? []) as { position_id: string; stage: Stage }[]) {
     const counts = out.get(row.position_id);
-    if (counts && row.stage in counts) counts[row.stage] += 1;
+    if (counts) counts[row.stage] = (counts[row.stage] ?? 0) + 1;
   }
   return out;
 }
@@ -147,6 +150,8 @@ const PositionInput = z.object({
   budgetMinInhand: rupees,
   budgetMaxInhand: rupees,
   summary: nullableText(2000),
+  // Owner 2026-11-21: who recruits for it (null: nobody yet). The route checks the person is in the HR team.
+  recruiterId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Pick the recruiter from the list.").nullable().optional(),
 });
 
 function positionColumns(input: z.infer<typeof PositionInput>, partial: boolean): Record<string, unknown> {
@@ -174,6 +179,7 @@ function positionColumns(input: z.infer<typeof PositionInput>, partial: boolean)
   if (input.budgetMinInhand !== undefined) out.budget_min_inhand = input.budgetMinInhand;
   if (input.budgetMaxInhand !== undefined) out.budget_max_inhand = input.budgetMaxInhand;
   if (input.summary !== undefined) out.summary = input.summary || null;
+  if (input.recruiterId !== undefined) out.recruiter_id = input.recruiterId;
   return out;
 }
 
@@ -182,7 +188,8 @@ export async function createPosition(client: SupabaseClient, orgId: string, by: 
   const parsed = PositionInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
   const now = new Date().toISOString();
-  const row = { organization_id: orgId, ...positionColumns(parsed.data, false), created_by: by.id, recruiter_id: by.id, created_at: now, updated_at: now };
+  // The person who saves it recruits for it, unless the body names someone (or nobody: a role opened from a hiring request).
+  const row = { organization_id: orgId, recruiter_id: by.id, ...positionColumns(parsed.data, false), created_by: by.id, created_at: now, updated_at: now };
   // Before migration 20261116000005 the detail columns are missing: the position is saved without them.
   let { data, error } = await client.from("candidate_positions").insert(row).select(POSITION_COLUMNS + DETAIL_COLUMNS).single();
   if (error && detailsMissing(error)) ({ data, error } = await client.from("candidate_positions").insert(withoutDetails(row)).select(POSITION_COLUMNS).single());
@@ -218,6 +225,7 @@ export async function updatePosition(client: SupabaseClient, orgId: string, id: 
  */
 export async function deletePosition(client: SupabaseClient, orgId: string, by: Actor, id: string): Promise<{ removed: number }> {
   const position = await getPosition(client, orgId, id);
+  const { stages } = await loadStages(client, orgId);
   const now = new Date().toISOString();
   const { data: gone, error } = await client
     .from("candidate_positions")
@@ -244,7 +252,7 @@ export async function deletePosition(client: SupabaseClient, orgId: string, by: 
       applicationId: (row.application_id as string | null) ?? null,
       positionId: id,
       action: "removed_from_position",
-      fromValue: STAGE_LABELS[row.stage as Stage],
+      fromValue: stageName(stages, row.stage as Stage),
       remark: `Position "${position.title}" was deleted.`,
     });
   }
@@ -289,13 +297,14 @@ export async function listMembers(client: SupabaseClient, orgId: string, positio
 const idList = z.array(z.string().uuid()).min(1).max(200);
 
 /**
- * Adds the people behind these records to the position, at "sourced". A person already in it is skipped (one row per
- * person per position). Returns how many were added and how many were already there.
+ * Adds the people behind these records to the position, at the list's first stage ("Sourced"). A person already in it
+ * is skipped (one row per person per position). Returns how many were added and how many were already there.
  */
 export async function addMembers(client: SupabaseClient, orgId: string, by: Actor, positionId: string, applicationIds: unknown): Promise<{ added: number; skipped: number }> {
   const ids = idList.safeParse(applicationIds);
   if (!ids.success) throw new CandidateActionError(400, "Pick at least one candidate (up to 200 at a time).");
   const position = await getPosition(client, orgId, positionId);
+  const start = firstStage((await loadStages(client, orgId)).stages).key;
   const records = await getRecordRows(client, orgId, [...new Set(ids.data)]);
   const byCandidate = new Map<string, string>();
   for (const row of records) if (!byCandidate.has(row.candidate_id)) byCandidate.set(row.candidate_id, row.id);
@@ -304,7 +313,7 @@ export async function addMembers(client: SupabaseClient, orgId: string, by: Acto
   const now = new Date().toISOString();
   for (const [candidateId, applicationId] of byCandidate) {
     const { error } = await client.from("candidate_position_members").insert({
-      organization_id: orgId, position_id: positionId, candidate_id: candidateId, application_id: applicationId,
+      organization_id: orgId, position_id: positionId, candidate_id: candidateId, application_id: applicationId, stage: start,
       added_by: by.id, stage_changed_by: by.id, added_at: now, stage_changed_at: now, updated_at: now,
     });
     if (error) {
@@ -351,13 +360,19 @@ async function getMember(client: SupabaseClient, orgId: string, positionId: stri
   return data as Record<string, unknown>;
 }
 
-/** Moves one person to a stage. "Others" needs a remark; any remark given is kept as the latest on the row. */
+/**
+ * Moves one person to a stage of the list (not a hidden one). A stage marked "remark needed" needs a remark; any
+ * remark given is kept as the latest on the row.
+ */
 export async function moveMember(client: SupabaseClient, orgId: string, by: Actor, positionId: string, memberId: string, stageInput: unknown, remarkInput: unknown): Promise<PositionMember> {
-  if (typeof stageInput !== "string" || !(STAGES as readonly string[]).includes(stageInput)) throw new CandidateActionError(400, "That stage does not exist.");
-  const stage = stageInput as Stage;
+  const { stages } = await loadStages(client, orgId);
+  const target: StageDef | undefined = typeof stageInput === "string" ? findStage(stages, stageInput) : undefined;
+  if (!target) throw new CandidateActionError(400, "That stage does not exist. Reload the page to see the current stages.");
+  const stage = target.key;
   const remark = cleanRemark(remarkInput);
-  if (STAGE_REMARK_REQUIRED.includes(stage) && !remark) throw new CandidateActionError(400, `Say what "${STAGE_LABELS[stage]}" means for this candidate: a remark is required.`);
   const before = await getMember(client, orgId, positionId, memberId);
+  if (target.hidden && before.stage !== stage) throw new CandidateActionError(400, `"${target.name}" is hidden in Configurations, so nobody can be moved there.`);
+  if (target.needsRemark && !remark && before.stage !== stage) throw new CandidateActionError(400, `Say what "${target.name}" means for this candidate: a remark is required.`);
   const now = new Date().toISOString();
   const changed = before.stage !== stage;
   const { data, error } = await client
@@ -371,7 +386,7 @@ export async function moveMember(client: SupabaseClient, orgId: string, by: Acto
   const candidateId = before.candidate_id as string;
   const applicationId = (before.application_id as string | null) ?? null;
   if (changed) {
-    await recordAction(client, orgId, by, { candidateId, applicationId, positionId, action: "stage_change", fromValue: STAGE_LABELS[before.stage as Stage], toValue: STAGE_LABELS[stage], remark });
+    await recordAction(client, orgId, by, { candidateId, applicationId, positionId, action: "stage_change", fromValue: stageName(stages, before.stage as Stage), toValue: target.name, remark });
   } else if (remark) {
     await recordAction(client, orgId, by, { candidateId, applicationId, positionId, action: "remark", remark });
   }
@@ -383,8 +398,9 @@ export async function moveMember(client: SupabaseClient, orgId: string, by: Acto
 export async function removeMember(client: SupabaseClient, orgId: string, by: Actor, positionId: string, memberId: string, remarkInput: unknown): Promise<void> {
   const remark = cleanRemark(remarkInput);
   const before = await getMember(client, orgId, positionId, memberId);
+  const { stages } = await loadStages(client, orgId);
   const now = new Date().toISOString();
   const { error } = await client.from("candidate_position_members").update({ deleted_at: now, updated_at: now }).eq("organization_id", orgId).eq("id", memberId);
   if (error) fail("remove from the position", error);
-  await recordAction(client, orgId, by, { candidateId: before.candidate_id as string, applicationId: (before.application_id as string | null) ?? null, positionId, action: "removed_from_position", fromValue: STAGE_LABELS[before.stage as Stage], remark });
+  await recordAction(client, orgId, by, { candidateId: before.candidate_id as string, applicationId: (before.application_id as string | null) ?? null, positionId, action: "removed_from_position", fromValue: stageName(stages, before.stage as Stage), remark });
 }

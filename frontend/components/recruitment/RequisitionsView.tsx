@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Briefcase, Check, ClipboardList, Plus, Send, X } from 'lucide-react';
+import { AlertTriangle, Briefcase, Check, ClipboardList, Plus, Send, ThumbsUp, X } from 'lucide-react';
 import {
     APPROVAL_LEVEL_LABELS, REQUISITION_STATUS_LABELS,
     type Requisition, type RequisitionApproval, type RequisitionAccess, type RequisitionDecision, type RequisitionListResponse, type RequisitionResponse, type RequisitionStatus,
@@ -17,6 +17,13 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, Drawer, EmptyState
  * Recruitment (every request: status, age in days, who it waits on). The form is Stage 1; the drawer is Stage 2 for an
  * approver (approve with the in-plan tick, reject with reason, send back for change, put on hold) and the request's
  * history for everyone else. Nothing here decides anything by itself.
+ * Owner 2026-11-20: "it is for the HR team to see who raised a requisition" / "it must be only for the logins": HR's
+ * tab is the tracker only (no "Raise a request"); requests are raised from the "Hiring requests" page in the sidebar of
+ * the people the Tech team picked (access.canRaise).
+ * Owner 2026-11-21 ("go ahead with all"): the tracker filters by department, location and status and shows the
+ * candidates in each approved role's pipeline; the form keeps what was typed through a page refresh (spec: "unsaved
+ * form data survives a page refresh"); a department head sees their departments' requests here and may endorse them;
+ * the raiser of a request on hold may confirm it is still needed (spec A24).
  */
 
 const STATUS_TONE: Record<RequisitionStatus, 'success' | 'info' | 'warn' | 'neutral'> = { draft: 'neutral', submitted: 'info', on_hold: 'warn', sent_back: 'warn', approved: 'success', rejected: 'neutral', withdrawn: 'neutral' };
@@ -27,6 +34,21 @@ const fromLakhs = (s: string): number | null => { const t = s.trim(); if (!t) re
 const num = (s: string): number | null => { const t = s.trim(); if (!t) return null; const n = Number(t); return Number.isFinite(n) ? n : null; };
 /** Stage 2's SLA: 3 working days end to end. Over it, the row turns red. */
 const SLA_DAYS = 3;
+/** What the form had typed, kept in this browser until it is saved or cancelled. */
+const draftKey = (orgId: string, id: string | null) => `hiring-request-form:${orgId}:${id ?? 'new'}`;
+function readDraft(key: string): FormState | null {
+    try {
+        const raw = window.localStorage.getItem(key);
+        const saved = raw ? (JSON.parse(raw) as { f?: Partial<FormState> }) : null;
+        return saved?.f ? { ...EMPTY_FORM, ...saved.f } : null;
+    } catch { return null; }
+}
+function writeDraft(key: string, f: FormState | null) {
+    try {
+        if (f) window.localStorage.setItem(key, JSON.stringify({ f, at: Date.now() }));
+        else window.localStorage.removeItem(key);
+    } catch { /* private window or storage blocked: the form still works, it just is not kept */ }
+}
 
 interface FormState {
     roleTitle: string; department: string; location: string; positions: string; requestType: 'new' | 'replacement'; replacingName: string;
@@ -50,6 +72,9 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const [state, setState] = useState<RequisitionListResponse | null>(null);
     const [nonce, setNonce] = useState(0);
     const [filter, setFilter] = useState<'open' | 'all' | 'mine'>('open');
+    const [dept, setDept] = useState('');
+    const [loc, setLoc] = useState('');
+    const [status, setStatus] = useState<RequisitionStatus | ''>('');
     const [form, setForm] = useState<{ open: boolean; requisition: Requisition | null }>({ open: false, requisition: null });
     const [openId, setOpenId] = useState<string | null>(null);
     useEffect(() => {
@@ -65,12 +90,26 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const access = state?.access;
     const all = state?.requisitions ?? [];
     const waitingOnMe = (r: Requisition) => (r.status === 'submitted' || r.status === 'on_hold') && !!access && r.currentLevel !== null && access.approverLevels.includes(r.currentLevel);
-    const shown = all.filter(r => filter === 'all' ? true : filter === 'mine' ? waitingOnMe(r) : ['draft', 'submitted', 'on_hold', 'sent_back'].includes(r.status));
+    const norm = (v: string | null) => (v ?? '').trim().toLowerCase();
+    const shown = all
+        .filter(r => filter === 'all' ? true : filter === 'mine' ? waitingOnMe(r) : ['draft', 'submitted', 'on_hold', 'sent_back'].includes(r.status))
+        .filter(r => (!dept || norm(r.department) === dept) && (!loc || norm(r.location) === loc) && (!status || r.status === status));
     const forMe = all.filter(waitingOnMe).length;
+    // The spec's tracker filters: department, location, status (the values the requests hold).
+    const choices = (pick: (r: Requisition) => string | null) => {
+        const seen = new Map<string, string>();
+        for (const r of all) { const v = pick(r)?.trim(); if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); }
+        return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+    };
+    const deptChoices = choices(r => r.department);
+    const locChoices = choices(r => r.location);
+    const statusChoices = [...new Set(all.map(r => r.status))];
+    const headOf = access?.headOf ?? [];
+    const formDepartments = [...new Set([...(state?.departments ?? []), ...deptChoices.map(([, v]) => v)])].sort((a, b) => a.localeCompare(b));
 
     return (
         <div className="space-y-4">
-            <RequisitionForm orgId={orgId} open={form.open} requisition={form.requisition} onClose={() => setForm(f => ({ ...f, open: false }))}
+            <RequisitionForm orgId={orgId} open={form.open} requisition={form.requisition} departments={formDepartments} onClose={() => setForm(f => ({ ...f, open: false }))}
                 onSaved={r => { setForm({ open: false, requisition: null }); refresh(); if (r.status === 'draft') setOpenId(r.id); }} />
             <RequisitionDrawer orgId={orgId} id={openId} onClose={() => setOpenId(null)} onChanged={refresh}
                 onEdit={r => { setOpenId(null); setForm({ open: true, requisition: r }); }} />
@@ -79,10 +118,12 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                 <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-elevated text-primary-dark sm:inline-flex" aria-hidden><Briefcase className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1 basis-72">
                     <p className="font-display text-base font-semibold text-text-primary">{mode === 'hr' ? 'Manpower requisitions' : 'Hiring requests'}</p>
-                    <p className="text-sm text-text-secondary">A request to hire goes to the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
-                    {access && !access.configured && <p className="mt-1 flex items-center gap-x-1.5 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5" aria-hidden />The approvers are not set yet: ask the Tech team to set the HR Head and Director in Settings → Notifications → Recruitment. Requests can be drafted but not submitted.</p>}
+                    <p className="text-sm text-text-secondary">{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
+                    {access && !access.configured && <p className="mt-1 flex items-center gap-x-1.5 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5" aria-hidden />The approvers are not set yet: ask the Tech team to set them in the Tech dashboard → HR Configs. Requests can be drafted but not submitted.</p>}
                 </div>
-                <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={BTN_PRIMARY}><Plus className="h-4 w-4" />Raise a request</button>
+                {mode === 'manager' && access?.canRaise && <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={BTN_PRIMARY}><Plus className="h-4 w-4" />Raise a request</button>}
+                {mode === 'manager' && access && !access.canRaise && <p className="basis-full text-xs text-text-secondary">{headOf.length ? 'You see the requests raised for the departments you head, and can endorse them. ' : 'You can follow your earlier requests here. '}Raising a new one is not switched on for your login: the Tech team decides who can.</p>}
+                {mode === 'manager' && access?.canRaise && headOf.length > 0 && <p className="basis-full text-xs text-text-secondary">You also see the requests raised for the departments you head, and can endorse them.</p>}
             </section>
 
             <section className={`${CARD} overflow-hidden`} aria-label="Hiring requests">
@@ -94,11 +135,31 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                                 className={`h-8 rounded-lg px-3 text-sm font-semibold transition-colors ${filter === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>{label}</button>
                         ))}
                     </div>
+                    {all.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter the requests">
+                            <label className="sr-only" htmlFor="req-f-dept">Department</label>
+                            <select id="req-f-dept" value={dept} onChange={e => setDept(e.target.value)} className={`${INPUT} h-8 w-auto min-w-[140px] px-2 text-sm`}>
+                                <option value="">All departments</option>
+                                {deptChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                            </select>
+                            <label className="sr-only" htmlFor="req-f-loc">Location</label>
+                            <select id="req-f-loc" value={loc} onChange={e => setLoc(e.target.value)} className={`${INPUT} h-8 w-auto min-w-[130px] px-2 text-sm`}>
+                                <option value="">All locations</option>
+                                {locChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                            </select>
+                            <label className="sr-only" htmlFor="req-f-status">Status</label>
+                            <select id="req-f-status" value={status} onChange={e => setStatus(e.target.value as RequisitionStatus | '')} className={`${INPUT} h-8 w-auto min-w-[130px] px-2 text-sm`}>
+                                <option value="">Any status</option>
+                                {statusChoices.map(st => <option key={st} value={st}>{REQUISITION_STATUS_LABELS[st]}</option>)}
+                            </select>
+                            {(dept || loc || status) && <button type="button" onClick={() => { setDept(''); setLoc(''); setStatus(''); }} className={`${BTN_GHOST} h-8`}>Clear</button>}
+                        </div>
+                    )}
                 </div>
                 {!state ? (
                     <p className="flex items-center gap-x-2 px-4 py-6 text-sm text-text-tertiary sm:px-6"><Spinner className="h-3.5 w-3.5" />Loading</p>
                 ) : shown.length === 0 ? (
-                    <EmptyState icon={ClipboardList} title={all.length ? 'Nothing here' : 'No hiring requests yet'}>{all.length ? 'Try another filter.' : 'Raise the first one above. A manager fills in the role, the budget band and why it is needed; the HR Head reviews it.'}</EmptyState>
+                    <EmptyState icon={ClipboardList} title={all.length ? 'Nothing here' : 'No hiring requests yet'}>{all.length ? 'Try another filter.' : mode === 'hr' ? 'Requests appear here when someone raises one from “Hiring requests” in their sidebar.' : 'Raise the first one above: the role, the budget band and why it is needed. The HR Head reviews it.'}</EmptyState>
                 ) : (
                     <ul className="divide-y divide-border-subtle">
                         {shown.map(r => {
@@ -111,6 +172,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                                             {r.requisitionNo && <span className="text-xs tabular-nums text-text-tertiary">{r.requisitionNo}</span>}
                                             <Tag tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</Tag>
                                             {waitingOnMe(r) && <Tag tone="warn">Your decision</Tag>}
+                                            {(r.endorsedBy?.length ?? 0) > 0 && <Tag tone="success">Endorsed</Tag>}
                                         </span>
                                         <span className="mt-0.5 block truncate text-xs text-text-secondary">
                                             {[r.department, r.location, `${r.positions} ${r.positions === 1 ? 'position' : 'positions'}`, r.budgetMaxCtc !== null ? `${lpa(r.budgetMinCtc)} to ${lpa(r.budgetMaxCtc)}` : null, mode === 'hr' ? `by ${r.raisedByName ?? '—'}` : null].filter(Boolean).join(' · ')}
@@ -120,6 +182,10 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                                         <p className={LABEL}>Waiting on</p>
                                         <p className="truncate text-sm font-medium text-text-primary">{r.currentLevel ? `${r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]}` : <span className="font-normal text-text-tertiary">—</span>}</p>
                                         {r.currentLevel && <p className="text-xs text-text-tertiary">{APPROVAL_LEVEL_LABELS[r.currentLevel]}{r.needsDirector ? ' · out of plan or above the CTC level' : ''}</p>}
+                                    </div>
+                                    <div className="w-24 shrink-0">
+                                        <p className={LABEL}>In pipeline</p>
+                                        <p className={`${NUM_SM} text-text-primary`} title={r.positionId ? 'Candidates in the position opened from this request' : 'Counted once the request is approved and its position opens'}>{r.pipelineCount ?? <span className="font-normal text-text-tertiary">—</span>}</p>
                                     </div>
                                     <div className="w-24 shrink-0">
                                         <p className={LABEL}>{r.status === 'submitted' || r.status === 'on_hold' ? 'Age' : 'Took'}</p>
@@ -137,12 +203,32 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
 }
 
 /** Stage 1: the requisition form. Save as draft, or submit for approval. */
-function RequisitionForm({ orgId, open, requisition, onClose, onSaved }: { orgId: string; open: boolean; requisition: Requisition | null; onClose: () => void; onSaved: (r: Requisition) => void }) {
+function RequisitionForm({ orgId, open, requisition, departments, onClose, onSaved }: { orgId: string; open: boolean; requisition: Requisition | null; departments: string[]; onClose: () => void; onSaved: (r: Requisition) => void }) {
     const { notify, reportError } = useUi();
     const [f, setF] = useState<FormState>(EMPTY_FORM);
     const [busy, setBusy] = useState<'draft' | 'submit' | null>(null);
+    const [restored, setRestored] = useState(false);
     const [seenOpen, setSeenOpen] = useState(open);
-    if (open !== seenOpen) { setSeenOpen(open); if (open) setF(requisition ? toForm(requisition) : EMPTY_FORM); }
+    const key = draftKey(orgId, requisition?.id ?? null);
+    const base = requisition ? toForm(requisition) : EMPTY_FORM;
+    if (open !== seenOpen) {
+        setSeenOpen(open);
+        if (open) {
+            // Owner 2026-11-21 (spec): what was typed before a refresh, or before the form was closed without Cancel, comes back.
+            const kept = readDraft(key);
+            const differs = !!kept && JSON.stringify(kept) !== JSON.stringify(base);
+            setF(differs && kept ? kept : base);
+            setRestored(differs);
+        }
+    }
+    useEffect(() => {
+        if (!open) return;
+        writeDraft(key, JSON.stringify(f) === JSON.stringify(base) ? null : f);
+        // base is derived from requisition, which the key already names.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, f, key]);
+    const discardTyped = () => { writeDraft(key, null); setRestored(false); setF(base); };
+    const cancel = () => { if (busy) return; writeDraft(key, null); setRestored(false); onClose(); };
     const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF(s => ({ ...s, [k]: v }));
     const editing = !!requisition;
     const canSubmit = !!f.roleTitle.trim() && fromLakhs(f.budgetMax) !== null && !!f.justification.trim() && (f.requestType !== 'replacement' || !!f.replacingName.trim());
@@ -157,6 +243,8 @@ function RequisitionForm({ orgId, open, requisition, onClose, onSaved }: { orgId
             : await api<{ requisition: Requisition }>('/api/recruitment/requisitions', { json: { orgId, ...body, submit } });
         setBusy(null);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        writeDraft(key, null);
+        setRestored(false);
         notify(submit ? `${res.data.requisition.requisitionNo} submitted to the ${res.data.requisition.currentLevel ? APPROVAL_LEVEL_LABELS[res.data.requisition.currentLevel] : 'approvers'}` : 'Saved as a draft', 'success');
         onSaved(res.data.requisition);
     };
@@ -172,15 +260,21 @@ function RequisitionForm({ orgId, open, requisition, onClose, onSaved }: { orgId
             title={editing ? `Edit request${requisition.requisitionNo ? ` · ${requisition.requisitionNo}` : ''}` : 'Raise a hiring request'}
             description="Stage 1 of the hiring flow. The HR Head reviews it; an out-of-plan role, or one above the CTC level, also goes to the Director."
             footer={<>
-                <button type="button" onClick={onClose} disabled={!!busy} className={BTN_GHOST}>Cancel</button>
+                <button type="button" onClick={cancel} disabled={!!busy} className={BTN_GHOST}>Cancel</button>
                 <button type="button" onClick={() => void save(false)} disabled={!!busy || !f.roleTitle.trim()} className={BTN_SECONDARY}>{busy === 'draft' && <Spinner />}Save as draft</button>
                 <button type="button" onClick={() => void save(true)} disabled={!!busy || !canSubmit} className={BTN_PRIMARY} title={canSubmit ? undefined : 'Needs the role, the budget band maximum and the justification'}>{busy === 'submit' ? <Spinner /> : <Send className="h-4 w-4" />}Submit for approval</button>
             </>}
         >
             <div className="space-y-5">
+                {restored && (
+                    <p role="status" className="flex flex-wrap items-center gap-x-2 rounded-lg bg-info/10 px-3 py-2 text-sm text-text-primary">
+                        Brought back what you typed before. Nothing is sent until you save or submit.
+                        <button type="button" onClick={discardTyped} className="font-semibold text-primary-dark underline underline-offset-2">Start over</button>
+                    </p>
+                )}
                 <section className="grid gap-4 sm:grid-cols-2">
                     {field('Role title', 'req-role', <input id="req-role" value={f.roleTitle} onChange={e => set('roleTitle', e.target.value)} maxLength={120} placeholder="e.g. Senior Technical Executive" className={INPUT} autoFocus />)}
-                    {field('Department', 'req-dept', <input id="req-dept" value={f.department} onChange={e => set('department', e.target.value)} maxLength={80} className={INPUT} />)}
+                    {field('Department', 'req-dept', <><input id="req-dept" list="req-dept-list" value={f.department} onChange={e => set('department', e.target.value)} maxLength={80} className={INPUT} /><datalist id="req-dept-list">{departments.map(d => <option key={d} value={d} />)}</datalist></>, departments.length ? 'pick from the list so the department head sees it' : undefined)}
                     {field('Location', 'req-loc', <input id="req-loc" value={f.location} onChange={e => set('location', e.target.value)} maxLength={80} placeholder="City or site" className={INPUT} />)}
                     {field('Number of positions', 'req-n', <input id="req-n" type="number" min={1} max={500} value={f.positions} onChange={e => set('positions', e.target.value)} className={INPUT} />)}
                     {field('Replacement or new', 'req-type', (
@@ -228,8 +322,9 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
     const [reason, setReason] = useState('');
     const [inPlan, setInPlan] = useState<boolean | null>(null);
     const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+    const [endorseNote, setEndorseNote] = useState('');
     const [seenId, setSeenId] = useState(id);
-    if (seenId !== id) { setSeenId(id); setDecision(null); setReason(''); setInPlan(null); setConfirmWithdraw(false); }
+    if (seenId !== id) { setSeenId(id); setDecision(null); setReason(''); setInPlan(null); setConfirmWithdraw(false); setEndorseNote(''); }
 
     const act = async (path: string, json: Record<string, unknown>, done: string) => {
         if (!r) return;
@@ -238,7 +333,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         notify(done, 'success');
-        setDecision(null); setReason(''); setInPlan(null); setConfirmWithdraw(false);
+        setDecision(null); setReason(''); setInPlan(null); setConfirmWithdraw(false); setEndorseNote('');
         setNonce(n => n + 1);
         onChanged();
     };
@@ -258,6 +353,8 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         ['Qualification', r.qualification], ['Target joining', r.targetJoiningDate ? formatDate(r.targetJoiningDate) : null], ['Reporting manager', r.reportingManager],
         ['Raised by', `${r.raisedByName ?? '—'}${r.submittedAt ? `, ${formatDate(r.submittedAt)}` : ''}`],
         ['In the approved plan', r.inPlan === null ? <span className="text-text-tertiary">not reviewed yet</span> : r.inPlan ? 'Yes' : 'No: out of plan'],
+        ...((r.endorsedBy?.length ?? 0) > 0 ? [['Endorsed by', r.endorsedBy!.join(', ')] as [string, React.ReactNode]] : []),
+        ...(r.positionId ? [['Candidates in pipeline', String(r.pipelineCount ?? 0)] as [string, React.ReactNode]] : []),
     ] : [];
 
     return (
@@ -267,7 +364,10 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                 {s.canEdit && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={BTN_SECONDARY}>Edit</button>}
                 {s.canEdit && r.status === 'draft' && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'submit' }, 'Submitted for approval')} disabled={busy} className={BTN_PRIMARY}><Send className="h-4 w-4" />Submit for approval</button>}
                 {s.canEdit && r.status === 'sent_back' && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={BTN_PRIMARY}>Change and resubmit</button>}
-                {r.raisedBy && ['draft', 'submitted', 'sent_back', 'on_hold'].includes(r.status) && (s.canEdit || r.status !== 'draft') && !s.canDecide && (
+                {/* Spec A24: the raiser tells the approver a request on hold is still needed */}
+                {s.canConfirmNeeded && !confirmWithdraw && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'still_needed' }, 'The approver is told the role is still needed')} disabled={busy} className={BTN_PRIMARY}><Check className="h-4 w-4" />Still needed</button>}
+                {/* Owner 2026-11-20: only the person who raised it sees Withdraw (the server refuses anyone else) */}
+                {s.canWithdraw && !s.canDecide && (
                     confirmWithdraw
                         ? <><span className="mr-auto text-sm text-text-secondary">Withdraw this request?</span><button type="button" onClick={() => setConfirmWithdraw(false)} className={BTN_GHOST}>Keep</button><button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'withdraw', reason: reason.trim() || undefined }, 'Withdrawn')} disabled={busy} className={BTN_DANGER_FILLED}>Withdraw</button></>
                         : <button type="button" onClick={() => setConfirmWithdraw(true)} disabled={busy} className={`${BTN_GHOST} mr-auto text-error`}>Withdraw</button>
@@ -314,6 +414,17 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                             )}
                         </section>
                     )}
+                    {s.canEndorse && (
+                        <section className={`${CARD} px-4 py-4 ring-1 ring-inset ring-success/40`} aria-label="Endorse as department head">
+                            <p className="text-sm font-semibold text-text-primary">Endorse as head of {r.department}</p>
+                            <p className="mt-0.5 text-xs text-text-secondary">Tells the approvers you support this request. It does not approve it, and the HR Head and Director still decide.</p>
+                            <label htmlFor="req-endorse-note" className="mt-3 block text-xs font-medium text-text-secondary">Note (optional)</label>
+                            <textarea id="req-endorse-note" rows={2} value={endorseNote} onChange={e => setEndorseNote(e.target.value)} maxLength={1000} className={`${INPUT} mt-1 h-auto min-h-[56px] resize-y py-2 leading-relaxed`} />
+                            <div className="mt-3 flex justify-end">
+                                <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'endorse', note: endorseNote.trim() || undefined }, 'Endorsed')} disabled={busy} className={BTN_PRIMARY}>{busy ? <Spinner /> : <ThumbsUp className="h-4 w-4" />}Endorse</button>
+                            </div>
+                        </section>
+                    )}
                     {r.status === 'sent_back' && r.decisionReason && <div role="status" className="rounded-xl bg-warning/[.08] px-4 py-3 text-sm ring-1 ring-inset ring-warning/40"><span className="font-semibold">Sent back:</span> {r.decisionReason}</div>}
                     {r.status === 'rejected' && r.decisionReason && <div role="status" className="rounded-xl bg-error/[.06] px-4 py-3 text-sm ring-1 ring-inset ring-error/30"><span className="font-semibold">Rejected:</span> {r.decisionReason}</div>}
                     {r.status === 'on_hold' && <div role="status" className={`${WELL} px-4 py-3 text-sm`}><span className="font-semibold">On hold</span>{r.holdSince ? ` since ${formatDate(r.holdSince)}` : ''}{r.holdReason ? `: ${r.holdReason}` : ''}</div>}
@@ -342,7 +453,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
 }
 
 function ApprovalLine({ a }: { a: RequisitionApproval }) {
-    const what = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', sent_back: 'Sent back for changes', on_hold: 'Put on hold', resumed: 'Resumed', withdrawn: 'Withdrawn', position_opened: 'Position opened' }[a.action];
+    const what = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', sent_back: 'Sent back for changes', on_hold: 'Put on hold', resumed: 'Resumed', withdrawn: 'Withdrawn', position_opened: 'Position opened', endorsed: 'Endorsed by the department head', still_needed: 'Confirmed still needed' }[a.action];
     return (
         <>
             <p className="flex flex-wrap items-baseline gap-x-2">
