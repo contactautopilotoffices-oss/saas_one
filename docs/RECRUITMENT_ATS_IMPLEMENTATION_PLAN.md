@@ -49,6 +49,14 @@
   - **A03:** an approved request opens its position with **no recruiter**. The HR team is emailed to assign one, using a new Recruiter picker on Recruitment → Positions (HR team only). The person picked is emailed, and the HR Head is emailed if nobody is assigned after 48 h.
   - All alerts are by email; WhatsApp is parked.
   - **Migration `20261121000001_recruitment_requisition_followups.sql`, to be applied by a person.** It adds the "endorsed" and "still needed" history entries. Until it is applied those two buttons say a database update is needed; everything else works.
+- **21 Nov 2026, connected trackers (HRMS meeting item 5).** In Recruitment → Sheets, **Connect a tracker**: a Google Sheet or Excel (OneDrive/SharePoint) share link, the tab, the header row, the column matching (guessed, HR corrects it), the status values matched to pipeline stages, and how often to sync (hourly, daily, manual). Owner's rules:
+  - **one way, sheet → app**, through the upload's cleaning and Merge, so nothing is deleted;
+  - statuses move people in the **open position whose title matches the row's role**;
+  - a cell only changes the app if it **changed in the sheet since the last sync**;
+  - the sheet is shared **"Anyone with the link can view"** (no Google sign-in);
+  - **duplicates are flagged**: the same person and role twice in the tracker (the last row is used and flagged for review), and a person already in the database (the import's "already in the database" flag).
+
+  A tab that **repeats its header row** (the owner's tracker has 116 blocks with columns in different orders) is read block by block. Code: `backend/lib/candidates/trackers.ts`, `/api/candidates/trackers*`, hourly cron `/api/cron/tracker-sync` (vercel.json), `TrackerConnections.tsx`. **Migration `20261121000002_candidate_tracker_connections.sql`, to be applied by a person.** Tests: `tests/candidates/trackers.test.ts`.
 - Tables (migration `20261117000003_recruitment_requisitions.sql`, applied by a person): `recruitment_requisitions`, `recruitment_requisition_approvals` (insert-only), `recruitment_requisition_notices`, `recruitment_requisition_counters`. Code: `backend/lib/candidates/requisitions.ts`, `requisition-notify.ts`, `app/api/recruitment/*`. Tests: `tests/candidates/requisitions.test.ts`.
 
 ---

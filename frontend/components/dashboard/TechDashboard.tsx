@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -302,6 +303,8 @@ export default function TechDashboard() {
                             </div>
                         </div>
                     ))}
+                    {/* Owner 2026-11-21: shown only to the people HR Configs picks */}
+                    <div className="mb-6"><HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} rail={sidebarCollapsed} /></div>
                 </nav>
                 <div className="shrink-0 border-t border-border p-4">
                     <div className={`mb-3 flex items-center gap-3 px-2 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>

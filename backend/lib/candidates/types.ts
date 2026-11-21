@@ -1188,3 +1188,85 @@ export interface RequisitionResponse {
   /** Owner 2026-11-21 (spec A24): the raiser may confirm a request on hold is still needed. */
   canConfirmNeeded?: boolean;
 }
+
+// Connected trackers (owner 2026-11-21; HRMS meeting item 5; migration 20261121000002). A Google Sheet or Excel file,
+// by its share link, synced one way into the app: rows into the candidate database, statuses onto pipeline stages. ---
+
+/** The candidate fields a tracker column can fill (the sheet upload's fields). */
+export const TRACKER_FIELDS = [
+  "fullName", "email", "phone", "location", "currentOrganization", "currentDesignation", "role", "totalExp", "relevantExp",
+  "notice", "currentInhand", "expectedInhand", "candidateSource", "sourcingDate", "remark",
+] as const satisfies readonly import("./parse-sheet").SheetField[];
+export type TrackerField = (typeof TRACKER_FIELDS)[number];
+export const TRACKER_FIELD_LABELS: Record<TrackerField, string> = {
+  fullName: "Candidate name", email: "Email", phone: "Phone", location: "Location", currentOrganization: "Current organisation",
+  currentDesignation: "Current designation", role: "Role (matches an open position)", totalExp: "Total experience",
+  relevantExp: "Relevant experience", notice: "Notice period", currentInhand: "Current in-hand (₹/month)",
+  expectedInhand: "Expected in-hand (₹/month)", candidateSource: "Source / vendor", sourcingDate: "Sourcing date", remark: "Remark",
+};
+export const TRACKER_SYNC_EVERY = ["hourly", "daily", "manual"] as const;
+export type TrackerSyncEvery = (typeof TRACKER_SYNC_EVERY)[number];
+export const TRACKER_SYNC_LABELS: Record<TrackerSyncEvery, string> = { hourly: "Every hour", daily: "Once a day", manual: "Only when I press Sync now" };
+
+/** What a sync did, for the card and the history. */
+export interface TrackerSyncSummary {
+  rowsRead: number;
+  rowsChanged: number;
+  rowsUnchanged: number;
+  rowsSkipped: number;
+  recordsAdded: number;
+  recordsUpdated: number;
+  stageMoves: number;
+  /** Rows whose stage move waits for the next sync (time ran out, or it failed: see `notes`). */
+  stagePending: number;
+  /** Roles with a mapped status but no open position of that title. */
+  rolesWithoutPosition: string[];
+  notes: string[];
+  /** Owner 2026-11-21: rows repeating another row's person and role (the last is used and flagged for review). */
+  duplicateRows?: number;
+  /** "Amit Babu (BMS Operator): rows 4, 12", up to 10. */
+  duplicates?: string[];
+  /** Imported rows whose person the app already had from another sheet or by hand (flagged "already in the database"). */
+  alreadyInDatabase?: number;
+}
+
+export interface TrackerConnection {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  sourceKind: "google_sheet" | "excel_link";
+  tabName: string;
+  headerRow: number;
+  columnMap: Record<string, TrackerField | null>;
+  statusColumn: string | null;
+  statusMap: Record<string, string>;
+  syncEvery: TrackerSyncEvery;
+  active: boolean;
+  sheetId: string | null;
+  syncing: boolean;
+  lastSyncedAt: string | null;
+  lastOk: boolean | null;
+  lastError: string | null;
+  lastSummary: TrackerSyncSummary | null;
+  createdAt: string;
+}
+
+/** Reading a link before saving: its tabs, and the chosen tab's header row, columns and values. */
+export interface TrackerPreview {
+  sourceKind: "google_sheet" | "excel_link";
+  tabs: string[];
+  tab: string;
+  headerRow: number;
+  headers: string[];
+  /** The app's guess for each column (the sheet upload's matching). */
+  guess: Record<string, TrackerField | null>;
+  /** A guess at the column holding the stage, when one looks like it. */
+  statusColumnGuess: string | null;
+  /** The first value seen in each column, for the person to check the matching. */
+  examples: Record<string, string>;
+  rowCount: number;
+  /** How many header rows the tab has (a tracker that starts its columns again lower down has more than one). */
+  blocks: number;
+  /** Each column's distinct values (up to 60; columns with more are left out), for matching statuses to stages. */
+  distinct: Record<string, string[]>;
+}

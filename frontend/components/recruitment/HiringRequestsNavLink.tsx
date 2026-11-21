@@ -11,7 +11,9 @@ import { useAuth } from '@/frontend/context/AuthContext';
  * the Tech dashboard's HR Configs tab ("make it configurable somewhere in the tech login on who can have that option in
  * their sidebars"). It asks the server once per organisation (/api/recruitment/can-raise) and shows nothing
  * until the answer is yes. Placed next to Petty Cash in every sidebar that has it. Owner 2026-11-21: department heads
- * get it too (canOpen), to follow and endorse their departments' requests.
+ * get it too (canOpen), to follow and endorse their departments' requests. Owner 2026-11-21: "add it to all dashboards
+ * apart from the tenant login" (Tech console, department consoles and Accounts too; not the food vendor, Super Tenant
+ * or vendor portal: owner, same day); who sees it is still only what HR Configs says.
  */
 
 const answers = new Map<string, Promise<boolean>>();
@@ -30,7 +32,8 @@ export default function HiringRequestsNavLink({ onNavigate, compact = false, rai
     const pathname = usePathname();
     const params = useParams();
     const { membership } = useAuth();
-    const org = (typeof params?.orgId === 'string' ? params.orgId : '') || membership?.org_id || '';
+    // Owner 2026-11-21: in every login but the tenant's; a property-only login (no organisation role) uses its property's organisation.
+    const org = (typeof params?.orgId === 'string' ? params.orgId : '') || membership?.org_id || membership?.properties?.find(p => p.organization_id)?.organization_id || '';
     const [shown, setShown] = useState<{ org: string; yes: boolean } | null>(null);
     useEffect(() => {
         if (!org) return;
