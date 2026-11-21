@@ -12,6 +12,8 @@ import { FoundTask, ResolvedQuery, formatFound, viewFor } from './findTasks';
  */
 
 export interface ExecIO {
+    /** Owner 2026-11-21: true when messages to other people really wait 1 minute (heldMessages.ts, table present). */
+    holdsMessages?: boolean;
     /** Owner 2026-10-28: `remark` is saved as the completion remark and goes to the giver with the notice. */
     setStatus(actorId: string, taskId: string, status: 'pending' | 'in_progress' | 'completed', opts?: { notifyGiver?: boolean; remark?: string }): Promise<void>;
     /** ONE grouped "task completed" notice to each giver for tasks completed quietly (optional: without it, each completion
@@ -55,6 +57,8 @@ export interface ExecOptions {
     relay?: boolean;
     /** Titles of the tasks in that request (they are not on the person's own list). */
     titles?: Record<string, string>;
+    /** Owner 2026-11-21: messages to other people wait 1 minute (heldMessages.ts), so say "will be told", not "has been told". */
+    held?: boolean;
 }
 
 /** Owner 2026-10-20: notes are saved as a "Remark: …" line (the same wording Task import uses, shown on the card). */
@@ -83,6 +87,7 @@ function outcome(verbPast: string, verbBase: string, noun: { one: string; many: 
 }
 
 export async function executeAction(action: Action, ctx: BrainContext, io: ExecIO, opts: ExecOptions = {}): Promise<ExecutionResult | null> {
+    opts = { ...opts, held: opts.held ?? !!io.holdsMessages };
     const me = ctx.sender.id;
     const titleOf = (id: string) => opts.titles?.[id] ?? ctx.tasks.find(t => t.id === id)?.title ?? 'that task';
     const nameOf = (id: string) => (id === me ? 'you' : ctx.people.find(p => p.id === id)?.name ?? 'them');
@@ -130,7 +135,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             let told: string[] = []; let couldNot: string[] = [];
             try { ({ told, couldNot } = await io.relay(me, { taskIds: action.taskIds, state: action.state, note: action.note, titles: opts.titles })); } catch { /* reported below as not reached */ }
             const names = (a: string[]) => (a.length > 1 ? `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}` : a[0]);
-            const tail = [told.length ? `I've let ${names(told)} know.` : '', couldNot.length ? `I couldn't reach ${names(couldNot)} just now.` : ''].filter(Boolean).join(' ');
+            const tail = [told.length ? (opts.held ? `${names(told)} will be told in a minute.` : `I've let ${names(told)} know.`) : '', couldNot.length ? `I couldn't reach ${names(couldNot)} just now.` : ''].filter(Boolean).join(' ');
             return tail ? { ...base, summary: `${base.summary} ${tail}` } : base;
         }
 
@@ -144,7 +149,10 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             if (group && r.done.length) { try { await io.alertAssigned!(me, action.assigneeId, alertTitles, action.date); } catch { /* the tasks exist; a failed alert must not fail them */ } }
             // Owner 2026-10-20: the "Added" reply shows each task's note too, the same as the preview did.
             const shown = r.done.map(title => { const t = action.tasks.find(x => x.title === title); return t?.details ? `${title} (note: ${t.details})` : title; });
-            return outcome('Added', 'add', { one: 'task', many: 'tasks' }, shown, r.failed, who === 'you' ? ' to your list' : ` for ${who}`);
+            const added = outcome('Added', 'add', { one: 'task', many: 'tasks' }, shown, r.failed, who === 'you' ? ' to your list' : ` for ${who}`);
+            // Owner 2026-11-21: added straight away now, so the "similar task" warning the preview used to show goes in the reply.
+            if (r.done.length && action.similar?.length) added.summary = `${added.summary} Note: ${who === 'you' ? 'you already have' : `${who} already has`} a similar open task: ${action.similar.join(', ')}.`;
+            return added;
         }
 
         case 'hand_over_task': {
@@ -213,7 +221,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             const line = `• ${action.title} (from ${action.fromName})`;
             try {
                 await io.answerRequest(me, action.requestId, action.accept, action.reason);
-                return { summary: action.accept ? `Accepted. It is on your list now, and ${action.fromName} has been told.` : `Done. ${action.fromName} has been told${action.reason ? ' why' : ''}.`, values: { details: action.accept || !action.reason ? line : `${line}\nReason: ${action.reason}` } };
+                return { summary: action.accept ? `Accepted. It is on your list now, and ${action.fromName} ${opts.held ? 'will be told in a minute' : 'has been told'}.` : `Done. ${action.fromName} ${opts.held ? 'will be told' : 'has been told'}${action.reason ? ' why' : ''}${opts.held ? ' in a minute' : ''}.`, values: { details: action.accept || !action.reason ? line : `${line}\nReason: ${action.reason}` } };
             } catch (err) {
                 return { summary: `I could not send your answer. ${reason(err)}`, values: { details: line } };
             }
@@ -225,7 +233,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
             try {
                 await io.changeTask(me, action.taskId, { ...(action.date ? { date: action.date } : {}), ...(action.toId ? { toId: action.toId } : {}) });
                 const to = action.toId ? nameOf(action.toId) : null;
-                return { summary: `Changed the task${to && to !== 'you' ? `; ${to} has been told` : ''}.`, values: { details: line } };
+                return { summary: `Changed the task${to && to !== 'you' ? `; ${to} ${opts.held ? 'will be told in a minute' : 'has been told'}` : ''}.`, values: { details: line } };
             } catch (err) {
                 return { summary: `I could not change it. ${reason(err)}`, values: { details: line } };
             }
@@ -245,7 +253,7 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
                 const r = await io.remindTasks(me, action.taskIds);
                 const sent = r.reminded.map(x => `${x.name} (${x.count})`).join(', ');
                 const lines = [...r.reminded.map(x => `• Reminded ${x.name} about ${x.count} ${plural(x.count, 'task', 'tasks')}`), ...r.skipped.map(x => `• Not sent: ${x.title} (${x.why})`)];
-                return { summary: sent ? `Sent a reminder to ${sent}.` : 'No reminder was sent.', values: { details: lines.join('\n') } };
+                return { summary: sent ? (opts.held ? `The reminder to ${sent} goes out in a minute.` : `Sent a reminder to ${sent}.`) : 'No reminder was sent.', values: { details: lines.join('\n') } };
             } catch (err) {
                 return { summary: `I could not send the reminder. ${reason(err)}`, values: {} };
             }
@@ -272,8 +280,14 @@ export async function executeAction(action: Action, ctx: BrainContext, io: ExecI
                 catch (err) { parts.push({ summary: `One part could not be done. ${reason(err)}`, values: {} }); }
             }
             const details = parts.map(p => p.values.details).filter(Boolean).join('\n');
-            const left = action.unclear.length ? ` I couldn't work out: ${action.unclear.join('; ')}. Please send it again on its own.` : '';
-            return { summary: `${parts.map(p => p.summary).join(' ')}${left}`.trim(), values: details ? { details } : {} };
+            // Owner 2026-11-21: with no Yes card first, what was NOT done is a fixed line the system inserts (never left to the AI).
+            const notAllowed = action.unclear.filter(u => /^you can't /i.test(u));
+            const unsure = action.unclear.filter(u => !/^you can't /i.test(u));
+            const leftOut = [
+                ...(notAllowed.length ? [`Not done: ${notAllowed.join('; ')}.`] : []),
+                ...(unsure.length ? [`I couldn't work out: ${unsure.join('; ')}. Please send it again on its own.`] : []),
+            ].join(' ');
+            return { summary: parts.map(p => p.summary).join(' ').trim(), values: { ...(details ? { details } : {}), ...(leftOut ? { leftOut } : {}) } };
         }
 
         default:
