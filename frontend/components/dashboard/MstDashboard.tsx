@@ -1,6 +1,7 @@
 'use client';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -817,6 +818,7 @@ const MstDashboard = () => {
                     <div className="mb-6" data-navigation-section="management-hub">
                         <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
                         <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                        <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                     </div>
 {/* System & Personal */}
                     <div className="mb-4">

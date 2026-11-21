@@ -7,7 +7,11 @@
  *     when the template is set up (AISENSY_REQUISITION_* below);
  *   - the Tech dashboard's Omnichannel matrix (module "recruitment") adds anyone else, by role or by name, per event,
  *     through the same resolvers every other module uses;
- *   - the manager who raised it is told of every decision; the Director is told when the HR Head approved in plan.
+ *   - the manager who raised it is told of every decision; the Director is told when the HR Head approved in plan;
+ *   - owner 2026-11-21: the department's head when a request for it goes in (they may endorse it); the HR team when an
+ *     approved request opens a role (spec A03: assign a recruiter), and the HR Head when nobody is assigned after 48 h;
+ *     a recruiter when they are assigned; the raiser of a request on hold at 15 and 20 days, the HR Head at 25 (spec
+ *     A24), and the approver when the raiser confirms it is still needed. These go by email.
  * Every message sent is written to recruitment_requisition_notices, so a reminder goes once per level, and the
  * approver's email carries a one-time link (email_action_tokens, 7 days) that decides from a phone without a login.
  *
@@ -17,13 +21,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { APPROVAL_LEVEL_LABELS, REQUISITION_STATUS_LABELS, type ApprovalLevel, type Requisition } from "./types";
-import { loadRecruitmentConfig, waitingRequisitions, type RequisitionEvent } from "./requisitions";
+import { activeRoles, heldRequisitions, HR_ROLES, loadRecruitmentConfig, unassignedRoles, waitingRequisitions, type RequisitionEvent } from "./requisitions";
 
 const NOTICES = "recruitment_requisition_notices";
 const TOKEN_ENTITY = "recruitment_requisition";
 /** Stage 2's clock: reminders at 24 h and 48 h, escalation at 72 h, at each level. */
 export const REMINDER_HOURS = [24, 48] as const;
 export const ESCALATION_HOURS = 72;
+/** Spec A24: on hold over 15 days, ask the raiser on day 15 and day 20; day 25 to the HR Head. */
+export const HOLD_CHASE_DAYS = [15, 20] as const;
+export const HOLD_ESCALATION_DAYS = 25;
+/** Spec A03: an opened role with no recruiter after 2 days goes to the HR Head. */
+export const UNASSIGNED_HOURS = 48;
 
 /** The Omnichannel matrix's event keys for the "recruitment" module (OmnichannelNotificationSettings.tsx lists the same). */
 export const REQUISITION_EVENT_KEYS = {
@@ -237,12 +246,71 @@ async function notifyEscalated(client: SupabaseClient, orgId: string, deps: Noti
   }, subject, html);
 }
 
+const button = (href: string, label: string) => `<p style="margin-top:16px"><a href="${esc(href)}" style="display:inline-block;background:#1e293b;color:#fff;padding:11px 22px;border-radius:10px;text-decoration:none;font-weight:bold">${esc(label)}</a></p>`;
+const hiringRequestsUrl = (deps: NotifyDeps, orgId: string) => `${deps.appUrl}/${orgId}/hiring-requests`;
+
+/** Owner 2026-11-21: the department's head hears of a request for it, and may endorse it. */
+async function notifyDepartmentHead(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, headId: string): Promise<void> {
+  const head = (await people(client, [headId])).get(headId);
+  const subject = `Hiring request ${r.requisitionNo ?? ""} for your department · ${r.roleTitle}`;
+  const html = `<p>Hello ${esc(firstName(head?.name ?? null))},</p>
+    <p>${esc(r.raisedByName ?? "A manager")} raised a hiring request for ${esc(r.department ?? "your department")}. It is with the ${esc(r.currentLevel ? APPROVAL_LEVEL_LABELS[r.currentLevel] : "approvers")} now.</p>
+    ${summaryHtml(r)}
+    <p>As the department head you can endorse it from Hiring requests. Endorsing tells the approvers you support it; it does not approve it.</p>
+    ${deps.appUrl ? button(hiringRequestsUrl(deps, orgId), "Open Hiring requests") : ""}`;
+  await deliver(client, orgId, deps, r, "department_head", null, { emails: [head?.email ?? ""].filter(Boolean), whatsapp: [] }, subject, html);
+}
+
+/** The HR team: the HR Head and backup, and everyone with an HR role in the organisation. */
+async function hrTeam(client: SupabaseClient, orgId: string): Promise<string[]> {
+  const [config, { roles }] = await Promise.all([loadRecruitmentConfig(client, orgId), activeRoles(client, orgId).catch(() => ({ roles: [] as { userId: string; role: string }[] }))]);
+  return [...new Set([config.hrHead.userId, config.hrHead.backupUserId, ...roles.filter((x) => HR_ROLES.includes(x.role.toLowerCase())).map((x) => x.userId)].filter((id): id is string => Boolean(id)))];
+}
+
+/** Spec A03: an approved request opened a role; the HR team assigns a recruiter. */
+async function notifyRoleOpened(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition): Promise<void> {
+  const who = await people(client, await hrTeam(client, orgId));
+  const subject = `New role open: ${r.roleTitle} (${r.requisitionNo ?? "hiring request"}) · assign a recruiter`;
+  const html = `<p>Hello,</p>
+    <p>Hiring request <strong>${esc(r.requisitionNo)}</strong> was approved, so <strong>${esc(r.roleTitle)}</strong> is now an open position. Nobody is recruiting for it yet.</p>
+    ${summaryHtml(r)}
+    <p>Open Recruitment → Positions and pick the recruiter. If nobody is assigned within 2 days, the HR Head is told.</p>`;
+  await deliver(client, orgId, deps, r, "role_opened", null, { emails: [...who.values()].map((p) => p.email ?? "").filter(Boolean), whatsapp: [] }, subject, html);
+}
+
+/** Spec A24: the raiser confirmed a request on hold is still needed; the approver it waits on is told. */
+async function notifyStillNeeded(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, approverId: string | null, noteText: string | null): Promise<void> {
+  if (!approverId) return;
+  const approver = (await people(client, [approverId])).get(approverId);
+  const subject = `Still needed: hiring request ${r.requisitionNo ?? ""} on hold · ${r.roleTitle}`;
+  const html = `<p>Hello ${esc(firstName(approver?.name ?? null))},</p>
+    <p>${esc(r.raisedByName ?? "The manager")} confirms the role <strong>${esc(r.roleTitle)}</strong> is still needed. The request has been on hold${r.holdSince ? ` since ${esc(r.holdSince.slice(0, 10))}` : ""}.</p>
+    ${noteText ? `<p style="border-left:3px solid #cbd5e1;padding-left:10px;color:#334155">${esc(noteText)}</p>` : ""}
+    <p>Open Hiring requests to resume it, or to decide.</p>`;
+  await deliver(client, orgId, deps, r, "still_needed", r.currentLevel, { emails: [approver?.email ?? ""].filter(Boolean), whatsapp: [] }, subject, html);
+}
+
+/** Owner 2026-11-21: a recruiter is told when they are assigned to a position (Recruitment → Positions). */
+export async function notifyRecruiterAssigned(client: SupabaseClient, position: { id: string; title: string }, recruiterId: string, byName: string | null, deps: Pick<NotifyDeps, "sendEmail"> = defaultNotifyDeps()): Promise<void> {
+  const recruiter = (await people(client, [recruiterId])).get(recruiterId);
+  if (!recruiter?.email) return;
+  try {
+    await deps.sendEmail(recruiter.email, `You are the recruiter for ${position.title}`, `<p>Hello ${esc(firstName(recruiter.name))},</p>
+      <p>${esc(byName ?? "HR")} made you the recruiter for <strong>${esc(position.title)}</strong>. You will find it under Recruitment → Positions.</p>`);
+  } catch (error) {
+    console.error("[candidates] recruiter alert failed", error);
+  }
+}
+
 /** The routes' notifier: one event from requisitions.ts -> the messages for it. */
 export function requisitionNotifier(client: SupabaseClient, orgId: string, deps: NotifyDeps = defaultNotifyDeps()): (event: RequisitionEvent) => Promise<void> {
   return async (event) => {
     if (event.kind === "awaiting") await notifyAwaiting(client, orgId, deps, event.requisition, event.approverId, event.level, "awaiting");
     else if (event.kind === "decided") await notifyDecided(client, orgId, deps, event.requisition, event.decision, event.reason, event.byName);
     else if (event.kind === "director_informed") await notifyDirectorInformed(client, orgId, deps, event.requisition, event.directorId);
+    else if (event.kind === "department_head") await notifyDepartmentHead(client, orgId, deps, event.requisition, event.headId);
+    else if (event.kind === "role_opened") await notifyRoleOpened(client, orgId, deps, event.requisition);
+    else if (event.kind === "still_needed") await notifyStillNeeded(client, orgId, deps, event.requisition, event.approverId, event.note);
   };
 }
 
@@ -252,13 +320,56 @@ async function sentKinds(client: SupabaseClient, orgId: string, requisitionId: s
   return new Set(((data ?? []) as { kind: string }[]).map((n) => n.kind));
 }
 
+/** The notices of these kinds this request had since `since` (any level). */
+async function sentSince(client: SupabaseClient, orgId: string, requisitionId: string, kinds: string[], since: string | null): Promise<Set<string>> {
+  let q = client.from(NOTICES).select("kind, created_at").eq("organization_id", orgId).eq("requisition_id", requisitionId).in("kind", kinds).eq("ok", true);
+  if (since) q = q.gte("created_at", since);
+  const { data } = await q;
+  return new Set(((data ?? []) as { kind: string }[]).map((n) => n.kind));
+}
+
+/** Spec A24: day 15 and day 20 to the raiser ("still needed, or withdraw?"), day 25 to the HR Head. */
+async function chaseHold(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, kind: "hold_15" | "hold_20" | "hold_25", confirmedAt: string | null): Promise<void> {
+  const config = await loadRecruitmentConfig(client, orgId);
+  const days = kind === "hold_25" ? HOLD_ESCALATION_DAYS : kind === "hold_20" ? 20 : 15;
+  const ids = kind === "hold_25" ? [config.hrHead.userId, config.hrHead.backupUserId] : [r.raisedBy];
+  const who = await people(client, [...ids, r.currentApproverId]);
+  const to = ids.filter((id): id is string => Boolean(id)).map((id) => who.get(id)).filter((p): p is Person => Boolean(p));
+  const holder = r.currentApproverId ? who.get(r.currentApproverId)?.name ?? null : null;
+  const subject = kind === "hold_25"
+    ? `On hold ${days} days: hiring request ${r.requisitionNo ?? ""} · ${r.roleTitle}`
+    : `Is this role still needed? Hiring request ${r.requisitionNo ?? ""} has been on hold ${days} days`;
+  const html = kind === "hold_25"
+    ? `<p>Hiring request <strong>${esc(r.requisitionNo)}</strong> for <strong>${esc(r.roleTitle)}</strong> has been on hold for ${days} days${holder ? `, waiting on ${esc(holder)}` : ""}.${r.holdReason ? ` Reason: ${esc(r.holdReason)}.` : ""}</p>
+      <p>${confirmedAt ? `${esc(r.raisedByName ?? "The manager")} confirmed on ${esc(confirmedAt.slice(0, 10))} that it is still needed.` : `${esc(r.raisedByName ?? "The manager")} has not confirmed it is still needed.`} Please resume it or decide.</p>${summaryHtml(r)}`
+    : `<p>Hello ${esc(firstName(to[0]?.name ?? null))},</p>
+      <p>Your hiring request <strong>${esc(r.requisitionNo)}</strong> for <strong>${esc(r.roleTitle)}</strong> has been on hold for ${days} days${r.holdReason ? ` (${esc(r.holdReason)})` : ""}.</p>
+      <p>Open it under Hiring requests and either press <strong>Still needed</strong>, so the approver knows, or <strong>Withdraw</strong> it if the role is no longer needed.</p>
+      ${deps.appUrl ? button(hiringRequestsUrl(deps, orgId), "Open Hiring requests") : ""}`;
+  await deliver(client, orgId, deps, r, kind, null, { emails: to.map((p) => p.email ?? "").filter(Boolean), whatsapp: [] }, subject, html);
+}
+
+/** Spec A03's escalation: a role opened from a request still has no recruiter after 48 h; the HR Head is told, once. */
+async function notifyUnassigned(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition): Promise<void> {
+  const config = await loadRecruitmentConfig(client, orgId);
+  const who = await people(client, [config.hrHead.userId, config.hrHead.backupUserId]);
+  const subject = `No recruiter yet: ${r.roleTitle} (${r.requisitionNo ?? "hiring request"})`;
+  const html = `<p>The role <strong>${esc(r.roleTitle)}</strong>, opened when hiring request <strong>${esc(r.requisitionNo)}</strong> was approved${r.decidedAt ? ` on ${esc(r.decidedAt.slice(0, 10))}` : ""}, still has no recruiter.</p>
+    <p>Open Recruitment → Positions and pick one.</p>${summaryHtml(r)}`;
+  await deliver(client, orgId, deps, r, "unassigned_48", null, { emails: [...who.values()].map((p) => p.email ?? "").filter(Boolean), whatsapp: [] }, subject, html);
+}
+
 /**
  * The reminders job (hourly): for every request waiting at a level, a reminder at 24 h and 48 h to its approver and
- * an escalation at 72 h, each once per level. Returns what it sent, for the cron's log.
+ * an escalation at 72 h, each once per level; for every request on hold, the spec's A24 chasers (day 15 and 20 to the
+ * raiser, day 25 to the HR Head, once each per hold); for every role opened without a recruiter after 48 h, the HR Head
+ * (A03, once). Returns what it sent, for the cron's log.
  */
-export async function runRequisitionReminders(client: SupabaseClient, orgId: string, deps: NotifyDeps = defaultNotifyDeps(), now = deps.now?.() ?? new Date()): Promise<{ reminders: number; escalations: number }> {
+export async function runRequisitionReminders(client: SupabaseClient, orgId: string, deps: NotifyDeps = defaultNotifyDeps(), now = deps.now?.() ?? new Date()): Promise<{ reminders: number; escalations: number; holdChasers: number; unassigned: number }> {
   let reminders = 0;
   let escalations = 0;
+  let holdChasers = 0;
+  let unassigned = 0;
   for (const { requisition: r, hoursAtLevel } of await waitingRequisitions(client, orgId, now)) {
     const level = r.currentLevel;
     if (!level || !r.currentApproverId) continue;
@@ -272,5 +383,22 @@ export async function runRequisitionReminders(client: SupabaseClient, orgId: str
     const latest = due[due.length - 1];
     if (latest) { await notifyAwaiting(client, orgId, deps, r, r.currentApproverId, level, latest); reminders += 1; }
   }
-  return { reminders, escalations };
+  for (const { requisition: r, daysOnHold, confirmedAt } of await heldRequisitions(client, orgId, now)) {
+    const had = await sentSince(client, orgId, r.id, ["hold_15", "hold_20", "hold_25"], r.holdSince);
+    if (daysOnHold >= HOLD_ESCALATION_DAYS) {
+      if (!had.has("hold_25")) { await chaseHold(client, orgId, deps, r, "hold_25", confirmedAt); holdChasers += 1; }
+      continue;
+    }
+    // A raiser who already confirmed it is still needed is not asked again in this hold.
+    if (confirmedAt) continue;
+    const due = HOLD_CHASE_DAYS.filter((d) => daysOnHold >= d).map((d) => `hold_${d}` as "hold_15" | "hold_20").filter((k) => !had.has(k));
+    const latest = due[due.length - 1];
+    if (latest) { await chaseHold(client, orgId, deps, r, latest, null); holdChasers += 1; }
+  }
+  for (const r of await unassignedRoles(client, orgId, now, UNASSIGNED_HOURS)) {
+    if ((await sentSince(client, orgId, r.id, ["unassigned_48"], null)).has("unassigned_48")) continue;
+    await notifyUnassigned(client, orgId, deps, r);
+    unassigned += 1;
+  }
+  return { reminders, escalations, holdChasers, unassigned };
 }

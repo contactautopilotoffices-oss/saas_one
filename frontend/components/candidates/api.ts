@@ -21,7 +21,7 @@ export type ApiResult<T> =
 export type ApiFailure = Extract<ApiResult<unknown>, { ok: false }>;
 
 interface ApiInit {
-    method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
     /** Sent as a JSON body. */
     json?: unknown;
     /** Sent as multipart/form-data (the browser sets the boundary header). */

@@ -24,6 +24,7 @@ import NotificationBell from '@/frontend/components/dashboard/NotificationBell';
 import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
 import PanelToggle from '@/frontend/components/ui/PanelToggle';
 import ResumeReminderBadge from '@/frontend/components/candidates/ResumeReminderBadge';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 
 /**
  * Owner 2026-11-09: for these logins a collapsed sidebar is an icon rail (the Tech console's pattern), not hidden.
@@ -226,6 +227,8 @@ export default function DashboardSidebar({
     const pettyCashAndBookRoomLinks = (
         <>
             <PettyCashNavLink onNavigate={handleLinkClick} />
+            {/* Owner 2026-11-20: shown only to the roles and people the Tech team picked (Tech dashboard -> HR Configs) */}
+            <HiringRequestsNavLink onNavigate={handleLinkClick} rail={rail} />
 
             {/* HR and CRM teams book meeting rooms here, without credits */}
             {(isCreditFreeBookingRole(userRole) || isCreditFreeBookingRole(membership?.org_role)) && (

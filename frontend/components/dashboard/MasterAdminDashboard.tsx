@@ -2,6 +2,7 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect } from 'react';
 import {
     ShieldCheck, Users, Building2, AlertTriangle, Activity,
@@ -525,6 +526,7 @@ const MasterAdminDashboard = () => {
                     ))}
 
                     <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                    <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
 </nav>
 
                 <div className="pt-6 pb-12 border-t border-border flex-shrink-0">

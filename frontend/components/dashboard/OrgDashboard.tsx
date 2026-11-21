@@ -2,6 +2,7 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect } from 'react';
 import {
     BarChart3, Users, Building2, LayoutDashboard,
@@ -184,6 +185,7 @@ const OrgDashboard = ({ orgId }: { orgId: string }) => {
                         ))}
 
                     <PettyCashNavLink />
+                    <HiringRequestsNavLink />
 </nav>
                 </div>
 

@@ -14,6 +14,9 @@ export default function Home() {
     const { user, isLoading, membership, isMembershipLoading, signOut } = useAuth();
     const router = useRouter();
     const [isRedirecting, setIsRedirecting] = useState(false);
+    // Set while an account with no access is signed out and sent to the login page, so the landing page
+    // does not flash up when the sign-out clears the user.
+    const [isLeaving, setIsLeaving] = useState(false);
     // Where the redirect below is heading, so the safety timer can finish the job.
     const redirectTargetRef = useRef<string | null>(null);
 
@@ -132,8 +135,19 @@ export default function Home() {
                 // If the user already completed onboarding but has no active memberships, 
                 // send them to no access rather than forcing them to onboard again.
                 if (membership?.onboarding_completed) {
-                    console.log('User has no memberships but already onboarded. Redirecting to no access.');
-                    go('/login?error=no_access');
+                    // Sign out on this device first, then a full page load to the login page, which shows
+                    // "not assigned to any organization or property". Sending a still-signed-in user to /login
+                    // looped for ever: the proxy sends a signed-in user on /login back to /, and / sent them to
+                    // /login again (stuck reloading, with no way out in an iPhone home-screen app). The local
+                    // sign-out needs no network, so it cannot fail and restart the loop; other devices sign
+                    // out the same way when the account next opens the app there.
+                    console.log('User has no memberships but already onboarded. Signing out on this device and opening the login page.');
+                    setIsLeaving(true);
+                    // The context's sign-out clears the saved login details and caches straight away; its
+                    // server call may still be running when the page changes, which does not matter.
+                    signOut().catch(() => {});
+                    try { await createClient().auth.signOut({ scope: 'local' }); } catch { /* the full load below still runs */ }
+                    window.location.replace('/login?error=no_access');
                 } else {
                     console.log('User logged in but no memberships found and not onboarded. Redirecting to onboarding.');
                     go('/onboarding');
@@ -145,10 +159,10 @@ export default function Home() {
         };
 
         handleAuthRedirect();
-    }, [user, isLoading, isMembershipLoading, membership, router]);
+    }, [user, isLoading, isMembershipLoading, membership, router, signOut]);
 
     // Show loader while checking auth or redirecting
-    if (isLoading || isRedirecting) {
+    if (isLoading || isRedirecting || isLeaving) {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-slate-950">
                 <Loader size="lg" text="Loading..." />

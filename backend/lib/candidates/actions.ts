@@ -166,7 +166,7 @@ export async function changeRecordWithHistory(client: SupabaseClient, orgId: str
  * The person is in this position now (a live row in the pipeline). A note filed under a position must belong to it.
  * Throws a 400 for a malformed id and a 404 when they are not (or no longer) in it.
  */
-async function assertInPosition(client: SupabaseClient, orgId: string, candidateId: string, positionId: unknown): Promise<string> {
+export async function assertInPosition(client: SupabaseClient, orgId: string, candidateId: string, positionId: unknown): Promise<string> {
   if (typeof positionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(positionId)) {
     throw new CandidateActionError(400, "positionId must be a uuid.");
   }

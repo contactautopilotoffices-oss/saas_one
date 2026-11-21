@@ -3,12 +3,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BookOpen, FileUp, FolderPlus, Layers, PencilLine, Search, Trash2 } from 'lucide-react';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
-import { EMPLOYMENT_TYPE_LABELS, FLOW_STAGES, PRIORITY_LABELS, STAGE_LABELS, type Position, type PositionReadResponse, type Stage } from '@/backend/lib/candidates/types';
+import { boardColumns, type StageDef } from '@/backend/lib/candidates/stage-list';
+import { EMPLOYMENT_TYPE_LABELS, PRIORITY_LABELS, type Position, type PositionReadResponse } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatCount, formatDate, formatInr } from './format';
 import JdLibrary, { type JdPick } from './JdLibrary';
 import PositionForm, { type PositionJdLink, type PositionSeed } from './PositionForm';
 import { BTN_DANGER_FILLED } from './Remarks';
+import { useStages } from './stage-ui';
 import { BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
@@ -29,16 +31,18 @@ export function preferLabels(prefer: Preferences): { key: keyof Preferences; lab
     return out;
 }
 
-function Funnel({ counts }: { counts: Position['counts'] }) {
-    const max = Math.max(1, ...FLOW_STAGES.map(s => counts[s]));
-    const short: Record<Stage, string> = { sourced: 'Src', screening: 'Scr', shortlisted: 'Short', interview: 'Int', offer: 'Offer', joined: 'Join', on_hold: '', not_responding: '', rejected: '', others: '' };
+/** People per round (owner 2026-11-19: one bar per board column of HR's list; rejected people are not counted). */
+function Funnel({ counts, stages }: { counts: Position['counts']; stages: StageDef[] }) {
+    const columns = boardColumns(stages).map(c => ({ name: c.name, n: c.stages.filter(s => s.kind !== 'rejected').reduce((t, s) => t + (counts[s.key] ?? 0), 0) }));
+    const max = Math.max(1, ...columns.map(c => c.n));
+    const short = (name: string) => name.split(/[\s·/]+/)[0].slice(0, 5);
     return (
-        <div className="flex h-10 items-end gap-x-1" aria-label={FLOW_STAGES.map(s => `${STAGE_LABELS[s]} ${counts[s]}`).join(', ')}>
-            {FLOW_STAGES.map(s => (
-                <span key={s} className="flex w-9 flex-col items-center gap-y-0.5 text-[10px] text-text-tertiary">
-                    <span className={`${NUM_SM} text-xs text-text-primary`}>{counts[s]}</span>
-                    <span className={`block w-full rounded-t-sm ${s === 'joined' ? 'bg-success' : 'bg-primary/40'}`} style={{ height: `${Math.max(2, Math.round((counts[s] / max) * 18))}px` }} aria-hidden />
-                    {short[s]}
+        <div className="flex h-10 items-end gap-x-1" aria-label={columns.map(c => `${c.name} ${c.n}`).join(', ')}>
+            {columns.map((c, i) => (
+                <span key={c.name} title={c.name} className="flex w-9 flex-col items-center gap-y-0.5 text-[10px] text-text-tertiary">
+                    <span className={`${NUM_SM} text-xs text-text-primary`}>{c.n}</span>
+                    <span className={`block w-full rounded-t-sm ${i === columns.length - 1 ? 'bg-success' : 'bg-primary/40'}`} style={{ height: `${Math.max(2, Math.round((c.n / max) * 18))}px` }} aria-hidden />
+                    {short(c.name)}
                 </span>
             ))}
         </div>
@@ -67,6 +71,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     onPipeline: (position: Position) => void;
 }) {
     const { notify, reportError } = useUi();
+    const stages = useStages(orgId)?.stages ?? [];
     const [positions, setPositions] = useState<Position[] | null>(null);
     const [statusFilter, setStatusFilter] = useState<'open' | 'closed' | 'all'>('open');
     const [q, setQ] = useState('');
@@ -80,6 +85,25 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     const [jdLink, setJdLink] = useState<PositionJdLink | null>(null);
     const [pasteText, setPasteText] = useState('');
     const fileRef = useRef<HTMLInputElement | null>(null);
+    // Owner 2026-11-21 (spec A03): HR assigns each position's recruiter from the HR team; a role opened from an approved
+    // hiring request starts with nobody, and the HR Head is told when nobody is assigned after 2 days.
+    const [recruiters, setRecruiters] = useState<{ id: string; name: string }[]>([]);
+    const [assigning, setAssigning] = useState<string | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ people: { id: string; name: string }[] }>(`/api/candidates/recruiters${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (!ctrl.signal.aborted && res.ok) setRecruiters(res.data.people);
+        });
+        return () => ctrl.abort();
+    }, [orgId]);
+    const assignRecruiter = async (p: Position, recruiterId: string) => {
+        setAssigning(p.id);
+        const res = await api<{ position: Position }>(`/api/candidates/positions/${encodeURIComponent(p.id)}`, { method: 'PATCH', json: { orgId, recruiterId: recruiterId || null } });
+        setAssigning(null);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        setPositions(list => (list ?? []).map(x => (x.id === p.id ? { ...x, recruiterId: res.data.position.recruiterId ?? null, recruiterName: res.data.position.recruiterName } : x)));
+        notify(recruiterId ? `${res.data.position.recruiterName ?? 'The recruiter'} is now the recruiter` : 'Recruiter removed', 'success');
+    };
 
     useEffect(() => {
         const ctrl = new AbortController();
@@ -251,10 +275,17 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                                         )}
                                     </div>
                                     <Tag tone={p.status === 'closed' ? 'neutral' : ageing ? 'warn' : 'success'}>{p.status === 'closed' ? `Closed${p.closedAt ? ` ${formatDate(p.closedAt)}` : ''}` : ageing ? 'Ageing' : 'Open'}</Tag>
-                                    <Funnel counts={p.counts} />
-                                    <div className="w-28 shrink-0">
-                                        <p className={LABEL}>Recruiter</p>
-                                        <p className="truncate text-sm font-medium text-text-primary" title={p.recruiterName ?? ''}>{p.recruiterName ?? <span className="font-normal text-text-tertiary">—</span>}</p>
+                                    <Funnel counts={p.counts} stages={stages} />
+                                    <div className="w-36 shrink-0">
+                                        <label htmlFor={`pos-recruiter-${p.id}`} className={LABEL}>Recruiter</label>
+                                        {recruiters.length || p.recruiterId ? (
+                                            <select id={`pos-recruiter-${p.id}`} value={p.recruiterId ?? ''} disabled={assigning === p.id || p.status === 'closed'} onChange={e => void assignRecruiter(p, e.target.value)}
+                                                className={`${INPUT} mt-0.5 h-8 px-2 text-sm ${!p.recruiterId && p.status === 'open' ? 'text-amber-800 ring-1 ring-inset ring-warning/60' : ''}`} title={p.recruiterName ?? 'Nobody assigned yet'}>
+                                                <option value="">{p.status === 'open' ? 'Assign…' : '—'}</option>
+                                                {p.recruiterId && !recruiters.some(r => r.id === p.recruiterId) && <option value={p.recruiterId}>{p.recruiterName ?? 'Someone'}</option>}
+                                                {recruiters.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                            </select>
+                                        ) : <p className="truncate text-sm font-medium text-text-primary">{p.recruiterName ?? <span className="font-normal text-text-tertiary">—</span>}</p>}
                                     </div>
                                     <div className="w-24 shrink-0">
                                         <p className={LABEL}>{p.status === 'open' ? 'Days open' : 'Days to fill'}</p>

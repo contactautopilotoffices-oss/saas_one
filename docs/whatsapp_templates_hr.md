@@ -253,6 +253,56 @@ Sent from the Recruitment module (the pipeline's Shortlisted / Rejected prompt, 
   * `{{1}}`: Candidate's first name
   * `{{2}}`: Role
 
+### Template 12: Candidate stage update — editable (owner 2026-11-19)
+Replaces Templates 10 and 11 in the app (they stay for the history). Sent when a person moves a candidate to a stage marked "Offer a WhatsApp update" in Recruitment → Configurations, or from the candidate panel's "Send update". The opening and closing are fixed; `{{3}}` is HR's text, prefilled from the stage's default in Configurations and edited before each send (one paragraph, at most 400 characters: WhatsApp refuses line breaks inside a parameter). Once per person, position and stage. The campaign name is the template name unless `AISENSY_CANDIDATE_STAGE_UPDATE_CAMPAIGN` says otherwise. **Until Meta approves it, sends fail and are recorded as failed** with AiSensy's reason.
+* **Template Name**: `candidate_stage_update_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  This is an update on your application for the {{2}} role at Autopilot Offices.
+
+  {{3}}
+
+  Thank you,
+  Autopilot Offices Recruitment Team
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name (e.g. *Farah*)
+  * `{{2}}`: Role (e.g. *Assistant Manager – Accounts*)
+  * `{{3}}`: HR's update (e.g. *Your L1 interview is with the Finance Head on Friday at 11 am. Please bring your ID proof.*)
+* **Sample for Meta's review** (`{{3}}`): *You have been shortlisted for the first interview round. Our recruiter will call you shortly to fix the date and time.*
+
+### Template 13: Candidate interview invite (owner 2026-11-19)
+Sent by **Schedule interview** on a candidate (`backend/lib/candidates/interviews.ts`) when HR ticks "on WhatsApp". For an online interview `{{5}}` carries the video call's one link (the candidate waits until someone in the call lets them in); in person, the venue. One per interview (a new time or the next round is a new invite). The campaign name is the template name unless `AISENSY_CANDIDATE_INTERVIEW_INVITE_CAMPAIGN` says otherwise. **Until Meta approves it, the invite is reported as not sent** and HR shares the link with the copy / WhatsApp share buttons.
+* **Template Name**: `candidate_interview_invite_v1`
+* **Category**: UTILITY
+* **Language**: `en`
+* **Header**: None
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Your {{2}} interview for the {{3}} role at Autopilot Offices is on {{4}}.
+
+  {{5}}
+
+  If this time does not suit you, please tell the recruiter who called you.
+  ```
+* **Footer**: `Automated update · Please do not reply to this message`
+* **Buttons**: None
+* **Parameters Mapping**:
+  * `{{1}}`: Candidate's first name (e.g. *Farah*)
+  * `{{2}}`: Round (e.g. *L1*)
+  * `{{3}}`: Role (e.g. *Assistant Manager – Accounts*)
+  * `{{4}}`: When (e.g. *Sat, 21 Nov 2026 at 11:00 am (IST)*)
+  * `{{5}}`: How to join (e.g. *Join the video call here: https://…/guest/…*) or where to come (e.g. *Please come to: 3rd floor, Alkapuri, Vadodara*)
+
 ---
 
 ### 1c. Hiring requests (manpower requisitions) — owner 2026-11-17
@@ -272,7 +322,15 @@ Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only
 * `{{1}}` approver's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` raised by · `{{5}}` the one-time decision link (or the app link)
 
 #### Template: Hiring request reminder
-* **Template Name**: `requisition_reminder_v1` · same parameters as above; body starts "Reminder: hiring request *{{2}}* for *{{3}}* has waited for your decision."
+* **Template Name**: `requisition_reminder_v1`
+* **Category**: UTILITY · **Language**: `en`
+* **Body Text** (the same five parameters as above; WhatsApp needs every one used):
+  ```text
+  Hello {{1}},
+  Reminder: hiring request *{{2}}* for *{{3}}*, raised by {{4}}, is still waiting for your decision.
+  Review and decide here: {{5}}
+  The link works once, for 7 days. You can also decide from the app under Hiring requests.
+  ```
 
 #### Template: Hiring request escalated
 * **Template Name**: `requisition_escalated_v1`

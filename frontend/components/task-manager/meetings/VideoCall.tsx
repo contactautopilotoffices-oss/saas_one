@@ -18,13 +18,16 @@
  * Owner 2026-11-19 (free LiveKit plan): the sound is recorded in a team member's browser (CallRecorder.tsx); the
  * server picks one, and another takes over if that person leaves. Built from @livekit/components-react hooks with
  * our own styling (the LiveKit style sheet package is not installed).
+ *
+ * Owner 2026-11-19: Recruitment opens the same call inside its own page (an interview's "Join call"); `onClose` then
+ * gives the lobby and the "left" screen a way back, and `notesWhere` says where the notes will show.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { LiveKitRoom, RoomAudioRenderer, StartAudio, VideoTrack, isTrackReference, useIsSpeaking, useLocalParticipant, useParticipants, useRoomContext, useTracks, type TrackReferenceOrPlaceholder } from '@livekit/components-react';
 import { Track, type Participant } from 'livekit-client';
-import { AlertTriangle, ChevronDown, Loader2, Mic, MicOff, MonitorUp, PhoneOff, RotateCcw, ShieldCheck, UserPlus, Users, Video, VideoOff } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ChevronDown, Loader2, Mic, MicOff, MonitorUp, PhoneOff, RotateCcw, ShieldCheck, UserPlus, Users, Video, VideoOff } from 'lucide-react';
 import { call, niceDateTime, type GuestsView } from './api';
 import GuestPanel from './GuestPanel';
 import CallRecorder, { type CallRecordingState } from './CallRecorder';
@@ -43,7 +46,13 @@ type Stage = 'lobby' | 'connecting' | 'call' | 'left';
 
 const joinUrl = (id: string) => `/api/task-manager/meetings/${encodeURIComponent(id)}/join`;
 
-export default function VideoCall({ meetingId }: { meetingId: string }) {
+export default function VideoCall({ meetingId, onClose, notesWhere }: {
+    meetingId: string;
+    /** Opened inside another page (Recruitment): the way back to it. */
+    onClose?: () => void;
+    /** Where the notes will show, when not in the Meeting Assistant. */
+    notesWhere?: string;
+}) {
     const [info, setInfo] = useState<Info | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [stage, setStage] = useState<Stage>('lobby');
@@ -122,6 +131,9 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
     return (
         <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-4 py-10 text-white">
             <div className="w-full max-w-md space-y-5 rounded-3xl border border-white/10 bg-zinc-900 p-6 shadow-xl">
+                {onClose && stage !== 'left' && (
+                    <button type="button" onClick={onClose} className="-mt-1 flex items-center gap-1.5 text-sm font-bold text-zinc-400 hover:text-white"><ArrowLeft className="h-4 w-4" /> Back</button>
+                )}
                 {!info && !error && <p className="flex items-center gap-2 text-sm text-zinc-400"><Loader2 className="h-4 w-4 animate-spin" /> Loading the meeting…</p>}
                 {!info && error && <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm font-semibold text-red-300">{error}</p>}
 
@@ -129,14 +141,16 @@ export default function VideoCall({ meetingId }: { meetingId: string }) {
                     <div className="space-y-3 text-center">
                         <PhoneOff className="mx-auto h-8 w-8 text-zinc-500" />
                         <h1 className="text-lg font-black">{endedByHost ? 'You ended the call' : 'You left the call'}</h1>
-                        <p className="text-sm text-zinc-400">The notes and the task list are made from the recording after the call. You will find them in the Meeting Assistant.</p>
+                        <p className="text-sm text-zinc-400">{notesWhere ? `The notes are made from the recording after the call. You will find them ${notesWhere}.` : 'The notes and the task list are made from the recording after the call. You will find them in the Meeting Assistant.'}</p>
                         <div className="flex flex-wrap justify-center gap-2 pt-2">
                             {!endedByHost && (
                                 <button type="button" onClick={() => { setStage('lobby'); void loadInfo(); }} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black hover:bg-indigo-500">
                                     <RotateCcw className="h-4 w-4" /> Rejoin
                                 </button>
                             )}
-                            <Link href="/" className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-white/5">Go to the app</Link>
+                            {onClose
+                                ? <button type="button" onClick={onClose} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-white/5">Back</button>
+                                : <Link href="/" className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-bold text-zinc-200 hover:bg-white/5">Go to the app</Link>}
                         </div>
                     </div>
                 )}

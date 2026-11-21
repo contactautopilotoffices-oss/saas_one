@@ -12,27 +12,15 @@ import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
 import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
+import type { Stage } from "./stage-list";
 
 // Positions and their pipelines (owner 2026-11-15; the logic is in positions.ts, which is server-only: these constants
 // and shapes live here so the client components can import them without pulling the model transport in).
-export const FLOW_STAGES = ["sourced", "screening", "shortlisted", "interview", "offer", "joined"] as const;
-export const SIDE_STAGES = ["on_hold", "not_responding", "rejected", "others"] as const;
-export const STAGES = [...FLOW_STAGES, ...SIDE_STAGES] as const;
-export type Stage = (typeof STAGES)[number];
-export const STAGE_LABELS: Record<Stage, string> = {
-  sourced: "Sourced",
-  screening: "Screening",
-  shortlisted: "Shortlisted",
-  interview: "Interview",
-  offer: "Offer",
-  joined: "Joined",
-  on_hold: "On hold",
-  not_responding: "Not responding",
-  rejected: "Rejected",
-  others: "Others",
-};
-/** Stages a person must explain with a remark when they move someone there. */
-export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
+// Owner 2026-11-19: the stages are a list HR edits (Recruitment -> Configurations); see stage-list.ts.
+export {
+  DEFAULT_STAGES, LEGACY_STAGES, STAGE_KIND_HINTS, STAGE_KIND_LABELS, STAGE_KINDS, STAGE_TONES,
+  type Stage, type StageDef, type StageKind, type StageList, type StageTone,
+} from "./stage-list";
 
 export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "internship"] as const;
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
@@ -76,6 +64,8 @@ export interface Position {
   budgetMaxInhand: number | null;
   /** The role in 2–3 sentences, from the JD and edited by HR. */
   summary: string | null;
+  /** Owner 2026-11-21: who recruits for it (null: nobody assigned yet; a role opened from a hiring request starts so). */
+  recruiterId?: string | null;
   /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
   recruiterName: string | null;
   createdAt: string;
@@ -905,11 +895,16 @@ export interface PreparedCall {
 
 // Outreach (owner 2026-11-16, mockup board 7; migration 20261116000003) --------------------------------------------------
 
-export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted"] as const;
-export type OutreachKind = (typeof OUTREACH_KINDS)[number];
+// Owner 2026-11-19: "stage_update" is the editable message (fixed opening and closing, HR's text in the middle) sent
+// for the stage the person is in; the first two are the earlier fixed messages, kept for the history.
+export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted", "stage_update"] as const;
+export type OutreachKind = (typeof OUTREACH_KINDS)[number] | "interview_invite";
 export const OUTREACH_KIND_LABELS: Record<OutreachKind, string> = {
   shortlisted: "Shortlisted",
   not_shortlisted: "Not shortlisted",
+  stage_update: "Stage update",
+  // Owner 2026-11-19: sent by "Schedule interview" (interviews.ts), not by the Send panel.
+  interview_invite: "Interview invite",
 };
 
 /** What the Send panel shows before anyone clicks Send (GET /api/candidates/outreach/preview). */
@@ -925,9 +920,11 @@ export interface OutreachPreview {
   phoneMasked: string | null;
   /** The template (= AiSensy campaign) that would be used. */
   campaign: string;
-  /** The message as the candidate would read it, with the name and role filled in. */
+  /** The message as the candidate would read it, with the name and role filled in (and the default middle text). */
   message: string;
   footer: string;
+  /** Owner 2026-11-19, a stage update: the fixed parts around HR's text, and the stage's default text. */
+  stageUpdate?: { stageKey: string; stageName: string; opening: string; closing: string; defaultText: string } | null;
   checks: {
     notBlacklisted: boolean;
     phoneValid: boolean;
@@ -1008,6 +1005,52 @@ export interface OutreachRecord {
   error: string | null;
   byName: string | null;
   at: string;
+  /** Owner 2026-11-19, a stage update: the stage it was for and the text HR sent (null for the fixed messages). */
+  stageKey?: string | null;
+  message?: string | null;
+}
+
+// Interviews (owner 2026-11-19, HRMS meeting: "video meeting link generation"; migration 20261119000002) ---------------
+
+// Owner 2026-11-19: "hybrid mode is not required".
+export const INTERVIEW_MODES = ["online", "in_person"] as const;
+export type InterviewMode = (typeof INTERVIEW_MODES)[number];
+export const INTERVIEW_MODE_LABELS: Record<InterviewMode, string> = {
+  online: "Online (video call)",
+  in_person: "In person",
+};
+
+/** One interview scheduled for a candidate (GET /api/candidates/interviews), newest first. */
+export interface Interview {
+  /** The history entry's id. */
+  id: string;
+  positionId: string | null;
+  positionTitle: string | null;
+  round: string | null;
+  /** India time, as the form gave it: "2026-11-21T11:00". */
+  at: string;
+  /** online / in_person; older entries may say video / phone. */
+  mode: string | null;
+  venue: string | null;
+  interviewers: string | null;
+  note: string | null;
+  /** The meeting: an online interview's video call (with its one link for everyone), or an in-person interview's recording. */
+  meetingId: string | null;
+  joinUrl: string | null;
+  /** The meeting as it is now: scheduled, live, the notes being written, ready (with the notes), failed. */
+  meeting: { status: string; summary: { summary: string; decisions: string[]; openQuestions: string[] } | null } | null;
+  byName: string | null;
+  createdAt: string;
+}
+
+/** What scheduling sent, for the form to say. */
+export interface InterviewSend {
+  to: "candidate" | "interviewer";
+  channel: "whatsapp" | "email";
+  name: string;
+  ok: boolean;
+  /** Why not, in plain words. */
+  note: string | null;
 }
 
 // Manpower requisitions (owner 2026-11-17; migration 20261117000003). Stages 1 and 2 of the Recruitment Module spec. ---
@@ -1032,7 +1075,7 @@ export type RequestType = (typeof REQUEST_TYPES)[number];
 export const REQUISITION_DECISIONS = ["approve", "reject", "send_back", "hold", "resume"] as const;
 export type RequisitionDecision = (typeof REQUISITION_DECISIONS)[number];
 
-/** Settings -> Notifications -> Recruitment in the Tech dashboard (organization_settings.recruitment_config). */
+/** Recruitment -> Configurations, "Hiring request approvals" (owner 2026-11-20; organization_settings.recruitment_config). */
 export interface RecruitmentConfig {
   hrHead: { userId: string | null; backupUserId: string | null };
   director: { userId: string | null; backupUserId: string | null };
@@ -1040,6 +1083,18 @@ export interface RecruitmentConfig {
   directorCtcLevel: number | null;
   /** Days to fill a role opened from an approved request. */
   targetDays: number;
+  /**
+   * Owner 2026-11-20: who may raise a hiring request (they get "Hiring requests" in their sidebar). Set by the Tech
+   * team and admins in the Tech dashboard's HR Configs tab: roles, and people one by one.
+   * Nobody until set.
+   */
+  raisers: { roles: string[]; userIds: string[] };
+  /**
+   * Owner 2026-11-21: the department heads (the spec's "Department head: see own department's requisitions and status;
+   * endorse requisitions"). A head sees the requests raised for their department and may endorse them; endorsing does
+   * not approve anything. Set in the Tech dashboard's HR Configs tab. Departments match ignoring case.
+   */
+  departmentHeads: { department: string; userId: string }[];
 }
 
 export interface Requisition {
@@ -1081,12 +1136,17 @@ export interface Requisition {
   ageDays: number;
   /** Stage 1: the last requisition for the same role title, when there was one. */
   previous?: { id: string; requisitionNo: string | null; status: RequisitionStatus; createdAt: string } | null;
+  /** The tracker's "candidates in pipeline": people in the position opened from it (null before it is approved). */
+  pipelineCount?: number | null;
+  /** Owner 2026-11-21: the department heads who endorsed it, newest first. */
+  endorsedBy?: string[];
 }
 
 export interface RequisitionApproval {
   id: string;
   level: ApprovalLevel | null;
-  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened";
+  /** "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001. */
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed";
   inPlan: boolean | null;
   reason: string | null;
   byName: string | null;
@@ -1100,13 +1160,19 @@ export interface RequisitionAccess {
   seesAll: boolean;
   /** The levels this person approves at (primary or backup). */
   approverLevels: ApprovalLevel[];
-  /** The approvers are set in Settings (a request cannot be submitted until they are). */
+  /** The approvers are set in Recruitment -> Configurations (a request cannot be submitted until they are). */
   configured: boolean;
+  /** Owner 2026-11-20: this person may raise a hiring request (set in the Tech dashboard). */
+  canRaise?: boolean;
+  /** Owner 2026-11-21: the departments this person heads (lower case): they see those requests and may endorse them. */
+  headOf?: string[];
 }
 
 export interface RequisitionListResponse {
   requisitions: Requisition[];
   access: RequisitionAccess;
+  /** Owner 2026-11-21: the departments that have a head (the form suggests them, so the head sees the request). */
+  departments?: string[];
 }
 export interface RequisitionResponse {
   requisition: Requisition;
@@ -1115,4 +1181,10 @@ export interface RequisitionResponse {
   /** The signed-in person may decide on it now (it waits at their level, and they did not raise it). */
   canDecide: boolean;
   canEdit: boolean;
+  /** Owner 2026-11-20: only the person who raised it may withdraw it, while it is still open (HR only follows it). */
+  canWithdraw?: boolean;
+  /** Owner 2026-11-21: the caller heads the request's department, it waits on the approvers, and they have not endorsed it. */
+  canEndorse?: boolean;
+  /** Owner 2026-11-21 (spec A24): the raiser may confirm a request on hold is still needed. */
+  canConfirmNeeded?: boolean;
 }
