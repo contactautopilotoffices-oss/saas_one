@@ -563,21 +563,23 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     return (
         <div className="flex flex-col h-full bg-white">
             {/* Header */}
-            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-100 bg-white flex-shrink-0">
-                <div className="flex items-center gap-1 sm:gap-3">
-                    <button onClick={prevMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors" title="Previous month">
-                        <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
-                    </button>
-                    <h2 className="text-sm sm:text-lg md:text-xl font-black text-slate-900 min-w-[125px] sm:min-w-[180px] text-center">
-                        {MONTH_NAMES[viewMonth - 1]} {viewYear}
-                    </h2>
-                    <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors" title="Next month">
-                        <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
-                    </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-100 bg-white flex-shrink-0">
+                <div className="flex items-center justify-between sm:justify-start gap-1 sm:gap-3 w-full sm:w-auto">
+                    <div className="flex items-center gap-1 sm:gap-2">
+                        <button onClick={prevMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors active:scale-95" title="Previous month">
+                            <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
+                        </button>
+                        <h2 className="text-sm sm:text-lg md:text-xl font-black text-slate-900 min-w-[110px] sm:min-w-[180px] text-center">
+                            {MONTH_NAMES[viewMonth - 1]} {viewYear}
+                        </h2>
+                        <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors active:scale-95" title="Next month">
+                            <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
+                        </button>
+                    </div>
                     <select
                         value={selectedLocation}
                         onChange={e => setSelectedLocation(e.target.value)}
-                        className="px-2 py-1 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[120px] sm:max-w-[170px] truncate"
+                        className="px-2 py-1.5 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[130px] sm:max-w-[170px] truncate"
                     >
                         <option value="all">All Floors {schedules.length > 0 ? `(${schedules.length})` : ''}</option>
                         {availableLocations.map(loc => {
@@ -589,7 +591,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     </select>
                 </div>
 
-                <div className="flex items-center gap-2 sm:gap-3 justify-end">
+                <div className="flex items-center gap-1.5 sm:gap-2.5 justify-end w-full sm:w-auto">
                     {/* Legend */}
                     <div className="hidden md:flex flex-wrap items-center gap-3 text-xs font-semibold">
                         {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
@@ -610,30 +612,28 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     </div>
                     <button
                         onClick={handleOpenActivityLogs}
-                        className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 border border-slate-200 text-slate-700 bg-white text-xs sm:text-sm font-bold rounded-xl hover:bg-slate-50 transition-all flex-shrink-0"
+                        className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-3.5 sm:py-2 border border-slate-200 text-slate-700 bg-white text-xs sm:text-sm font-bold rounded-xl hover:bg-slate-50 active:scale-95 transition-all shrink-0"
                         title="View PPM Activity & Audit Logs"
                     >
-                        <History className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500" />
-                        <span className="hidden sm:inline">Activity Logs</span>
-                        <span className="sm:hidden">Logs</span>
+                        <History className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500 shrink-0" />
+                        <span>Logs</span>
                     </button>
                     {!readOnly && (
                         <button
                             onClick={() => handleOpenAddTask()}
-                            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-emerald-600 text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-emerald-700 transition-all flex-shrink-0 shadow-xs"
+                            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-4 sm:py-2 bg-emerald-600 text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-emerald-700 active:scale-95 transition-all shrink-0 shadow-xs"
                             title="Add new PPM task"
                         >
-                            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                            <span className="hidden sm:inline">Add Task</span>
-                            <span className="sm:hidden">Add</span>
+                            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                            <span>Add Task</span>
                         </button>
                     )}
                     {canUpload && (
                         <button
                             onClick={() => setShowUpload(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-primary text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0"
+                            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-4 sm:py-2 bg-primary text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-primary/90 active:scale-95 transition-all shrink-0"
                         >
-                            <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                             <span className="hidden sm:inline">Upload Excel</span>
                             <span className="sm:hidden">Import</span>
                         </button>
@@ -843,6 +843,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             {selectedTask && (
                 <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-xs" onClick={() => setSelectedTask(null)}>
                     <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
                         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
                             <div className="min-w-0 pr-2">
                                 <p className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase tracking-widest truncate">{selectedTask.status === 'done' && !isEditMode ? 'Task Details' : 'Update PPM Task'}</p>
@@ -1644,6 +1645,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             {showAddTaskModal && (
                 <div className="fixed inset-0 bg-black/60 z-[65] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-xs" onClick={() => setShowAddTaskModal(false)}>
                     <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
                         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
                             <div>
                                 <h3 className="text-base sm:text-lg font-black text-slate-900">Add New PPM Task</h3>
@@ -1670,7 +1672,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         <select
                                             value={newTaskForm.property_id || activePropertyId}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, property_id: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
                                             required
                                         >
                                             <option value="">— Select Property —</option>
@@ -1688,7 +1690,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             value={newTaskForm.system_name}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, system_name: e.target.value }))}
                                             placeholder="e.g. HVAC, DG Set, Fire Alarm"
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                             required
                                         />
                                     </div>
@@ -1699,7 +1701,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             value={newTaskForm.detail_name}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, detail_name: e.target.value }))}
                                             placeholder="e.g. Chiller Unit #1"
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                         />
                                     </div>
                                 </div>
@@ -1711,7 +1713,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         value={newTaskForm.scope_of_work}
                                         onChange={e => setNewTaskForm(prev => ({ ...prev, scope_of_work: e.target.value }))}
                                         placeholder="Servicing procedure, checks, filter changes..."
-                                        className="w-full h-18 px-3 py-2 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="w-full h-20 px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
                                     />
                                 </div>
 
@@ -1723,7 +1725,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             type="date"
                                             value={newTaskForm.planned_date}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, planned_date: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
                                             required
                                         />
                                     </div>
@@ -1732,7 +1734,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         <select
                                             value={newTaskForm.frequency}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, frequency: e.target.value }))}
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
                                         >
                                             <option value="daily">Daily</option>
                                             <option value="weekly">Weekly</option>
@@ -1752,7 +1754,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         value={newTaskForm.location}
                                         onChange={e => setNewTaskForm(prev => ({ ...prev, location: e.target.value }))}
                                         placeholder="e.g. Basement 1, Terrace, 4th Floor"
-                                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     />
                                 </div>
 
@@ -1774,7 +1776,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                         vendor_contact_person: found?.contact_person || prev.vendor_contact_person,
                                                     }));
                                                 }}
-                                                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                                className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
                                             >
                                                 <option value="">— Select Registered Vendor (or type manually below) —</option>
                                                 {activeVendors.map(v => (
@@ -1789,14 +1791,14 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                             value={newTaskForm.vendor_name}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, vendor_name: e.target.value }))}
                                             placeholder="Vendor Company Name"
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                         />
                                         <input
                                             type="text"
                                             value={newTaskForm.vendor_phone}
                                             onChange={e => setNewTaskForm(prev => ({ ...prev, vendor_phone: e.target.value }))}
                                             placeholder="Vendor Phone"
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                         />
                                     </div>
                                 </div>
@@ -1808,19 +1810,19 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         value={newTaskForm.maker}
                                         onChange={e => setNewTaskForm(prev => ({ ...prev, maker: e.target.value }))}
                                         placeholder="Maker (defaults to you)"
-                                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     />
                                     <input
                                         type="text"
                                         value={newTaskForm.checker}
                                         onChange={e => setNewTaskForm(prev => ({ ...prev, checker: e.target.value }))}
                                         placeholder="Checker (optional)"
-                                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     />
                                 </div>
                             </div>
 
-                            <div className="p-4 border-t border-slate-100 flex gap-2 bg-slate-50 flex-shrink-0">
+                            <div className="p-3 sm:p-4 border-t border-slate-100 flex gap-2 bg-slate-50 flex-shrink-0">
                                 <button
                                     type="button"
                                     onClick={() => setShowAddTaskModal(false)}
@@ -1843,29 +1845,30 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
             {/* Property PPM Activity & Audit Logs Modal */}
             {showActivityLogsModal && (
-                <div className="fixed inset-0 bg-black/60 z-[65] flex items-center justify-center p-3 sm:p-6 backdrop-blur-xs" onClick={() => setShowActivityLogsModal(false)}>
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/60 z-[65] flex items-end sm:items-center justify-center p-0 sm:p-6 backdrop-blur-xs" onClick={() => setShowActivityLogsModal(false)}>
+                    <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
                         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
-                            <div>
-                                <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                                    <History className="w-5 h-5 text-primary" />
-                                    <span>PPM Activity & Audit History</span>
+                            <div className="min-w-0 pr-2">
+                                <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2 truncate">
+                                    <History className="w-5 h-5 text-primary shrink-0" />
+                                    <span className="truncate">PPM Activity & Audit History</span>
                                 </h3>
-                                <p className="text-xs text-slate-500">Audit trail of who created, updated, and deleted tasks</p>
+                                <p className="text-xs text-slate-500 truncate">Audit trail of who created, updated, and deleted tasks</p>
                             </div>
-                            <button onClick={() => setShowActivityLogsModal(false)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
+                            <button onClick={() => setShowActivityLogsModal(false)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors shrink-0">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Filter pills */}
-                        <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center gap-2 text-xs font-bold">
-                            <span className="text-slate-500 mr-1">Filter:</span>
+                        <div className="px-4 sm:px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center gap-2 text-xs font-bold overflow-x-auto no-scrollbar flex-nowrap">
+                            <span className="text-slate-500 mr-1 shrink-0">Filter:</span>
                             {(['all', 'created', 'updated', 'deleted'] as const).map(f => (
                                 <button
                                     key={f}
                                     onClick={() => setActivityLogsFilter(f)}
-                                    className={`px-3 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors ${
+                                    className={`px-3 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors shrink-0 ${
                                         activityLogsFilter === f
                                             ? 'bg-primary text-white'
                                             : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
@@ -1877,7 +1880,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                         </div>
 
                         {/* Log list */}
-                        <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-2.5">
+                        <div className="p-3 sm:p-5 overflow-y-auto flex-1 space-y-2.5">
                             {isLoadingLogs ? (
                                 <div className="flex items-center justify-center py-16">
                                     <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -1896,7 +1899,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         return (
                                             <div
                                                 key={log.id}
-                                                className={`p-3.5 rounded-xl border text-xs transition-all ${
+                                                className={`p-3 sm:p-3.5 rounded-xl border text-xs transition-all ${
                                                     isDelete
                                                         ? 'bg-rose-50/60 border-rose-200'
                                                         : isCreate
@@ -1904,10 +1907,10 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                         : 'bg-slate-50/70 border-slate-200'
                                                 }`}
                                             >
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <div className="flex items-center gap-2">
+                                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-1 sm:gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
                                                         <span
-                                                            className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
+                                                            className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider shrink-0 ${
                                                                 isDelete
                                                                     ? 'bg-rose-600 text-white'
                                                                     : isCreate
@@ -1917,12 +1920,12 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                         >
                                                             {log.action}
                                                         </span>
-                                                        <span className="font-black text-slate-900">{log.system_name}</span>
+                                                        <span className="font-black text-slate-900 break-words">{log.system_name}</span>
                                                         {log.detail_name && (
-                                                            <span className="text-slate-500 font-medium">({log.detail_name})</span>
+                                                            <span className="text-slate-500 font-medium break-words">({log.detail_name})</span>
                                                         )}
                                                     </div>
-                                                    <span className="text-[11px] text-slate-400 shrink-0">
+                                                    <span className="text-[10px] sm:text-[11px] text-slate-400 shrink-0">
                                                         {new Date(log.event_at).toLocaleString('en-IN', {
                                                             dateStyle: 'medium',
                                                             timeStyle: 'short',
@@ -1930,14 +1933,14 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                     </span>
                                                 </div>
 
-                                                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600">
+                                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600">
                                                     <span className="font-semibold text-slate-800">
                                                         By: <span className="font-black text-primary">{log.actor_name}</span>
                                                     </span>
                                                     {log.planned_date && (
-                                                        <span>Planned: {log.planned_date}</span>
+                                                        <span className="text-slate-500">Planned: {log.planned_date}</span>
                                                     )}
-                                                    <span className="text-slate-700">{log.details}</span>
+                                                    <span className="text-slate-700 w-full sm:w-auto">{log.details}</span>
                                                 </div>
                                             </div>
                                         );
