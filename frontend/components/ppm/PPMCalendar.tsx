@@ -371,14 +371,22 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
     const handleDeleteTask = async () => {
         if (!selectedTask) return;
+        const targetTaskId = selectedTask.id;
         setIsDeletingTask(true);
         setDeleteError(null);
         try {
-            const res = await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+            const res = await fetch(`/api/ppm/schedules/${targetTaskId}`, {
                 method: 'DELETE',
             });
             const data = await res.json();
             if (res.ok) {
+                // Optimistically remove from state and update cache
+                const cacheKey = `tab-ppm-${organizationId}-${activePropertyId || 'all'}-${viewYear}-${viewMonth}`;
+                setSchedules(prev => {
+                    const filtered = prev.filter(s => s.id !== targetTaskId);
+                    setCachedData(cacheKey, { schedules: filtered });
+                    return filtered;
+                });
                 setShowDeleteConfirm(false);
                 setSelectedTask(null);
                 await fetchSchedules();
@@ -803,9 +811,26 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md shrink-0 ${cfg.bg} ${cfg.text}`}>
-                                                                {cfg.label}
-                                                            </span>
+                                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${cfg.bg} ${cfg.text}`}>
+                                                                    {cfg.label}
+                                                                </span>
+                                                                {!readOnly && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            setSelectedTask(task);
+                                                                            setDeleteError(null);
+                                                                            setShowDeleteConfirm(true);
+                                                                        }}
+                                                                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors"
+                                                                        title="Delete this task"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                         {task.detail_name && <p className="text-xs text-slate-600 font-medium mt-0.5 truncate">{task.detail_name}</p>}
                                                         {(task.vendor_name || task.vendor_phone) && (
@@ -1388,6 +1413,23 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                     </button>
                                 </div>
                             )}
+
+                            {!readOnly && (
+                                <div className="pt-2 flex items-center justify-between border-t border-slate-100">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setDeleteError(null);
+                                            setShowDeleteConfirm(true);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        <span>Delete Task</span>
+                                    </button>
+                                    <span className="text-[10px] text-slate-400 font-mono">PPM #{selectedTask.id.slice(0, 8)}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1600,7 +1642,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
 
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && selectedTask && (
-                <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-xs" onClick={() => setShowDeleteConfirm(false)}>
+                <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-xs" onClick={() => setShowDeleteConfirm(false)}>
                     <div className="bg-white rounded-2xl shadow-2xl p-5 w-full max-w-sm space-y-4" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-3">
                             <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">

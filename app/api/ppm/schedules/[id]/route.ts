@@ -272,22 +272,15 @@ export async function DELETE(
             },
         });
 
-        // 2. Perform delete
-        let { error: deleteError } = await supabase
+        // 2. Perform delete using admin client (ppm_schedules requires admin privileges to delete rows)
+        const { error: deleteError } = await supabaseAdmin
             .from('ppm_schedules')
             .delete()
             .eq('id', id);
 
         if (deleteError) {
-            console.warn('[PPM] user-scoped delete failed, attempting admin fallback:', deleteError.message);
-            const adminDel = await supabaseAdmin
-                .from('ppm_schedules')
-                .delete()
-                .eq('id', id);
-
-            if (adminDel.error) {
-                return NextResponse.json({ error: adminDel.error.message }, { status: 500 });
-            }
+            console.error('[PPM] Admin delete failed:', deleteError.message);
+            return NextResponse.json({ error: deleteError.message }, { status: 500 });
         }
 
         return NextResponse.json({
