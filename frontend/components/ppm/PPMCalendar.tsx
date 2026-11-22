@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDataCache } from '@/frontend/context/DataCacheContext';
-import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye, Download, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Upload, X, CheckCircle2, Clock, AlertCircle, SkipForward, Loader2, FileSpreadsheet, CalendarDays, Camera, FileText, Receipt, Building2, LayoutDashboard, Maximize2, ExternalLink, Eye, Download, Pencil, Plus, Trash2, History } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { maskStorageUrl } from '@/frontend/utils/storageUrl';
@@ -111,6 +111,38 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     const [editRemark, setEditRemark] = useState('');
     const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
+
+    // Add Task state
+    const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+    const [isAddingTask, setIsAddingTask] = useState(false);
+    const [addTaskError, setAddTaskError] = useState<string | null>(null);
+    const [newTaskForm, setNewTaskForm] = useState({
+        property_id: '',
+        system_name: '',
+        detail_name: '',
+        scope_of_work: '',
+        frequency: 'monthly',
+        location: '',
+        vendor_id: '',
+        vendor_name: '',
+        vendor_phone: '',
+        vendor_contact_person: '',
+        planned_date: '',
+        maker: '',
+        checker: '',
+        remark: '',
+    });
+
+    // Delete Task state
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [isDeletingTask, setIsDeletingTask] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
+
+    // Activity Logs state
+    const [showActivityLogsModal, setShowActivityLogsModal] = useState(false);
+    const [activityLogs, setActivityLogs] = useState<any[]>([]);
+    const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+    const [activityLogsFilter, setActivityLogsFilter] = useState<'all' | 'created' | 'updated' | 'deleted'>('all');
 
     useEffect(() => {
         setUploadPropertyId(propertyId || '');
@@ -257,6 +289,127 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             setUpdateError(err instanceof Error ? err.message : 'Could not save this update. Please check your connection and retry.');
         } finally {
             setIsUpdating(false);
+        }
+    };
+
+    const handleOpenAddTask = (initialDate?: string) => {
+        const defaultDate = initialDate || selectedDate || `${viewYear}-${String(viewMonth).padStart(2, '0')}-${String(Math.min(today.getDate(), 28)).padStart(2, '0')}`;
+        setNewTaskForm({
+            property_id: activePropertyId || (properties.length > 0 ? properties[0].id : ''),
+            system_name: '',
+            detail_name: '',
+            scope_of_work: '',
+            frequency: 'monthly',
+            location: '',
+            vendor_id: '',
+            vendor_name: '',
+            vendor_phone: '',
+            vendor_contact_person: '',
+            planned_date: defaultDate,
+            maker: (user as any)?.user_metadata?.full_name || '',
+            checker: '',
+            remark: '',
+        });
+        setAddTaskError(null);
+        setShowAddTaskModal(true);
+    };
+
+    const handleCreateTask = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const targetPropertyId = activePropertyId || newTaskForm.property_id;
+        if (!targetPropertyId) {
+            setAddTaskError('Please select a property.');
+            return;
+        }
+        if (!newTaskForm.system_name.trim()) {
+            setAddTaskError('System Name is required.');
+            return;
+        }
+        if (!newTaskForm.planned_date) {
+            setAddTaskError('Planned Date is required.');
+            return;
+        }
+
+        setIsAddingTask(true);
+        setAddTaskError(null);
+        try {
+            const res = await fetch('/api/ppm/schedules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    organization_id: organizationId,
+                    property_id: targetPropertyId,
+                    system_name: newTaskForm.system_name,
+                    detail_name: newTaskForm.detail_name,
+                    scope_of_work: newTaskForm.scope_of_work,
+                    frequency: newTaskForm.frequency,
+                    location: newTaskForm.location,
+                    vendor_id: newTaskForm.vendor_id || null,
+                    vendor_name: newTaskForm.vendor_name || null,
+                    vendor_phone: newTaskForm.vendor_phone || null,
+                    vendor_contact_person: newTaskForm.vendor_contact_person || null,
+                    planned_date: newTaskForm.planned_date,
+                    maker: newTaskForm.maker || (user as any)?.user_metadata?.full_name || 'Team Member',
+                    checker: newTaskForm.checker || null,
+                    remark: newTaskForm.remark || null,
+                }),
+            });
+
+            const data = await res.json();
+            if (res.ok) {
+                setShowAddTaskModal(false);
+                await fetchSchedules();
+            } else {
+                setAddTaskError(data.error || 'Failed to add task.');
+            }
+        } catch (err: any) {
+            setAddTaskError(err.message || 'Network error while adding task.');
+        } finally {
+            setIsAddingTask(false);
+        }
+    };
+
+    const handleDeleteTask = async () => {
+        if (!selectedTask) return;
+        setIsDeletingTask(true);
+        setDeleteError(null);
+        try {
+            const res = await fetch(`/api/ppm/schedules/${selectedTask.id}`, {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setShowDeleteConfirm(false);
+                setSelectedTask(null);
+                await fetchSchedules();
+            } else {
+                setDeleteError(data.error || 'Failed to delete task.');
+            }
+        } catch (err: any) {
+            setDeleteError(err.message || 'Network error while deleting task.');
+        } finally {
+            setIsDeletingTask(false);
+        }
+    };
+
+    const handleOpenActivityLogs = async () => {
+        setShowActivityLogsModal(true);
+        setIsLoadingLogs(true);
+        try {
+            const params = new URLSearchParams({
+                organization_id: organizationId,
+                limit: '100',
+            });
+            if (activePropertyId) params.set('property_id', activePropertyId);
+            const res = await fetch(`/api/ppm/activity-logs?${params}`);
+            if (res.ok) {
+                const data = await res.json();
+                setActivityLogs(data.logs || []);
+            }
+        } catch (err) {
+            console.error('Failed to load PPM activity logs:', err);
+        } finally {
+            setIsLoadingLogs(false);
         }
     };
 
@@ -410,21 +563,23 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
     return (
         <div className="flex flex-col h-full bg-white">
             {/* Header */}
-            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-100 bg-white flex-shrink-0">
-                <div className="flex items-center gap-1 sm:gap-3">
-                    <button onClick={prevMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors" title="Previous month">
-                        <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
-                    </button>
-                    <h2 className="text-sm sm:text-lg md:text-xl font-black text-slate-900 min-w-[125px] sm:min-w-[180px] text-center">
-                        {MONTH_NAMES[viewMonth - 1]} {viewYear}
-                    </h2>
-                    <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors" title="Next month">
-                        <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
-                    </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-3 sm:px-6 py-2.5 sm:py-4 border-b border-slate-100 bg-white flex-shrink-0">
+                <div className="flex items-center justify-between sm:justify-start gap-1 sm:gap-3 w-full sm:w-auto">
+                    <div className="flex items-center gap-1 sm:gap-2">
+                        <button onClick={prevMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors active:scale-95" title="Previous month">
+                            <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
+                        </button>
+                        <h2 className="text-sm sm:text-lg md:text-xl font-black text-slate-900 min-w-[110px] sm:min-w-[180px] text-center">
+                            {MONTH_NAMES[viewMonth - 1]} {viewYear}
+                        </h2>
+                        <button onClick={nextMonth} className="p-1.5 sm:p-2 hover:bg-slate-100 rounded-lg sm:rounded-xl transition-colors active:scale-95" title="Next month">
+                            <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600" />
+                        </button>
+                    </div>
                     <select
                         value={selectedLocation}
                         onChange={e => setSelectedLocation(e.target.value)}
-                        className="px-2 py-1 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[120px] sm:max-w-[170px] truncate"
+                        className="px-2 py-1.5 sm:px-3 sm:py-1.5 border border-slate-200 rounded-lg sm:rounded-xl text-[11px] sm:text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary bg-white cursor-pointer ml-1 sm:ml-2 shadow-2xs max-w-[130px] sm:max-w-[170px] truncate"
                     >
                         <option value="all">All Floors {schedules.length > 0 ? `(${schedules.length})` : ''}</option>
                         {availableLocations.map(loc => {
@@ -436,7 +591,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     </select>
                 </div>
 
-                <div className="flex items-center gap-2 sm:gap-3 justify-end">
+                <div className="flex items-center gap-1.5 sm:gap-2.5 justify-end w-full sm:w-auto">
                     {/* Legend */}
                     <div className="hidden md:flex flex-wrap items-center gap-3 text-xs font-semibold">
                         {Object.entries(STATUS_CONFIG).map(([key, cfg]) => (
@@ -455,12 +610,30 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                             </span>
                         ))}
                     </div>
+                    <button
+                        onClick={handleOpenActivityLogs}
+                        className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-3.5 sm:py-2 border border-slate-200 text-slate-700 bg-white text-xs sm:text-sm font-bold rounded-xl hover:bg-slate-50 active:scale-95 transition-all shrink-0"
+                        title="View PPM Activity & Audit Logs"
+                    >
+                        <History className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500 shrink-0" />
+                        <span>Logs</span>
+                    </button>
+                    {!readOnly && (
+                        <button
+                            onClick={() => handleOpenAddTask()}
+                            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-4 sm:py-2 bg-emerald-600 text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-emerald-700 active:scale-95 transition-all shrink-0 shadow-xs"
+                            title="Add new PPM task"
+                        >
+                            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+                            <span>Add Task</span>
+                        </button>
+                    )}
                     {canUpload && (
                         <button
                             onClick={() => setShowUpload(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-primary text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-primary/90 transition-all flex-shrink-0"
+                            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-2.5 py-2 sm:px-4 sm:py-2 bg-primary text-white text-xs sm:text-sm font-bold rounded-xl hover:bg-primary/90 active:scale-95 transition-all shrink-0"
                         >
-                            <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
                             <span className="hidden sm:inline">Upload Excel</span>
                             <span className="sm:hidden">Import</span>
                         </button>
@@ -591,6 +764,17 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                         <X className="w-5 h-5 text-slate-500" />
                                     </button>
                                 </div>
+                                {!readOnly && (
+                                    <div className="p-3 border-b border-slate-100 bg-slate-50/50">
+                                        <button
+                                            onClick={() => handleOpenAddTask(selectedDate)}
+                                            className="flex items-center justify-center gap-1.5 w-full py-2 px-3 bg-white border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-xl text-xs font-bold transition-all shadow-2xs"
+                                        >
+                                            <Plus className="w-3.5 h-3.5" />
+                                            <span>Add Task for this Date</span>
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
                                     {dayTasks.length === 0 ? (
                                         <div className="text-center py-10 text-slate-400">
@@ -659,6 +843,7 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
             {selectedTask && (
                 <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-xs" onClick={() => setSelectedTask(null)}>
                     <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
                         <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
                             <div className="min-w-0 pr-2">
                                 <p className="text-[10px] sm:text-xs text-slate-400 font-bold uppercase tracking-widest truncate">{selectedTask.status === 'done' && !isEditMode ? 'Task Details' : 'Update PPM Task'}</p>
@@ -671,9 +856,24 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                     )}
                                 </div>
                             </div>
-                            <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
-                                <X className="w-5 h-5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                                {!readOnly && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setDeleteError(null);
+                                            setShowDeleteConfirm(true);
+                                        }}
+                                        className="p-2 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl transition-colors"
+                                        title="Delete this PPM task"
+                                    >
+                                        <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                                    </button>
+                                )}
+                                <button onClick={() => setSelectedTask(null)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
                         </div>
                         <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
                             {/* Info */}
@@ -1089,6 +1289,64 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                                     )}
                                 </div>
                             )}
+
+                            {/* Activity History & Audit Trail */}
+                            <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50/70 space-y-2.5">
+                                <div className="flex items-center gap-2 text-xs font-black text-slate-700 uppercase tracking-widest">
+                                    <History className="w-3.5 h-3.5 text-slate-500" />
+                                    <span>Activity & Audit Trail</span>
+                                </div>
+                                <div className="space-y-2 text-xs">
+                                    {/* Creator Info */}
+                                    <div className="flex items-start gap-2 bg-white p-2.5 rounded-lg border border-slate-100 shadow-2xs">
+                                        <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-bold text-slate-800">
+                                                Created by {selectedTask.attachments?.created_by_name || selectedTask.maker || 'Team Member'}
+                                            </p>
+                                            <p className="text-[11px] text-slate-400 mt-0.5">
+                                                {selectedTask.attachments?.created_at
+                                                    ? new Date(selectedTask.attachments.created_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+                                                    : 'Initial schedule upload'}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Update logs */}
+                                    {Array.isArray(selectedTask.attachments?.activity_logs) && selectedTask.attachments.activity_logs
+                                        .filter((l: any) => l.action === 'updated')
+                                        .map((log: any, idx: number) => (
+                                            <div key={idx} className="flex items-start gap-2 bg-white p-2.5 rounded-lg border border-slate-100 shadow-2xs">
+                                                <div className="w-2 h-2 rounded-full bg-blue-500 mt-1.5 shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="font-bold text-slate-800">
+                                                        Updated by {log.user_name || 'Team Member'}
+                                                    </p>
+                                                    <p className="text-[11px] text-slate-600 mt-0.5">{log.details}</p>
+                                                    <p className="text-[10px] text-slate-400 mt-0.5">
+                                                        {new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        ))}
+
+                                    {/* Completion Info */}
+                                    {selectedTask.status === 'done' && (selectedTask.attachments?.completed_by_name || selectedTask.done_date) && (
+                                        <div className="flex items-start gap-2 bg-emerald-50/80 p-2.5 rounded-lg border border-emerald-100 shadow-2xs">
+                                            <div className="w-2 h-2 rounded-full bg-emerald-600 mt-1.5 shrink-0" />
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-bold text-emerald-800">
+                                                    Marked Done{selectedTask.attachments?.completed_by_name ? ` by ${selectedTask.attachments.completed_by_name}` : ''}
+                                                </p>
+                                                <p className="text-[11px] text-emerald-700 mt-0.5">
+                                                    {selectedTask.done_date ? `Completion Date: ${selectedTask.done_date}` : ''}
+                                                    {selectedTask.attachments?.completed_at ? ` (${new Date(selectedTask.attachments.completed_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })})` : ''}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
 
                         {/* Sticky Modal Action Footer */}
@@ -1339,6 +1597,359 @@ export default function PPMCalendar({ organizationId, propertyId, properties = [
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && selectedTask && (
+                <div className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4 backdrop-blur-xs" onClick={() => setShowDeleteConfirm(false)}>
+                    <div className="bg-white rounded-2xl shadow-2xl p-5 w-full max-w-sm space-y-4" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                                <Trash2 className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <h4 className="text-base font-black text-slate-900">Delete PPM Task</h4>
+                                <p className="text-xs text-slate-500">Recorded in audit log</p>
+                            </div>
+                        </div>
+                        <p className="text-sm text-slate-700">
+                            Are you sure you want to delete <span className="font-bold text-slate-900">"{selectedTask.system_name}"</span>{selectedTask.detail_name ? ` (${selectedTask.detail_name})` : ''}?
+                        </p>
+                        {deleteError && (
+                            <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700">
+                                {deleteError}
+                            </div>
+                        )}
+                        <div className="flex gap-2 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowDeleteConfirm(false)}
+                                disabled={isDeletingTask}
+                                className="flex-1 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-slate-50 transition-colors text-sm"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleDeleteTask}
+                                disabled={isDeletingTask}
+                                className="flex-1 py-2.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 disabled:opacity-60 transition-colors text-sm flex items-center justify-center gap-1.5"
+                            >
+                                {isDeletingTask ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting...</> : 'Yes, Delete'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Add Task Modal */}
+            {showAddTaskModal && (
+                <div className="fixed inset-0 bg-black/60 z-[65] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-xs" onClick={() => setShowAddTaskModal(false)}>
+                    <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] sm:max-h-[90vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
+                        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
+                            <div>
+                                <h3 className="text-base sm:text-lg font-black text-slate-900">Add New PPM Task</h3>
+                                <p className="text-xs text-slate-500">Create a preventive maintenance schedule task with audit trail</p>
+                            </div>
+                            <button onClick={() => setShowAddTaskModal(false)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleCreateTask} className="flex flex-col flex-1 overflow-hidden">
+                            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 overscroll-contain">
+                                {addTaskError && (
+                                    <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
+                                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                                        <span>{addTaskError}</span>
+                                    </div>
+                                )}
+
+                                {/* Property */}
+                                {(!activePropertyId || properties.length > 1) && (
+                                    <div>
+                                        <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Property *</label>
+                                        <select
+                                            value={newTaskForm.property_id || activePropertyId}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, property_id: e.target.value }))}
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                                            required
+                                        >
+                                            <option value="">— Select Property —</option>
+                                            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                    </div>
+                                )}
+
+                                {/* System Name & Detail Name */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">System / Category *</label>
+                                        <input
+                                            type="text"
+                                            value={newTaskForm.system_name}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, system_name: e.target.value }))}
+                                            placeholder="e.g. HVAC, DG Set, Fire Alarm"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Equipment / Detail</label>
+                                        <input
+                                            type="text"
+                                            value={newTaskForm.detail_name}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, detail_name: e.target.value }))}
+                                            placeholder="e.g. Chiller Unit #1"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Scope of Work */}
+                                <div>
+                                    <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Scope of Work</label>
+                                    <textarea
+                                        value={newTaskForm.scope_of_work}
+                                        onChange={e => setNewTaskForm(prev => ({ ...prev, scope_of_work: e.target.value }))}
+                                        placeholder="Servicing procedure, checks, filter changes..."
+                                        className="w-full h-20 px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                </div>
+
+                                {/* Planned Date & Frequency */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Planned Date *</label>
+                                        <input
+                                            type="date"
+                                            value={newTaskForm.planned_date}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, planned_date: e.target.value }))}
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Frequency</label>
+                                        <select
+                                            value={newTaskForm.frequency}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, frequency: e.target.value }))}
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                                        >
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                            <option value="quarterly">Quarterly</option>
+                                            <option value="half-yearly">Half-Yearly</option>
+                                            <option value="yearly">Yearly</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Location & Floor */}
+                                <div>
+                                    <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Location / Floor</label>
+                                    <input
+                                        type="text"
+                                        value={newTaskForm.location}
+                                        onChange={e => setNewTaskForm(prev => ({ ...prev, location: e.target.value }))}
+                                        placeholder="e.g. Basement 1, Terrace, 4th Floor"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                </div>
+
+                                {/* Vendor assignment */}
+                                <div>
+                                    <label className="text-xs font-black text-slate-700 uppercase tracking-widest mb-1.5 block">Assigned Maintenance Vendor</label>
+                                    {activeVendors.length > 0 && (
+                                        <div className="mb-2">
+                                            <select
+                                                value={newTaskForm.vendor_id}
+                                                onChange={e => {
+                                                    const vId = e.target.value;
+                                                    const found = activeVendors.find(v => v.id === vId);
+                                                    setNewTaskForm(prev => ({
+                                                        ...prev,
+                                                        vendor_id: vId,
+                                                        vendor_name: found?.company_name || prev.vendor_name,
+                                                        vendor_phone: found?.phone || prev.vendor_phone,
+                                                        vendor_contact_person: found?.contact_person || prev.vendor_contact_person,
+                                                    }));
+                                                }}
+                                                className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+                                            >
+                                                <option value="">— Select Registered Vendor (or type manually below) —</option>
+                                                {activeVendors.map(v => (
+                                                    <option key={v.id} value={v.id}>{v.company_name} {v.contact_person ? `(${v.contact_person})` : ''}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        <input
+                                            type="text"
+                                            value={newTaskForm.vendor_name}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, vendor_name: e.target.value }))}
+                                            placeholder="Vendor Company Name"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                        <input
+                                            type="text"
+                                            value={newTaskForm.vendor_phone}
+                                            onChange={e => setNewTaskForm(prev => ({ ...prev, vendor_phone: e.target.value }))}
+                                            placeholder="Vendor Phone"
+                                            className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Maker / Checker */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <input
+                                        type="text"
+                                        value={newTaskForm.maker}
+                                        onChange={e => setNewTaskForm(prev => ({ ...prev, maker: e.target.value }))}
+                                        placeholder="Maker (defaults to you)"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                    <input
+                                        type="text"
+                                        value={newTaskForm.checker}
+                                        onChange={e => setNewTaskForm(prev => ({ ...prev, checker: e.target.value }))}
+                                        placeholder="Checker (optional)"
+                                        className="w-full px-3 py-2.5 sm:py-2 border border-slate-200 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="p-3 sm:p-4 border-t border-slate-100 flex gap-2 bg-slate-50 flex-shrink-0">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowAddTaskModal(false)}
+                                    className="px-4 py-2.5 border border-slate-200 text-slate-600 font-bold rounded-xl hover:bg-white text-sm"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isAddingTask}
+                                    className="flex-1 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-60 transition-all text-sm flex items-center justify-center gap-2"
+                                >
+                                    {isAddingTask ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating Task...</> : <><Plus className="w-4 h-4" /> Add Task</>}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Property PPM Activity & Audit Logs Modal */}
+            {showActivityLogsModal && (
+                <div className="fixed inset-0 bg-black/60 z-[65] flex items-end sm:items-center justify-center p-0 sm:p-6 backdrop-blur-xs" onClick={() => setShowActivityLogsModal(false)}>
+                    <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] sm:max-h-[88vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-2.5 sm:hidden" />
+                        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-slate-100 flex-shrink-0">
+                            <div className="min-w-0 pr-2">
+                                <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2 truncate">
+                                    <History className="w-5 h-5 text-primary shrink-0" />
+                                    <span className="truncate">PPM Activity & Audit History</span>
+                                </h3>
+                                <p className="text-xs text-slate-500 truncate">Audit trail of who created, updated, and deleted tasks</p>
+                            </div>
+                            <button onClick={() => setShowActivityLogsModal(false)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors shrink-0">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Filter pills */}
+                        <div className="px-4 sm:px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center gap-2 text-xs font-bold overflow-x-auto no-scrollbar flex-nowrap">
+                            <span className="text-slate-500 mr-1 shrink-0">Filter:</span>
+                            {(['all', 'created', 'updated', 'deleted'] as const).map(f => (
+                                <button
+                                    key={f}
+                                    onClick={() => setActivityLogsFilter(f)}
+                                    className={`px-3 py-1 rounded-lg uppercase tracking-wider text-[10px] font-black transition-colors shrink-0 ${
+                                        activityLogsFilter === f
+                                            ? 'bg-primary text-white'
+                                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    {f}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Log list */}
+                        <div className="p-3 sm:p-5 overflow-y-auto flex-1 space-y-2.5">
+                            {isLoadingLogs ? (
+                                <div className="flex items-center justify-center py-16">
+                                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                                </div>
+                            ) : activityLogs.filter(log => activityLogsFilter === 'all' || log.action === activityLogsFilter).length === 0 ? (
+                                <div className="text-center py-16 text-slate-400">
+                                    <History className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                                    <p className="text-sm font-semibold">No activity logs recorded yet</p>
+                                </div>
+                            ) : (
+                                activityLogs
+                                    .filter(log => activityLogsFilter === 'all' || log.action === activityLogsFilter)
+                                    .map(log => {
+                                        const isDelete = log.action === 'deleted';
+                                        const isCreate = log.action === 'created';
+                                        return (
+                                            <div
+                                                key={log.id}
+                                                className={`p-3 sm:p-3.5 rounded-xl border text-xs transition-all ${
+                                                    isDelete
+                                                        ? 'bg-rose-50/60 border-rose-200'
+                                                        : isCreate
+                                                        ? 'bg-emerald-50/60 border-emerald-200'
+                                                        : 'bg-slate-50/70 border-slate-200'
+                                                }`}
+                                            >
+                                                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-1 sm:gap-2">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span
+                                                            className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider shrink-0 ${
+                                                                isDelete
+                                                                    ? 'bg-rose-600 text-white'
+                                                                    : isCreate
+                                                                    ? 'bg-emerald-600 text-white'
+                                                                    : 'bg-blue-600 text-white'
+                                                            }`}
+                                                        >
+                                                            {log.action}
+                                                        </span>
+                                                        <span className="font-black text-slate-900 break-words">{log.system_name}</span>
+                                                        {log.detail_name && (
+                                                            <span className="text-slate-500 font-medium break-words">({log.detail_name})</span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-[10px] sm:text-[11px] text-slate-400 shrink-0">
+                                                        {new Date(log.event_at).toLocaleString('en-IN', {
+                                                            dateStyle: 'medium',
+                                                            timeStyle: 'short',
+                                                        })}
+                                                    </span>
+                                                </div>
+
+                                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600">
+                                                    <span className="font-semibold text-slate-800">
+                                                        By: <span className="font-black text-primary">{log.actor_name}</span>
+                                                    </span>
+                                                    {log.planned_date && (
+                                                        <span className="text-slate-500">Planned: {log.planned_date}</span>
+                                                    )}
+                                                    <span className="text-slate-700 w-full sm:w-auto">{log.details}</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
