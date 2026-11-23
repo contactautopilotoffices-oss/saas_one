@@ -72,6 +72,12 @@ const TAB_PRELOADS = [
 // Types
 type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water' | 'grievance' | 'assets' | 'ppm';
 
+const VALID_STAFF_TABS: readonly Tab[] = [
+    'dashboard', 'requests', 'guest_experience', 'create_request', 'visitors',
+    'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings',
+    'profile', 'flow-map', 'water', 'grievance', 'assets', 'ppm'
+] as const;
+
 interface Property {
     id: string;
     name: string;
@@ -124,8 +130,14 @@ const StaffDashboard = () => {
     const router = useRouter();
     const propertyId = (params?.propertyId as string) || dashboardPropertyId;
 
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+
     // State
-    const [dashboardTab, setActiveTab] = useState<Tab>('dashboard');
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_STAFF_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'dashboard';
+    });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -138,7 +150,6 @@ const StaffDashboard = () => {
     const [userRole, setUserRole] = useState('Staff Professional');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const searchParams = useSearchParams();
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKeyPrefix = `staff-${propertyId}`;
 
@@ -198,7 +209,7 @@ const StaffDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings', 'profile', 'flow-map', 'water', 'assets', 'ppm'].includes(tab)) {
+        if (tab && VALID_STAFF_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);

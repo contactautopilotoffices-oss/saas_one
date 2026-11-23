@@ -50,8 +50,18 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments' | 'candidates'>('tickets');
-    const [visitedTabs, setVisitedTabs] = useState<Set<string>>(new Set(['tickets']));
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments' | 'candidates'>(() => {
+        const tabParam = searchParams?.get('subtab') || searchParams?.get('tab');
+        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates', 'meeting_assistant'];
+        if (tabParam && allowed.includes(tabParam)) return tabParam as any;
+        return 'tickets';
+    });
+    const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => {
+        const tabParam = searchParams?.get('subtab') || searchParams?.get('tab');
+        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates', 'meeting_assistant'];
+        const initial = (tabParam && allowed.includes(tabParam)) ? tabParam : 'tickets';
+        return new Set([initial]);
+    });
     const [viewMode, setViewMode] = useState<'kanban' | 'table' | 'properties'>('table');
 
     const [tickets, setTickets] = useState<any[]>(() => {

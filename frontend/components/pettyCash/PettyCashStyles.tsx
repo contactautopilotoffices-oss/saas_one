@@ -430,12 +430,12 @@ export default function PettyCashStyles() {
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
-.pc-status[data-status=closed], .pc-status[data-status=paid], .pc-status[data-status=approved] {
+.pc-status[data-status=closed], .pc-status[data-status=paid], .pc-status[data-status=approved], .pc-status[data-status=accepted] {
   background: rgba(16, 185, 129, 0.1);
   border-color: rgba(16, 185, 129, 0.25);
   color: #10b981;
 }
-.dark .pc-status[data-status=closed], .dark .pc-status[data-status=paid], .dark .pc-status[data-status=approved] {
+.dark .pc-status[data-status=closed], .dark .pc-status[data-status=paid], .dark .pc-status[data-status=approved], .dark .pc-status[data-status=accepted] {
   color: #34d399;
 }
 .pc-status[data-status=rejected], .pc-status[data-status=cancelled] {
@@ -454,12 +454,12 @@ export default function PettyCashStyles() {
 .dark .pc-status[data-status=submitted], .dark .pc-status[data-status=pending_approval], .dark .pc-status[data-status=sent_back] {
   color: #fbbf24;
 }
-.pc-status[data-status=draft] {
+.pc-status[data-status=draft], .pc-status[data-status=withdrawn] {
   background: rgba(148, 163, 184, 0.1);
   border-color: rgba(148, 163, 184, 0.2);
   color: #64748b;
 }
-.dark .pc-status[data-status=draft] {
+.dark .pc-status[data-status=draft], .dark .pc-status[data-status=withdrawn] {
   color: #94a3b8;
 }
 .pc-upload {
