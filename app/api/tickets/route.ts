@@ -355,6 +355,10 @@ export async function POST(request: NextRequest) {
             priority: explicitPriority,
             department: explicitDepartment, // Allow explicit department override
             assignedTo,
+            photo_before_url,
+            photoBeforeUrl,
+            video_before_url,
+            videoBeforeUrl
         } = body;
 
         const propId = property_id || propertyId;
@@ -504,7 +508,9 @@ export async function POST(request: NextRequest) {
                 // Escalation hierarchy attached directly on insert (saves separate update & re-fetch)
                 hierarchy_id: defaultHierarchy?.id,
                 current_escalation_level: defaultHierarchy ? 0 : undefined,
-                escalation_last_action_at: defaultHierarchy ? new Date().toISOString() : undefined
+                escalation_last_action_at: defaultHierarchy ? new Date().toISOString() : undefined,
+                photo_before_url: photo_before_url || photoBeforeUrl || undefined,
+                video_before_url: video_before_url || videoBeforeUrl || undefined
             })
             .select('*')
             .single();
@@ -533,16 +539,11 @@ export async function POST(request: NextRequest) {
                     propId
                 );
 
-                // Re-fetch the ticket after assignment
-                const { data: assignedTicket } = await supabase
-                    .from('tickets')
-                    .select('*')
-                    .eq('id', ticket.id)
-                    .single();
-
-                if (assignedTicket) {
-                    finalTicket.status = assignedTicket.status;
-                    finalTicket.assigned_to = assignedTicket.assigned_to;
+                const assignment = assignmentResult?.results?.[0];
+                if (assignment && assignment.assignedTo) {
+                    finalTicket.status = assignment.status;
+                    finalTicket.assigned_to = assignment.assignedTo;
+                    finalTicket.assigned_at = new Date().toISOString();
                 }
             } catch (assignErr) {
                 console.error('[Ticket API] Auto-assignment error:', assignErr);
