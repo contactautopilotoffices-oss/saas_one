@@ -15,6 +15,31 @@ const ASSIGNABLE_ROLES = ['mst', 'staff', 'soft_service_supervisor', 'soft_servi
  */
 const SKILL_ONLY_ROLES = ['soft_service_supervisor', 'soft_service_manager'];
 
+/**
+ * Minimum remaining minutes in a shift required to assign a new ticket.
+ * If a resolver has less than this buffer (e.g. 30 mins) before their shift ends,
+ * tickets are routed to resolvers with adequate remaining time or to the incoming shift.
+ */
+const SHIFT_END_BUFFER_MINUTES = 30;
+
+function getMinutesUntilShiftEnd(currentTime: string, endTime: string | null): number {
+    if (!endTime) return 999;
+    const [cHours, cMins] = currentTime.split(':').map(Number);
+    const [eHours, eMins] = endTime.split(':').map(Number);
+    let diffMins = (eHours * 60 + eMins) - (cHours * 60 + cMins);
+    if (diffMins < 0) diffMins += 24 * 60; // Overnight shift
+    return diffMins;
+}
+
+function getMinutesUntilShiftStart(currentTime: string, startTime: string | null): number {
+    if (!startTime) return 999;
+    const [cHours, cMins] = currentTime.split(':').map(Number);
+    const [sHours, sMins] = startTime.split(':').map(Number);
+    let diffMins = (sHours * 60 + sMins) - (cHours * 60 + cMins);
+    if (diffMins < 0) diffMins += 24 * 60;
+    return diffMins;
+}
+
 interface AssignmentResult {
     ticketId: string;
     assignedTo: string | null;
@@ -157,7 +182,9 @@ export async function processIntelligentAssignment(
         .eq('roster_date', todayStr);
 
     const rosterScheduledWorkingUserIds = new Set<string>();
-    const rosterCurrentShiftUserIds = new Set<string>();
+    const rosterAdequateShiftUserIds = new Set<string>();
+    const rosterEndingSoonUserIds = new Set<string>();
+    const rosterUpcomingShiftUserIds = new Set<string>();
 
     if (todayRosters && todayRosters.length > 0) {
         for (const r of todayRosters) {
@@ -170,19 +197,32 @@ export async function processIntelligentAssignment(
 
             rosterScheduledWorkingUserIds.add(r.user_id);
 
-            // Check if current time is within this shift window
+            // Check shift timing relative to current IST time
             if (shift?.start_time && shift?.end_time) {
                 const s = shift.start_time;
                 const e = shift.end_time;
                 const isCurrent = s <= e
                     ? (currentIstTime >= s && currentIstTime <= e)
                     : (currentIstTime >= s || currentIstTime <= e); // Overnight shift spanning midnight
+
                 if (isCurrent) {
-                    rosterCurrentShiftUserIds.add(r.user_id);
+                    const remainingMins = getMinutesUntilShiftEnd(currentIstTime, e);
+                    if (remainingMins >= SHIFT_END_BUFFER_MINUTES) {
+                        rosterAdequateShiftUserIds.add(r.user_id);
+                    } else {
+                        // Shift is ending within buffer window (e.g. 15 mins left) — avoid assigning unless no one else
+                        rosterEndingSoonUserIds.add(r.user_id);
+                    }
+                } else {
+                    const startMins = getMinutesUntilShiftStart(currentIstTime, s);
+                    if (startMins > 0 && startMins <= SHIFT_END_BUFFER_MINUTES) {
+                        // Upcoming shift starting within buffer window (ready to take ticket)
+                        rosterUpcomingShiftUserIds.add(r.user_id);
+                    }
                 }
             } else {
-                // Flexible or un-timed working shift
-                rosterCurrentShiftUserIds.add(r.user_id);
+                // Flexible or un-timed working shift: treat as having adequate time
+                rosterAdequateShiftUserIds.add(r.user_id);
             }
         }
     }
@@ -214,12 +254,20 @@ export async function processIntelligentAssignment(
             const poolName = (ticket.skill_group_code || 'general').toLowerCase();
             let pool = mstPools[poolName]?.length > 0 ? mstPools[poolName] : mstPools.general;
 
-            // Roster-aware filtering:
-            // 1. If property has roster rows, prioritize resolvers currently on active working shift
-            // 2. Fallback to resolvers scheduled on a working shift today (excluding leaves/weekly off)
-            if (rosterCurrentShiftUserIds.size > 0) {
-                const onShiftPool = pool.filter(p => rosterCurrentShiftUserIds.has(p.user_id));
-                if (onShiftPool.length > 0) pool = onShiftPool;
+            // Roster-aware intelligent tiering:
+            // Tier 1: Resolvers currently on shift with adequate time remaining (>= 30 mins)
+            // Tier 2: Resolvers starting their shift shortly (<= 30 mins)
+            // Tier 3: Resolvers on shift whose shift is ending soon (< 30 mins, handover buffer)
+            // Tier 4: Any resolver scheduled for work today
+            if (rosterAdequateShiftUserIds.size > 0) {
+                const adequatePool = pool.filter(p => rosterAdequateShiftUserIds.has(p.user_id));
+                if (adequatePool.length > 0) pool = adequatePool;
+            } else if (rosterUpcomingShiftUserIds.size > 0) {
+                const upcomingPool = pool.filter(p => rosterUpcomingShiftUserIds.has(p.user_id));
+                if (upcomingPool.length > 0) pool = upcomingPool;
+            } else if (rosterEndingSoonUserIds.size > 0) {
+                const endingSoonPool = pool.filter(p => rosterEndingSoonUserIds.has(p.user_id));
+                if (endingSoonPool.length > 0) pool = endingSoonPool;
             } else if (rosterScheduledWorkingUserIds.size > 0) {
                 const scheduledWorkingPool = pool.filter(p => rosterScheduledWorkingUserIds.has(p.user_id));
                 if (scheduledWorkingPool.length > 0) pool = scheduledWorkingPool;
