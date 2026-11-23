@@ -6,6 +6,10 @@
  * flow, same data-centre pin) so both behave identically when misconfigured.
  */
 
+export class ZohoMailSendError extends Error {
+    constructor(message: string, public readonly rejected: boolean) { super(message); }
+}
+
 export interface ZohoMailMessage {
     messageId: string;
     threadId: string;
@@ -328,7 +332,7 @@ export class ZohoMailService {
      */
     static async listPage(
         source: MailSource,
-        opts: { start: number; limit?: number; address?: string },
+        opts: { start: number; limit?: number; address?: string; folderId?: string },
     ): Promise<{ items: ZohoMailListItem[]; fetched: number }> {
         const { token, apiDomain } = await this.tokenFor(source);
         const address = opts.address ?? ('prefix' in source ? mailboxAddress(source.prefix) : undefined);
@@ -338,8 +342,14 @@ export class ZohoMailService {
             limit: String(Math.min(PAGE_SIZE, opts.limit ?? PAGE_SIZE)),
             includeto: 'true',
         });
+        if (opts.folderId) {
+            params.set('folderId', opts.folderId);
+            params.set('sortBy', 'date');
+            params.set('sortorder', 'false');
+        }
         const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/view?${params}`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
+            signal: opts.folderId ? AbortSignal.timeout(15_000) : undefined,
         });
         const data = await res.json().catch(() => null);
         if (!res.ok || !Array.isArray(data?.data)) {
@@ -603,6 +613,38 @@ export class ZohoMailService {
         return this.getMessageContentRaw(messageId, folderId, token, apiDomain, address);
     }
 
+    /** A single reviewed message; no automatic retry after the provider may have accepted it. */
+    static async sendMessageWithGrant(
+        grant: { refreshToken: string; dc: string },
+        input: { from: string; to: string; subject: string; body: string; replyMessageId?: string },
+    ): Promise<{ messageId: string | null; threadId: string | null }> {
+        let token: string; let apiDomain: string; let acct: string;
+        try {
+            ({ token, apiDomain } = await this.tokenFromGrant(grant));
+            acct = await this.accountIdFor(token, apiDomain, input.from);
+        } catch { throw new ZohoMailSendError('Reconnect this mailbox with permission to send email.', true); }
+        const suffix = input.replyMessageId ? `/${encodeURIComponent(input.replyMessageId)}` : '';
+        let res: Response;
+        try {
+            res = await fetch(`${apiDomain}/api/accounts/${acct}/messages${suffix}`, {
+                method: 'POST', signal: AbortSignal.timeout(25_000), redirect: 'error',
+                headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ fromAddress: input.from, toAddress: input.to, subject: input.subject, content: input.body,
+                    mailFormat: 'plaintext', encoding: 'UTF-8', ...(input.replyMessageId ? { action: 'reply' } : {}) }),
+            });
+        } catch { throw new ZohoMailSendError('Zoho did not confirm the send. Check Sent in Zoho before trying again.', false); }
+        const data = await res.json().catch(() => null);
+        const code = Number(data?.status?.code ?? res.status);
+        const acknowledged = Number(data?.status?.code) === 200 || Boolean(data?.data?.messageId || data?.data?.[0]?.messageId);
+        if (!res.ok || !data || code >= 400 || !acknowledged) {
+            const rejected = (code >= 400 && code < 500 && code !== 408) || (res.status >= 400 && res.status < 500 && res.status !== 408);
+            throw new ZohoMailSendError(rejected ? 'Zoho refused this email. Check the address and sending permission, then retry.'
+                : 'Zoho did not confirm the send. Check Sent in Zoho before trying again.', rejected);
+        }
+        const sent = Array.isArray(data.data) ? data.data[0] : data.data;
+        return { messageId: sent?.messageId ? String(sent.messageId) : null, threadId: sent?.threadId ? String(sent.threadId) : null };
+    }
+
     private static async getMessageContentRaw(
         messageId: string,
         folderId: string | null | undefined,
@@ -650,10 +692,11 @@ export class ZohoMailService {
         messageId: string,
         grant: { refreshToken: string; dc: string },
         address?: string,
+        folderId?: string,
     ): Promise<ZohoMailAttachment[]> {
         const t = await this.tokenFromGrant(grant);
         const acct = await this.accountIdFor(t.token, t.apiDomain, address);
-        return this.listAttachmentsRaw(messageId, acct, t.token, t.apiDomain);
+        return this.listAttachmentsRaw(messageId, acct, t.token, t.apiDomain, folderId);
     }
 
     private static async listAttachmentsRaw(
@@ -661,23 +704,29 @@ export class ZohoMailService {
         acct: string,
         token: string,
         apiDomain: string,
+        folderId?: string,
     ): Promise<ZohoMailAttachment[]> {
-        const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/${messageId}/attachmentInfo`, {
+        const folder = folderId ? `/folders/${encodeURIComponent(folderId)}` : '';
+        const res = await fetch(`${apiDomain}/api/accounts/${acct}${folder}/messages/${encodeURIComponent(messageId)}/${folderId ? 'attachmentinfo' : 'attachmentInfo'}`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
+            signal: folderId ? AbortSignal.timeout(15_000) : undefined,
         });
         const data = await res.json().catch(() => null);
 
-        if (!res.ok) {
+        if (!res.ok || (folderId && Number(data?.status?.code) >= 400)) {
             // A message with no attachments answers 404/"no records" — that is an empty
             // list, not a failure worth aborting the sync for.
-            if (res.status === 404 || data?.status?.code === 404) return [];
+            if (!folderId && (res.status === 404 || data?.status?.code === 404)) return [];
             console.error('Zoho Mail Attachment Info Error:', data);
             throw new Error(data?.data?.errorCode || data?.status?.description || 'Failed to list attachments from Zoho Mail');
         }
 
         // attachmentInfo wraps the list in `data.ATTACHMENTS` on some tenants and in
         // `data` directly on others — accept both.
-        const raw: any[] = Array.isArray(data?.data?.ATTACHMENTS)
+        if (folderId && !Array.isArray(data?.data?.attachments) && !Array.isArray(data?.data?.ATTACHMENTS) && !Array.isArray(data?.data)) {
+            throw new Error('Zoho returned unreadable attachment details. Retry this preview.');
+        }
+        const raw: Array<Record<string, unknown>> = Array.isArray(data?.data?.attachments) ? data.data.attachments : Array.isArray(data?.data?.ATTACHMENTS)
             ? data.data.ATTACHMENTS
             : Array.isArray(data?.data) ? data.data : [];
         return raw.map(a => ({
@@ -706,10 +755,11 @@ export class ZohoMailService {
         attachmentId: string,
         grant: { refreshToken: string; dc: string },
         address?: string,
+        options?: { folderId: string; maxBytes: number },
     ): Promise<Buffer> {
         const t = await this.tokenFromGrant(grant);
         const acct = await this.accountIdFor(t.token, t.apiDomain, address);
-        return this.downloadAttachmentRaw(messageId, attachmentId, acct, t.token, t.apiDomain);
+        return this.downloadAttachmentRaw(messageId, attachmentId, acct, t.token, t.apiDomain, options);
     }
 
     private static async downloadAttachmentRaw(
@@ -718,16 +768,33 @@ export class ZohoMailService {
         acct: string,
         token: string,
         apiDomain: string,
+        options?: { folderId: string; maxBytes: number },
     ): Promise<Buffer> {
-        const res = await fetch(`${apiDomain}/api/accounts/${acct}/messages/${messageId}/attachments/${attachmentId}`, {
+        const folder = options ? `/folders/${encodeURIComponent(options.folderId)}` : '';
+        const res = await fetch(`${apiDomain}/api/accounts/${acct}${folder}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`, {
             headers: { 'Authorization': `Zoho-oauthtoken ${token}` },
+            signal: options ? AbortSignal.timeout(20_000) : undefined,
         });
         if (!res.ok) {
             const data = await res.text().catch(() => '');
             console.error('Zoho Mail Attachment Download Error:', res.status, data.slice(0, 500));
             throw new Error(`Failed to download attachment from Zoho Mail (HTTP ${res.status})`);
         }
-        return Buffer.from(await res.arrayBuffer());
+        if (!options) return Buffer.from(await res.arrayBuffer());
+        if (!res.body) throw new Error('Zoho returned an empty attachment');
+        const reader = res.body.getReader();
+        const chunks: Buffer[] = [];
+        let size = 0;
+        try {
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                size += value.byteLength;
+                if (size > options.maxBytes) throw new Error('Attachment exceeds the resume size limit');
+                chunks.push(Buffer.from(value));
+            }
+        } finally { await reader.cancel().catch(() => undefined); }
+        return Buffer.concat(chunks);
     }
 
     /**

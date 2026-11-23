@@ -108,7 +108,7 @@ export function recordKey(candidateId: string, role: string | null): string {
   return `${candidateId}|${(role ?? "").trim().toLowerCase()}`;
 }
 
-async function loadPeopleByContact(client: SupabaseClient, orgId: string, emails: string[], phones: string[]): Promise<PersonRow[]> {
+export async function loadPeopleByContact(client: SupabaseClient, orgId: string, emails: string[], phones: string[]): Promise<PersonRow[]> {
   const found = new Map<string, PersonRow>();
   for (const [column, values] of [
     ["email_key", emails],
@@ -121,6 +121,31 @@ async function loadPeopleByContact(client: SupabaseClient, orgId: string, emails
     }
   }
   return [...found.values()];
+}
+
+/** Shared by tracker review and import: empty profile cells keep the app's value. */
+export function personValues(c: CleanRow) {
+  return {
+    full_name: c.fullName,
+    ...(c.email ? { email: c.email, email_key: c.emailKey } : {}),
+    ...(c.phone ? { phone: c.phone, phone_key: c.phoneKey } : {}),
+    ...(c.currentOrganization ? { current_organization: c.currentOrganization } : {}),
+    ...(c.currentDesignation ? { current_designation: c.currentDesignation } : {}),
+    ...(c.location ? { location: c.location } : {}),
+    ...(c.totalExpMonths !== null ? { total_exp_months: c.totalExpMonths } : {}),
+  };
+}
+
+export async function loadSheetRecords(client: SupabaseClient, orgId: string, sheetId: string): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await client.from("candidate_applications")
+      .select("id, candidate_id, role, search_text, candidate_source, sourcing_date, relevant_exp_months, notice_period_days, current_inhand, expected_inhand, remark, status")
+      .eq("organization_id", orgId).eq("sheet_id", sheetId).is("deleted_at", null).order("created_at").order("id").range(offset, offset + 999);
+    if (error) fail("read the existing sheet", error);
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return out;
+  }
 }
 
 async function upsertBatches(client: SupabaseClient, table: string, rows: Record<string, unknown>[], context: string) {
@@ -239,13 +264,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
         people.set(group, person);
       }
       // Latest non-empty value wins.
-      person.full_name = c.fullName;
-      if (c.email) [person.email, person.email_key] = [c.email, c.emailKey];
-      if (c.phone) [person.phone, person.phone_key] = [c.phone, c.phoneKey];
-      if (c.currentOrganization) person.current_organization = c.currentOrganization;
-      if (c.currentDesignation) person.current_designation = c.currentDesignation;
-      if (c.location) person.location = c.location;
-      if (c.totalExpMonths !== null) person.total_exp_months = c.totalExpMonths;
+      Object.assign(person, personValues(c));
     });
 
     // Owner 2026-11-16: a row is "already in the database" only when its person was already in ANOTHER sheet or was
@@ -268,15 +287,7 @@ export async function importSheet(client: SupabaseClient, args: ImportArgs): Pro
     // 3. Records.
     const existingRecords = new Map<string, { id: string; search_text: string }>();
     if (mode === "merge") {
-      const { data, error } = await client
-        .from("candidate_applications")
-        .select("id, candidate_id, role, search_text")
-        .eq("organization_id", orgId)
-        .eq("sheet_id", sheetId)
-        .is("deleted_at", null)
-        .order("created_at");
-      if (error) fail("read the existing sheet", error);
-      for (const app of data ?? []) {
+      for (const app of await loadSheetRecords(client, orgId, sheetId)) {
         const key = recordKey(app.candidate_id as string, app.role as string | null);
         if (!existingRecords.has(key)) existingRecords.set(key, { id: app.id as string, search_text: app.search_text as string });
       }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { RESUME_RATE_LIMIT, WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { setResumeCandidate } from "@/backend/lib/candidates/resume-text";
-import { deleteResumeFile, resumeFileText, resumeLink, resumeOpen, resumeStorage } from "@/backend/lib/candidates/resumes";
+import { deleteResumeFile, resumeFileText, resumeLink, resumeOpen, resumeStorage, updateResumeMetadata } from "@/backend/lib/candidates/resumes";
 
 import { errorResponse, rateLimited, readJson, requireCandidateAccess } from "../../_lib/auth";
 
@@ -59,10 +59,11 @@ export async function PATCH(request: Request, { params }: Params) {
   const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
   if (limited) return limited;
   try {
-    await setResumeCandidate(auth.admin, auth.orgId, id, body.candidateId ?? null);
+    if ('metadata' in body) await updateResumeMetadata(auth.admin, auth.orgId, id, body.metadata);
+    else await setResumeCandidate(auth.admin, auth.orgId, id, body.candidateId ?? null);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    return errorResponse(error, "Couldn't change the resume's candidate");
+    return errorResponse(error, "Couldn't update the resume");
   }
 }
 

@@ -29,6 +29,7 @@ import { assertInPosition, listActions, loadBlacklist, recordAction, REMARK_MAX,
 import { parsePhone } from "./normalize";
 import { campaignFor, maskPhone, withinSendingHours } from "./outreach";
 import { moveMember } from "./positions";
+import { defaultFlowDeps, fileInterview, interviewExtras, scorecardLinks, type FlowDeps } from "./hiring";
 import { CandidateActionError, getRecord } from "./records";
 import { INTERVIEW_MODES, type Interview, type InterviewMode, type InterviewSend } from "./types";
 
@@ -45,6 +46,8 @@ export interface InterviewDeps {
   /** Where the app is ("https://…"), for the link in the messages. */
   appUrl: string;
   now?: () => Date;
+  /** Owner 2026-11-21: each interviewer's one-time scorecard link (hiring.ts); none when absent. */
+  scorecardLink?: FlowDeps["scorecardLink"];
 }
 
 export function defaultInterviewDeps(appUrl: string): InterviewDeps {
@@ -71,6 +74,7 @@ export function defaultInterviewDeps(appUrl: string): InterviewDeps {
       await EmailService.sendEmail({ to, subject, html });
     },
     appUrl: (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || appUrl).replace(/\/$/, ""),
+    scorecardLink: defaultFlowDeps().scorecardLink,
   };
 }
 
@@ -110,10 +114,12 @@ const firstName = (name: string) => name.trim().split(/\s+/)[0] || "there";
 /** A WhatsApp template parameter is one line. */
 const param = (s: string) => s.replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim();
 
-function emailHtml(heading: string, rows: [string, string][], link: string | null, footer: string): string {
+function emailHtml(heading: string, rows: [string, string][], link: string | null, footer: string, scorecard: string | null = null): string {
   const table = rows.map(([k, v]) => `<tr><td style="padding:4px 14px 4px 0;color:#64748b;vertical-align:top">${esc(k)}</td><td style="padding:4px 0">${esc(v)}</td></tr>`).join("");
   const button = link ? `<p style="margin:18px 0"><a href="${esc(link)}" style="background:#4f46e5;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Join the video call</a></p><p style="font-size:12px;color:#64748b">Or open: ${esc(link)}</p>` : "";
-  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#0f172a"><p style="font-size:16px;font-weight:600">${esc(heading)}</p><table style="border-collapse:collapse;font-size:14px">${table}</table>${button}<p style="font-size:12px;color:#64748b;margin-top:18px">${esc(footer)}</p></div>`;
+  // Owner 2026-11-21: the interviewer's own scorecard, from the phone, without a login.
+  const card = scorecard ? `<p style="margin:18px 0"><a href="${esc(scorecard)}" style="background:#0f766e;color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">Fill your scorecard after the interview</a></p><p style="font-size:12px;color:#64748b">Your link only. You see the other interviewers' ratings after you submit yours.</p>` : "";
+  return `<div style="font-family:Arial,sans-serif;font-size:14px;color:#0f172a"><p style="font-size:16px;font-weight:600">${esc(heading)}</p><table style="border-collapse:collapse;font-size:14px">${table}</table>${button}${card}<p style="font-size:12px;color:#64748b;margin-top:18px">${esc(footer)}</p></div>`;
 }
 
 /**
@@ -165,6 +171,15 @@ export async function scheduleInterview(client: SupabaseClient, orgId: string, b
       interviewer: names, interviewerIds: interviewers.map((p) => p.id), meetingId: meeting?.id ?? null, joinPath: meeting?.joinPath ?? null,
     },
   });
+  // Owner 2026-11-21 (migration 20261121000003): the interview is filed for its follow-up, with a scorecard per interviewer.
+  const cards = await fileInterview(client, orgId, by, {
+    id: interviewId, candidateId: record.candidateId, applicationId: record.id, positionId, round: input.round, atLocal: input.at, mode: input.mode, venue,
+    interviewers: interviewers.map((p) => ({ id: p.id, name: p.name })), joinPath: meeting?.joinPath ?? null,
+  });
+  const cardLinks = cards.size && deps.scorecardLink
+    ? await scorecardLinks(client, orgId, { sendEmail: deps.sendEmail, scorecardLink: deps.scorecardLink, appUrl: deps.appUrl }, interviewId, cards,
+      { candidate: record.fullName, role, round: input.round, when: istLabel(input.at), designation: record.currentDesignation ?? null }, new Map(interviewers.map((p) => [p.id, p.name])), when)
+    : new Map<string, string>();
   if (input.moveTo) await moveMember(client, orgId, by, positionId, await memberId(client, orgId, positionId, record.candidateId), input.moveTo, null);
 
   // The invites, only those HR ticked.
@@ -197,7 +212,7 @@ export async function scheduleInterview(client: SupabaseClient, orgId: string, b
         [["Round", input.round], ["When", label], ["How", online ? "Video call" : "In person"],
           ...(venue && !online ? [["Where", venue] as [string, string]] : []), ...(about ? [["Candidate", about] as [string, string]] : []), ...(names ? [["Interviewers", names] as [string, string]] : []),
           ...(input.note ? [["Note", input.note] as [string, string]] : []), ["Scheduled by", by.name ?? "HR"]],
-        joinUrl, online ? "You go straight in with your login; the candidate waits until someone in the call lets them in. The call is recorded and the notes appear on the candidate's profile." : "HR records the interview from the Recruitment module; the notes appear on the candidate's profile.");
+        joinUrl, online ? "You go straight in with your login; the candidate waits until someone in the call lets them in. The call is recorded and the notes appear on the candidate's profile." : "HR records the interview from the Recruitment module; the notes appear on the candidate's profile.", cardLinks.get(p.id) ?? null);
       sent.push(await tryEmail(deps, email, `Interview: ${record.fullName} · ${input.round} · ${label}`, html, { to: "interviewer", name: p.name }));
     }
   }
@@ -278,7 +293,13 @@ export async function listInterviews(client: SupabaseClient, orgId: string, cand
   const byMeeting = new Map(((meetings.data ?? []) as { id: string; status: string; summary: { summary?: string; decisions?: string[]; openQuestions?: string[] } | null }[]).map((m) => [m.id, m]));
   const titles = new Map(((positions.data ?? []) as { id: string; title: string }[]).map((p) => [p.id, p.title]));
   const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+  // Owner 2026-11-21: each interview's status and scorecards (filed under its interviewId; none before the migration).
+  const extras = await interviewExtras(client, orgId, actions.map((a) => a.meta.interviewId).filter((id): id is string => typeof id === "string" && UUID.test(id)));
+  // The latest reschedule, if any, gives the time.
+  const movedTo = new Map<string, string>();
+  for (const x of all) if (x.action === "remark" && x.meta.kind === "interview_rescheduled" && typeof x.meta.interviewId === "string" && typeof x.meta.at === "string" && !movedTo.has(x.meta.interviewId)) movedTo.set(x.meta.interviewId, x.meta.at);
   return actions.map((a) => {
+    const extra = typeof a.meta.interviewId === "string" ? extras.get(a.meta.interviewId) : undefined;
     const meetingId = meetingOf(a);
     const m = meetingId ? byMeeting.get(meetingId) : undefined;
     const joinPath = text(a.meta.joinPath);
@@ -287,7 +308,11 @@ export async function listInterviews(client: SupabaseClient, orgId: string, cand
       positionId: a.positionId,
       positionTitle: a.positionId ? titles.get(a.positionId) ?? null : null,
       round: text(a.meta.round),
-      at: text(a.meta.at) ?? "",
+      at: (typeof a.meta.interviewId === "string" ? movedTo.get(a.meta.interviewId) : undefined) ?? text(a.meta.at) ?? "",
+      followUpId: typeof a.meta.interviewId === "string" && extra ? a.meta.interviewId : null,
+      status: extra?.status ?? "scheduled",
+      statusReason: extra?.statusReason ?? null,
+      scorecards: extra?.scorecards ?? [],
       mode: text(a.meta.mode),
       venue: text(a.meta.venue),
       interviewers: text(a.meta.interviewer),

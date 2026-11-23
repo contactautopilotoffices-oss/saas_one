@@ -17,8 +17,10 @@ const runJob = runRequisitionReminders;
 import {
   aboveCtcLevel, canDecide, createRequisition, decideRequisition, firstLevelFor, getRequisition, listRequisitions, loadRecruitmentConfig,
   approverPools, canRaiseRequisitions, mayConfigureApprovals, mayConfigureRaisers, requisitionAccess, roleChoices, saveRaisers, saveRecruitmentConfig, submitRequisition, updateRequisition, withdrawRequisition, workingDaysBetween, type RequisitionEvent,
-  canEndorse, confirmStillNeeded, endorseRequisition, hasEndorsed, saveDepartmentHeads, unassignedRoles,
+  canEndorse, confirmStillNeeded, endorseRequisition, hasEndorsed, saveDepartmentHeads, saveRejectionReasons, unassignedRoles,
 } from "../../backend/lib/candidates/requisitions";
+
+import { DEFAULT_REJECTION_REASONS } from "../../backend/lib/candidates/stage-list";
 
 import { freshDb, REQUISITIONS_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -78,7 +80,7 @@ describe("manpower requisitions", () => {
 
     await assert.rejects(saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_HEAD } }), /different person/);
     const saved = await saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR }, directorCtcLevel: 1_000_000, targetDays: 30 });
-    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [] });
+    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "" });
     const access = await requisitionAccess(client, HR_HEAD, ORG);
     assert.deepEqual([access.seesAll, access.approverLevels, access.configured], [true, ["hr_head"], true]);
     assert.deepEqual((await requisitionAccess(client, MANAGER, ORG)).approverLevels, []);
@@ -141,6 +143,15 @@ describe("manpower requisitions", () => {
     // An approvals save keeps who may raise.
     await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
     assert.deepEqual((await loadRecruitmentConfig(client, ORG)).raisers, { roles: ["manager"], userIds: [DIRECTOR] });
+  });
+
+  it("keeps HR's rejection reasons, each once, and other settings saves keep them (owner 2026-11-21)", async () => {
+    await assert.rejects(saveRejectionReasons(client, ORG, { reasons: [] }), /at least one/);
+    await assert.rejects(saveRejectionReasons(client, ORG, { reasons: ["x".repeat(61)] }), /1 to 60/);
+    assert.deepEqual(await saveRejectionReasons(client, ORG, { reasons: [" Salary  mismatch ", "salary mismatch", "Other"] }, by(HR_HEAD, "Anita Verma")), ["Salary mismatch", "Other"]);
+    await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
+    assert.deepEqual((await loadRecruitmentConfig(client, ORG)).rejectionReasons, ["Salary mismatch", "Other"]);
+    await saveRejectionReasons(client, ORG, { reasons: [...DEFAULT_REJECTION_REASONS] });
   });
 
   it("Stage 1: the form is checked, the request gets its ID on submission, and the last request for the same role is shown", async () => {

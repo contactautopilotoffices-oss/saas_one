@@ -31,6 +31,7 @@ import { z } from "zod";
 
 import { namesOf, type Actor } from "./actions";
 import { CANDIDATE_ACCESS_ROLES } from "./config";
+import { DEFAULT_REJECTION_REASONS } from "./stage-list";
 import { EMPTY_FILTERS } from "./filters";
 import { createPosition } from "./positions";
 import { CandidateActionError } from "./records";
@@ -87,7 +88,7 @@ export function workingDaysBetween(from: Date, to: Date): number {
 
 // Settings ------------------------------------------------------------------------------------------------------------
 
-const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [] };
+const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "" };
 
 const uuidOrNull = z.string().regex(UUID).nullable().optional();
 const ConfigInput = z.object({
@@ -111,7 +112,66 @@ function toConfig(raw: unknown): RecruitmentConfig {
     targetDays: typeof r.targetDays === "number" && r.targetDays >= 1 ? Math.round(r.targetDays) : DEFAULT_TARGET_DAYS,
     raisers: toRaisers(r.raisers),
     departmentHeads: toDepartmentHeads(r.departmentHeads),
+    rejectionReasons: toReasons(r.rejectionReasons),
+    offerLetter: typeof r.offerLetter === "string" ? r.offerLetter.slice(0, 20_000) : "",
   };
+}
+
+/** Owner 2026-11-21: saves HR's offer letter template (Recruitment -> Configurations). Empty restores the default. */
+export async function saveOfferLetter(client: SupabaseClient, orgId: string, body: unknown, by?: Actor): Promise<string> {
+  const text = (body as { letter?: unknown } | null)?.letter;
+  if (typeof text !== "string" || text.length > 20_000) throw new CandidateActionError(400, "The letter is at most 20,000 characters.");
+  const current = await loadRecruitmentConfig(client, orgId);
+  const next: RecruitmentConfig = { ...current, offerLetter: text.trim() };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  if (by && current.offerLetter !== next.offerLetter) {
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({ organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: "Offer letter template changed", before: { offerLetter: current.offerLetter }, after: { offerLetter: next.offerLetter }, created_at: now });
+    if (logError && !missingRelation(logError)) console.error("[candidates] offer letter: the change was not recorded", logError);
+  }
+  return next.offerLetter;
+}
+
+/** The saved reasons (trimmed, each once), or the defaults when none were saved. */
+function toReasons(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_REJECTION_REASONS];
+  const out: string[] = [];
+  for (const x of raw) {
+    const v = typeof x === "string" ? x.replace(/\s+/g, " ").trim().slice(0, 60) : "";
+    if (v && !out.some((o) => o.toLowerCase() === v.toLowerCase())) out.push(v);
+  }
+  return out.length ? out : [...DEFAULT_REJECTION_REASONS];
+}
+
+/** Owner 2026-11-21: saves the rejection reasons (HR, in Recruitment -> Configurations), recorded in the history of changes. */
+export async function saveRejectionReasons(client: SupabaseClient, orgId: string, body: unknown, by?: Actor): Promise<string[]> {
+  const list = (body as { reasons?: unknown } | null)?.reasons;
+  if (!Array.isArray(list) || !list.length) throw new CandidateActionError(400, "Keep at least one reason.");
+  if (list.length > 30) throw new CandidateActionError(400, "At most 30 reasons.");
+  if (list.some((x) => typeof x !== "string" || !x.trim() || x.trim().length > 60)) throw new CandidateActionError(400, "Each reason is 1 to 60 characters.");
+  const reasons = toReasons(list);
+  const current = await loadRecruitmentConfig(client, orgId);
+  const next: RecruitmentConfig = { ...current, rejectionReasons: reasons };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  if (by && JSON.stringify(current.rejectionReasons) !== JSON.stringify(reasons)) {
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({
+      organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: `Rejection reasons: ${reasons.join(", ")}`.slice(0, 2000),
+      before: { rejectionReasons: current.rejectionReasons }, after: { rejectionReasons: reasons }, created_at: now,
+    });
+    if (logError && !missingRelation(logError)) console.error("[candidates] rejection reasons: the change was not recorded", logError);
+  }
+  return reasons;
 }
 
 /** One head per department (the first kept when a department is listed twice, ignoring case). */
@@ -366,6 +426,8 @@ export async function saveRecruitmentConfig(client: SupabaseClient, orgId: strin
     // Who may raise requests and the department heads are set separately (saveRaisers, saveDepartmentHeads); kept here.
     raisers: current.raisers,
     departmentHeads: current.departmentHeads,
+    rejectionReasons: current.rejectionReasons,
+    offerLetter: current.offerLetter,
   };
   for (const level of APPROVAL_LEVELS) {
     const s = next[level === "hr_head" ? "hrHead" : "director"];
@@ -606,7 +668,7 @@ export type RequisitionEvent =
   /** Spec A24: the raiser confirmed a request on hold is still needed; the approver it waits on is told. */
   | { kind: "still_needed"; requisition: Requisition; approverId: string | null; note: string | null };
 export type RequisitionNotifier = (event: RequisitionEvent) => Promise<void>;
-export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date }
+export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date; sourceMailId?: string }
 
 async function emit(deps: RequisitionDeps, event: RequisitionEvent): Promise<void> {
   if (!deps.notify) return;
@@ -633,7 +695,7 @@ export async function createRequisition(client: SupabaseClient, orgId: string, b
   const parsed = FormInput.safeParse(b);
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
   const now = (deps.now ?? (() => new Date()))().toISOString();
-  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...formColumns(parsed.data, false), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now }).select("id").single();
+  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...formColumns(parsed.data, false), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now, ...(deps.sourceMailId ? { source_mail_id: deps.sourceMailId } : {}) }).select("id").single();
   if (error) fail("save the request", error);
   const id = (data as { id: string }).id;
   if (b.submit === true) return submitRequisition(client, orgId, by, id, deps);

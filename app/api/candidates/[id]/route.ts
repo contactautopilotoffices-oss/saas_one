@@ -6,6 +6,7 @@ import { indexPending } from "@/backend/lib/candidates/indexing";
 import { getFullRecord } from "@/backend/lib/candidates/filter-search";
 import { deleteRecord } from "@/backend/lib/candidates/records";
 import { linkUnmatched } from "@/backend/lib/candidates/resume-text";
+import { savedTrackerValues } from "@/backend/lib/candidates/trackers";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
 
@@ -23,7 +24,9 @@ export async function GET(request: Request, { params }: Params) {
   if (!UUID.test(id)) return notFound();
   try {
     // With the resume fields and "has a resume" (owner 2026-11-11): the candidate's panel opens from any list.
-    return NextResponse.json({ record: await getFullRecord(auth.admin, auth.orgId, id) });
+    const record = await getFullRecord(auth.admin, auth.orgId, id);
+    record.trackerValues = await savedTrackerValues(auth.admin, auth.orgId, record.id, record.sheetId);
+    return NextResponse.json({ record });
   } catch (error) {
     return errorResponse(error, "Couldn't load the candidate");
   }
@@ -49,6 +52,7 @@ export async function PATCH(request: Request, { params }: Params) {
     await changeRecordWithHistory(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), id, fields);
     // The saved record as the panel shows it (resume fields included), so an edit does not blank them on screen.
     const record = await getFullRecord(auth.admin, auth.orgId, id);
+    record.trackerValues = await savedTrackerValues(auth.admin, auth.orgId, record.id, record.sheetId);
     after(() => indexPending(auth.admin, auth.orgId));
     // Phase 2: a changed email or phone may now match a stored resume.
     after(() => linkUnmatched(auth.admin, auth.orgId));

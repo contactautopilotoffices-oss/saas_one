@@ -1,0 +1,218 @@
+'use client';
+
+import React, { useEffect, useState } from 'react';
+import { BadgeIndianRupee, Check, Phone, Send, X } from 'lucide-react';
+import { OFFER_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type Offer } from '@/backend/lib/candidates/types';
+import { api, qs } from './api';
+import { formatDate } from './format';
+import { BTN_DANGER_FILLED } from './Remarks';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+
+/*
+ * Selection and the offer, to joining (owner 2026-11-21; spec Stages 7-9, screen 11 "Offer screen"). On a candidate:
+ * the combined scorecard per position and "Select and make an offer" (the CTC against the request's band). In the
+ * Recruitment tab "Offers": every offer, where it stands, and the next step for whoever may take it: the HR Head and the
+ * Director approve; HR edits the letter and releases it (blocked while a blank is unfilled), records the answer, logs
+ * the calls until joining, and marks joined or dropped. Nothing is decided by the app.
+ */
+
+const lpa = (v: number | null) => (v === null ? '—' : `₹${(v / 100_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} LPA`);
+const TONE: Record<Offer['status'], 'success' | 'info' | 'warn' | 'neutral'> = { pending: 'warn', approved: 'info', rejected: 'neutral', released: 'info', accepted: 'success', declined: 'neutral', joined: 'success', dropped: 'neutral', withdrawn: 'neutral' };
+
+/** On a candidate (the Interviews tab): the combined scorecard per position, the offers, and "Select and make an offer". */
+export function CandidateOffers({ orgId, record, interviews }: { orgId: string; record: CandidateRecord; interviews: Interview[] }) {
+    const { notify } = useUi();
+    const [offers, setOffers] = useState<Offer[] | null>(null);
+    const [nonce, setNonce] = useState(0);
+    const [form, setForm] = useState<{ positionId: string; ctc: string; joining: string; note: string } | null>(null);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ offers: Offer[] }>(`/api/candidates/offers${qs({ orgId, candidateId: record.candidateId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted) setOffers(res.ok ? res.data.offers : []); });
+        return () => ctrl.abort();
+    }, [orgId, record.candidateId, nonce]);
+
+    // The combined scorecard: every submitted card, per position.
+    const positions = [...new Map(interviews.filter(i => i.positionId).map(i => [i.positionId!, i.positionTitle ?? 'Position'])).entries()];
+    const cardsFor = (positionId: string) => interviews.filter(i => i.positionId === positionId).flatMap(i => (i.scorecards ?? []).filter(c => c.submittedAt).map(c => ({ ...c, round: i.round })));
+    const make = async () => {
+        if (!form) return;
+        const ctc = Math.round(Number(form.ctc) * 100_000);
+        if (!(ctc > 0)) { notify('Give the offer CTC in lakhs per year, e.g. 4.5.', 'error'); return; }
+        setBusy(true);
+        const res = await api<{ offer: Offer }>('/api/candidates/offers', { json: { orgId, applicationId: record.id, positionId: form.positionId, proposedCtc: ctc, joiningDate: form.joining || null, note: form.note.trim() || undefined } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify(`Offer sent for approval to ${res.data.offer.currentApproverName ?? 'the HR Head'}${res.data.offer.needsDirector ? '; above the band, so the Director approves too' : ''}`, 'success');
+        setForm(null);
+        setNonce(n => n + 1);
+    };
+
+    if (!positions.length && !offers?.length) return null;
+    return (
+        <section className={`${CARD} px-4 py-3`} aria-label="Selection and offer">
+            <p className="flex items-center gap-x-1.5 text-sm font-semibold text-text-primary"><BadgeIndianRupee className="h-4 w-4" aria-hidden />Selection and offer</p>
+            {positions.map(([positionId, title]) => {
+                const cards = cardsFor(positionId);
+                const avg = cards.length ? Math.round((cards.reduce((n, c) => n + (c.overall ?? 0), 0) / cards.length) * 10) / 10 : null;
+                const live = offers?.some(o => o.positionId === positionId && ['pending', 'approved', 'released', 'accepted'].includes(o.status));
+                return (
+                    <div key={positionId} className={`${WELL} mt-2 px-3 py-2.5`}>
+                        <p className="text-sm font-semibold text-text-primary">{title}</p>
+                        <p className="text-xs text-text-secondary">{cards.length ? `Combined scorecard: ${avg}/5 over ${cards.length} card${cards.length === 1 ? '' : 's'} · ${cards.map(c => `${c.round ?? 'Round'}: ${c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}`).join(' · ')}` : 'No scorecard submitted yet.'}</p>
+                        {!live && (form?.positionId === positionId ? (
+                            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                                <label className="text-xs text-text-secondary">Offer CTC (lakhs per year)<input type="number" min={0} step={0.1} value={form.ctc} onChange={e => setForm({ ...form, ctc: e.target.value })} className={`${INPUT} mt-1 h-9`} autoFocus /></label>
+                                <label className="text-xs text-text-secondary">Joining date<input type="date" value={form.joining} onChange={e => setForm({ ...form, joining: e.target.value })} className={`${INPUT} mt-1 h-9`} /></label>
+                                <label className="text-xs text-text-secondary sm:col-span-3">Why this candidate (optional)<input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} maxLength={500} className={`${INPUT} mt-1 h-9`} /></label>
+                                <div className="flex gap-2 sm:col-span-3">
+                                    <button type="button" onClick={() => setForm(null)} disabled={busy} className={BTN_GHOST}>Cancel</button>
+                                    <button type="button" onClick={() => void make()} disabled={busy || !form.ctc} className={BTN_PRIMARY}>{busy && <Spinner />}Send for approval</button>
+                                </div>
+                                <p className="text-xs text-text-tertiary sm:col-span-3">The HR Head approves; above the hiring request&rsquo;s budget band the Director approves too. The letter goes out only after that, when HR releases it.</p>
+                            </div>
+                        ) : <button type="button" onClick={() => setForm({ positionId, ctc: '', joining: '', note: '' })} className={`${BTN_SECONDARY} mt-2`}><Check className="h-4 w-4" />Select and make an offer</button>)}
+                    </div>
+                );
+            })}
+            {offers === null ? <p className="mt-2 flex items-center gap-x-2 text-xs text-text-tertiary"><Spinner className="h-3 w-3" />Loading offers</p>
+                : offers.map(o => <OfferCard key={o.id} orgId={orgId} offer={o} onChanged={() => setNonce(n => n + 1)} compact />)}
+        </section>
+    );
+}
+
+/** The Recruitment tab "Offers": every offer, newest first, with the next step for whoever may take it. */
+export default function OffersView({ orgId }: { orgId: string }) {
+    const [offers, setOffers] = useState<Offer[] | null>(null);
+    const [error, setError] = useState('');
+    const [nonce, setNonce] = useState(0);
+    const [filter, setFilter] = useState<'open' | 'all'>('open');
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ offers: Offer[] }>(`/api/candidates/offers${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (!res.ok) { setError(res.error); setOffers([]); return; }
+            setError('');
+            setOffers(res.data.offers);
+        });
+        return () => ctrl.abort();
+    }, [orgId, nonce]);
+    const shown = (offers ?? []).filter(o => filter === 'all' || ['pending', 'approved', 'released', 'accepted'].includes(o.status));
+    const mine = (offers ?? []).filter(o => o.canDecide).length;
+    return (
+        <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Offers</h2>
+                    <p className="text-xs text-text-secondary">From selection to joining. Make an offer from a candidate&rsquo;s Interviews tab.{mine ? ` ${mine} waiting for your approval.` : ''}</p>
+                </div>
+                <div role="group" aria-label="Which offers" className="inline-grid grid-cols-2 gap-x-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
+                    {(['open', 'all'] as const).map(f => <button key={f} type="button" onClick={() => setFilter(f)} aria-pressed={filter === f} className={`h-8 rounded-lg px-3 text-sm font-semibold ${filter === f ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary'}`}>{f === 'open' ? 'In progress' : 'All'}</button>)}
+                </div>
+            </div>
+            {error && <p role="alert" className="text-sm text-error">{error}</p>}
+            {offers === null ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
+                : shown.length === 0 ? <EmptyState icon={BadgeIndianRupee} title={offers.length ? 'Nothing in progress' : 'No offers yet'}>{offers.length ? 'Switch to All to see the closed ones.' : 'Select a candidate from their Interviews tab to make the first one.'}</EmptyState>
+                : shown.map(o => <OfferCard key={o.id} orgId={orgId} offer={o} onChanged={() => setNonce(n => n + 1)} />)}
+        </div>
+    );
+}
+
+function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: string; offer: Offer; onChanged: () => void; compact?: boolean }) {
+    const { notify } = useUi();
+    const [busy, setBusy] = useState(false);
+    const [step, setStep] = useState<null | 'reject' | 'revise' | 'letter' | 'declined' | 'accepted' | 'dropped' | 'contact'>(null);
+    const [text, setText] = useState('');
+    const [date, setDate] = useState(o.joiningDate ?? '');
+    const [letter, setLetter] = useState(o.letter ?? '');
+    const act = async (json: Record<string, unknown>, done: string) => {
+        setBusy(true);
+        const res = await api<{ offer: Offer }>(`/api/candidates/offers/${encodeURIComponent(o.id)}`, { method: 'PATCH', json: { orgId, ...json } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify(done, 'success');
+        setStep(null); setText('');
+        onChanged();
+    };
+    const box = (label: string, required: boolean, submit: () => void, cta: string, danger = false, withDate = false) => (
+        <div className={`${WELL} mt-2 space-y-2 px-3 py-2.5`}>
+            {withDate && <label className="block text-xs text-text-secondary">Joining date<input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${INPUT} mt-1 h-9 sm:max-w-[200px]`} /></label>}
+            <label className="block text-xs text-text-secondary">{label}{required ? ' *' : ' (optional)'}<input value={text} onChange={e => setText(e.target.value)} maxLength={1000} className={`${INPUT} mt-1 h-9`} autoFocus /></label>
+            <div className="flex gap-2"><button type="button" onClick={() => setStep(null)} disabled={busy} className={BTN_GHOST}>Back</button><button type="button" onClick={submit} disabled={busy || (required && !text.trim()) || (withDate && !date)} className={danger ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}{cta}</button></div>
+        </div>
+    );
+    return (
+        <div className={`${compact ? `${WELL} mt-2` : CARD} px-4 py-3`}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {!compact && <span className="font-display text-[15px] font-semibold text-text-primary">{o.candidateName}</span>}
+                <span className="text-sm text-text-secondary">{o.positionTitle ?? 'Position'}{o.requisitionNo ? ` · ${o.requisitionNo}` : ''}</span>
+                <Tag tone={TONE[o.status]}>{OFFER_STATUS_LABELS[o.status]}</Tag>
+                {o.canDecide && <Tag tone="warn">Your approval</Tag>}
+            </div>
+            <p className="mt-1 text-sm text-text-primary">
+                <span className="font-semibold">{lpa(o.proposedCtc)}</span>
+                <span className="text-text-secondary"> · band {lpa(o.bandMin)} to {lpa(o.bandMax)}</span>
+                {o.variancePct !== null && <span className="font-semibold text-red-800"> · {o.variancePct}% above the band</span>}
+                <span className="text-text-secondary"> · joining {o.joiningDate ? formatDate(o.joiningDate) : '—'}</span>
+            </p>
+            {o.status === 'pending' && <p className="text-xs text-text-secondary">Waiting on {o.currentApproverName ?? (o.currentLevel === 'director' ? 'the Director' : 'the HR Head')}{o.needsDirector && o.currentLevel === 'hr_head' ? ', then the Director (above the band)' : ''}.</p>}
+            {o.responseReason && <p className="text-xs text-text-secondary">“{o.responseReason}”</p>}
+            {o.status === 'accepted' && <p className="text-xs text-text-secondary">Last contact {o.lastContactAt ? formatDate(o.lastContactAt) : '—'} · call at least once a week until joining.</p>}
+
+            {/* The next step */}
+            {o.canDecide && !step && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => void act({ action: 'decide', decision: 'approve' }, o.needsDirector && o.currentLevel === 'hr_head' ? 'Approved: passed to the Director' : 'Approved: HR can release the letter')} disabled={busy} className={BTN_PRIMARY}>{busy && <Spinner />}<Check className="h-4 w-4" />Approve</button>
+                    <button type="button" onClick={() => setStep('revise')} disabled={busy} className={BTN_SECONDARY}>Ask to revise</button>
+                    <button type="button" onClick={() => setStep('reject')} disabled={busy} className={`${BTN_GHOST} text-error`}><X className="h-4 w-4" />Reject</button>
+                </div>
+            )}
+            {step === 'reject' && box('Reason', true, () => void act({ action: 'decide', decision: 'reject', reason: text }, 'Rejected'), 'Reject', true)}
+            {step === 'revise' && box('What to revise', true, () => void act({ action: 'decide', decision: 'revise', reason: text }, 'Sent back to revise'), 'Send back')}
+
+            {o.status === 'approved' && !step && (
+                <div className="mt-2 space-y-2">
+                    {o.letterGaps.length > 0 && <p role="status" className="text-xs font-medium text-red-800">The letter has blanks to fill before release: {o.letterGaps.join(', ')}.</p>}
+                    <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => { setLetter(o.letter ?? ''); setDate(o.joiningDate ?? ''); setStep('letter'); }} className={BTN_SECONDARY}>Check the letter</button>
+                        <button type="button" onClick={() => void act({ action: 'release' }, 'Released: the letter was emailed to the candidate')} disabled={busy || o.letterGaps.length > 0} className={BTN_PRIMARY} title={o.letterGaps.length ? 'Fill the blanks in the letter first' : undefined}>{busy && <Spinner />}<Send className="h-4 w-4" />Release the offer</button>
+                    </div>
+                </div>
+            )}
+            {step === 'letter' && (
+                <div className={`${WELL} mt-2 space-y-2 px-3 py-2.5`}>
+                    <label className="block text-xs text-text-secondary">Joining date<input type="date" value={date} onChange={e => setDate(e.target.value)} className={`${INPUT} mt-1 h-9 sm:max-w-[200px]`} /></label>
+                    <label className={LABEL} htmlFor={`letter-${o.id}`}>The letter (anything still in {'{{…}}'} blocks the release)</label>
+                    <textarea id={`letter-${o.id}`} rows={12} value={letter} onChange={e => setLetter(e.target.value)} className={`${INPUT} h-auto resize-y py-2 font-mono text-[13px] leading-relaxed`} />
+                    <div className="flex gap-2"><button type="button" onClick={() => setStep(null)} disabled={busy} className={BTN_GHOST}>Back</button><button type="button" onClick={() => void act({ action: 'letter', letter, joiningDate: date || null }, 'Letter saved')} disabled={busy} className={BTN_PRIMARY}>{busy && <Spinner />}Save the letter</button></div>
+                </div>
+            )}
+
+            {o.status === 'released' && !step && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setStep('accepted')} className={BTN_PRIMARY}><Check className="h-4 w-4" />Accepted</button>
+                    <button type="button" onClick={() => setStep('declined')} className={`${BTN_GHOST} text-error`}>Declined</button>
+                </div>
+            )}
+            {step === 'accepted' && box('Note', false, () => void act({ action: 'response', response: 'accepted', reason: text || undefined, joiningDate: date }, 'Accepted: weekly contact reminders start'), 'Record acceptance', false, true)}
+            {step === 'declined' && box('Why did they decline?', true, () => void act({ action: 'response', response: 'declined', reason: text }, 'Declined: recorded'), 'Record', true)}
+
+            {o.status === 'accepted' && !step && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setStep('contact')} className={BTN_SECONDARY}><Phone className="h-4 w-4" />Log a call</button>
+                    <button type="button" onClick={() => void act({ action: 'joining', outcome: 'joined' }, 'Joined')} disabled={busy} className={BTN_PRIMARY}>{busy && <Spinner />}Joined</button>
+                    <button type="button" onClick={() => setStep('dropped')} className={`${BTN_GHOST} text-error`}>Did not join</button>
+                </div>
+            )}
+            {step === 'contact' && box('What was said', false, () => void act({ action: 'contact', note: text || undefined }, 'Call logged'), 'Log the call')}
+            {step === 'dropped' && box('Why are they not joining?', true, () => void act({ action: 'joining', outcome: 'dropped', reason: text }, 'Dropped: the position is open again; the HR Head and Director are told'), 'Record', true)}
+
+            {!compact && o.events.length > 0 && (
+                <details className="mt-2 text-xs text-text-secondary">
+                    <summary className="cursor-pointer">History</summary>
+                    <ol className="mt-1 space-y-0.5 pl-4">{o.events.map((e, k) => <li key={k}>{formatDate(e.at)} · {e.action.replace(/_/g, ' ')}{e.byName ? ` · ${e.byName}` : ''}{e.reason ? `: “${e.reason}”` : ''}</li>)}</ol>
+                </details>
+            )}
+        </div>
+    );
+}
