@@ -15,6 +15,7 @@ export default function ExpenseForm({
     existingExpenses,
     proofThreshold = 500,
     requestDate,
+    defaultPropertyId,
     onSaved
 }: {
     context: Context;
@@ -25,6 +26,7 @@ export default function ExpenseForm({
     proofThreshold?: number;
     /** Request date (YYYY-MM-DD, India time). Bills dated before it are not accepted. */
     requestDate?: string;
+    defaultPropertyId?: string;
     onSaved: () => void;
 }) {
     const [proofs, setProofs] = useState<Upload[]>([]);
@@ -32,6 +34,7 @@ export default function ExpenseForm({
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [key] = useState(() => crypto.randomUUID());
+    const [propertyId, setPropertyId] = useState(correction?.property?.id || defaultPropertyId || (context.properties?.[0]?.id ?? ''));
     const [amount, setAmount] = useState('');
     const [spendMode, setSpendMode] = useState<'Operation' | 'Client'>(correction?.spend_mode || 'Operation');
     const [selectedCategory, setSelectedCategory] = useState(correction?.category || PC_CATEGORIES[0] || 'Travel');
@@ -88,8 +91,30 @@ export default function ExpenseForm({
             setExpenseDate(ocr.date);
         }
         if (ocr.category_hint) {
-            const matched = PC_CATEGORIES.find(c => c.toLowerCase() === ocr.category_hint?.toLowerCase());
-            if (matched) setSelectedCategory(matched);
+            const hint = ocr.category_hint.trim().toLowerCase();
+            const direct = PC_CATEGORIES.find(c => c.toLowerCase() === hint);
+            if (direct) {
+                setSelectedCategory(direct);
+            } else {
+                const fuzzy = PC_CATEGORIES.find(c => {
+                    const lc = c.toLowerCase();
+                    return lc.includes(hint) || hint.includes(lc) ||
+                        (hint.includes('stationery') && lc.includes('stationery')) ||
+                        ((hint.includes('food') || hint.includes('tea') || hint.includes('pantry') || hint.includes('snack') || hint.includes('refreshment')) && lc.includes('food')) ||
+                        ((hint.includes('cab') || hint.includes('uber') || hint.includes('ola') || hint.includes('travel') || hint.includes('fare') || hint.includes('auto')) && lc.includes('travel')) ||
+                        ((hint.includes('fuel') || hint.includes('petrol') || hint.includes('diesel')) && lc.includes('fuel')) ||
+                        ((hint.includes('repair') || hint.includes('maintenance') || hint.includes('hardware')) && lc.includes('repair')) ||
+                        ((hint.includes('clean') || hint.includes('housekeep') || hint.includes('broom')) && lc.includes('housekeeping')) ||
+                        ((hint.includes('courier') || hint.includes('post') || hint.includes('parcel')) && lc.includes('courier')) ||
+                        ((hint.includes('supply') || hint.includes('office')) && lc.includes('office'));
+                });
+                if (fuzzy) {
+                    setSelectedCategory(fuzzy);
+                } else {
+                    setSelectedCategory('custom');
+                    setCustomCategory(ocr.category_hint);
+                }
+            }
         }
         if (ocr.summary) {
             setDescription(ocr.summary);
@@ -135,6 +160,7 @@ export default function ExpenseForm({
                                 payment_mode: paymentMode,
                                 payment_ref: paymentRef,
                                 spend_mode: spendMode,
+                                ...(propertyId ? { property_id: propertyId } : {}),
                                 documents: proofs,
                                 has_no_bill: isNoBillSubmit,
                                 ...(isNoBillSubmit || noBillReason.trim() ? { no_bill_reason: noBillReason.trim() } : {}),
@@ -200,6 +226,27 @@ export default function ExpenseForm({
                         <p role="status" className="text-xs text-emerald-700 dark:text-emerald-400 font-semibold">
                             Remaining after this expense: {inr(remaining)}
                         </p>
+                    )}
+
+                    {/* Branch / Property Selector */}
+                    {context.properties && context.properties.length > 0 && (
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                                Branch / Property <span className="text-rose-500">*</span>
+                                <select
+                                    className="pc-input mt-1.5"
+                                    name="property_id"
+                                    value={propertyId}
+                                    onChange={e => setPropertyId(e.target.value)}
+                                >
+                                    {context.properties.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name} {p.code ? `(${p.code})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                        </div>
                     )}
 
                     {/* Spend Mode Selector: Operation vs Client */}

@@ -23,11 +23,14 @@ import { toDataUri, type RasterPage } from '@/backend/lib/ocr/rasterize';
 import { markFailed, modelFor } from '@/task-manager/ai/modelFor';
 
 /** Verified multimodal on ENGY. A model outside this set is allowed but warned about. */
-export const ENGY_VISION_MODELS = ['glm-5.3-flash', 'kimi-k3', 'deepseek-v4.1-flash'] as const;
+export const ENGY_VISION_MODELS = ['deepseek-v4.1-flash', 'kimi-k3'] as const;
 
-/** Default: best extraction quality per rupee in testing. */
+/** Default: best extraction quality per rupee in testing (deepseek-v4.1-flash is multimodal; glm/qwen on Engy are text-only). */
+const envVisionModel = (process.env.OCR_VISION_MODEL || '').trim();
 export const DEFAULT_VISION_MODEL =
-    process.env.OCR_VISION_MODEL || 'glm-5.3-flash';
+    envVisionModel && !/glm|qwen/i.test(envVisionModel)
+        ? envVisionModel
+        : 'deepseek-v4.1-flash';
 
 const TIMEOUT_MS = Number(process.env.OCR_VISION_TIMEOUT_MS || 60_000);
 
@@ -63,9 +66,9 @@ export interface VisionExtractResult {
  */
 async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtractResult> {
     let model = input.model || DEFAULT_VISION_MODEL;
-    // qwen3.8-27b on Engy is text-only; automatically switch to multimodal glm-5.3-flash
-    if (model.includes('qwen3.8-27b')) {
-        model = 'glm-5.3-flash';
+    // On Engy, glm and qwen series are text-only; automatically switch to multimodal deepseek-v4.1-flash
+    if (/qwen|glm/i.test(model)) {
+        model = 'deepseek-v4.1-flash';
     }
 
     // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
@@ -117,8 +120,11 @@ async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtrac
 
         if (!res.ok) {
             const detail = (await res.text().catch(() => '')).slice(0, 400);
-            if (/does not support image input/i.test(detail) && model !== 'glm-5.3-flash') {
-                return visionExtractRaw({ ...input, model: 'glm-5.3-flash' });
+            if (/does not support image input/i.test(detail)) {
+                if (model !== 'deepseek-v4.1-flash') {
+                    return visionExtractRaw({ ...input, model: 'deepseek-v4.1-flash' });
+                }
+                return visionExtractRaw({ ...input, model: 'kimi-k3' });
             }
             return { ...base, ok: false, error: `${provider} ${res.status}: ${detail}` };
         }

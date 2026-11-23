@@ -890,6 +890,7 @@ export default function WorkflowRequestDetail({
                                 existingExpenses={detail.expenses}
                                 proofThreshold={context.properties.find(p => p.id === r?.property_id)?.petty_cash_proof_threshold ?? 500}
                                 requestDate={r?.created_at ? new Date(r.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : undefined}
+                                defaultPropertyId={r?.property_id}
                                 onSaved={() => { void changed(); }}
                             />
                         </div>

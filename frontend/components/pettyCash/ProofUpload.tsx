@@ -26,6 +26,7 @@ export default function ProofUpload({
     const [busy, setBusy] = useState(false);
     const [ocrBusy, setOcrBusy] = useState(false);
     const [error, setError] = useState('');
+    const [ocrWarning, setOcrWarning] = useState('');
 
     return (
         <div className="pc-upload space-y-2">
@@ -44,6 +45,7 @@ export default function ProofUpload({
                         setBusy(true);
                         onBusyChange?.(true);
                         setError('');
+                        setOcrWarning('');
                         const uploaded = [...value];
                         try {
                             for (const file of files) {
@@ -55,8 +57,9 @@ export default function ProofUpload({
                                 });
                                 uploaded.push(up);
 
-                                // Trigger Vision OCR for payment screenshots or receipts
-                                if (onOcrExtracted && file.type.startsWith('image/')) {
+                                // Trigger Vision OCR for payment screenshots, bills, or PDF receipts
+                                const isProcessable = file.type.startsWith('image/') || file.type === 'application/pdf' || /\.(jpe?g|png|webp|pdf)$/i.test(file.name);
+                                if (onOcrExtracted && isProcessable) {
                                     setOcrBusy(true);
                                     try {
                                         const ocrForm = new FormData();
@@ -71,6 +74,8 @@ export default function ProofUpload({
                                         }
                                     } catch (ocrErr) {
                                         console.warn('OCR extraction warning:', ocrErr);
+                                        const msg = ocrErr instanceof Error ? ocrErr.message : 'Could not read receipt';
+                                        setOcrWarning(`Notice: AI could not auto-read '${file.name}' (${msg}). You can still fill details manually.`);
                                     } finally {
                                         setOcrBusy(false);
                                     }
@@ -98,6 +103,7 @@ export default function ProofUpload({
                     Analyzing receipt with Vision AI…
                 </p>
             )}
+            {ocrWarning && <p role="status" className="text-amber-700 dark:text-amber-400 text-xs">{ocrWarning}</p>}
             {error && <p role="alert" className="text-red-600 text-xs">{error}</p>}
 
             {value.length > 0 && (

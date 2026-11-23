@@ -24,9 +24,9 @@ export interface PettyCashOcrData {
     file_hash?: string;
 }
 
-const OCR_INSTRUCTION = `You are an expert financial auditor OCR AI parsing payment proofs, UPI receipts (Google Pay, PhonePe, Paytm, BHIM, CRED), bank transfer slips, and cash vouchers/bills in India.
+const OCR_INSTRUCTION = `You are an expert financial auditor OCR AI parsing payment proofs, UPI receipts (Google Pay, PhonePe, Paytm, BHIM, CRED), bank transfer slips, tax invoices, cash memos, retail bills, restaurant bills, fuel slips, and cash vouchers in India.
 
-Analyze this receipt/screenshot and extract the transaction details into a valid JSON object with the following fields:
+Analyze this receipt/screenshot/bill and extract the transaction details into a valid JSON object with the following fields:
 {
   "amount": number | null,
   "date": "YYYY-MM-DD" | null,
@@ -40,13 +40,15 @@ Analyze this receipt/screenshot and extract the transaction details into a valid
 }
 
 CRITICAL RULES:
-1. The amount is the most important field. Look for bold rupee values on UPI success screens (e.g. ₹150, ₹100.00). Do not confuse it with account balance.
-2. For UPI apps (Google Pay, PhonePe, Paytm, BHIM, CRED), payment_mode MUST be "UPI".
-3. Extract UPI reference ID, UTR (typically 12 digits), or transaction ID into payment_ref. Be extremely careful and precise with digit order.
-4. Status must be "SUCCESS" only if explicitly marked Paid, Successful, or has a green tick. If Failed or Declined, mark "FAILED".
+1. The amount is the most important field. Look for bold rupee values on UPI success screens (e.g. ₹150, ₹100.00), or "Total", "Grand Total", "Net Amount", "Total Due", "Amount Paid" on printed bills, cash memos, or invoices. Do not confuse it with account balance or change given.
+2. For UPI apps (Google Pay, PhonePe, Paytm, BHIM, CRED), payment_mode MUST be "UPI". For physical printed bills/cash memos where mode is cash or unspecified, set "Cash".
+3. Extract UPI reference ID, UTR (typically 12 digits), or transaction ID into payment_ref. For cash/tax bills with an invoice or receipt number, put the invoice/bill number in payment_ref if no transaction ID is present.
+4. Status must be "SUCCESS" if explicitly marked Paid, Successful, or if it is a completed printed purchase receipt/bill/tax invoice. If Failed or Declined, mark "FAILED".
 5. Format dates strictly as YYYY-MM-DD. If year is missing, assume current year 2026.
-6. confidence is a score from 0 to 100 based on clarity and legibility.
-7. Return ONLY the JSON object.`;
+6. Look for store name, restaurant name, merchant name, or vendor header for "vendor".
+7. Suggest a category in category_hint based on purchased items (e.g. "Printing & Stationery", "Food & Beverages", "Travel", "Office Supplies", "Repairs & Maintenance", "Housekeeping", "Fuel", "Courier").
+8. confidence is a score from 0 to 100 based on clarity and legibility.
+9. Return ONLY the JSON object.`;
 
 async function handlePost(request: NextRequest) {
     try {
@@ -98,6 +100,7 @@ async function handlePost(request: NextRequest) {
             pages,
             instruction: OCR_INSTRUCTION,
             json: true,
+            thinkingOff: true,
             maxTokens: 1000,
         });
         const durationMs = Date.now() - startTime;

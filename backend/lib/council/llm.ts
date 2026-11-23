@@ -137,6 +137,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
     // which returns per-token pricing, so these are the provider's own figures
     // rather than an estimate. Re-read that endpoint if they change.
     'deepseek-v4-flash-0731': { input: 0.045, output: 0.09 },
+    'deepseek-v4.1-flash': { input: 0.06, output: 0.24 },
     'qwen3.6-35b-a3b': { input: 0.045, output: 0.3 },
     'qwen3.8-27b': { input: 0.045, output: 0.32 },
     'glm-5.3-flash': { input: 0.135, output: 0.45 },
