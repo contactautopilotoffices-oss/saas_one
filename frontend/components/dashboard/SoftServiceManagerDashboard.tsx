@@ -169,7 +169,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                 <div className="p-4 lg:p-5 pb-2 flex-shrink-0">
                     <div className="flex flex-col items-center gap-1 mb-3">
                         <img src="/autopilot-logo-new.png" alt="Autopilot Logo" className="h-10 w-auto object-contain" />
-                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">{isManager ? 'Soft Service Manager' : 'Staff Soft Service'}</p>
+                        <p className="text-[10px] text-text-tertiary font-black uppercase tracking-[0.2em]">{isManager ? 'Soft Service Supervisor' : 'Staff Soft Service'}</p>
                     </div>
                 </div>
 

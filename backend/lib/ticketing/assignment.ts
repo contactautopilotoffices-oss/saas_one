@@ -4,16 +4,16 @@ import { getOrgItMembers, IT_TEAM } from './itRule';
 // getOrgItMembers moved to itRule.ts (2026-11-20) so ticket sorting can use it too; unchanged.
 
 /**
- * Owner 2026-11-16: the property roles that can be handed a ticket. Soft service supervisors were missing, so
- * soft-service tickets never reached them even once they held the `soft_services` skill.
+ * Owner 2026-11-16: the property roles that can be handed a ticket. Soft service supervisors and managers
+ * can receive soft service tickets.
  */
-const ASSIGNABLE_ROLES = ['mst', 'staff', 'soft_service_supervisor'];
+const ASSIGNABLE_ROLES = ['mst', 'staff', 'soft_service_supervisor', 'soft_service_manager'];
 
 /**
  * Roles that only ever receive work in their own skill pool — they are deliberately kept out of the `general`
- * pool, so a technical or plumbing ticket is never round-robined onto a soft service supervisor.
+ * pool, so a technical or plumbing ticket is never round-robined onto a soft service supervisor or manager.
  */
-const SKILL_ONLY_ROLES = ['soft_service_supervisor'];
+const SKILL_ONLY_ROLES = ['soft_service_supervisor', 'soft_service_manager'];
 
 interface AssignmentResult {
     ticketId: string;
@@ -74,10 +74,10 @@ export async function processIntelligentAssignment(
         .select('user_id, skill_code')
         .in('user_id', typedResolverStats.map((rs: any) => rs.user_id));
 
-    // 2.5 Fetch all active MST/Staff members for this property (for role checking and @mention assignment)
+    // 2.5 Fetch all active MST/Staff/Supervisor members for this property (for role checking and @mention assignment)
     const { data: allMembersInfo } = await supabase
         .from('property_memberships')
-        .select('user_id, role, users!inner(full_name)')
+        .select('user_id, role, users:users!property_memberships_user_id_fkey(full_name)')
         .eq('property_id', propertyId)
         .eq('is_active', true)
         .in('role', ASSIGNABLE_ROLES);
@@ -86,6 +86,20 @@ export async function processIntelligentAssignment(
     const userRoleMap: Record<string, string> = {};
     (allMembersInfo || []).forEach((ur: any) => {
         userRoleMap[ur.user_id] = ur.role;
+    });
+
+    // Ensure all assignable active members from property_memberships are represented in typedResolverStats
+    const existingResolverUserIds = new Set(typedResolverStats.map(rs => rs.user_id));
+    (allMembersInfo || []).forEach((mem: any) => {
+        if (!existingResolverUserIds.has(mem.user_id)) {
+            typedResolverStats.push({
+                user_id: mem.user_id,
+                last_assigned_at: null,
+                is_checked_in: false,
+                skill_group: { code: SKILL_ONLY_ROLES.includes(mem.role) ? 'soft_services' : 'general' }
+            });
+            existingResolverUserIds.add(mem.user_id);
+        }
     });
 
     // 3. Map MSTs to pools (excluding staff with technical skill from assignment)
@@ -118,14 +132,62 @@ export async function processIntelligentAssignment(
             }
         });
 
-        // Soft service supervisors stay in their own skill pool only (see SKILL_ONLY_ROLES), so they are not
+        // Soft service supervisors/managers stay in their own skill pool only (see SKILL_ONLY_ROLES), so they are not
         // round-robined technical work. Everyone else (except staff technical) is also in general.
         if (SKILL_ONLY_ROLES.includes(userRole)) return;
 
         mstPools.general.push(rs);
     });
 
-    // 4. Fallback: If no resolvers found, get any active MST/staff from property_memberships
+    // 4. Fetch today's duty roster for property (IST date)
+    // Offline staff (e.g. pantry boys, contract housekeeping) are never assigned tickets.
+    const now = new Date();
+    const istDate = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    const todayStr = istDate.toISOString().split('T')[0];
+    const currentIstTime = istDate.toISOString().slice(11, 19); // "HH:MM:SS"
+
+    const { data: todayRosters } = await supabase
+        .from('staff_rosters')
+        .select(`
+            user_id,
+            is_reliever,
+            shift:shift_configurations(code, name, start_time, end_time, is_working_day)
+        `)
+        .eq('property_id', propertyId)
+        .eq('roster_date', todayStr);
+
+    const rosterScheduledWorkingUserIds = new Set<string>();
+    const rosterCurrentShiftUserIds = new Set<string>();
+
+    if (todayRosters && todayRosters.length > 0) {
+        for (const r of todayRosters) {
+            // Only consider registered app users with assignable roles (offline staff are never assigned)
+            if (!userRoleMap[r.user_id]) continue;
+
+            const shift = r.shift as any;
+            const isWorking = shift ? shift.is_working_day !== false : true;
+            if (!isWorking) continue; // Exclude weekly off (WO), leave (L), comp off (C OFF)
+
+            rosterScheduledWorkingUserIds.add(r.user_id);
+
+            // Check if current time is within this shift window
+            if (shift?.start_time && shift?.end_time) {
+                const s = shift.start_time;
+                const e = shift.end_time;
+                const isCurrent = s <= e
+                    ? (currentIstTime >= s && currentIstTime <= e)
+                    : (currentIstTime >= s || currentIstTime <= e); // Overnight shift spanning midnight
+                if (isCurrent) {
+                    rosterCurrentShiftUserIds.add(r.user_id);
+                }
+            } else {
+                // Flexible or un-timed working shift
+                rosterCurrentShiftUserIds.add(r.user_id);
+            }
+        }
+    }
+
+    // 4.5 Fallback: If no resolvers found, get any active MST/staff from property_memberships
     let fallbackResolver = null;
     if (typedResolverStats.length === 0) {
         const { data: fallbackUsers } = await supabase
@@ -133,7 +195,7 @@ export async function processIntelligentAssignment(
             .select('user_id, role, last_activity_at')
             .eq('property_id', propertyId)
             .eq('is_active', true)
-            .in('role', ['mst', 'staff'])
+            .in('role', ['mst', 'staff', 'soft_service_supervisor', 'soft_service_manager'])
             .order('last_activity_at', { ascending: false })
             .limit(1);
 
@@ -151,6 +213,17 @@ export async function processIntelligentAssignment(
         try {
             const poolName = (ticket.skill_group_code || 'general').toLowerCase();
             let pool = mstPools[poolName]?.length > 0 ? mstPools[poolName] : mstPools.general;
+
+            // Roster-aware filtering:
+            // 1. If property has roster rows, prioritize resolvers currently on active working shift
+            // 2. Fallback to resolvers scheduled on a working shift today (excluding leaves/weekly off)
+            if (rosterCurrentShiftUserIds.size > 0) {
+                const onShiftPool = pool.filter(p => rosterCurrentShiftUserIds.has(p.user_id));
+                if (onShiftPool.length > 0) pool = onShiftPool;
+            } else if (rosterScheduledWorkingUserIds.size > 0) {
+                const scheduledWorkingPool = pool.filter(p => rosterScheduledWorkingUserIds.has(p.user_id));
+                if (scheduledWorkingPool.length > 0) pool = scheduledWorkingPool;
+            }
 
             // Prioritize checked-in users if any are available
             const checkedInPool = pool.filter(p => p.is_checked_in);
@@ -187,7 +260,8 @@ export async function processIntelligentAssignment(
 
             if (!assignedTo && fullText.includes('@') && allMembersInfo) {
                 for (const member of allMembersInfo) {
-                    const name = (member.users?.full_name || '').toLowerCase();
+                    const u: any = Array.isArray(member.users) ? member.users[0] : member.users;
+                    const name = (u?.full_name || '').toLowerCase();
                     if (name) {
                         const firstName = name.split(' ')[0];
                         // If mentioned by full name or first name
