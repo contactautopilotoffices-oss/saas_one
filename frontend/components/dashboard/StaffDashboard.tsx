@@ -8,8 +8,8 @@ import {
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, RefreshCw, Cog, X,
     AlertOctagon, BarChart3, FileText, Camera, Menu, Pencil, Loader2, Zap, Activity, Filter, Calendar, Package, Scan, Droplets
-,
-  MessageSquarePlus, ShieldCheck, Wrench
+    ,
+    MessageSquarePlus, ShieldCheck, Wrench
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -101,12 +101,12 @@ interface Ticket {
     internal?: boolean;
     property_id?: string;
     creator?: { property_memberships?: TicketCreatorMembership[] };
-    ticket_escalation_logs?: { 
-        from_level: number; 
-        to_level: number | null; 
-        escalated_at: string; 
-        from_employee?: { full_name: string; user_photo_url?: string | null } | null; 
-        to_employee?: { full_name: string; user_photo_url?: string | null } | null 
+    ticket_escalation_logs?: {
+        from_level: number;
+        to_level: number | null;
+        escalated_at: string;
+        from_employee?: { full_name: string; user_photo_url?: string | null } | null;
+        to_employee?: { full_name: string; user_photo_url?: string | null } | null
     }[];
     material_requests?: { id: string }[];
 }
@@ -184,7 +184,7 @@ const StaffDashboard = () => {
             let savedShift: string | null = null;
             try {
                 savedShift = localStorage.getItem(`shift-status-${user?.id || 'unknown'}-${propertyId}`);
-            } catch {}
+            } catch { }
             if (savedShift !== null && !isShiftInitialized) {
                 setIsCheckedIn(savedShift === 'true');
             }
@@ -267,7 +267,7 @@ const StaffDashboard = () => {
                 setIsShiftInitialized(true);
                 try {
                     localStorage.setItem(`shift-status-${user.id}-${propertyId}`, String(data.isCheckedIn));
-                } catch {}
+                } catch { }
             }
         } catch (error) {
             console.error('Error fetching check-in status:', error);
@@ -289,7 +289,7 @@ const StaffDashboard = () => {
                 setIsCheckedIn(data.isCheckedIn);
                 try {
                     localStorage.setItem(`shift-status-${user?.id}-${propertyId}`, String(data.isCheckedIn));
-                } catch {}
+                } catch { }
                 showToast(data.message, 'success');
             } else {
                 const err = await res.json();
@@ -363,8 +363,8 @@ const StaffDashboard = () => {
             .eq('property_id', propertyId)
             .order('created_at', { ascending: false })
             .limit(10000),
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId),
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['resolved', 'closed', 'pending_validation'])
+        supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId),
+        supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['resolved', 'closed', 'pending_validation'])
         ]);
         const { data, error } = ticketsResult;
 
@@ -385,7 +385,7 @@ const StaffDashboard = () => {
             const completed = (data || []).filter((t: Ticket) => ['resolved', 'closed', 'pending_validation'].includes(t.status));
             setIncomingTickets(active);
             setCompletedTickets(completed);
-            
+
             const totalExact = totalCount || data?.length || 0;
             const closedExact = closedCountResult || completed.length;
             setTicketStats({ total: totalExact, open: totalExact - closedExact, closed: closedExact });
@@ -721,7 +721,7 @@ const StaffDashboard = () => {
                         <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
                         <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                     </div>
-{/* System & Personal */}
+                    {/* System & Personal */}
                     <div className="mb-4">
                         <div className="space-y-0.5">
                             <button
@@ -812,209 +812,209 @@ const StaffDashboard = () => {
 
                 {/* Page Content */}
                 <main className={`flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
-                {dashboardContent ?? (<>
+                    {dashboardContent ?? (<>
 
 
-                    <AnimatePresence mode="wait">
-                        <motion.div
-                            key={activeTab}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                            transition={{ duration: 0.2 }}
-                        >
-                            {activeTab === 'dashboard' && property && user && (
-                                <DashboardTab
-                                    tickets={incomingTickets.filter(t =>
-                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                    )}
-                                    completedTickets={completedTickets.filter(t =>
-                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                    )}
-                                    ticketStats={ticketStats}
-                                    onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
-                                    userId={user.id}
-                                    isLoading={isLoading}
-                                    propertyId={propertyId}
-                                    propertyName={property.name}
-                                    userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
-                                    onSettingsClick={() => handleTabChange('settings')}
-                                    onEditClick={handleEditClick}
-                                    userRole={userRole}
-                                    onFilterClick={(filter) => handleTabChange('requests', filter)}
-                                />
-                            )}
-                            {activeTab === 'requests' && user && (
-                                <RequestsTab
-                                    activeTickets={incomingTickets.filter(t =>
-                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                    )}
-                                    completedTickets={completedTickets.filter(t =>
-                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                    )}
-                                    onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
-                                    userId={user.id}
-                                    isLoading={isLoading}
-                                    propertyName={property?.name}
-                                    userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
-                                    onEditClick={handleEditClick}
-                                    userRole={userRole}
-                                    propertyId={propertyId}
-                                    onTabChange={handleTabChange}
-                                    filter={requestFilter}
-                                    onFilterChange={(newFilter) => {
-                                        setRequestFilter(newFilter);
-                                        const url = new URL(window.location.href);
-                                        url.searchParams.set('filter', newFilter);
-                                        window.history.pushState({}, '', url.toString());
-                                    }}
-                                />
-                            )}
-                            {activeTab === 'create_request' && property && user && (
-                                <TenantTicketingDashboard
-                                    propertyId={property.id}
-                                    organizationId={property.organization_id || ''}
-                                    user={{ id: user.id, full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff' }}
-                                    propertyName={property.name}
-                                    isStaff={true}
-                                    userRole={userRole}
-                                    showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
-                                />
-                            )}
-                            {activeTab === 'flow-map' && (
-                                <TicketFlowMap propertyId={propertyId} />
-                            )}
-                            {activeTab === 'guest_experience' && propertyId && (
-                                <GuestExperienceDashboard propertyId={propertyId} />
-                            )}
-                            {activeTab === 'visitors' && <VMSAdminDashboard propertyId={propertyId} />}
-                            {activeTab === 'rooms' && property && user && <AdminRoomManager propertyId={property.id} user={user} />}
-                            {activeTab === 'diesel' && <DieselStaffDashboard />}
-                            {activeTab === 'electricity' && canAccessElectricityLogger(userRole) && (
-                                property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />
-                            )}
-                            {activeTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
-                            {activeTab === 'stock' && property && (
-                                <StockDashboard
-                                    propertyId={property.id}
-                                    hideReports={true}
-                                    initialItemId={searchParams.get('scanItem') ?? undefined}
-                                />
-                            )}
-                            {activeTab === 'checklist' && property && (
-                                <SOPDashboard propertyId={property.id} />
-                            )}
-                            {activeTab === 'assets' && property && (
-                                <AssetsModule
-                                    organizationId={property.organization_id}
-                                    propertyId={property.id}
-                                    propertyName={property.name}
-                                    canManage={false}
-                                />
-                            )}
-                            {activeTab === 'grievance' && (
-                                <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
-                            )}
-                            {activeTab === 'settings' && <SettingsView />}
-                            {activeTab === 'profile' && (
-                                <div className="flex justify-center items-start py-8">
-                                    <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
-                                        {/* Card Header with Autopilot Logo */}
-                                        <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
-                                            {/* Autopilot Logo */}
-                                            <div className="flex items-center justify-center mb-6">
-                                                <img
-                                                    src="/autopilot-logo-new.png"
-                                                    alt="Autopilot Logo"
-                                                    className="h-10 w-auto object-contain invert mix-blend-screen"
-                                                />
-                                            </div>
-
-                                            {/* User Avatar */}
-                                            <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden">
-                                                {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
-                                                    <Image
-                                                        src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
-                                                        alt="Profile"
-                                                        width={96}
-                                                        height={96}
-                                                        className="w-full h-full object-cover"
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={activeTab}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                {activeTab === 'dashboard' && property && user && (
+                                    <DashboardTab
+                                        tickets={incomingTickets.filter(t =>
+                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                        )}
+                                        completedTickets={completedTickets.filter(t =>
+                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                        )}
+                                        ticketStats={ticketStats}
+                                        onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
+                                        userId={user.id}
+                                        isLoading={isLoading}
+                                        propertyId={propertyId}
+                                        propertyName={property.name}
+                                        userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
+                                        onSettingsClick={() => handleTabChange('settings')}
+                                        onEditClick={handleEditClick}
+                                        userRole={userRole}
+                                        onFilterClick={(filter) => handleTabChange('requests', filter)}
+                                    />
+                                )}
+                                {activeTab === 'requests' && user && (
+                                    <RequestsTab
+                                        activeTickets={incomingTickets.filter(t =>
+                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                        )}
+                                        completedTickets={completedTickets.filter(t =>
+                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                        )}
+                                        onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
+                                        userId={user.id}
+                                        isLoading={isLoading}
+                                        propertyName={property?.name}
+                                        userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
+                                        onEditClick={handleEditClick}
+                                        userRole={userRole}
+                                        propertyId={propertyId}
+                                        onTabChange={handleTabChange}
+                                        filter={requestFilter}
+                                        onFilterChange={(newFilter) => {
+                                            setRequestFilter(newFilter);
+                                            const url = new URL(window.location.href);
+                                            url.searchParams.set('filter', newFilter);
+                                            window.history.pushState({}, '', url.toString());
+                                        }}
+                                    />
+                                )}
+                                {activeTab === 'create_request' && property && user && (
+                                    <TenantTicketingDashboard
+                                        propertyId={property.id}
+                                        organizationId={property.organization_id || ''}
+                                        user={{ id: user.id, full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff' }}
+                                        propertyName={property.name}
+                                        isStaff={true}
+                                        userRole={userRole}
+                                        showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
+                                    />
+                                )}
+                                {activeTab === 'flow-map' && (
+                                    <TicketFlowMap propertyId={propertyId} />
+                                )}
+                                {activeTab === 'guest_experience' && propertyId && (
+                                    <GuestExperienceDashboard propertyId={propertyId} />
+                                )}
+                                {activeTab === 'visitors' && <VMSAdminDashboard propertyId={propertyId} />}
+                                {activeTab === 'rooms' && property && user && <AdminRoomManager propertyId={property.id} user={user} />}
+                                {activeTab === 'diesel' && <DieselStaffDashboard />}
+                                {activeTab === 'electricity' && canAccessElectricityLogger(userRole) && (
+                                    property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />
+                                )}
+                                {activeTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
+                                {activeTab === 'stock' && property && (
+                                    <StockDashboard
+                                        propertyId={property.id}
+                                        hideReports={true}
+                                        initialItemId={searchParams.get('scanItem') ?? undefined}
+                                    />
+                                )}
+                                {activeTab === 'checklist' && property && (
+                                    <SOPDashboard propertyId={property.id} />
+                                )}
+                                {activeTab === 'assets' && property && (
+                                    <AssetsModule
+                                        organizationId={property.organization_id}
+                                        propertyId={property.id}
+                                        propertyName={property.name}
+                                        canManage={false}
+                                    />
+                                )}
+                                {activeTab === 'grievance' && (
+                                    <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
+                                )}
+                                {activeTab === 'settings' && <SettingsView />}
+                                {activeTab === 'profile' && (
+                                    <div className="flex justify-center items-start py-8">
+                                        <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
+                                            {/* Card Header with Autopilot Logo */}
+                                            <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
+                                                {/* Autopilot Logo */}
+                                                <div className="flex items-center justify-center mb-6">
+                                                    <img
+                                                        src="/autopilot-logo-new.png"
+                                                        alt="Autopilot Logo"
+                                                        className="h-10 w-auto object-contain invert mix-blend-screen"
                                                     />
-                                                ) : (
-                                                    <span className="text-4xl font-black text-white">
-                                                        {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
-                                                    </span>
-                                                )}
+                                                </div>
+
+                                                {/* User Avatar */}
+                                                <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden">
+                                                    {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
+                                                        <Image
+                                                            src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
+                                                            alt="Profile"
+                                                            width={96}
+                                                            height={96}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <span className="text-4xl font-black text-white">
+                                                            {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {/* Role Badge */}
+                                                <span className="px-4 py-1.5 bg-primary text-text-inverse rounded-full text-xs font-black uppercase tracking-wider">
+                                                    {userRole}
+                                                </span>
                                             </div>
 
-                                            {/* Role Badge */}
-                                            <span className="px-4 py-1.5 bg-primary text-text-inverse rounded-full text-xs font-black uppercase tracking-wider">
-                                                {userRole}
-                                            </span>
-                                        </div>
+                                            {/* Card Body with User Info */}
+                                            <div className="p-8 space-y-6">
+                                                <div className="space-y-4">
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {user?.user_metadata?.full_name || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                        {/* Card Body with User Info */}
-                                        <div className="p-8 space-y-6">
-                                            <div className="space-y-4">
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {user?.user_metadata?.full_name || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {user?.user_metadata?.phone || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {user?.user_metadata?.phone || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
+                                                        <span className="text-sm font-medium text-slate-700">
+                                                            {user?.email || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
-                                                    <span className="text-sm font-medium text-slate-700">
-                                                        {user?.email || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {property?.name || 'Not Assigned'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {property?.name || 'Not Assigned'}
-                                                    </span>
+                                                    <div className="flex justify-between items-center py-3">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Work Email</span>
+                                                        <span className="text-xs font-medium text-primary">
+                                                            {user?.email}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => setShowUniversalScanner(true)}
+                                                        className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:opacity-95 shadow-lg shadow-primary/20 transition-all mt-6"
+                                                    >
+                                                        <Scan className="w-4 h-4" />
+                                                        Scan Stock Item
+                                                    </button>
                                                 </div>
-
-                                                <div className="flex justify-between items-center py-3">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Work Email</span>
-                                                    <span className="text-xs font-medium text-primary">
-                                                        {user?.email}
-                                                    </span>
-                                                </div>
-                                                <button
-                                                    onClick={() => setShowUniversalScanner(true)}
-                                                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:opacity-95 shadow-lg shadow-primary/20 transition-all mt-6"
-                                                >
-                                                    <Scan className="w-4 h-4" />
-                                                    Scan Stock Item
-                                                </button>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
 
-                </>)}
-</main>
+                    </>)}
+                </main>
 
                 <StockMovementModal
                     isOpen={showScannerModal}
@@ -1349,14 +1349,14 @@ const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick,
                         {filter === 'completed' || filter === 'completed_by_me' ? <CheckCircle2 className="w-4 h-4 text-success" /> :
                             filter === 'assigned_to_me' ? <ClipboardList className="w-4 h-4 text-primary" /> :
                                 filter === 'raised_by_me' ? <UserCircle className="w-4 h-4 text-primary" /> :
-                                filter === 'active' ? <Clock className="w-4 h-4 text-info" /> :
-                                    <FolderKanban className="w-4 h-4 text-info" />
+                                    filter === 'active' ? <Clock className="w-4 h-4 text-info" /> :
+                                        <FolderKanban className="w-4 h-4 text-info" />
                         }
                         {filter === 'all' ? 'All Property Activity' :
                             filter === 'active' ? 'All Active Requests' :
                                 filter === 'assigned_to_me' ? 'Assigned To Me' :
                                     filter === 'raised_by_me' ? 'Raised By Me' :
-                                    filter === 'completed_by_me' ? 'Completed By Me' : 'All Completed Requests'}
+                                        filter === 'completed_by_me' ? 'Completed By Me' : 'All Completed Requests'}
                         <span className="ml-2 text-[10px] bg-muted px-2 py-0.5 rounded-full text-text-tertiary">{filtered.length}</span>
                     </h2>
                 </div>
