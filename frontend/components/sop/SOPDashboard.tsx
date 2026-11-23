@@ -117,12 +117,18 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         // Determine user role for this property
         const fetchUserRole = async () => {
             try {
-                if (propertyId) {
+                const orgRole = (membership?.org_role || '').toLowerCase().replace(/\s+/g, '_');
+                const isOrgElevated = ['org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin', 'owner', 'admin'].includes(orgRole);
+
+                if (isOrgElevated) {
+                    // Org-wide admins always retain their elevated org role across all properties
+                    setUserRole(orgRole);
+                } else if (propertyId) {
                     const property = membership?.properties?.find(p => p.id === propertyId);
                     if (property?.role) {
-                        setUserRole(property.role);
-                    } else if (membership?.org_role) {
-                        setUserRole(membership.org_role);
+                        setUserRole(property.role.toLowerCase().replace(/\s+/g, '_'));
+                    } else if (orgRole) {
+                        setUserRole(orgRole);
                     } else {
                         setUserRole('staff');
                     }
@@ -130,18 +136,18 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
                     // Check if they are an admin on ANY of the properties being viewed
                     const hasAdminRole = membership?.properties?.some(p => 
                         propertyIds.includes(p.id) && 
-                        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(p.role?.toLowerCase() || '')
+                        ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes((p.role || '').toLowerCase().replace(/\s+/g, '_'))
                     );
                     
                     if (hasAdminRole) {
                         setUserRole('property_admin');
-                    } else if (membership?.org_role) {
-                        setUserRole(membership.org_role);
+                    } else if (orgRole) {
+                        setUserRole(orgRole);
                     } else {
                         setUserRole('staff');
                     }
                 } else {
-                    setUserRole(membership?.org_role || 'staff');
+                    setUserRole(orgRole || 'staff');
                 }
             } catch (err) {
                 console.error('Error fetching user role:', err);
@@ -153,11 +159,14 @@ const SOPDashboard: React.FC<SOPDashboardProps> = ({ propertyId, propertyIds, pr
         fetchUserRole();
     }, [propertyId, propertyIds, membership, isMultiProperty]);
 
-    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(userRole.toLowerCase());
+    const normalizedUserRole = (userRole || '').toLowerCase().replace(/\s+/g, '_');
+    const normalizedOrgRole = (membership?.org_role || '').toLowerCase().replace(/\s+/g, '_');
+    const isAdmin = ['property_admin', 'org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedUserRole) ||
+                    ['org_admin', 'org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedOrgRole);
     const isOrgSuperAdmin = Boolean(
         membership?.is_master_admin ||
-        (membership?.org_role && ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(membership.org_role.toLowerCase())) ||
-        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes((userRole || '').toLowerCase())
+        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedOrgRole) ||
+        ['org_super_admin', 'master_admin', 'ops_super_admin'].includes(normalizedUserRole)
     );
 
     // Non-admin users should only be defaulted to history if currently on admin-only 'list' view
