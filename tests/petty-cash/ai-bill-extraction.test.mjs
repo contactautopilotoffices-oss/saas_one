@@ -24,3 +24,26 @@ test('aiCatalog defaults for ocr_vision specifies multimodal models', () => {
     assert.ok(ocrVision.defaults.includes('deepseek-v4.1-flash'), 'ocr_vision defaults must include deepseek-v4.1-flash');
     assert.ok(!ocrVision.defaults.includes('qwen3.8-27b'), 'ocr_vision defaults must not include text-only qwen3.8-27b');
 });
+
+test('visionExtract prioritizes Engy keys across ENGY_API_KEY, engy, and COUNCIL_API_KEY', async () => {
+    // 1. With ENGY_API_KEY
+    process.env.ENGY_API_KEY = 'sk-engy-test-key';
+    const { visionExtract } = loadTs('backend/lib/ocr/vision.ts');
+    let result = await visionExtract({ pages: [], instruction: 'test' });
+    assert.equal(result.provider, 'engy', 'Provider must resolve to engy via ENGY_API_KEY');
+    delete process.env.ENGY_API_KEY;
+
+    // 2. With lowercase engy
+    process.env.engy = 'sk-engy-test-key-2';
+    result = await visionExtract({ pages: [], instruction: 'test' });
+    assert.equal(result.provider, 'engy', 'Provider must resolve to engy via engy');
+    delete process.env.engy;
+
+    // 3. With COUNCIL_API_KEY
+    process.env.COUNCIL_API_KEY = 'sk-engy-test-key-3';
+    process.env.COUNCIL_BASE_URL = 'https://api.engy.ai/v1';
+    result = await visionExtract({ pages: [], instruction: 'test' });
+    assert.equal(result.provider, 'engy', 'Provider must resolve to engy via COUNCIL_API_KEY');
+    delete process.env.COUNCIL_API_KEY;
+    delete process.env.COUNCIL_BASE_URL;
+});

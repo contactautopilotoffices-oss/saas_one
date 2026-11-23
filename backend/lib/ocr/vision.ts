@@ -71,12 +71,19 @@ async function visionExtractRaw(input: VisionExtractInput): Promise<VisionExtrac
         model = 'deepseek-v4.1-flash';
     }
 
-    // Prioritize Engy API key when configured in env (engy=sk-engy-... or ENGY_API_KEY)
-    const engyKey = (process.env.ENGY_API_KEY || process.env.engy || '').trim();
+    // Prioritize Engy API key when configured in env (ENGY_API_KEY / engy / ENGY_KEY / COUNCIL_API_KEY when pointing to engy)
+    const engyKey = (
+        process.env.ENGY_API_KEY ||
+        process.env.engy ||
+        process.env.ENGY_KEY ||
+        (process.env.COUNCIL_API_KEY && (process.env.COUNCIL_API_KEY.startsWith('sk-engy-') || /engy\./i.test(process.env.COUNCIL_BASE_URL || '')) ? process.env.COUNCIL_API_KEY : '')
+    ).trim();
     const resolved = resolveProvider();
-    const apiKey = engyKey || resolved.apiKey;
-    const baseUrl = engyKey ? (process.env.ENGY_BASE_URL || 'https://api.engy.ai/v1') : resolved.spec.baseUrl;
-    const provider = engyKey ? 'engy' : resolved.provider;
+    const apiKey = engyKey || (resolved.apiKey?.startsWith('sk-engy-') ? resolved.apiKey : null) || resolved.apiKey;
+    const baseUrl = engyKey
+        ? (process.env.ENGY_BASE_URL || process.env.COUNCIL_BASE_URL || 'https://api.engy.ai/v1')
+        : (apiKey?.startsWith('sk-engy-') ? 'https://api.engy.ai/v1' : resolved.spec.baseUrl);
+    const provider = engyKey || apiKey?.startsWith('sk-engy-') ? 'engy' : resolved.provider;
 
     const base: Omit<VisionExtractResult, 'ok'> = {
         data: null, text: null, model, provider, usage: null,
