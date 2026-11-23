@@ -252,33 +252,50 @@ export async function processIntelligentAssignment(
     for (const ticket of tickets) {
         try {
             const poolName = (ticket.skill_group_code || 'general').toLowerCase();
-            let pool = mstPools[poolName]?.length > 0 ? mstPools[poolName] : mstPools.general;
+            const primaryPool = mstPools[poolName]?.length > 0 ? mstPools[poolName] : [];
+            const generalPool = mstPools.general?.length > 0 ? mstPools.general : [];
 
-            // Roster-aware intelligent tiering:
-            // Tier 1: Resolvers currently on shift with adequate time remaining (>= 30 mins)
-            // Tier 2: Resolvers starting their shift shortly (<= 30 mins)
-            // Tier 3: Resolvers on shift whose shift is ending soon (< 30 mins, handover buffer)
-            // Tier 4: Any resolver scheduled for work today
-            if (rosterAdequateShiftUserIds.size > 0) {
-                const adequatePool = pool.filter(p => rosterAdequateShiftUserIds.has(p.user_id));
-                if (adequatePool.length > 0) pool = adequatePool;
-            } else if (rosterUpcomingShiftUserIds.size > 0) {
-                const upcomingPool = pool.filter(p => rosterUpcomingShiftUserIds.has(p.user_id));
-                if (upcomingPool.length > 0) pool = upcomingPool;
-            } else if (rosterEndingSoonUserIds.size > 0) {
-                const endingSoonPool = pool.filter(p => rosterEndingSoonUserIds.has(p.user_id));
-                if (endingSoonPool.length > 0) pool = endingSoonPool;
-            } else if (rosterScheduledWorkingUserIds.size > 0) {
-                const scheduledWorkingPool = pool.filter(p => rosterScheduledWorkingUserIds.has(p.user_id));
-                if (scheduledWorkingPool.length > 0) pool = scheduledWorkingPool;
+            // Tier evaluation helper
+            const evaluateRosterTiers = (candidates: ResolverStat[]): ResolverStat[] | null => {
+                if (!candidates || candidates.length === 0) return null;
+                // Tier 1: On-shift with adequate time remaining (>= 30 mins)
+                const adequate = candidates.filter(p => rosterAdequateShiftUserIds.has(p.user_id));
+                if (adequate.length > 0) return adequate;
+                // Tier 2: Upcoming shift starting soon (<= 30 mins)
+                const upcoming = candidates.filter(p => rosterUpcomingShiftUserIds.has(p.user_id));
+                if (upcoming.length > 0) return upcoming;
+                // Tier 3: On-shift ending soon (< 30 mins, handover window)
+                const endingSoon = candidates.filter(p => rosterEndingSoonUserIds.has(p.user_id));
+                if (endingSoon.length > 0) return endingSoon;
+                // Tier 4: Scheduled working today
+                const scheduled = candidates.filter(p => rosterScheduledWorkingUserIds.has(p.user_id));
+                if (scheduled.length > 0) return scheduled;
+                return null;
+            };
+
+            let pool: ResolverStat[] = [];
+            if (rosterScheduledWorkingUserIds.size > 0) {
+                // Try primary pool against roster
+                const primaryRoster = evaluateRosterTiers(primaryPool);
+                if (primaryRoster) {
+                    pool = primaryRoster;
+                } else {
+                    // Fallback to general pool against roster if primary skill has no one scheduled
+                    const generalRoster = evaluateRosterTiers(generalPool);
+                    if (generalRoster) pool = generalRoster;
+                }
             }
 
-            // Prioritize checked-in users if any are available
+            // If no roster matches (e.g. overnight gap or property without roster), use base pools
+            if (pool.length === 0) {
+                pool = primaryPool.length > 0 ? primaryPool : generalPool;
+            }
+
+            // Prioritize checked-in users if any are available in the selected pool
             const checkedInPool = pool.filter(p => p.is_checked_in);
             if (checkedInPool.length > 0) pool = checkedInPool;
 
             let assignedTo: string | null = null;
-            let status = 'assigned';
 
             // Check for @mention in title or description FIRST
             const fullText = `${ticket.title || ''} ${ticket.description || ''}`.toLowerCase();
@@ -339,45 +356,42 @@ export async function processIntelligentAssignment(
                 } else if (fallbackResolver) {
                     // No pool available, use fallback resolver
                     assignedTo = fallbackResolver;
-                } else {
-                    // Last resort: find any MST/staff in the property
-                    const { data: anyResolver } = await supabase
-                        .from('property_memberships')
-                        .select('user_id')
-                        .eq('property_id', propertyId)
-                        .eq('is_active', true)
-                        .in('role', ['mst', 'staff'])
-                        .limit(1)
-                        .single();
-
-                    if (anyResolver) {
-                        assignedTo = anyResolver.user_id;
-                    }
+                } else if (allMembersInfo && allMembersInfo.length > 0) {
+                    // Pick any active resolver from property_memberships
+                    const pref = (poolName === 'soft_services')
+                        ? allMembersInfo.find(m => SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0]
+                        : allMembersInfo.find(m => !SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0];
+                    assignedTo = pref.user_id;
                 }
             }
 
-            // ALWAYS assign - if still no one found, get last active MST/staff
+            // GUARANTEE: A ticket NEVER enters waitlist if any resolver exists at the property.
+            // If still no resolver found, check property_memberships directly for ANY active resolver.
             if (!assignedTo) {
-                const { data: lastActiveMstStaff } = await supabase
+                const { data: anyResolver } = await supabase
                     .from('property_memberships')
-                    .select('user_id, last_activity_at')
+                    .select('user_id')
                     .eq('property_id', propertyId)
                     .eq('is_active', true)
-                    .in('role', ['mst', 'staff'])
-                    .order('last_activity_at', { ascending: false })
+                    .in('role', ASSIGNABLE_ROLES)
+                    .order('last_activity_at', { ascending: false, nullsFirst: false })
                     .limit(1)
-                    .single();
+                    .maybeSingle();
 
-                if (lastActiveMstStaff) {
-                    assignedTo = lastActiveMstStaff.user_id;
+                if (anyResolver) {
+                    assignedTo = anyResolver.user_id;
                 }
             }
+
+            // If a resolver is found, ticket is assigned.
+            // If and ONLY if there is literally NO resolver at the property, ticket moves to waitlist.
+            const finalStatus = assignedTo ? 'assigned' : 'waitlist';
 
             // Update database
             const { error: updateError } = await supabase
                 .from('tickets')
                 .update({
-                    status: assignedTo ? 'assigned' : 'open',
+                    status: finalStatus,
                     assigned_to: assignedTo,
                     assigned_at: assignedTo ? new Date().toISOString() : null,
                 })
@@ -392,12 +406,9 @@ export async function processIntelligentAssignment(
                     .update({ last_assigned_at: new Date().toISOString() })
                     .eq('user_id', assignedTo)
                     .eq('property_id', propertyId);
-
-                // Notifications: the assignment itself fires trg_tickets_outbox, and the Omnichannel
-                // matrix decides who is told and on which channel.
             }
 
-            results.push({ ticketId: ticket.id, assignedTo, status: assignedTo ? 'assigned' : 'open' });
+            results.push({ ticketId: ticket.id, assignedTo, status: finalStatus });
         } catch (err: any) {
             results.push({ ticketId: ticket.id, assignedTo: null, status: 'error', error: err.message });
         }
@@ -407,7 +418,7 @@ export async function processIntelligentAssignment(
         summary: {
             total: results.length,
             assigned: results.filter(r => r.status === 'assigned').length,
-            unassigned: results.filter(r => r.status === 'open').length,
+            waitlist: results.filter(r => r.status === 'waitlist').length,
             errors: results.filter(r => r.status === 'error').length,
         },
         results
