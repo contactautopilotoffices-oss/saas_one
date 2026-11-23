@@ -31,12 +31,13 @@ const POLL_MS = 4_000;
 const pollDelay = (status: MeetingStatus) => (PROCESSING.includes(status) || status === 'live' ? POLL_MS : status === 'scheduled' ? 6_000 : null);
 const input = 'w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100';
 
-export default function MeetingReview({ space, meetingId, people: peopleWithVoice = [], onBack, onContinueRecording }: {
+export default function MeetingReview({ space, meetingId, people: peopleWithVoice = [], onBack, backLabel = 'All meetings', onContinueRecording }: {
     space: MeetingSpace;
     meetingId: string;
     /** Everyone in the Task Manager with their "voice ready" mark (from the list); the meeting's own list is the fallback */
     people?: MeetingPerson[];
     onBack: () => void;
+    backLabel?: string;
     onContinueRecording: (id: string, title: string) => void;
 }) {
     const [data, setData] = useState<Data | null>(null);
@@ -137,7 +138,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
     if (!data) {
         return (
             <div className="space-y-4">
-                <BackButton onBack={onBack} />
+                <BackButton onBack={onBack} label={backLabel} />
                 {error ? <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>
                     : <p className="flex items-center gap-2 text-sm font-semibold text-zinc-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>}
             </div>
@@ -155,7 +156,7 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
 
     return (
         <div className="mx-auto max-w-4xl space-y-5">
-            <BackButton onBack={onBack} />
+            <BackButton onBack={onBack} label={backLabel} />
 
             {/* Header */}
             <div className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -547,10 +548,10 @@ export default function MeetingReview({ space, meetingId, people: peopleWithVoic
     }
 }
 
-function BackButton({ onBack }: { onBack: () => void }) {
+function BackButton({ onBack, label }: { onBack: () => void; label: string }) {
     return (
         <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm font-bold text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100">
-            <ArrowLeft className="h-4 w-4" /> All meetings
+            <ArrowLeft className="h-4 w-4" /> {label}
         </button>
     );
 }

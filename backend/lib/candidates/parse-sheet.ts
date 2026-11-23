@@ -193,14 +193,43 @@ function cellText(value: unknown): string {
   return String(value).trim();
 }
 
-/** Find the header row (the first of the top 15 rows naming a candidate-name column and 3+ known columns). */
-function findHeader(grid: unknown[][]): { index: number; fields: (SheetField | null)[] } | null {
+/**
+ * A header row: it names a candidate-name column and two more known columns. Shared by the sheet upload and the
+ * connected trackers (trackers.ts), so both read a repeated header row the same way.
+ */
+export function isHeaderLine(line: unknown[] | undefined): boolean {
+  const known = new Set((line ?? []).map(fieldForHeader).filter(Boolean));
+  return known.has("fullName") && known.size >= 3;
+}
+
+/** Find the header row (the first of the top 15 rows that is a header row). */
+function findHeader(grid: unknown[][]): number | null {
   for (let i = 0; i < Math.min(grid.length, 15); i += 1) {
-    const fields = (grid[i] ?? []).map(fieldForHeader);
-    const known = new Set(fields.filter(Boolean));
-    if (known.has("fullName") && known.size >= 3) return { index: i, fields };
+    if (isHeaderLine(grid[i])) return i;
   }
   return null;
+}
+
+/** A header row's column names (blanks named by position) and fields; a field repeated in the row is used once. */
+function columnsOf(line: unknown[], warnings: string[]): { headers: string[]; fields: (SheetField | null)[] } {
+  const headers = line.map((h, i) => cellText(h) || `Column ${i + 1}`);
+  const fields = line.map(fieldForHeader);
+  const inRow = new Set<SheetField>();
+  fields.forEach((field, i) => {
+    if (!field) return;
+    if (inRow.has(field)) {
+      const warning = `Two columns look like "${headers[i]}"; only the first is used.`;
+      if (!warnings.includes(warning)) warnings.push(warning);
+      fields[i] = null;
+    } else inRow.add(field);
+  });
+  return { headers, fields };
+}
+
+/** "561, 588, 1203 and 4 more" */
+function rowList(rowNumbers: number[]): string {
+  const shown = rowNumbers.slice(0, 5).join(", ");
+  return rowNumbers.length > 5 ? `${shown} and ${rowNumbers.length - 5} more` : shown;
 }
 
 /** Parse a workbook. Uses the first worksheet that has a recognisable header row. */
@@ -217,25 +246,26 @@ export function parseSheet(data: Uint8Array, fileName: string): ParsedSheet {
   const warnings: string[] = [];
   for (const name of workbook.SheetNames) {
     const grid = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, raw: true, defval: null, blankrows: true });
-    const header = findHeader(grid);
-    if (!header) continue;
+    const headerIndex = findHeader(grid);
+    if (headerIndex === null) continue;
 
     if (workbook.SheetNames.length > 1) warnings.push(`Read the worksheet "${name}"; other worksheets were ignored.`);
-    const headers = (grid[header.index] ?? []).map((h, i) => cellText(h) || `Column ${i + 1}`);
-    const fields = header.fields;
-    const seen = new Set<SheetField>();
-    fields.forEach((field, i) => {
-      if (!field) return;
-      if (seen.has(field)) {
-        warnings.push(`Two columns look like "${headers[i]}"; only the first is used.`);
-        fields[i] = null;
-      } else seen.add(field);
-    });
+    let { headers, fields } = columnsOf(grid[headerIndex] ?? [], warnings);
+    const seen = new Set<SheetField>(fields.filter((f): f is SheetField => f !== null));
 
+    // A tracker can repeat its header row further down, sometimes with columns added or moved (owner's Standard
+    // Tracker, 2026-11-21). Such a row is not a candidate: the rows below it are read with its columns.
+    const repeatedHeaders: number[] = [];
     const rows: SheetRow[] = [];
-    for (let r = header.index + 1; r < grid.length; r += 1) {
+    for (let r = headerIndex + 1; r < grid.length; r += 1) {
       const line = grid[r] ?? [];
       if (line.every((cell) => cellText(cell) === "")) continue;
+      if (isHeaderLine(line)) {
+        ({ headers, fields } = columnsOf(line, warnings));
+        for (const f of fields) if (f) seen.add(f);
+        repeatedHeaders.push(r + 1);
+        continue;
+      }
       if (rows.length >= MAX_SHEET_ROWS) {
         throw new SheetError(`The sheet has more than ${MAX_SHEET_ROWS.toLocaleString("en-IN")} rows. Split it into smaller files.`);
       }
@@ -251,6 +281,10 @@ export function parseSheet(data: Uint8Array, fileName: string): ParsedSheet {
       rows.push({ rowNumber: r + 1, raw, clean, issues });
     }
     if (!rows.length) throw new SheetError("The sheet has a header row but no candidate rows.");
+    if (repeatedHeaders.length) {
+      const many = repeatedHeaders.length > 1;
+      warnings.push(`${many ? "Rows" : "Row"} ${rowList(repeatedHeaders)} ${many ? "repeat" : "repeats"} the column names; read as column names, not as candidates.`);
+    }
     return { worksheet: name, rows, fields: [...seen], warnings };
   }
   throw new SheetError(

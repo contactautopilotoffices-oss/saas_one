@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Meeting overlays can open inside Recruitment without changing the URL. */
+body:has([data-meeting-surface]) [data-hr-policy-bot] { display: none; }
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ============================================

@@ -97,11 +97,11 @@ const HIDDEN_PATH_PREFIXES = [
     '/terms', '/data-deletion', '/waiting-approval', '/cc-preview', '/design-lab', '/loader-test',
     '/test-loader', '/simple-test',
     // Candidate assessments: the public test link and every /proctor page (runner, preview, report).
-    '/t', '/proctor',
+    '/t', '/proctor', '/guest', '/meet',
 ];
 
 function isHiddenPath(pathname: string | null): boolean {
-    if (!pathname || pathname === '/') return true;
+    if (!pathname || pathname === '/' || /^\/[^/]+\/meetings(?:\/|$)/.test(pathname)) return true;
     return HIDDEN_PATH_PREFIXES.some(prefix =>
         prefix.endsWith('/') ? pathname.startsWith(prefix) : pathname === prefix || pathname.startsWith(`${prefix}/`),
     );
@@ -194,7 +194,7 @@ export default function HrAssistantBot() {
     };
 
     useEffect(() => {
-        if (!user?.id) return;
+        if (!user?.id || isHiddenPath(pathname)) return;
         claimHrChat(user.id);
         let cancelled = false;
         void loadAccess(user.id).then(result => {
@@ -203,7 +203,7 @@ export default function HrAssistantBot() {
         return () => {
             cancelled = true;
         };
-    }, [user?.id]);
+    }, [user?.id, pathname]);
 
     useEffect(() => {
         if (!canUse || open || alreadyGreeted()) return;
@@ -250,7 +250,7 @@ export default function HrAssistantBot() {
     const mood: BotMood = pending ? 'thinking' : hovered || showGreeting ? 'happy' : 'idle';
 
     return (
-        <>
+        <div data-hr-policy-bot>
             <AnimatePresence>
                 {open && (
                     <motion.div
@@ -357,6 +357,6 @@ export default function HrAssistantBot() {
                     </motion.button>
                 </div>
             </div>
-        </>
+        </div>
     );
 }

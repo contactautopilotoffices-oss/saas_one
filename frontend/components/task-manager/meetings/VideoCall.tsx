@@ -36,6 +36,7 @@ interface Info {
     meeting: {
         id: string; title: string; status: string; scheduledFor: string | null; confidential: boolean; hostName: string;
         isHost: boolean; open: boolean; startedAt: string | null; problem: string | null;
+        purpose?: 'interview' | null;
     };
     setup: string[];
     /** Stage 2: the guest link and the people who asked to join through it */
@@ -46,14 +47,21 @@ type Stage = 'lobby' | 'connecting' | 'call' | 'left';
 
 const joinUrl = (id: string) => `/api/task-manager/meetings/${encodeURIComponent(id)}/join`;
 
-export default function VideoCall({ meetingId, onClose, notesWhere }: {
+type VideoCallProps = {
     meetingId: string;
     /** Opened inside another page (Recruitment): the way back to it. */
     onClose?: () => void;
     /** Where the notes will show, when not in the Meeting Assistant. */
     notesWhere?: string;
-}) {
+};
+
+export default function VideoCall(props: VideoCallProps) {
+    return <div data-meeting-surface><VideoCallContent {...props} /></div>;
+}
+
+function VideoCallContent({ meetingId, onClose, notesWhere }: VideoCallProps) {
     const [info, setInfo] = useState<Info | null>(null);
+    const notesDestination = notesWhere ?? (info?.meeting.purpose === 'interview' ? 'in the candidate’s Interviews tab in Recruitment' : 'in the Meeting Assistant');
     const [error, setError] = useState<string | null>(null);
     const [stage, setStage] = useState<Stage>('lobby');
     const [conn, setConn] = useState<Conn | null>(null);
@@ -141,7 +149,7 @@ export default function VideoCall({ meetingId, onClose, notesWhere }: {
                     <div className="space-y-3 text-center">
                         <PhoneOff className="mx-auto h-8 w-8 text-zinc-500" />
                         <h1 className="text-lg font-black">{endedByHost ? 'You ended the call' : 'You left the call'}</h1>
-                        <p className="text-sm text-zinc-400">{notesWhere ? `The notes are made from the recording after the call. You will find them ${notesWhere}.` : 'The notes and the task list are made from the recording after the call. You will find them in the Meeting Assistant.'}</p>
+                        <p className="text-sm text-zinc-400">The notes are made from the recording after the call. You will find them {notesDestination}.</p>
                         <div className="flex flex-wrap justify-center gap-2 pt-2">
                             {!endedByHost && (
                                 <button type="button" onClick={() => { setStage('lobby'); void loadInfo(); }} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-black hover:bg-indigo-500">
@@ -166,7 +174,7 @@ export default function VideoCall({ meetingId, onClose, notesWhere }: {
                         </div>
 
                         {!info.meeting.open ? (
-                            <p className="rounded-xl bg-white/5 px-3 py-3 text-sm font-semibold text-zinc-300">This meeting has ended. Its notes are in the Meeting Assistant.</p>
+                            <p className="rounded-xl bg-white/5 px-3 py-3 text-sm font-semibold text-zinc-300">This meeting has ended. Its notes are {notesDestination}.</p>
                         ) : info.setup.length > 0 ? (
                             <div className="space-y-1 rounded-xl bg-amber-500/10 px-3 py-3 text-sm text-amber-200">
                                 <p className="font-bold">Video calls are not set up yet.</p>

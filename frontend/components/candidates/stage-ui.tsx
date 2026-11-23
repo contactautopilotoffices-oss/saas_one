@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import type { StageDef, StageList, StageTone } from '@/backend/lib/candidates/stage-list';
+import { DEFAULT_REJECTION_REASONS, type StageDef, type StageList, type StageTone } from '@/backend/lib/candidates/stage-list';
 import { api, qs } from './api';
 
 /*
@@ -44,6 +44,28 @@ export function stagesFailed(orgId: string): boolean {
 }
 export function retryStages(orgId: string) {
     void fetchList(orgId);
+}
+
+/** Owner 2026-11-21: the rejection reasons HR set in Configurations (the defaults until loaded). */
+const reasonLists = new Map<string, string[]>();
+const reasonLoads = new Map<string, Promise<void>>();
+export function setRejectionReasons(orgId: string, reasons: string[]) {
+    reasonLists.set(orgId, reasons);
+    changed();
+}
+export function useRejectionReasons(orgId: string): string[] {
+    const [, setTick] = useState(0);
+    useEffect(() => {
+        const l = () => setTick(t => t + 1);
+        listeners.add(l);
+        if (!reasonLists.has(orgId) && !reasonLoads.has(orgId)) {
+            reasonLoads.set(orgId, api<{ reasons: string[] }>(`/api/candidates/rejection-reasons${qs({ orgId })}`).then(res => {
+                if (res.ok) setRejectionReasons(orgId, res.data.reasons);
+            }).finally(() => reasonLoads.delete(orgId)));
+        }
+        return () => { listeners.delete(l); };
+    }, [orgId]);
+    return reasonLists.get(orgId) ?? [...DEFAULT_REJECTION_REASONS];
 }
 
 /** The organisation's stages (null while loading, or when loading failed: see stagesFailed). */

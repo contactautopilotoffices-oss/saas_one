@@ -3,14 +3,14 @@
 import React, { useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, CircleHelp, Star, X } from 'lucide-react';
 import { positionFit, type FitVerdict } from '@/backend/lib/candidates/position-fit';
-import { findStage, nextRoundStage, rejectStageFor, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
+import { findStage, nextRoundStage, reasonNeeded, rejectStageFor, stageGroups, unlistedStage, withReason, type StageDef } from '@/backend/lib/candidates/stage-list';
 import type { CandidateRecord, Position, PositionMember, Stage } from '@/backend/lib/candidates/types';
 import { api } from './api';
 import { formatDate } from './format';
 import { ScheduleInterviewForm } from './InterviewScheduler';
 import { OutreachBody } from './OutreachPanel';
 import { BTN_DANGER_FILLED, REMARK_MAX } from './Remarks';
-import { StageChip, StageOptions, useStages } from './stage-ui';
+import { StageChip, StageOptions, useRejectionReasons, useStages } from './stage-ui';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
 /*
@@ -58,6 +58,8 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
     const { position, member } = ctx;
     const stageList = useStages(orgId);
     const stages = stageList?.stages ?? [];
+    const rejectionReasons = useRejectionReasons(orgId);
+    const [reason, setReason] = useState('');
     const here: StageDef = findStage(stages, member.stage) ?? unlistedStage(member.stage);
     const stageOf = (key: Stage): StageDef => findStage(stages, key) ?? unlistedStage(key);
     const next = nextRoundStage(stages, member.stage);
@@ -68,7 +70,7 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
     if (tab !== seenTab) { setSeenTab(tab); setForm(null); }
     const [busy, setBusy] = useState(false);
     const [remark, setRemark] = useState('');
-    const open = (next: Form) => { setRemark(''); setForm(f => (f && next && f.kind === next.kind && (f.kind !== 'move' || (next.kind === 'move' && f.stage === next.stage)) ? null : next)); };
+    const open = (next: Form) => { setRemark(''); setReason(''); setForm(f => (f && next && f.kind === next.kind && (f.kind !== 'move' || (next.kind === 'move' && f.stage === next.stage)) ? null : next)); };
     const first = record.fullName.split(' ')[0];
     const days = daysSince(member.stageChangedAt);
 
@@ -78,9 +80,12 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
         return true;
     };
     const saveMove = async (stage: Stage) => {
-        const why = remark.trim() || null;
         const target = stageOf(stage);
-        if (target.needsRemark && !why) return;
+        // Owner 2026-11-21 (spec): a rejection takes a reason from HR's list; a move back a round needs a remark.
+        const need = reasonNeeded(stages, member.stage, stage);
+        if (need === 'reject' && !reason) return;
+        const why = need === 'reject' ? withReason(reason, remark) : remark.trim() || null;
+        if ((target.needsRemark || need === 'back') && !why) return;
         setBusy(true);
         const ok = await moveTo(stage, why);
         setBusy(false);
@@ -138,13 +143,22 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
             {form?.kind === 'move' && (
                 <div className={`${WELL} mt-3 px-3 py-3`}>
                     <p className="text-sm font-semibold text-text-primary">Move {first} to {stageOf(form.stage).name}</p>
-                    <label htmlFor="pipe-move-remark" className="mt-2 block text-xs font-medium text-text-secondary">Remark {stageOf(form.stage).needsRemark ? <span className="text-error">*</span> : '(optional)'}</label>
+                    {reasonNeeded(stages, member.stage, form.stage) === 'reject' && (
+                        <>
+                            <label htmlFor="pipe-move-reason" className="mt-2 block text-xs font-medium text-text-secondary">Reason <span className="text-error">*</span></label>
+                            <select id="pipe-move-reason" value={reason} onChange={e => setReason(e.target.value)} className={`${INPUT} mt-1`}>
+                                <option value="">Pick a reason…</option>
+                                {rejectionReasons.map(r => <option key={r} value={r}>{r}</option>)}
+                            </select>
+                        </>
+                    )}
+                    <label htmlFor="pipe-move-remark" className="mt-2 block text-xs font-medium text-text-secondary">{reasonNeeded(stages, member.stage, form.stage) === 'reject' ? 'Note' : 'Remark'} {stageOf(form.stage).needsRemark || reasonNeeded(stages, member.stage, form.stage) === 'back' ? <span className="text-error">*</span> : '(optional)'}</label>
                     <input id="pipe-move-remark" value={remark} onChange={e => setRemark(e.target.value)} maxLength={REMARK_MAX} autoFocus
                         placeholder={stageOf(form.stage).kind === 'rejected' ? 'Why, in one line (kept in the history, not sent)' : 'Why, if it helps the next person'} className={`${INPUT} mt-1`}
                         onKeyDown={e => { if (e.key === 'Enter') void saveMove(form.stage); }} />
                     <div className="mt-2.5 flex justify-end gap-x-2">
                         <button type="button" onClick={() => setForm(null)} disabled={busy} className={BTN_GHOST}>Cancel</button>
-                        <button type="button" onClick={() => void saveMove(form.stage)} disabled={busy || (stageOf(form.stage).needsRemark && !remark.trim())} className={stageOf(form.stage).kind === 'rejected' ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}Move to {stageOf(form.stage).name}</button>
+                        <button type="button" onClick={() => void saveMove(form.stage)} disabled={busy || ((stageOf(form.stage).needsRemark || reasonNeeded(stages, member.stage, form.stage) === 'back') && !remark.trim()) || (reasonNeeded(stages, member.stage, form.stage) === 'reject' && !reason)} className={stageOf(form.stage).kind === 'rejected' ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}Move to {stageOf(form.stage).name}</button>
                     </div>
                 </div>
             )}

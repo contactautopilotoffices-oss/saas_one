@@ -4,8 +4,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { CalendarClock, Check, Copy, MessageCircle, Mic, Search, Video, X } from 'lucide-react';
 import { boardColumns, columnIndexOf, findStage, stageGroups, type StageDef } from '@/backend/lib/candidates/stage-list';
-import { INTERVIEW_MODE_LABELS, INTERVIEW_MODES, type CandidateRecord, type Interview, type InterviewMode, type InterviewSend, type Position, type PositionMember } from '@/backend/lib/candidates/types';
+import { INTERVIEW_MODE_LABELS, INTERVIEW_MODES, INTERVIEW_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type InterviewMode, type InterviewSend, type Position, type PositionMember } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
+import { CandidateOffers } from './OffersView';
 import { REMARK_MAX } from './Remarks';
 import { StageOptions } from './stage-ui';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
@@ -13,6 +14,7 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, use
 // The Meeting Assistant's call and recorder, loaded only when opened (they bring the video library with them).
 const VideoCall = dynamic(() => import('@/frontend/components/task-manager/meetings/VideoCall'), { ssr: false });
 const MeetingRecorder = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingRecorder'), { ssr: false });
+const MeetingReview = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingReview'), { ssr: false });
 
 /*
  * Schedule interview (owner 2026-11-19; HRMS meeting: "generate meeting links directly within the platform", "both
@@ -253,14 +255,14 @@ const STATUS_WORDS: Record<string, string> = {
 
 /** Over the Recruitment page: the call or the recorder, with nothing else around it. */
 function Overlay({ dark, children }: { dark: boolean; children: React.ReactNode }) {
-    return <div role="dialog" aria-modal="true" className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-zinc-950' : 'bg-surface px-4 py-6 sm:py-10'}`}>{children}</div>;
+    return <div data-meeting-surface role="dialog" aria-label="Recruitment interview" aria-modal="true" className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-zinc-950' : 'bg-surface px-4 py-6 sm:py-10'}`}>{children}</div>;
 }
 
 /** The candidate's Interviews tab: each interview, Join call / Record interview, its link while it is ahead, its notes once written. */
 export function InterviewsList({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
     const { notify, reportError } = useUi();
     const [reload, setReload] = useState(0);
-    const [opened, setOpened] = useState<null | { kind: 'call'; meetingId: string } | { kind: 'record'; meetingId: string; title: string; people: { id: string; name: string; department: string | null }[] }>(null);
+    const [opened, setOpened] = useState<null | { kind: 'call' | 'notes'; meetingId: string } | { kind: 'record'; meetingId: string; title: string; people: { id: string; name: string; department: string | null }[] }>(null);
     const [starting, setStarting] = useState<string | null>(null);
     const close = () => { setOpened(null); setReload(n => n + 1); };
     const record_ = async (i: Interview) => {
@@ -287,6 +289,16 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
         return () => ctrl.abort();
     }, [orgId, record.candidateId, nonce, reload, reportError]);
     const list = state?.id === record.candidateId ? state.list : null;
+    const processing = list?.some(i => i.meeting && ['live', 'uploaded', 'transcribing', 'identifying', 'extracting'].includes(i.meeting.status)) ?? false;
+    useEffect(() => {
+        if (!processing || opened) return;
+        const timer = window.setInterval(() => setReload(n => n + 1), 10_000);
+        return () => window.clearInterval(timer);
+    }, [processing, opened]);
+    if (opened?.kind === 'notes') {
+        return <Overlay dark={false}><MeetingReview space="hr" meetingId={opened.meetingId} onBack={close} backLabel="Back to candidate"
+            onContinueRecording={(meetingId, title) => setOpened({ kind: 'record', meetingId, title, people: [] })} /></Overlay>;
+    }
     if (opened?.kind === 'call') {
         return <Overlay dark><VideoCall meetingId={opened.meetingId} onClose={close} notesWhere="in the candidate’s Interviews tab in Recruitment" /></Overlay>;
     }
@@ -314,6 +326,9 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
                         </div>
                         {(i.interviewers || i.byName) && <p className="mt-0.5 text-xs text-text-secondary">{i.interviewers ? `With ${i.interviewers}` : ''}{i.interviewers && i.byName ? ' · ' : ''}{i.byName ? `scheduled by ${i.byName}` : ''}</p>}
                         {i.note && <p className="mt-1 text-xs italic text-text-secondary">“{i.note}”</p>}
+                        {i.meetingId && i.meeting && !['scheduled', 'live', 'recording', 'deleted', 'discarded'].includes(i.meeting.status) && (
+                            <button type="button" className={`${BTN_SECONDARY} mt-2`} onClick={() => setOpened({ kind: 'notes', meetingId: i.meetingId! })}>Full notes and transcript</button>
+                        )}
                         {i.mode === 'online' && i.meetingId && ahead && (!i.meeting || i.meeting.status === 'scheduled' || i.meeting.status === 'live') && (
                             <div className="mt-2.5 space-y-2">
                                 <button type="button" onClick={() => setOpened({ kind: 'call', meetingId: i.meetingId! })} className={BTN_PRIMARY}><Video className="h-4 w-4" />{i.meeting?.status === 'live' ? 'Join the call now' : 'Join call'}</button>
@@ -340,9 +355,73 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
                                 )}
                             </div>
                         )}
+                        <InterviewFollowUp orgId={orgId} interview={i} onChanged={() => setReload(n => n + 1)} />
                     </li>
                 );
             })}
+            <li><CandidateOffers orgId={orgId} record={record} interviews={list} /></li>
         </ul>
+    );
+}
+
+/**
+ * Owner 2026-11-21 (spec Stage 6): the interview's status (done, no-show, cancelled), moving it to a new time (the
+ * candidate and the panel are told), and the panel's scorecards (HR sees them all; each interviewer fills theirs from
+ * the link in their invite).
+ */
+function InterviewFollowUp({ orgId, interview: i, onChanged }: { orgId: string; interview: Interview; onChanged: () => void }) {
+    const { notify } = useUi();
+    const [busy, setBusy] = useState(false);
+    const [moving, setMoving] = useState(false);
+    const [at, setAt] = useState(i.at);
+    const [reason, setReason] = useState('');
+    if (!i.followUpId) return null;
+    const status = i.status ?? 'scheduled';
+    const patch = async (json: Record<string, unknown>, done: string) => {
+        setBusy(true);
+        const res = await api<{ told?: number }>('/api/candidates/interviews/follow-up', { method: 'PATCH', json: { orgId, id: i.followUpId, ...json } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify(`${done}${res.data.told ? ` · ${res.data.told} told by email` : ''}`, 'success');
+        setMoving(false); setReason('');
+        onChanged();
+    };
+    const cards = i.scorecards ?? [];
+    const submitted = cards.filter(c => c.submittedAt);
+    return (
+        <div className="mt-2.5 border-t border-border-subtle pt-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'done' ? 'bg-emerald-50 text-emerald-800' : status === 'scheduled' ? 'bg-sky-50 text-sky-800' : 'bg-slate-100 text-slate-700'}`}>{INTERVIEW_STATUS_LABELS[status]}</span>
+                {i.statusReason && <span className="text-xs text-text-secondary">“{i.statusReason}”</span>}
+                {status === 'scheduled' && (
+                    <span className="ml-auto flex flex-wrap gap-1">
+                        <button type="button" onClick={() => void patch({ status: 'done' }, 'Marked done')} disabled={busy} className={`${BTN_GHOST} h-8`}><Check className="h-4 w-4" />Done</button>
+                        <button type="button" onClick={() => void patch({ status: 'no_show' }, 'Marked no-show')} disabled={busy} className={`${BTN_GHOST} h-8`}>No-show</button>
+                        <button type="button" onClick={() => setMoving(m => !m)} disabled={busy} className={`${BTN_GHOST} h-8`}><CalendarClock className="h-4 w-4" />Reschedule</button>
+                        <button type="button" onClick={() => void patch({ status: 'cancelled', reason: reason || undefined }, 'Cancelled')} disabled={busy} className={`${BTN_GHOST} h-8 text-error`}><X className="h-4 w-4" />Cancel</button>
+                    </span>
+                )}
+            </div>
+            {moving && (
+                <div className={`${WELL} mt-2 flex flex-wrap items-end gap-2 px-3 py-2.5`}>
+                    <label className="text-xs text-text-secondary">New time (IST)<input type="datetime-local" value={at} onChange={e => setAt(e.target.value)} className={`${INPUT} mt-1 h-9`} /></label>
+                    <label className="min-w-[160px] flex-1 text-xs text-text-secondary">Why (optional)<input value={reason} onChange={e => setReason(e.target.value)} maxLength={300} className={`${INPUT} mt-1 h-9`} /></label>
+                    <button type="button" onClick={() => void patch({ reschedule: at, reason: reason || undefined }, 'Moved')} disabled={busy || !at} className={BTN_PRIMARY}>{busy && <Spinner />}Move and tell everyone</button>
+                </div>
+            )}
+            {cards.length > 0 && (
+                <div className="mt-2">
+                    <p className={LABEL}>Scorecards · {submitted.length} of {cards.length} in</p>
+                    <ul className="mt-1 space-y-1">
+                        {cards.map(c => (
+                            <li key={c.id} className="text-xs text-text-primary">
+                                <span className="font-semibold">{c.panelName ?? 'Interviewer'}</span>{' · '}
+                                {c.submittedAt ? <>{c.overall}/5 · {c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}{Object.keys(c.ratings).length > 0 && <span className="text-text-secondary"> ({Object.entries(c.ratings).map(([k, v]) => `${k} ${v}`).join(', ')})</span>}{c.comments && <span className="block italic text-text-secondary">“{c.comments}”</span>}</> : <span className="text-text-tertiary">waiting (the link is in their invite; reminders go at 24 h and 48 h)</span>}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
     );
 }

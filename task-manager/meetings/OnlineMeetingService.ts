@@ -33,6 +33,7 @@ interface OnlineRow {
     id: string; title: string; created_by: string; attendee_ids: string[]; extra_names: string[]; confidential: boolean; status: string;
     workspace?: MeetingSpace | null; kind?: string | null; scheduled_for?: string | null; online?: OnlineState | null;
     lease_until: string | null;
+    purpose?: string | null;
 }
 
 /** A short lock on the row while the call's state is changed (two people joining at once must not lose a write). */
@@ -114,6 +115,7 @@ export class OnlineMeetingService {
                 id: m.id, title: m.title, status: m.status, scheduledFor: m.scheduled_for ?? null, confidential: m.confidential,
                 hostName: (host?.full_name as string | undefined) || 'Someone', isHost: m.created_by === userId,
                 open: this.isOpen(m), startedAt: m.online?.startedAt ?? null, problem: m.online?.problem ?? null,
+                purpose: m.purpose === 'interview' ? 'interview' : null,
             },
             setup: onlineSetupGaps(),
             // Stage 2: the guest link (if the host turned it on) and who asked to join through it

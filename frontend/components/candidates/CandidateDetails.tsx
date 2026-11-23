@@ -10,6 +10,7 @@ import {
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CallsTab from './CallsTab';
+import AssessmentSender from './AssessmentSender';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { InterviewsList } from './InterviewScheduler';
 import { OutreachSection } from './OutreachPanel';
@@ -33,7 +34,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
 type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls';
 /** The inline form open under the header, if any. */
-type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach';
+type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach' | 'assessment';
 /** The mockup's small header buttons (36 px, 13 px text). */
 const BTN_SM = 'h-9 rounded-xl px-3 text-[13px]';
 
@@ -64,7 +65,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
     // The lists hand over a record without the resume fields or the blacklist entry: fetch the full record once per opening.
     const [full, setFull] = useState<{ id: string; record: CandidateRecord } | null>(null);
-    const needsFull = open && (record.extras === undefined || record.blacklist === undefined) && full?.id !== record.id;
+    const needsFull = open && (record.extras === undefined || record.blacklist === undefined || record.trackerValues === undefined) && full?.id !== record.id;
     useEffect(() => {
         if (!needsFull) return;
         const ctrl = new AbortController();
@@ -223,7 +224,10 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 <button type="button" onClick={() => { goTo('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Add remark</button>
                 <button type="button" onClick={() => { goTo('resume'); setPicking(true); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Attach a resume</button>
                 {!r.blacklisted && (
+                    <>
                     <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'outreach' ? null : 'outreach'); }} aria-expanded={panel === 'outreach'} className={`${BTN_SECONDARY} ${BTN_SM}`} title="Tell the candidate on WhatsApp">Send update</button>
+                    <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'assessment' ? null : 'assessment'); }} aria-expanded={panel === 'assessment'} className={`${BTN_SECONDARY} ${BTN_SM}`}>Send assessment</button>
+                    </>
                 )}
                 {r.blacklist !== undefined && !r.blacklisted && (
                     <button type="button" onClick={toggleBlacklist} aria-expanded={blacklistOpen} className="ml-auto inline-flex h-9 items-center rounded-xl px-3 text-[13px] font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
@@ -282,6 +286,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 )}
 
                 {/* Send update on WhatsApp (owner 2026-11-16) */}
+                {panel === 'assessment' && !r.blacklisted && <AssessmentSender key={r.id} orgId={orgId} record={r} onClose={() => setPanel(null)} onSent={() => { setHistoryNonce(n => n + 1); onChanged?.(); }} />}
                 {panel === 'outreach' && !r.blacklisted && (
                     <OutreachSection orgId={orgId} record={r} onClose={() => setPanel(null)} onSent={() => { setPanel(null); setHistoryNonce(n => n + 1); onChanged?.(); }} />
                 )}
@@ -333,6 +338,11 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                                 </dl>
                             </section>
                         </div>
+                        {r.trackerValues && <details className={`${WELL} p-4`}>
+                            <summary className="cursor-pointer text-sm font-semibold">Tracker values</summary>
+                            <p className="mt-2 text-xs text-text-secondary">Saved at the last import of this record, including extra columns. Changes here in HRMS do not change these source values.</p>
+                            <dl className="mt-3 grid grid-cols-1 gap-3 @2xl:grid-cols-2">{Object.entries(r.trackerValues).map(([label, value]) => <Row key={label} label={label} value={value} />)}</dl>
+                        </details>}
                         <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5 @2xl:grid-cols-3 @5xl:grid-cols-4">
                             <Row label="Current designation" value={r.currentDesignation && <>{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</>} />
                             <Row label="Current company" value={r.currentOrganization && <>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</>} />

@@ -1,5 +1,6 @@
 'use client';
 
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useParams } from 'next/navigation';
@@ -82,6 +83,8 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
                 {canSeePettyCash && <>
                     <Link href={`/${orgId}/petty-cash`} onClick={() => setMobileOpen(false)} aria-current={pettyCashWorkspace ? 'page' : undefined} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold ${pettyCashWorkspace ? 'bg-primary text-white' : 'text-text-secondary hover:bg-surface-elevated'}`}><Wallet className="w-4 h-4" />Petty Cash</Link>
                 </>}
+                {/* Owner 2026-11-21: shown only to the people HR Configs picks */}
+                <HiringRequestsNavLink onNavigate={() => setMobileOpen(false)} compact />
             </nav>
 
             <div className="px-3 py-4 border-t border-border space-y-1 shrink-0">

@@ -20,7 +20,7 @@ import { jdLinksFor } from "./jd-library";
 import type { SearchFilters } from "./filters";
 import { PreferSchema, type Preferences } from "./query-spec";
 import { CandidateActionError, getRecordRows, markResumes, toRecord } from "./records";
-import { findStage, firstStage, stageName, type StageDef } from "./stage-list";
+import { findStage, firstStage, reasonNeeded, stageName, type StageDef } from "./stage-list";
 import { loadStages } from "./stages";
 import {
   EMPLOYMENT_TYPES, POSITION_PRIORITIES,
@@ -373,6 +373,9 @@ export async function moveMember(client: SupabaseClient, orgId: string, by: Acto
   const before = await getMember(client, orgId, positionId, memberId);
   if (target.hidden && before.stage !== stage) throw new CandidateActionError(400, `"${target.name}" is hidden in Configurations, so nobody can be moved there.`);
   if (target.needsRemark && !remark && before.stage !== stage) throw new CandidateActionError(400, `Say what "${target.name}" means for this candidate: a remark is required.`);
+  // Owner 2026-11-21 (spec): a reason to reject, and to move someone back to an earlier round.
+  const why = reasonNeeded(stages, before.stage as Stage, stage);
+  if (why && !remark) throw new CandidateActionError(400, why === "reject" ? `Pick the reason for moving to "${target.name}".` : `Moving back to "${target.name}" needs a reason.`);
   const now = new Date().toISOString();
   const changed = before.stage !== stage;
   const { data, error } = await client

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Download, FileText, Plus, X } from 'lucide-react';
-import { boardColumns, findStage, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
+import { boardColumns, findStage, reasonNeeded, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CandidateDetails from './CandidateDetails';
@@ -13,7 +13,7 @@ import type { PipelineContext } from './PipelineContext';
 import PositionForm, { type PositionSeed } from './PositionForm';
 import RecordForm from './RecordForm';
 import { RemarkDialog } from './Remarks';
-import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useStages } from './stage-ui';
+import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useRejectionReasons, useStages } from './stage-ui';
 import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
@@ -139,6 +139,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     // Owner 2026-11-16: right after a drop on a stage marked for WhatsApp (Configurations), offer to tell the candidate.
     const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; stageName: string; remark: string | null; open: boolean } | null>(null);
     const stageList = useStages(orgId);
+    const rejectionReasons = useRejectionReasons(orgId);
     // Owner 2026-11-17: the panel knows which person of the pipeline it shows and the people it walks through (the
     // stage the card was opened in, or the whole table), so the arrows step through them; `record` is kept for when
     // the person leaves the position while the panel is open.
@@ -186,7 +187,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const move = async (member: PositionMember, stageKey: Stage, remark: string | null = null) => {
         const stage = findStage(stageList?.stages ?? [], stageKey);
         if (!stage || stageKey === member.stage || !position) return;
-        if (stage.needsRemark && !remark) { setPendingMove({ member, stage }); return; }
+        // Owner 2026-11-21 (spec): a reason to reject or to move back a round, as for a stage that needs a remark.
+        if ((stage.needsRemark || reasonNeeded(stageList?.stages ?? [], member.stage, stageKey)) && !remark) { setPendingMove({ member, stage }); return; }
         setBusy(true);
         const res = await api<{ member: PositionMember }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
         setBusy(false);
@@ -271,12 +273,14 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         },
     } : null;
 
+    const pendingWhy = pendingMove ? reasonNeeded(stageList?.stages ?? [], pendingMove.member.stage, pendingMove.stage.key) : null;
     return (
         <div className="space-y-4">
             <RemarkDialog
                 open={!!pendingMove} required busy={busy}
                 title={pendingMove ? `${pendingMove.member.record?.fullName ?? 'Candidate'}: ${pendingMove.stage.name}` : ''}
-                description={pendingMove ? `"${pendingMove.stage.name}" needs a remark, so the next person knows what it means.` : undefined}
+                description={pendingMove ? (pendingWhy === 'reject' ? 'Pick the reason: it is kept in the history and counted in the reports. Nothing is sent to the candidate.' : pendingWhy === 'back' ? `Moving back to "${pendingMove.stage.name}" needs a reason.` : `"${pendingMove.stage.name}" needs a remark, so the next person knows what it means.`) : undefined}
+                reasons={pendingWhy === 'reject' ? rejectionReasons : undefined}
                 onClose={() => { if (!busy) setPendingMove(null); }}
                 onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage.key, remark); }}
             />
