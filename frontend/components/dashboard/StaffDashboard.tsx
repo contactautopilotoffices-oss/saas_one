@@ -424,26 +424,32 @@ const StaffDashboard = () => {
 
     const handleUpdateTicket = async () => {
         if (!editingTicket || !editTitle.trim()) return;
-        setIsUpdating(true);
+        const targetId = editingTicket.id;
+        const newTitle = editTitle;
+        const newDesc = editDescription;
+
+        // Instant optimistic update
+        setIncomingTickets(prev => prev.map(t => t.id === targetId ? { ...t, title: newTitle, description: newDesc } : t));
+        setEditingTicket(null);
+
         try {
-            const res = await fetch(`/api/tickets/${editingTicket.id}`, {
+            const res = await fetch(`/api/tickets/${targetId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: editTitle,
-                    description: editDescription
+                    title: newTitle,
+                    description: newDesc
                 })
             });
 
-            if (res.ok) {
-                setEditingTicket(null);
-                fetchTickets(); // Refresh list
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
-                alert(data.error || 'Failed to update ticket');
+                console.error(data.error || 'Failed to update ticket');
+                fetchTickets();
             }
-        } finally {
-            setIsUpdating(false);
+        } catch (error) {
+            console.error('Update ticket error:', error);
+            fetchTickets();
         }
     };
 
@@ -451,20 +457,28 @@ const StaffDashboard = () => {
         e.stopPropagation();
         if (!window.confirm('Are you sure you want to deactivate this request?')) return;
 
+        // Instant optimistic delete
+        setIncomingTickets(prev => prev.filter(t => t.id !== ticketId));
+        setTicketStats(prev => ({
+            ...prev,
+            total: Math.max(0, prev.total - 1),
+            open: Math.max(0, prev.open - 1)
+        }));
+
         try {
             const res = await fetch(`/api/tickets/${ticketId}`, {
                 method: 'DELETE'
             });
 
-            if (res.ok) {
-                fetchTickets();
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
                 alert(data.error || 'Failed to delete ticket');
+                fetchTickets();
             }
         } catch (error) {
             console.error('Delete ticket error:', error);
             alert('An error occurred while deleting the ticket');
+            fetchTickets();
         }
     };
 

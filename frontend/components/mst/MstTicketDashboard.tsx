@@ -115,7 +115,18 @@ export default function MstTicketDashboard({
 
     // Ticket action handlers
     const handleTicketAction = async (action: string, ticketId: string, reason?: string) => {
-        setActionLoading(true);
+        // Instant optimistic UI transition
+        if (action === 'start_work' || action === 'resume_work') {
+            setActiveTicket(prev => prev ? { ...prev, status: 'in_progress' } : null);
+            setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'in_progress' } : t));
+        } else if (action === 'pause_work') {
+            setActiveTicket(prev => prev ? { ...prev, status: 'paused', work_pause_reason: reason } : null);
+            setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'paused' } : t));
+        } else if (action === 'complete') {
+            setActiveTicket(null);
+            setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'completed' } : t));
+        }
+
         try {
             const body: Record<string, string> = { action };
             if (reason) body.work_pause_reason = reason;
@@ -131,12 +142,13 @@ export default function MstTicketDashboard({
                 throw new Error(error.error || 'Action failed');
             }
 
-            // Refresh data after action
-            await fetchMyWork();
-            await fetchAllTickets();
+            // Sync with server in background
+            fetchMyWork();
+            fetchAllTickets();
         } catch (error) {
             console.error('Action error:', error);
-            // Could add toast notification here
+            fetchMyWork();
+            fetchAllTickets();
         } finally {
             setActionLoading(false);
         }
