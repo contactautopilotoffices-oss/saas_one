@@ -99,6 +99,15 @@ const TAB_PRELOADS = [
 // Types
 type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'meeting_assistant' | 'petty-cash';
 
+const VALID_PROPERTY_TABS: readonly Tab[] = [
+    'overview', 'requests', 'guest_experience', 'reports', 'users', 'visitors',
+    'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics',
+    'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock',
+    'checklist', 'escalation', 'ppm', 'procurement', 'roster', 'water',
+    'water_analytics', 'ai_tickets', 'grievance', 'assets', 'tasks',
+    'petty-cash', 'meeting_assistant'
+] as const;
+
 interface Property {
     id: string;
     name: string;
@@ -355,10 +364,15 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const propertyId = activePropId || (params?.propertyId as string) || '';
 
     // State
-    const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    const activeTabFromSearch = searchParams?.get('tab');
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (activeTabFromSearch && VALID_PROPERTY_TABS.includes(activeTabFromSearch as Tab)) {
+            return activeTabFromSearch as Tab;
+        }
+        return 'overview';
+    });
     // Reports tab: the property-wide report (default) or the ticket import history.
     const [reportsView, setReportsView] = useState<'overview' | 'imports'>('overview');
-    const activeTabFromSearch = searchParams?.get('tab');
     const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
@@ -459,14 +473,19 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
         fetchedPropertyId.current = null;
 
         const currentUrl = new URL(window.location.href);
+        const currentTab = openTab || currentUrl.searchParams.get('tab');
+        if (currentTab) {
+            currentUrl.searchParams.set('tab', currentTab);
+        }
+
         if (currentUrl.pathname.includes('/property/')) {
             const newPath = currentUrl.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
-            router.push(newPath + currentUrl.search);
+            router.push(`${newPath}?${currentUrl.searchParams.toString()}`);
         } else {
             currentUrl.searchParams.set('propertyId', id);
-            router.push(currentUrl.pathname + '?' + currentUrl.searchParams.toString());
+            router.push(`${currentUrl.pathname}?${currentUrl.searchParams.toString()}`);
         }
-    }, [orgProperties, membership, router]);
+    }, [orgProperties, membership, router, openTab]);
 
     useEffect(() => {
         if (propertyId && fetchedPropertyId.current !== propertyId) {
@@ -489,8 +508,12 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks', ...(isOpsSuperAdmin ? ['meeting_assistant'] : [])].includes(tab)) {
-            setActiveTab(tab as Tab);
+        if (tab && VALID_PROPERTY_TABS.includes(tab as Tab)) {
+            if (tab === 'meeting_assistant' && !isOpsSuperAdmin) {
+                // ops only
+            } else {
+                setActiveTab(tab as Tab);
+            }
         }
         const filter = searchParams.get('filter');
         if (filter) {

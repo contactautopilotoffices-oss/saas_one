@@ -887,6 +887,9 @@ const OrgAdminDashboard = () => {
         } else {
             params.delete('propertyId');
         }
+        if (activeTab) {
+            params.set('tab', activeTab);
+        }
         
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
