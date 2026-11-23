@@ -5,9 +5,10 @@ import { CircleAlert, CircleCheck, ExternalLink, Link2, Pause, Pencil, Play, Plu
 import { stageGroups } from '@/backend/lib/candidates/stage-list';
 import {
     TRACKER_FIELD_LABELS, TRACKER_FIELDS, TRACKER_SYNC_EVERY, TRACKER_SYNC_LABELS,
-    type TrackerConnection, type TrackerField, type TrackerPreview, type TrackerSyncEvery, type TrackerSyncSummary,
+    type TrackerConnection, type TrackerColumnTarget, type TrackerField, type TrackerPreview, type TrackerSyncEvery, type TrackerSyncSummary,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
+import TrackerImportReview from './TrackerImportReview';
 import { formatDateTime } from './format';
 import { StageOptions, useStages } from './stage-ui';
 import { BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
@@ -36,12 +37,13 @@ function summaryLine(s: TrackerSyncSummary | null): string {
 }
 
 export default function TrackerConnections({ orgId, onDataChanged }: { orgId: string; onDataChanged: () => void }) {
-    const { notify, reportError } = useUi();
+    const { notify } = useUi();
     const [trackers, setTrackers] = useState<TrackerConnection[] | null>(null);
     const [loadError, setLoadError] = useState('');
     const [nonce, setNonce] = useState(0);
     const [form, setForm] = useState<{ open: boolean; tracker: TrackerConnection | null }>({ open: false, tracker: null });
     const [busy, setBusy] = useState<string | null>(null);
+    const [review, setReview] = useState<TrackerConnection | null>(null);
     const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
 
     useEffect(() => {
@@ -56,15 +58,6 @@ export default function TrackerConnections({ orgId, onDataChanged }: { orgId: st
     }, [orgId, nonce]);
     const refresh = () => setNonce(n => n + 1);
 
-    const sync = async (t: TrackerConnection) => {
-        setBusy(t.id);
-        const res = await api<{ summary: TrackerSyncSummary }>(`/api/candidates/trackers/${encodeURIComponent(t.id)}/sync`, { json: { orgId } });
-        setBusy(null);
-        refresh();
-        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
-        notify(`${t.name}: ${summaryLine(res.data.summary)}`, 'success');
-        if (res.data.summary.rowsChanged) onDataChanged();
-    };
     const setActive = async (t: TrackerConnection, active: boolean) => {
         setBusy(t.id);
         const res = await api(`/api/candidates/trackers/${encodeURIComponent(t.id)}`, { method: 'PATCH', json: { orgId, active } });
@@ -84,8 +77,9 @@ export default function TrackerConnections({ orgId, onDataChanged }: { orgId: st
 
     return (
         <section className="space-y-3" aria-labelledby="trackers-heading">
+            {review && <TrackerImportReview orgId={orgId} tracker={review} onClose={() => setReview(null)} onImported={() => { refresh(); onDataChanged(); }} />}
             <TrackerForm orgId={orgId} open={form.open} tracker={form.tracker} onClose={() => setForm(f => ({ ...f, open: false }))}
-                onSaved={t => { setForm({ open: false, tracker: null }); refresh(); notify(`${t.name} saved. Press Sync now to bring the rows in, or wait for the next sync.`, 'success'); }} />
+                onSaved={t => { setForm({ open: false, tracker: null }); refresh(); setReview(t); }} />
             <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                 <div>
                     <h2 id="trackers-heading" className="font-display text-base font-semibold text-text-primary">Connected trackers</h2>
@@ -131,7 +125,7 @@ export default function TrackerConnections({ orgId, onDataChanged }: { orgId: st
                                         </>
                                     ) : (
                                         <>
-                                            <button type="button" onClick={() => void sync(t)} disabled={busy === t.id || t.syncing} className={BTN_PRIMARY}>{busy === t.id ? <Spinner /> : <RefreshCw className="h-4 w-4" />}Sync now</button>
+                                            <button type="button" onClick={() => setReview(t)} disabled={busy === t.id || t.syncing} className={BTN_PRIMARY}>{busy === t.id ? <Spinner /> : <RefreshCw className="h-4 w-4" />}Preview / sync</button>
                                             <button type="button" onClick={() => setForm({ open: true, tracker: t })} disabled={busy === t.id} className={BTN_GHOST} title="Edit the connection"><Pencil className="h-4 w-4" />Edit</button>
                                             <button type="button" onClick={() => void setActive(t, !t.active)} disabled={busy === t.id} className={BTN_GHOST} title={t.active ? 'Stop the automatic sync' : 'Start the automatic sync again'}>{t.active ? <><Pause className="h-4 w-4" />Pause</> : <><Play className="h-4 w-4" />Resume</>}</button>
                                             <button type="button" onClick={() => setConfirmDisconnect(t.id)} disabled={busy === t.id} className={BTN_GHOST} title="Disconnect"><Unlink className="h-4 w-4" /></button>
@@ -156,10 +150,10 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
     const [reading, setReading] = useState(false);
     const [readError, setReadError] = useState('');
     const [name, setName] = useState('');
-    const [columnMap, setColumnMap] = useState<Record<string, TrackerField | null>>({});
+    const [columnMap, setColumnMap] = useState<Record<string, TrackerColumnTarget>>({});
     const [statusColumn, setStatusColumn] = useState('');
     const [statusMap, setStatusMap] = useState<Record<string, string>>({});
-    const [syncEvery, setSyncEvery] = useState<TrackerSyncEvery>('hourly');
+    const [syncEvery, setSyncEvery] = useState<TrackerSyncEvery>('manual');
     const [saving, setSaving] = useState(false);
     const [seenOpen, setSeenOpen] = useState(false);
 
@@ -173,8 +167,8 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
         setPreview(p);
         // Editing: keep the saved matching where the columns still exist; else the app's guesses.
         const saved = keep && keep.tabName === p.tab ? keep : null;
-        setColumnMap(Object.fromEntries(p.headers.map(h => [h, saved ? (saved.columnMap[h] ?? null) : p.guess[h] ?? null])));
-        const col = saved ? saved.statusColumn ?? '' : p.statusColumnGuess ?? '';
+        setColumnMap(Object.fromEntries(p.headers.flatMap(h => saved && Object.hasOwn(saved.columnMap, h) ? [[h, saved.columnMap[h]]] : p.guess[h] ? [[h, p.guess[h]]] : [])));
+        const col = saved ? saved.statusColumn ?? '' : '';
         setStatusColumn(col);
         setStatusMap(saved ? { ...saved.statusMap } : guessStatuses(p.distinct[col] ?? []));
         setName(n => n || (keep ? keep.name : p.tab));
@@ -193,7 +187,7 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
         setSeenOpen(open);
         if (open) {
             setPreview(null); setReadError(''); setSaving(false);
-            setUrl(tracker?.sourceUrl ?? ''); setName(tracker?.name ?? ''); setSyncEvery(tracker?.syncEvery ?? 'hourly');
+            setUrl(tracker?.sourceUrl ?? ''); setName(tracker?.name ?? ''); setSyncEvery(tracker?.syncEvery ?? 'manual');
             setColumnMap(tracker?.columnMap ?? {}); setStatusColumn(tracker?.statusColumn ?? ''); setStatusMap(tracker?.statusMap ?? {});
             if (tracker) void read(tracker.sourceUrl, tracker.tabName, tracker.headerRow, tracker);
         }
@@ -201,7 +195,8 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
 
     const fields = Object.values(columnMap).filter(Boolean) as TrackerField[];
     const statusValues = statusColumn && preview ? preview.distinct[statusColumn] ?? [] : [];
-    const canSave = !!preview && !!name.trim() && fields.includes('fullName') && !saving;
+    const unmatched = preview?.headers.filter(h => !Object.hasOwn(columnMap, h)) ?? [];
+    const canSave = !!preview && !unmatched.length && !!name.trim() && fields.includes('fullName') && !saving && !reading;
 
     const save = async () => {
         if (!preview || !canSave) return;
@@ -221,13 +216,13 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
             description={<>Paste the share link of a Google Sheet or an Excel file (OneDrive or SharePoint). Share it as <span className="font-semibold">“Anyone with the link can view”</span> first. Nothing is ever written to your sheet.</>}
             footer={<>
                 <button type="button" onClick={onClose} disabled={saving} className={BTN_GHOST}>Cancel</button>
-                <button type="button" onClick={() => void save()} disabled={!canSave} className={BTN_PRIMARY} title={!fields.includes('fullName') ? 'Match a column to Candidate name' : undefined}>{saving && <Spinner />}{tracker ? 'Save' : 'Connect'}</button>
+                <button type="button" onClick={() => void save()} disabled={!canSave} className={BTN_PRIMARY} title={!fields.includes('fullName') ? 'Match a column to Candidate name' : undefined}>{saving && <Spinner />}{tracker ? 'Save and preview' : 'Connect and preview'}</button>
             </>}>
             <div className="space-y-5">
                 <div>
                     <label htmlFor="tracker-url" className={LABEL}>Share link</label>
                     <div className="mt-1.5 flex flex-wrap gap-2">
-                        <input id="tracker-url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" className={`${INPUT} min-w-[240px] flex-1`} />
+                        <input id="tracker-url" value={url} onChange={e => { setUrl(e.target.value); setPreview(null); }} placeholder="https://docs.google.com/spreadsheets/d/…" className={`${INPUT} min-w-[240px] flex-1`} />
                         <button type="button" onClick={() => void read(url.trim(), undefined, undefined, null)} disabled={!url.trim() || reading} className={BTN_SECONDARY}>{reading ? <Spinner /> : <RefreshCw className="h-4 w-4" />}{preview ? 'Read again' : 'Read the sheet'}</button>
                     </div>
                     {readError && <p role="alert" className="mt-1.5 text-sm text-error">{readError}</p>}
@@ -256,9 +251,12 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
                         </section>
                         <p className="text-xs text-text-secondary">{preview.rowCount.toLocaleString('en-IN')} rows in this tab.{preview.blocks > 1 ? ` The column names start again ${preview.blocks - 1} more time${preview.blocks > 2 ? 's' : ''} lower down; each part is read with its own columns, and every column name is listed below.` : ''}</p>
 
+                        <p className="text-xs text-text-secondary">Connecting saves the settings and opens a candidate preview. No candidates are imported until you press Import selected. Automatic sync starts only after that first reviewed import.</p>
+                        {(!tracker || tracker.active) && syncEvery !== 'manual' && <p role="status" className="text-sm text-amber-800">Automatic sync is enabled: after your first import, future new and changed rows will sync without a preview. Skipped candidates stay excluded. New columns stop the sync for review.</p>}
                         <section aria-label="Match the columns">
                             <p className="text-sm font-semibold text-text-primary">Match the columns</p>
-                            <p className="text-xs text-text-secondary">The app guessed from the column names; correct anything wrong. Columns set to “Don’t import” are kept with the row for reference. Two names for one field (e.g. “Organization” and “Organisation” in different parts) are fine.</p>
+                            <p className="text-xs text-text-secondary">Check the suggested matches. For every other column, choose Keep as extra column or Don&apos;t import. Extra columns stay on the tracker record; they do not change candidate profiles or pipeline stages.</p>
+                            {unmatched.length > 0 && <p role="status" className="mt-1 text-sm text-amber-800">{unmatched.length} columns need a decision before you continue.</p>}
                             <div className="mt-2 max-h-[340px] overflow-y-auto rounded-xl ring-1 ring-inset ring-border-subtle">
                                 <table className="w-full text-sm">
                                     <thead className="sticky top-0 bg-surface-elevated text-left text-xs text-text-secondary">
@@ -271,8 +269,10 @@ function TrackerForm({ orgId, open, tracker, onClose, onSaved }: { orgId: string
                                                 <td className="max-w-[220px] truncate px-3 py-1.5 text-text-secondary" title={preview.examples[h] ?? ''}>{preview.examples[h] ?? '—'}</td>
                                                 <td className="px-3 py-1.5">
                                                     <label className="sr-only" htmlFor={`tracker-col-${c}`}>Field for {h}</label>
-                                                    <select id={`tracker-col-${c}`} value={columnMap[h] ?? ''} onChange={e => setColumnMap(m => ({ ...m, [h]: (e.target.value || null) as TrackerField | null }))} className={`${INPUT} h-8 px-2 text-sm`}>
-                                                        <option value="">Don’t import</option>
+                                                    <select id={`tracker-col-${c}`} value={Object.hasOwn(columnMap, h) ? columnMap[h] ?? 'ignore' : ''} onChange={e => setColumnMap(m => ({ ...m, [h]: e.target.value === 'ignore' ? null : e.target.value as TrackerColumnTarget }))} className={`${INPUT} h-8 px-2 text-sm`}>
+                                                        <option value="" disabled>Choose what to do</option>
+                                                        <option value="extra">Keep as extra column</option>
+                                                        <option value="ignore">Don&apos;t import</option>
                                                         {TRACKER_FIELDS.map(f => <option key={f} value={f}>{TRACKER_FIELD_LABELS[f]}</option>)}
                                                     </select>
                                                 </td>

@@ -3,7 +3,7 @@ import { after, NextResponse } from "next/server";
 import { UPLOAD_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { indexPending } from "@/backend/lib/candidates/indexing";
 import { linkUnmatched } from "@/backend/lib/candidates/resume-text";
-import { syncTracker } from "@/backend/lib/candidates/trackers";
+import { previewTrackerImport, syncTracker } from "@/backend/lib/candidates/trackers";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../../_lib/auth";
 
@@ -21,7 +21,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const limited = rateLimited("upload", auth.user.id, UPLOAD_RATE_LIMIT);
   if (limited) return limited;
   try {
-    const summary = await syncTracker(auth.admin, auth.orgId, id, { trigger: "manual", by: await actorFor(auth.admin, auth.user) });
+    if (body.preview === true) return NextResponse.json({ preview: await previewTrackerImport(auth.admin, auth.orgId, id) });
+    const summary = await syncTracker(auth.admin, auth.orgId, id, { trigger: "manual", by: await actorFor(auth.admin, auth.user), reviewToken: body.reviewToken, selectedRows: body.selectedRows });
     after(async () => { await linkUnmatched(auth.admin, auth.orgId); await indexPending(auth.admin, auth.orgId); });
     return NextResponse.json({ summary });
   } catch (error) {

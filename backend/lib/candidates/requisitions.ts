@@ -668,7 +668,7 @@ export type RequisitionEvent =
   /** Spec A24: the raiser confirmed a request on hold is still needed; the approver it waits on is told. */
   | { kind: "still_needed"; requisition: Requisition; approverId: string | null; note: string | null };
 export type RequisitionNotifier = (event: RequisitionEvent) => Promise<void>;
-export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date }
+export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date; sourceMailId?: string }
 
 async function emit(deps: RequisitionDeps, event: RequisitionEvent): Promise<void> {
   if (!deps.notify) return;
@@ -695,7 +695,7 @@ export async function createRequisition(client: SupabaseClient, orgId: string, b
   const parsed = FormInput.safeParse(b);
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those details are not valid.");
   const now = (deps.now ?? (() => new Date()))().toISOString();
-  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...formColumns(parsed.data, false), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now }).select("id").single();
+  const { data, error } = await client.from(TABLE).insert({ organization_id: orgId, ...formColumns(parsed.data, false), status: "draft", raised_by: by.id, raised_by_name: by.name, created_at: now, updated_at: now, ...(deps.sourceMailId ? { source_mail_id: deps.sourceMailId } : {}) }).select("id").single();
   if (error) fail("save the request", error);
   const id = (data as { id: string }).id;
   if (b.submit === true) return submitRequisition(client, orgId, by, id, deps);

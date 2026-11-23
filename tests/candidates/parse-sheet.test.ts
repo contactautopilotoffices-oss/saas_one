@@ -108,6 +108,33 @@ describe("parseSheet", () => {
     assert.equal(parsed.rows[0].clean?.phoneKey, "9599358284");
   });
 
+  it("reads a repeated header row as column names, and the rows below it with those columns (owner's tracker)", () => {
+    // The first block has no Sourcing Date; the header repeats further down with it added, which moves every column.
+    const firstHeaders = ["Candidate Name", "Phone Number", "Role", "Remark"];
+    const laterHeaders = ["Sourcing Date", "Candidate Name", "Phone Number", "Role", "Remark"];
+    const parsed = parseSheet(
+      xlsxFile([
+        firstHeaders,
+        ["Amit Babu", 7534855802, "BMS Operator", "Rejected"],
+        [],
+        laterHeaders,
+        ["30-06-2026", "Chiter Sain Singh", 9599358284, "BMS Operator", "Not responding"],
+        laterHeaders,
+        ["01-07-2026", "Vignesh Pandit Bhoir", 9604560296, "Housekeeping Supervisor", "Shortlisted"],
+      ]),
+      "Tracker.xlsx",
+    );
+    assert.deepEqual(parsed.rows.map((r) => r.clean?.fullName), ["Amit Babu", "Chiter Sain Singh", "Vignesh Pandit Bhoir"]);
+    assert.deepEqual(parsed.rows.map((r) => r.rowNumber), [2, 5, 7]);
+    const chiter = parsed.rows[1].clean;
+    assert.equal(chiter?.phoneKey, "9599358284");
+    assert.equal(chiter?.role, "BMS Operator");
+    assert.equal(chiter?.sourcingDate, "2026-06-30");
+    assert.equal(parsed.rows[1].raw["Sourcing Date"], "30-06-2026");
+    assert.ok(parsed.fields.includes("sourcingDate"), "a field found only in a later header row still counts");
+    assert.ok(parsed.warnings.some((w) => /^Rows 4, 6 repeat the column names/.test(w)));
+  });
+
   it("rejects a sheet without a recognisable header", () => {
     assert.throws(() => parseSheet(xlsxFile([["a", "b"], [1, 2]]), "x.xlsx"), SheetError);
   });

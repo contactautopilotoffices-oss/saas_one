@@ -353,6 +353,25 @@ Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only
 
 ---
 
+### Candidate assessment invite (22 Nov 2026)
+
+Template and default AiSensy API campaign: `candidate_assessment_invite_v1`.
+Submit this body for Meta approval, then activate the API campaign before enabling live sends. This is a manual Recruitment send, not an Omnichannel Matrix event.
+
+```text
+Hello {{1}},
+
+Please complete the {{2}} assessment ({{3}} minutes):
+{{4}}
+
+Open the link and enter your name and email to begin.
+
+Autopilot Offices Recruitment Team
+```
+
+Parameters, in order: candidate first name, assessment title, duration in minutes, full public assessment URL. Example: `Asha`, `Aptitude`, `20`, `https://app.example.com/t/example-token`.
+Optional campaign override: `AISENSY_CANDIDATE_ASSESSMENT_CAMPAIGN`. Uses the existing AiSensy credentials; no new sender service.
+
 ## 2. HTML Email Templates
 
 Below are clean, responsive HTML email templates for all notification triggers.

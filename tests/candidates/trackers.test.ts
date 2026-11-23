@@ -14,7 +14,7 @@ import * as XLSX from "xlsx";
 import { resetHistoryCheck } from "../../backend/lib/candidates/actions";
 import { createPosition, listMembers } from "../../backend/lib/candidates/positions";
 import {
-  createTracker, downloadTracker, dueTrackers, listTrackers, previewTracker, readTrackerRows, syncTracker, trackerSource, updateTracker, type FetchLike,
+  createTracker, downloadTracker, dueTrackers, listTrackers, previewTracker, readTrackerRows, previewTrackerImport, syncTracker as runSyncTracker, trackerSource, updateTracker, type FetchLike, type SyncOptions,
 } from "../../backend/lib/candidates/trackers";
 
 import { freshDb } from "./db-stub";
@@ -40,6 +40,12 @@ function google(bytes: () => Uint8Array): FetchLike {
     if (url.startsWith("https://docs.google.com/")) return new Response(null, { status: 307, headers: { location: "https://doc-0s-sheets.googleusercontent.com/export/abc" } });
     return new Response(bytes() as BodyInit, { status: 200, headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
   };
+}
+
+async function syncTracker(client: SupabaseClient, org: string, id: string, options: SyncOptions) {
+  if (options.trigger === "schedule") return runSyncTracker(client, org, id, options);
+  const review = await previewTrackerImport(client, org, id, options.fetchImpl);
+  return runSyncTracker(client, org, id, { ...options, reviewToken: review.token, selectedRows: review.rows.filter(r => r.selected).map(r => r.rowNumber) });
 }
 
 const AMIT = [1, "Pratyarth Services", "Amit Babu", "er.babu.amit@gmail.com", "7534855802", "Noida", "BMS Operator", "15 Days", "Good profile", "Backed Out"];
@@ -160,7 +166,7 @@ describe("connected trackers", () => {
   it("records a failed sync on the card, and runs on schedule only when due", async () => {
     const [tracker] = await listTrackers(client, ORG);
     const broken: FetchLike = async () => new Response("<html>Sign in</html>", { status: 200, headers: { "content-type": "text/html" } });
-    await assert.rejects(syncTracker(client, ORG, tracker.id, { trigger: "manual", by: ME, fetchImpl: broken }), /Anyone with the link/);
+    await assert.rejects(runSyncTracker(client, ORG, tracker.id, { trigger: "manual", by: ME, fetchImpl: broken }), /Anyone with the link/);
     const [failed] = await listTrackers(client, ORG);
     assert.deepEqual([failed.lastOk, /Anyone with the link/.test(failed.lastError ?? ""), failed.syncing], [false, true, false]);
 

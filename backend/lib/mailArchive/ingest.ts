@@ -26,6 +26,7 @@
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { grantForMailbox, noteMailAccountResult } from '@/backend/lib/mail/accounts';
+import { htmlToText } from '@/backend/lib/mail/text';
 import { ZohoMailService, grantOwning, type MailSource, type ZohoMailListItem } from '@/backend/services/zohoMailService';
 
 const PAGE = 200;
@@ -36,7 +37,6 @@ const SWEEP_OVERLAP_MS = 2 * 3600_000;
 const MAX_SWEEP_PAGES = 15;
 const BODY_BATCH = 6;                               // fetched in parallel
 const BODY_MAX_ATTEMPTS = 3;
-const MAX_BODY_CHARS = 100_000;
 const LEASE_MS = 6 * 60_000;
 
 /** Not mail anyone sent or received in earnest. Never stored. */
@@ -115,22 +115,6 @@ function emailKey(mailboxId: string, m: ZohoMailListItem): string {
     return 'k1:' + crypto.createHash('sha256')
         .update(`${m.fromAddress.toLowerCase()}|${m.sentHeaderMs}|${subject}`).digest('hex');
 }
-
-function htmlToText(html: string): string {
-    return html
-        .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, ' ')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/(p|div|tr|li|h[1-6]|blockquote)>/gi, '\n')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
-        .replace(/[ \t\f\v]+/g, ' ')
-        .replace(/ *\n */g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
-        .slice(0, MAX_BODY_CHARS);
-}
-
 /** Insert the emails not already held for this mailbox. Returns how many were offered. */
 async function store(row: RosterRow, folders: Map<string, string>, items: ZohoMailListItem[]): Promise<number> {
     const rows = [];

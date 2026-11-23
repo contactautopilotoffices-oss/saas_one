@@ -226,6 +226,7 @@ export const TOP_N_MAX = 30;
 export const TOP_N_DEFAULT = 10;
 
 export interface CandidateRecord {
+  trackerValues?: Record<string, string> | null;
   /** The record (candidate_applications) id. */
   id: string;
   candidateId: string;
@@ -661,6 +662,8 @@ export interface ResumeFile {
   /** Where the upload said it came from (owner 2026-11-16); null when it did not say. */
   sourceKind: SourceKind | null;
   sourceName: string | null;
+  /** HR-assigned role for this resume, separate from the current job title. */
+  sourcedRole?: string | null;
   /** 'pending': a second CV for this person, waiting for HR (Update the CV or delete it); 'updated': HR made it the CV. */
   duplicateState: "pending" | "updated" | null;
   /** Filled for a pending duplicate. */
@@ -1209,6 +1212,7 @@ export const TRACKER_FIELDS = [
   "notice", "currentInhand", "expectedInhand", "candidateSource", "sourcingDate", "remark",
 ] as const satisfies readonly import("./parse-sheet").SheetField[];
 export type TrackerField = (typeof TRACKER_FIELDS)[number];
+export type TrackerColumnTarget = TrackerField | "extra" | null;
 export const TRACKER_FIELD_LABELS: Record<TrackerField, string> = {
   fullName: "Candidate name", email: "Email", phone: "Phone", location: "Location", currentOrganization: "Current organisation",
   currentDesignation: "Current designation", role: "Role (matches an open position)", totalExp: "Total experience",
@@ -1217,7 +1221,7 @@ export const TRACKER_FIELD_LABELS: Record<TrackerField, string> = {
 };
 export const TRACKER_SYNC_EVERY = ["hourly", "daily", "manual"] as const;
 export type TrackerSyncEvery = (typeof TRACKER_SYNC_EVERY)[number];
-export const TRACKER_SYNC_LABELS: Record<TrackerSyncEvery, string> = { hourly: "Every hour", daily: "Once a day", manual: "Only when I press Sync now" };
+export const TRACKER_SYNC_LABELS: Record<TrackerSyncEvery, string> = { hourly: "Every hour", daily: "Once a day", manual: "Manual (preview before import)" };
 
 /** What a sync did, for the card and the history. */
 export interface TrackerSyncSummary {
@@ -1248,7 +1252,7 @@ export interface TrackerConnection {
   sourceKind: "google_sheet" | "excel_link";
   tabName: string;
   headerRow: number;
-  columnMap: Record<string, TrackerField | null>;
+  columnMap: Record<string, TrackerColumnTarget>;
   statusColumn: string | null;
   statusMap: Record<string, string>;
   syncEvery: TrackerSyncEvery;
@@ -1260,6 +1264,8 @@ export interface TrackerConnection {
   lastError: string | null;
   lastSummary: TrackerSyncSummary | null;
   createdAt: string;
+  reviewedAt: string | null;
+  skippedKeys: string[];
 }
 
 /** Reading a link before saving: its tabs, and the chosen tab's header row, columns and values. */
@@ -1280,6 +1286,30 @@ export interface TrackerPreview {
   blocks: number;
   /** Each column's distinct values (up to 60; columns with more are left out), for matching statuses to stages. */
   distinct: Record<string, string[]>;
+}
+
+export interface TrackerImportRow {
+  rowNumber: number;
+  key: string | null;
+  name: string;
+  role: string | null;
+  raw: Record<string, string>;
+  outcome: "new" | "existing" | "unchanged" | "duplicate" | "invalid";
+  issues: string[];
+  selected: boolean;
+  changes: { field: string; before: string | number | null; after: string | number | null }[];
+  stage: string | null;
+}
+
+export interface TrackerImportPreview {
+  token: string;
+  headers: string[];
+  rows: TrackerImportRow[];
+  newCandidates: number;
+  existingCandidates: number;
+  changedRows: number;
+  duplicateRows: number;
+  invalidRows: number;
 }
 
 // The hiring flow after booking (owner 2026-11-21; migration 20261121000003): interview follow-up, scorecards, the

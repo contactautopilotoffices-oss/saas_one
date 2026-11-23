@@ -15,25 +15,25 @@
  * candidate sheet per connection (Recruitment -> Sheets), so people are matched by email, then phone, and nothing is
  * deleted when a row leaves the sheet. Only the rows that changed are imported each time.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { z } from "zod";
 
 import type { Actor } from "./actions";
-import { findLiveSheetByName, importSheet } from "./import";
-import { cleanRow, fieldForHeader, type CleanRow, type ParsedSheet, type SheetField, type SheetRow } from "./parse-sheet";
+import { findLiveSheetByName, groupPeople, importSheet, loadPeopleByContact, loadSheetRecords, personValues, recordKey } from "./import";
+import { cleanRow, fieldForHeader, isHeaderLine, type CleanRow, type ParsedSheet, type SheetField, type SheetRow } from "./parse-sheet";
 import { addMembers, listPositions, moveMember } from "./positions";
 import { CandidateActionError } from "./records";
 import { findStage } from "./stage-list";
 import { loadStages } from "./stages";
-import { TRACKER_FIELDS, TRACKER_SYNC_EVERY, type TrackerConnection, type TrackerField, type TrackerPreview, type TrackerSyncSummary } from "./types";
+import { TRACKER_FIELD_LABELS, TRACKER_FIELDS, TRACKER_SYNC_EVERY, type TrackerColumnTarget, type TrackerConnection, type TrackerField, type TrackerImportPreview, type TrackerImportRow, type TrackerPreview, type TrackerSyncSummary } from "./types";
 
 const CONNECTIONS = "candidate_tracker_connections";
 const SNAPSHOTS = "candidate_tracker_rows";
 const SYNCS = "candidate_tracker_syncs";
-export const TRACKERS_MIGRATION_MESSAGE = "Connected trackers need a database update first: run 20261121000002_candidate_tracker_connections.sql in Supabase.";
+export const TRACKERS_MIGRATION_MESSAGE = "Connected trackers need a database update first: run 20261121000002_candidate_tracker_connections.sql and 20261122000004_tracker_preview.sql in Supabase.";
 /** A tracker file is at most this big (the sheet upload allows 4 MB; a shared tracker grows). */
 export const MAX_TRACKER_BYTES = 15 * 1024 * 1024;
 const MAX_TRACKER_ROWS = 10_000;
@@ -155,12 +155,6 @@ function guessHeaderRow(grid: unknown[][]): number {
   return 1;
 }
 
-/** A header row: it names the candidate and two more known columns. */
-const isHeaderLine = (line: unknown[] | undefined) => {
-  const fields = new Set((line ?? []).map(fieldForHeader).filter(Boolean));
-  return fields.has("fullName") && fields.size >= 3;
-};
-
 interface Block { headers: string[]; rows: { line: unknown[]; rowNumber: number }[] }
 
 /**
@@ -176,15 +170,19 @@ function blocksOf(grid: unknown[][], headerRow: number): Block[] {
     if (isHeaderLine(line)) { blocks.push({ headers: line.map((h, i) => cellText(h) || `Column ${i + 1}`), rows: [] }); continue; }
     blocks[blocks.length - 1].rows.push({ line, rowNumber: r + 1 });
   }
+  for (const block of blocks) {
+    const width = block.rows.reduce((n, r) => Math.max(n, r.line.length), block.headers.length);
+    while (block.headers.length < width) block.headers.push(`Column ${block.headers.length + 1}`);
+  }
   return blocks;
 }
 
 /** Each column's field in a block: HR's matching for the header, else the app's guess; a field once per block. */
-function fieldsOf(headers: string[], columnMap: Record<string, TrackerField | null> | null): (TrackerField | null)[] {
+function fieldsOf(headers: string[], columnMap: Record<string, TrackerColumnTarget> | null): (TrackerField | null)[] {
   const used = new Set<TrackerField>();
   return headers.map((h) => {
     const f = columnMap && h in columnMap ? columnMap[h] : (fieldForHeader(h) as TrackerField | null);
-    if (!f || used.has(f)) return null;
+    if (!f || f === "extra" || used.has(f)) return null;
     used.add(f);
     return f;
   });
@@ -204,8 +202,8 @@ export async function previewTracker(input: { url: unknown; tab?: unknown; heade
   const blocks = blocksOf(grid, headerRow);
   // Every column name in the tab, in order of first appearance (a later block may add or rename columns).
   const headers: string[] = [];
-  const guess: Record<string, TrackerField | null> = {};
-  const examples: Record<string, string> = {};
+  const guess: Record<string, TrackerField | null> = Object.create(null);
+  const examples: Record<string, string> = Object.create(null);
   const values = new Map<string, Map<string, string>>();
   for (const block of blocks) {
     const fields = fieldsOf(block.headers, null);
@@ -221,7 +219,7 @@ export async function previewTracker(input: { url: unknown; tab?: unknown; heade
       }
     });
   }
-  const distinct: Record<string, string[]> = {};
+  const distinct: Record<string, string[]> = Object.create(null);
   for (const [h, seen] of values) if (seen.size && seen.size <= 60) distinct[h] = [...seen.values()].sort((a, b) => a.localeCompare(b));
   const statusColumnGuess = headers.find((h) => /status|screening|stage/i.test(h) && distinct[h]) ?? null;
   return {
@@ -232,7 +230,7 @@ export async function previewTracker(input: { url: unknown; tab?: unknown; heade
 
 // Connections ----------------------------------------------------------------------------------------------------------
 
-const COLUMNS = "id, name, source_url, source_kind, tab_name, header_row, column_map, status_column, status_map, sync_every, active, sheet_id, syncing_since, last_synced_at, last_ok, last_error, last_summary, created_by, created_at";
+const COLUMNS = "id, name, source_url, source_kind, tab_name, header_row, column_map, status_column, status_map, sync_every, active, sheet_id, syncing_since, last_synced_at, last_ok, last_error, last_summary, created_by, created_at, updated_at, reviewed_at, skipped_keys";
 
 function toConnection(row: Record<string, unknown>): TrackerConnection {
   const since = iso(row.syncing_since);
@@ -255,6 +253,8 @@ function toConnection(row: Record<string, unknown>): TrackerConnection {
     lastError: (row.last_error as string | null) ?? null,
     lastSummary: (row.last_summary as TrackerSyncSummary | null) ?? null,
     createdAt: iso(row.created_at) ?? "",
+    reviewedAt: iso(row.reviewed_at),
+    skippedKeys: (row.skipped_keys as string[]) ?? [],
   };
 }
 
@@ -277,10 +277,10 @@ const ConfigInput = z.object({
   url: z.string().trim().min(1, "Paste the sheet's share link."),
   tab: z.string().min(1, "Pick the tab.").max(200),
   headerRow: z.number().int().min(1).max(50),
-  columnMap: z.record(z.string().max(300), z.enum(TRACKER_FIELDS).nullable()),
+  columnMap: z.record(z.string().max(300), z.union([z.enum(TRACKER_FIELDS), z.literal("extra")]).nullable()),
   statusColumn: z.string().max(300).nullable().optional(),
   statusMap: z.record(z.string().max(300), z.string().max(40)).optional(),
-  syncEvery: z.enum(TRACKER_SYNC_EVERY),
+  syncEvery: z.enum(TRACKER_SYNC_EVERY).default("manual"),
 });
 
 /** Checks a connection's settings: a name column, each field once, the status values onto stages that exist. */
@@ -291,7 +291,7 @@ async function checkConfig(client: SupabaseClient, orgId: string, body: unknown)
   const source = trackerSource(c.url);
   // The same field may be matched by two column names (a later block may spell it differently); within one block the
   // first column wins.
-  const fields = Object.values(c.columnMap).filter((f): f is TrackerField => Boolean(f));
+  const fields = Object.values(c.columnMap);
   if (!fields.includes("fullName")) throw new CandidateActionError(400, "Match one column to \"Candidate name\".");
   const { stages } = await loadStages(client, orgId);
   const statusMap: Record<string, string> = {};
@@ -319,38 +319,45 @@ export async function createTracker(client: SupabaseClient, orgId: string, by: A
 /** Edits the settings ({ ...the form }), or pauses / resumes ({ active }). A changed column matching re-reads every row next sync. */
 export async function updateTracker(client: SupabaseClient, orgId: string, id: string, body: unknown): Promise<TrackerConnection> {
   const row = await loadRow(client, orgId, id);
+  if (toConnection(row).syncing) throw new CandidateActionError(409, "Wait for this tracker to finish syncing before editing it.");
   const b = (body ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
   let values: Record<string, unknown>;
   if (Object.keys(b).length === 1 && typeof b.active === "boolean") values = { active: b.active };
   else {
     values = await checkConfig(client, orgId, body);
-    const changed = values.tab_name !== row.tab_name || values.header_row !== row.header_row || JSON.stringify(values.column_map) !== JSON.stringify(row.column_map) || values.status_column !== row.status_column;
-    // New column matching: forget the old snapshots, so every row is read again with the new matching.
-    if (changed) await client.from(SNAPSHOTS).delete().eq("connection_id", row.id as string);
+    const changed = ["name", "source_url", "tab_name", "header_row", "column_map", "status_column", "status_map"].some(k => digest(values[k]) !== digest(row[k]));
+    if (changed) values.reviewed_at = null;
   }
-  const { data, error } = await client.from(CONNECTIONS).update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string).select(COLUMNS).single();
+  let save = client.from(CONNECTIONS).update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string).eq("updated_at", row.updated_at);
+  save = row.syncing_since ? save.eq("syncing_since", row.syncing_since) : save.is("syncing_since", null);
+  const { data, error } = await save.select(COLUMNS).maybeSingle();
   if (error) fail("save the connection", error);
+  if (!data) throw new CandidateActionError(409, "This tracker changed or started syncing. Refresh and try again.");
   return toConnection(data as Record<string, unknown>);
 }
 
 /** Disconnects (soft): it stops syncing. Everything it brought in stays, in its sheet under Recruitment -> Sheets. */
 export async function deleteTracker(client: SupabaseClient, orgId: string, id: string): Promise<void> {
   const row = await loadRow(client, orgId, id);
-  const { error } = await client.from(CONNECTIONS).update({ deleted_at: new Date().toISOString(), active: false }).eq("organization_id", orgId).eq("id", row.id as string);
+  if (toConnection(row).syncing) throw new CandidateActionError(409, "Wait for this tracker to finish syncing before disconnecting it.");
+  let remove = client.from(CONNECTIONS).update({ deleted_at: new Date().toISOString(), active: false }).eq("organization_id", orgId).eq("id", row.id as string).eq("updated_at", row.updated_at);
+  remove = row.syncing_since ? remove.eq("syncing_since", row.syncing_since) : remove.is("syncing_since", null);
+  const { data, error } = await remove.select("id").maybeSingle();
   if (error) fail("disconnect the tracker", error);
+  if (!data) throw new CandidateActionError(409, "This tracker changed or started syncing. Refresh and try again.");
 }
 
 // The sync -------------------------------------------------------------------------------------------------------------
 
 /** One sheet row as read: its cells by field, its status text, and its cleaned values. */
-interface TrackerRow { row: SheetRow; cells: Record<string, string>; status: string | null; key: string | null }
+interface TrackerRow { row: SheetRow; raw: Record<string, string>; cells: Record<string, string>; status: string | null; key: string | null }
 
 /** The row's identity across syncs: email, else phone, else name; with the role (one person may be tracked for two roles). */
 const rowKey = (c: CleanRow) => `${c.emailKey ?? c.phoneKey ?? `name:${norm(c.fullName)}`}|${norm(c.role)}`;
 
 /** Reads the tab with the connection's matching (the sheet upload's cleaning, per row). */
-export function readTrackerRows(grid: unknown[][], headerRow: number, columnMap: Record<string, TrackerField | null>, statusColumn: string | null): TrackerRow[] {
+export function readTrackerRows(grid: unknown[][], headerRow: number, columnMap: Record<string, TrackerColumnTarget>, statusColumn: string | null): TrackerRow[] {
   const out: TrackerRow[] = [];
   for (const block of blocksOf(grid, headerRow)) {
     const headers = block.headers;
@@ -358,19 +365,24 @@ export function readTrackerRows(grid: unknown[][], headerRow: number, columnMap:
     const statusAt = statusColumn ? headers.indexOf(statusColumn) : -1;
     for (const { line, rowNumber } of block.rows) {
       if (out.length >= MAX_TRACKER_ROWS) throw new CandidateActionError(413, `The tab has more than ${MAX_TRACKER_ROWS.toLocaleString("en-IN")} rows.`);
-      const raw: Record<string, string> = {};
+      const raw: Record<string, string> = Object.create(null);
+      const kept: Record<string, string> = Object.create(null);
+      const extra: Record<string, string> = Object.create(null);
       const fieldCells: Partial<Record<SheetField, unknown>> = {};
       const cells: Record<string, string> = {};
       line.forEach((cell, c) => {
         const text = cellText(cell);
         if (text) raw[headers[c] ?? `Column ${c + 1}`] = text;
+        if (columnMap[headers[c]] || headers[c] === statusColumn) kept[headers[c]] = text;
+        if (columnMap[headers[c]] === "extra") extra[headers[c]] = text;
         const field = fieldAt[c];
         if (field && !(field in fieldCells)) { fieldCells[field] = cell; cells[field] = text; }
       });
       const status = statusAt >= 0 ? cellText(line[statusAt]) || null : null;
       cells.__status = status ?? "";
+      cells.__extra = JSON.stringify(extra);
       const { clean, issues } = cleanRow(fieldCells);
-      out.push({ row: { rowNumber, raw, clean, issues }, cells, status, key: clean ? rowKey(clean) : null });
+      out.push({ row: { rowNumber, raw: kept, clean, issues }, raw, cells, status, key: clean ? rowKey(clean) : null });
     }
   }
   return out;
@@ -396,8 +408,13 @@ const RECORD_FIELDS: { field: TrackerField; clean: keyof CleanRow; column: strin
  * seen before, a cell the sheet did not change keeps the app's value: the person's details are left empty (the import
  * keeps a person's value when the row's is empty), and the record's are taken from the record as it is now.
  */
-function keepAppValues(clean: CleanRow, changed: Set<string>, record: Record<string, unknown> | undefined): CleanRow {
+function keepAppValues(clean: CleanRow, changed: Set<string>, record: Record<string, unknown> | undefined, person?: Awaited<ReturnType<typeof loadPeopleByContact>>[number]): CleanRow {
   const out: CleanRow = { ...clean };
+  if (person) {
+    if (!changed.has("fullName")) out.fullName = person.full_name;
+    if (!changed.has("email")) { out.email = person.email; out.emailKey = person.email_key; }
+    if (!changed.has("phone")) { out.phone = person.phone; out.phoneKey = person.phone_key; }
+  }
   if (!changed.has("currentOrganization")) out.currentOrganization = null;
   if (!changed.has("currentDesignation")) out.currentDesignation = null;
   if (!changed.has("location")) out.location = null;
@@ -411,7 +428,153 @@ function keepAppValues(clean: CleanRow, changed: Set<string>, record: Record<str
   return out;
 }
 
-export interface SyncOptions { trigger: "schedule" | "manual"; by?: Actor; fetchImpl?: FetchLike; now?: () => Date }
+const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value, (_key, v) =>
+  v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v)).digest("hex");
+const profileLabels: Record<string, string> = {
+  full_name: "Candidate name", email: "Email", phone: "Phone", current_organization: "Current organisation",
+  current_designation: "Current designation", location: "Location", total_exp_months: "Total experience (months)",
+};
+
+/** Read-only plan shared by preview and sync; its fingerprint also covers the current app values. */
+async function prepareTrackerImport(client: SupabaseClient, orgId: string, conn: TrackerConnection, fetchImpl?: FetchLike) {
+  const source = trackerSource(conn.sourceUrl);
+  const workbook = readWorkbook(await downloadTracker(source.downloadUrl, fetchImpl));
+  const grid = gridOf(workbook, conn.tabName);
+  const blocks = blocksOf(grid, conn.headerRow);
+  const headers = [...new Set(blocks.flatMap(b => b.headers))];
+  if (blocks.some(b => new Set(b.headers).size !== b.headers.length)) throw new CandidateActionError(422, "Two columns have the same name. Give each column its own name in the sheet, then read it again.");
+  const unknown = headers.filter(h => !Object.hasOwn(conn.columnMap, h));
+  if (unknown.length) throw new CandidateActionError(409, `New or unmatched columns need review: ${unknown.join(", ")}. Edit the connection and choose a field, Keep as extra column, or Don't import for each.`);
+  const rows = readTrackerRows(grid, conn.headerRow, conn.columnMap, conn.statusColumn);
+  const config = digest([conn.sourceUrl, conn.name, conn.tabName, conn.headerRow, conn.columnMap, conn.statusColumn, conn.statusMap]);
+  for (const r of rows) r.cells.__config = config;
+  const snapshots = new Map<string, { id: string; row_key: string; cells: Record<string, string> }>();
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await client.from(SNAPSHOTS).select("id, row_key, cells").eq("connection_id", conn.id).order("id").range(offset, offset + 999);
+    if (error) fail("read the last sync", error);
+    for (const s of (data ?? []) as { id: string; row_key: string; cells: Record<string, string> }[]) snapshots.set(s.row_key, s);
+    if (!data || data.length < 1000) break;
+  }
+  const beforeCells = (r: TrackerRow) => {
+    const cells = snapshots.get(r.key!)?.cells;
+    return cells?.__config === config || (cells && !cells.__config && conn.reviewedAt) ? cells : undefined;
+  };
+  const valid = rows.filter((r): r is TrackerRow & { row: SheetRow & { clean: CleanRow } } => !!r.row.clean);
+  const people = await loadPeopleByContact(client, orgId, valid.flatMap(r => r.row.clean.emailKey ? [r.row.clean.emailKey] : []), valid.flatMap(r => r.row.clean.phoneKey ? [r.row.clean.phoneKey] : []));
+  const byEmail = new Map<string, typeof people>();
+  const byPhone = new Map<string, typeof people>();
+  for (const p of people) {
+    if (p.email_key) byEmail.set(p.email_key, [...(byEmail.get(p.email_key) ?? []), p]);
+    if (p.phone_key) byPhone.set(p.phone_key, [...(byPhone.get(p.phone_key) ?? []), p]);
+  }
+  const groups = groupPeople(valid.map(r => ({ clean: r.row.clean })));
+  const groupMatch = new Map<number, string | null>();
+  const matches = new Map<number, (typeof people)[number]>();
+  const blocked = new Set<number>();
+  valid.forEach((r, i) => {
+    const c = r.row.clean;
+    const found = [...new Map([...(byEmail.get(c.emailKey ?? "") ?? []), ...(byPhone.get(c.phoneKey ?? "") ?? [])].map(p => [p.id, p])).values()];
+    const matchId = found[0]?.id ?? null;
+    const inconsistent = groupMatch.has(groups[i]) && groupMatch.get(groups[i]) !== matchId;
+    groupMatch.set(groups[i], matchId);
+    if (!c.emailKey && !c.phoneKey) {
+      r.row.issues.push("Add a valid email or phone in the tracker so later syncs can identify this person.");
+      blocked.add(r.row.rowNumber);
+    } else if (found.length > 1 || inconsistent) {
+      blocked.add(r.row.rowNumber);
+      r.row.issues.push("These contact details match different people. Correct them in the sheet before importing.");
+    } else if (found[0]) matches.set(groups[i], found[0]);
+  });
+  // Ambiguous contacts cannot influence another row in the same person group.
+  const blockedGroups = new Set(valid.flatMap((r, i) => blocked.has(r.row.rowNumber) ? [groups[i]] : []));
+  const byIdentity = new Map<string, TrackerRow[]>();
+  const personFor = new Map<number, (typeof people)[number]>();
+  valid.forEach((r, i) => {
+    const person = matches.get(groups[i]);
+    if (person) personFor.set(r.row.rowNumber, person);
+    if (blockedGroups.has(groups[i])) { blocked.add(r.row.rowNumber); return; }
+    const identity = `${person?.id ?? groups[i]}|${norm(r.row.clean.role)}`;
+    byIdentity.set(identity, [...(byIdentity.get(identity) ?? []), r]);
+  });
+  const byKey = new Map<string, TrackerRow>();
+  const duplicates: string[] = [];
+  let duplicateRows = 0;
+  for (const group of byIdentity.values()) {
+    const kept = group[group.length - 1];
+    byKey.set(kept.key!, kept);
+    if (group.length > 1) {
+      const others = group.slice(0, -1).map(r => r.row.rowNumber);
+      duplicateRows += others.length;
+      kept.row.issues.push(`Duplicate in the tracker: the same person and role is also in row${others.length === 1 ? "" : "s"} ${others.join(", ")}. This row's values were used.`);
+      if (duplicates.length < 10) duplicates.push(`${kept.row.clean?.fullName ?? "Someone"}${kept.row.clean?.role ? ` (${kept.row.clean.role})` : ""}: rows ${group.map(r => r.row.rowNumber).join(", ")}`);
+    }
+  }
+  const live = await findLiveSheetByName(client, orgId, conn.name);
+  const existing = live ? await appRecords(client, orgId, live.id) : new Map<string, Record<string, unknown>>();
+  const changed = [...byKey.values()].filter(r => changedCells(r.cells, beforeCells(r)).size > 0);
+  const parsedRows = changed.map(r => {
+    const c = r.row.clean!;
+    const person = personFor.get(r.row.rowNumber);
+    const record = person ? existing.get(recordKey(person.id, c.role)) : undefined;
+    return { ...r.row, clean: beforeCells(r) ? keepAppValues(c, changedCells(r.cells, beforeCells(r)), record, person) : c };
+  });
+  const parsedByNumber = new Map(parsedRows.map(r => [r.rowNumber, r]));
+  const reviewRows: TrackerImportRow[] = rows.map(r => {
+    const c = r.row.clean;
+    const person = personFor.get(r.row.rowNumber);
+    const record = c && person ? existing.get(recordKey(person.id, c.role)) : undefined;
+    const clean = parsedByNumber.get(r.row.rowNumber)?.clean;
+    const outcome = !c || blocked.has(r.row.rowNumber) ? "invalid" : byKey.get(r.key!) !== r ? "duplicate" : !clean ? "unchanged" : person ? "existing" : "new";
+    const changes: TrackerImportRow["changes"] = [];
+    const add = (field: string, before: unknown, after: unknown) => {
+      const a = (after ?? null) as string | number | null;
+      const b = (before ?? null) as string | number | null;
+      if (a !== b) changes.push({ field, before: b, after: a });
+    };
+    if (clean && outcome !== "invalid" && outcome !== "duplicate") {
+      for (const [k, value] of Object.entries(personValues(clean))) if (profileLabels[k]) add(profileLabels[k], person?.[k as keyof typeof person], value);
+      add("Role", record?.role, clean.role);
+      for (const f of RECORD_FIELDS) add(`${TRACKER_FIELD_LABELS[f.field]}${f.field === "relevantExp" ? " (months)" : ""}`, record?.[f.column], clean[f.clean]);
+      add("Status from remark", record?.status, clean.status);
+      const oldExtras = JSON.parse(beforeCells(r)?.__extra ?? "{}") as Record<string, string>;
+      const extras = JSON.parse(r.cells.__extra) as Record<string, string>;
+      for (const h of new Set([...Object.keys(oldExtras), ...Object.keys(extras)])) add(`Extra: ${h}`, oldExtras[h], extras[h]);
+    }
+    const statusChanged = !beforeCells(r) || beforeCells(r)?.__status !== r.cells.__status || beforeCells(r)?.__pendingStage === "true";
+    return {
+      rowNumber: r.row.rowNumber, key: r.key, name: c?.fullName ?? "Missing name", role: c?.role ?? null, raw: r.raw,
+      outcome, issues: r.row.issues, changes, selected: (outcome === "new" || outcome === "existing") && !conn.skippedKeys.includes(r.key!),
+      stage: clean && statusChanged && r.status ? conn.statusMap[norm(r.status)] ?? null : null,
+    };
+  });
+  const newRows = new Set(reviewRows.filter(r => r.outcome === "new").map(r => r.rowNumber));
+  const preview: TrackerImportPreview = {
+    token: digest([orgId, conn.id, config, conn.skippedKeys, conn.reviewedAt, conn.syncEvery, conn.active, reviewRows, people.slice().sort((a, b) => a.id.localeCompare(b.id)), [...snapshots].sort(), [...existing].sort(), live?.id]),
+    headers, rows: reviewRows,
+    newCandidates: new Set(valid.flatMap((r, i) => newRows.has(r.row.rowNumber) ? [groups[i]] : [])).size,
+    existingCandidates: new Set(reviewRows.filter(r => r.outcome === "existing" || r.outcome === "unchanged").map(r => personFor.get(r.rowNumber)?.id).filter(Boolean)).size,
+    changedRows: changed.length, duplicateRows, invalidRows: reviewRows.filter(r => r.outcome === "invalid").length,
+  };
+  return { rows, snapshots, beforeCells, byKey, changed, parsedRows, duplicates, duplicateRows, live, preview };
+}
+
+export async function previewTrackerImport(client: SupabaseClient, orgId: string, id: string, fetchImpl?: FetchLike): Promise<TrackerImportPreview> {
+  const conn = toConnection(await loadRow(client, orgId, id));
+  if (conn.syncing) throw new CandidateActionError(409, "This tracker is syncing. Try again in a minute.");
+  return (await prepareTrackerImport(client, orgId, conn, fetchImpl)).preview;
+}
+
+export async function savedTrackerValues(client: SupabaseClient, orgId: string, recordId: string, sheetId: string | null): Promise<Record<string, string> | null> {
+  if (!sheetId) return null;
+  const { data: connections, error } = await client.from(CONNECTIONS).select("id").eq("organization_id", orgId).eq("sheet_id", sheetId).limit(1);
+  if (error) { if (missingRelation(error)) return null; fail("read the tracker", error); }
+  if (!connections?.length) return null;
+  const { data: rows, error: rowsError } = await client.from("candidate_sheet_rows").select("raw").eq("sheet_id", sheetId).eq("application_id", recordId).order("upload_no", { ascending: false }).order("row_number", { ascending: false }).limit(1);
+  if (rowsError) fail("read the saved tracker values", rowsError);
+  return (rows?.[0]?.raw as Record<string, string>) ?? null;
+}
+
+export interface SyncOptions { trigger: "schedule" | "manual"; by?: Actor; fetchImpl?: FetchLike; now?: () => Date; reviewToken?: unknown; selectedRows?: unknown }
 
 /** Pulls one connection: the changed rows into its candidate sheet, the changed statuses onto the pipeline. */
 export async function syncTracker(client: SupabaseClient, orgId: string, id: string, options: SyncOptions): Promise<TrackerSyncSummary> {
@@ -419,68 +582,56 @@ export async function syncTracker(client: SupabaseClient, orgId: string, id: str
   const row = await loadRow(client, orgId, id);
   const conn = toConnection(row);
   if (conn.syncing) throw new CandidateActionError(409, "This tracker is already syncing. Try again in a minute.");
+  if (options.trigger === "schedule" && (!conn.active || conn.syncEvery === "manual" || !conn.reviewedAt)) throw new CandidateActionError(409, "Preview and import this tracker manually before automatic syncing.");
   const actorId = options.by?.id ?? (row.created_by as string | null);
   if (!actorId) throw new CandidateActionError(409, "The person who connected this tracker no longer has a login. Edit and save the connection to take it over.");
   const by: Actor = options.by ?? { id: actorId, name: "Tracker sync" };
-  await client.from(CONNECTIONS).update({ syncing_since: started.toISOString() }).eq("id", conn.id);
+  let claim = client.from(CONNECTIONS).update({ syncing_since: started.toISOString() }).eq("id", conn.id).eq("updated_at", row.updated_at);
+  claim = row.syncing_since ? claim.eq("syncing_since", row.syncing_since) : claim.is("syncing_since", null);
+  const { data: claimed, error: claimError } = await claim.select("id").maybeSingle();
+  if (claimError) fail("start the sync", claimError);
+  if (!claimed) throw new CandidateActionError(409, "This connection changed or is already syncing. Preview again.");
 
   const finish = async (ok: boolean, summary: TrackerSyncSummary | null, error: string | null) => {
     const at = new Date().toISOString();
-    await client.from(CONNECTIONS).update({ syncing_since: null, last_synced_at: at, last_ok: ok, last_error: error, ...(summary ? { last_summary: summary } : {}), updated_at: at }).eq("id", conn.id);
-    await client.from(SYNCS).insert({ organization_id: orgId, connection_id: conn.id, trigger: options.trigger, ok, summary, error, started_at: started.toISOString(), finished_at: at });
+    const { error: saveError } = await client.from(CONNECTIONS).update({ syncing_since: null, last_synced_at: at, last_ok: ok, last_error: error, ...(summary ? { last_summary: summary } : {}), updated_at: at }).eq("id", conn.id).eq("syncing_since", started.toISOString());
+    if (saveError) fail("save the sync result", saveError);
+    const { error: logError } = await client.from(SYNCS).insert({ organization_id: orgId, connection_id: conn.id, trigger: options.trigger, ok, summary, error, started_at: started.toISOString(), finished_at: at });
+    if (logError) fail("save the sync history", logError);
   };
 
   try {
-    const source = trackerSource(conn.sourceUrl);
-    const workbook = readWorkbook(await downloadTracker(source.downloadUrl, options.fetchImpl));
-    const rows = readTrackerRows(gridOf(workbook, conn.tabName), conn.headerRow, conn.columnMap, conn.statusColumn);
-
-    const { data: snapData, error: snapError } = await client.from(SNAPSHOTS).select("id, row_key, cells").eq("connection_id", conn.id);
-    if (snapError) fail("read the last sync", snapError);
-    const snapshots = new Map(((snapData ?? []) as { id: string; row_key: string; cells: Record<string, string> }[]).map((s) => [s.row_key, s]));
-
-    // The last row with a key wins (a person listed twice for the same role).
-    const byKey = new Map<string, TrackerRow>();
-    const seenAt = new Map<string, number[]>();
-    for (const r of rows) {
-      if (!r.key) continue;
-      byKey.set(r.key, r);
-      seenAt.set(r.key, [...(seenAt.get(r.key) ?? []), r.row.rowNumber]);
+    const plan = await prepareTrackerImport(client, orgId, conn, options.fetchImpl);
+    const { rows, snapshots, beforeCells, byKey, duplicates, duplicateRows, live, preview } = plan;
+    let selected: Set<number>;
+    if (options.trigger === "manual") {
+      const selection = z.array(z.number().int().positive()).max(MAX_TRACKER_ROWS).safeParse(options.selectedRows);
+      if (!selection.success || options.reviewToken !== preview.token) throw new CandidateActionError(409, "The sheet, settings or app records changed, or this import has not been reviewed. Preview again before importing.");
+      selected = new Set(selection.data);
+      const eligible = new Set(preview.rows.filter(r => r.outcome === "new" || r.outcome === "existing").map(r => r.rowNumber));
+      if ([...selected].some(n => !eligible.has(n))) throw new CandidateActionError(400, "Select only valid, changed rows from this preview.");
+      const skipped = new Set(conn.skippedKeys);
+      for (const r of preview.rows) {
+        if (!eligible.has(r.rowNumber)) continue;
+        if (selected.has(r.rowNumber)) skipped.delete(r.key!); else skipped.add(r.key!);
+      }
+      const { error } = await client.from(CONNECTIONS).update({ skipped_keys: [...skipped] }).eq("id", conn.id);
+      if (error) fail("save the rows to skip", error);
+    } else {
+      selected = new Set(preview.rows.filter(r => r.selected).map(r => r.rowNumber));
     }
-    // Owner 2026-11-21: "duplicates must be flagged". The same person (email, else phone, else name) for the same role
-    // in two rows: the last row is used, and it is flagged for review in the sheet with the other rows' numbers.
-    const duplicates: string[] = [];
-    let duplicateRows = 0;
-    for (const [key, at] of seenAt) {
-      if (at.length < 2) continue;
-      const kept = byKey.get(key)!;
-      const others = at.slice(0, -1);
-      duplicateRows += others.length;
-      kept.row.issues = [...kept.row.issues, `Duplicate in the tracker: the same person and role is also in row${others.length === 1 ? "" : "s"} ${others.join(", ")}. This row's values were used.`];
-      if (duplicates.length < 10) duplicates.push(`${kept.row.clean?.fullName ?? "Someone"}${kept.row.clean?.role ? ` (${kept.row.clean.role})` : ""}: rows ${at.join(", ")}`);
-    }
-    const changed = [...byKey.values()].filter((r) => changedCells(r.cells, snapshots.get(r.key!)?.cells).size > 0);
-
-    // What the app holds now for the rows seen before, to keep its values where the sheet did not change.
-    const existing = conn.sheetId ? await appRecords(client, orgId, conn.sheetId) : new Map<string, Record<string, unknown>>();
-    const parsedRows: SheetRow[] = changed.map((r) => {
-      const before = snapshots.get(r.key!)?.cells;
-      if (!before) return r.row;
-      const c = r.row.clean!;
-      const record = (c.emailKey && existing.get(`e:${c.emailKey}|${norm(c.role)}`)) || (c.phoneKey && existing.get(`p:${c.phoneKey}|${norm(c.role)}`)) || undefined;
-      return { ...r.row, clean: keepAppValues(c, changedCells(r.cells, before), record) };
-    });
+    const changed = plan.changed.filter(r => selected.has(r.row.rowNumber));
+    const parsedRows = plan.parsedRows.filter(r => selected.has(r.rowNumber));
 
     const summary: TrackerSyncSummary = {
-      rowsRead: rows.length, rowsChanged: changed.length, rowsUnchanged: byKey.size - changed.length, rowsSkipped: rows.filter((r) => !r.row.clean).length,
+      rowsRead: rows.length, rowsChanged: changed.length, rowsUnchanged: byKey.size - plan.changed.length, rowsSkipped: preview.invalidRows + plan.changed.length - changed.length,
       recordsAdded: 0, recordsUpdated: 0, stageMoves: 0, stagePending: 0, rolesWithoutPosition: [], notes: [],
       duplicateRows, duplicates, alreadyInDatabase: 0,
     };
     let sheetId = conn.sheetId;
     if (parsedRows.length) {
-      const fields = [...new Set(Object.values(conn.columnMap).filter(Boolean))] as SheetField[];
+      const fields = [...new Set(Object.values(conn.columnMap).filter(f => f && f !== "extra"))] as SheetField[];
       const parsed: ParsedSheet = { worksheet: conn.tabName, rows: parsedRows, fields, warnings: [] };
-      const live = await findLiveSheetByName(client, orgId, conn.name);
       const result = await importSheet(client, {
         orgId, userId: by.id, userEmail: null, userName: by.name, fileName: conn.name, parsed, mode: live ? "merge" : "new", existing: live,
       });
@@ -495,18 +646,22 @@ export async function syncTracker(client: SupabaseClient, orgId: string, id: str
     // Statuses onto the pipeline: rows whose status changed (or are new), when the status is matched to a stage.
     const pending = new Set<string>();
     const moves = changed.filter((r) => {
-      const before = snapshots.get(r.key!)?.cells;
-      return r.status && conn.statusMap[norm(r.status)] && (!before || (before.__status ?? "") !== (r.cells.__status ?? ""));
+      const before = beforeCells(r);
+      return r.status && conn.statusMap[norm(r.status)] && (!before || before.__pendingStage === "true" || (before.__status ?? "") !== (r.cells.__status ?? ""));
     });
     if (moves.length && sheetId) await applyStages(client, orgId, by, sheetId, moves, conn.statusMap, summary, pending, started);
 
-    // Remember what was read, except rows whose stage move still waits (they are read again next time).
-    const toSave = changed.filter((r) => !pending.has(r.key!)).map((r) => ({ id: snapshots.get(r.key!)?.id ?? randomUUID(), connection_id: conn.id, row_key: r.key!, cells: r.cells, updated_at: new Date().toISOString() }));
+    // Remember imported cells even when a stage move waits, so retrying does not overwrite later app edits.
+    const toSave = changed.map((r) => ({ id: snapshots.get(r.key!)?.id ?? randomUUID(), connection_id: conn.id, row_key: r.key!, cells: { ...r.cells, ...(pending.has(r.key!) ? { __pendingStage: "true" } : {}) }, updated_at: new Date().toISOString() }));
     for (let i = 0; i < toSave.length; i += 500) {
       const { error } = await client.from(SNAPSHOTS).upsert(toSave.slice(i, i + 500));
       if (error) fail("remember the sync", error);
     }
-    if (summary.rowsSkipped) summary.notes.push(`${summary.rowsSkipped} row${summary.rowsSkipped === 1 ? "" : "s"} without a candidate name were skipped.`);
+    if (summary.rowsSkipped) summary.notes.push(`${summary.rowsSkipped} row${summary.rowsSkipped === 1 ? "" : "s"} were skipped (invalid or not selected).`);
+    if (options.trigger === "manual") {
+      const { error } = await client.from(CONNECTIONS).update({ reviewed_at: new Date().toISOString() }).eq("id", conn.id);
+      if (error) fail("save the review", error);
+    }
     await finish(true, summary, null);
     return summary;
   } catch (error) {
@@ -518,24 +673,10 @@ export async function syncTracker(client: SupabaseClient, orgId: string, id: str
 
 /** The records of the connection's sheet as they are now, keyed by the person's email / phone and the role. */
 async function appRecords(client: SupabaseClient, orgId: string, sheetId: string): Promise<Map<string, Record<string, unknown>>> {
-  const { data, error } = await client.from("candidate_applications")
-    .select("id, candidate_id, role, candidate_source, sourcing_date, relevant_exp_months, notice_period_days, current_inhand, expected_inhand, remark, status")
-    .eq("organization_id", orgId).eq("sheet_id", sheetId).is("deleted_at", null);
-  if (error) fail("read the tracker's records", error);
-  const records = (data ?? []) as Record<string, unknown>[];
-  const ids = [...new Set(records.map((r) => r.candidate_id as string))];
-  const people = new Map<string, { email_key: string | null; phone_key: string | null }>();
-  for (let i = 0; i < ids.length; i += 200) {
-    const { data: rows } = await client.from("candidates").select("id, email_key, phone_key").in("id", ids.slice(i, i + 200));
-    for (const p of (rows ?? []) as { id: string; email_key: string | null; phone_key: string | null }[]) people.set(p.id, p);
-  }
   const out = new Map<string, Record<string, unknown>>();
-  for (const r of records) {
-    const p = people.get(r.candidate_id as string);
-    if (!p) continue;
-    // A row names the person by email or by phone: both keys lead to the record.
-    if (p.email_key) out.set(`e:${p.email_key}|${norm(r.role as string | null)}`, r);
-    if (p.phone_key) out.set(`p:${p.phone_key}|${norm(r.role as string | null)}`, r);
+  for (const r of await loadSheetRecords(client, orgId, sheetId)) {
+    const key = recordKey(r.candidate_id as string, r.role as string | null);
+    if (!out.has(key)) out.set(key, r);
   }
   return out;
 }
@@ -547,8 +688,12 @@ async function appRecords(client: SupabaseClient, orgId: string, sheetId: string
 async function applyStages(client: SupabaseClient, orgId: string, by: Actor, sheetId: string, moves: TrackerRow[], statusMap: Record<string, string>, summary: TrackerSyncSummary, pending: Set<string>, started: Date): Promise<void> {
   const positions = await listPositions(client, orgId, "open");
   const positionFor = new Map(positions.map((p) => [norm(p.title), p]));
-  const { data } = await client.from("candidate_applications").select("id, candidate_id, source_row").eq("organization_id", orgId).eq("sheet_id", sheetId).is("deleted_at", null).in("source_row", moves.map((m) => m.row.rowNumber));
-  const appByRow = new Map(((data ?? []) as { id: string; candidate_id: string; source_row: number }[]).map((a) => [a.source_row, a]));
+  const appByRow = new Map<number, { id: string; candidate_id: string; source_row: number }>();
+  for (let i = 0; i < moves.length; i += 200) {
+    const { data, error } = await client.from("candidate_applications").select("id, candidate_id, source_row").eq("organization_id", orgId).eq("sheet_id", sheetId).is("deleted_at", null).in("source_row", moves.slice(i, i + 200).map(m => m.row.rowNumber));
+    if (error) fail("read the imported records", error);
+    for (const a of (data ?? []) as { id: string; candidate_id: string; source_row: number }[]) appByRow.set(a.source_row, a);
+  }
   const missingRoles = new Set<string>();
 
   // Per position: add the people not in it yet, then move each.
@@ -558,20 +703,28 @@ async function applyStages(client: SupabaseClient, orgId: string, by: Actor, she
     const position = role ? positionFor.get(norm(role)) : undefined;
     if (!position) { if (role) missingRoles.add(role); continue; }
     const app = appByRow.get(move.row.rowNumber);
-    if (!app) continue;
+    if (!app) { pending.add(move.key!); continue; }
     const g = groups.get(position.id) ?? { position, items: [] };
     g.items.push({ move, app });
     groups.set(position.id, g);
   }
   for (const { position, items } of groups.values()) {
-    for (let i = 0; i < items.length; i += 200) await addMembers(client, orgId, by, position.id, [...new Set(items.slice(i, i + 200).map((x) => x.app.id))]).catch((error) => summary.notes.push(`Adding people to ${position.title}: ${error instanceof Error ? error.message : "failed"}`));
-    const { data: members } = await client.from("candidate_position_members").select("id, candidate_id, stage").eq("organization_id", orgId).eq("position_id", position.id).is("deleted_at", null).in("candidate_id", [...new Set(items.map((x) => x.app.candidate_id))]);
-    const memberOf = new Map(((members ?? []) as { id: string; candidate_id: string; stage: string }[]).map((m) => [m.candidate_id, m]));
+    const memberOf = new Map<string, { id: string; candidate_id: string; stage: string }>();
+    for (let i = 0; i < items.length; i += 200) {
+      const batch = items.slice(i, i + 200);
+      await addMembers(client, orgId, by, position.id, [...new Set(batch.map(x => x.app.id))]).catch(error => {
+        for (const { move } of batch) pending.add(move.key!);
+        summary.notes.push(`Adding people to ${position.title}: ${error instanceof Error ? error.message : "failed"}`);
+      });
+      const { data: members, error } = await client.from("candidate_position_members").select("id, candidate_id, stage").eq("organization_id", orgId).eq("position_id", position.id).is("deleted_at", null).in("candidate_id", [...new Set(batch.map(x => x.app.candidate_id))]);
+      if (error) fail("read the pipeline members", error);
+      for (const m of (members ?? []) as { id: string; candidate_id: string; stage: string }[]) memberOf.set(m.candidate_id, m);
+    }
     for (const { move, app } of items) {
       if (Date.now() - started.getTime() > STAGE_BUDGET_MS) { pending.add(move.key!); continue; }
       const member = memberOf.get(app.candidate_id);
       const stage = statusMap[norm(move.status)];
-      if (!member || !stage) continue;
+      if (!member || !stage) { pending.add(move.key!); continue; }
       if (member.stage === stage) continue;
       try {
         await moveMember(client, orgId, by, position.id, member.id, stage, `From the tracker: ${move.status}`);
@@ -589,7 +742,7 @@ async function applyStages(client: SupabaseClient, orgId: string, by: Actor, she
 
 /** For the hourly job: the connections due (active, not manual, last synced over an hour / a day ago), every organisation. */
 export async function dueTrackers(client: SupabaseClient, now = new Date()): Promise<{ orgId: string; id: string }[]> {
-  const { data, error } = await client.from(CONNECTIONS).select("id, organization_id, sync_every, last_synced_at").eq("active", true).is("deleted_at", null).neq("sync_every", "manual");
+  const { data, error } = await client.from(CONNECTIONS).select("id, organization_id, sync_every, last_synced_at").eq("active", true).is("deleted_at", null).neq("sync_every", "manual").not("reviewed_at", "is", null);
   if (error) return [];
   return ((data ?? []) as { id: string; organization_id: string; sync_every: string; last_synced_at: unknown }[])
     .filter((c) => {

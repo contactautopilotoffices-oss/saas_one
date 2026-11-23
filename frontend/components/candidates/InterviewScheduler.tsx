@@ -14,6 +14,7 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, use
 // The Meeting Assistant's call and recorder, loaded only when opened (they bring the video library with them).
 const VideoCall = dynamic(() => import('@/frontend/components/task-manager/meetings/VideoCall'), { ssr: false });
 const MeetingRecorder = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingRecorder'), { ssr: false });
+const MeetingReview = dynamic(() => import('@/frontend/components/task-manager/meetings/MeetingReview'), { ssr: false });
 
 /*
  * Schedule interview (owner 2026-11-19; HRMS meeting: "generate meeting links directly within the platform", "both
@@ -254,14 +255,14 @@ const STATUS_WORDS: Record<string, string> = {
 
 /** Over the Recruitment page: the call or the recorder, with nothing else around it. */
 function Overlay({ dark, children }: { dark: boolean; children: React.ReactNode }) {
-    return <div role="dialog" aria-modal="true" className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-zinc-950' : 'bg-surface px-4 py-6 sm:py-10'}`}>{children}</div>;
+    return <div data-meeting-surface role="dialog" aria-label="Recruitment interview" aria-modal="true" className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-zinc-950' : 'bg-surface px-4 py-6 sm:py-10'}`}>{children}</div>;
 }
 
 /** The candidate's Interviews tab: each interview, Join call / Record interview, its link while it is ahead, its notes once written. */
 export function InterviewsList({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
     const { notify, reportError } = useUi();
     const [reload, setReload] = useState(0);
-    const [opened, setOpened] = useState<null | { kind: 'call'; meetingId: string } | { kind: 'record'; meetingId: string; title: string; people: { id: string; name: string; department: string | null }[] }>(null);
+    const [opened, setOpened] = useState<null | { kind: 'call' | 'notes'; meetingId: string } | { kind: 'record'; meetingId: string; title: string; people: { id: string; name: string; department: string | null }[] }>(null);
     const [starting, setStarting] = useState<string | null>(null);
     const close = () => { setOpened(null); setReload(n => n + 1); };
     const record_ = async (i: Interview) => {
@@ -288,6 +289,16 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
         return () => ctrl.abort();
     }, [orgId, record.candidateId, nonce, reload, reportError]);
     const list = state?.id === record.candidateId ? state.list : null;
+    const processing = list?.some(i => i.meeting && ['live', 'uploaded', 'transcribing', 'identifying', 'extracting'].includes(i.meeting.status)) ?? false;
+    useEffect(() => {
+        if (!processing || opened) return;
+        const timer = window.setInterval(() => setReload(n => n + 1), 10_000);
+        return () => window.clearInterval(timer);
+    }, [processing, opened]);
+    if (opened?.kind === 'notes') {
+        return <Overlay dark={false}><MeetingReview space="hr" meetingId={opened.meetingId} onBack={close} backLabel="Back to candidate"
+            onContinueRecording={(meetingId, title) => setOpened({ kind: 'record', meetingId, title, people: [] })} /></Overlay>;
+    }
     if (opened?.kind === 'call') {
         return <Overlay dark><VideoCall meetingId={opened.meetingId} onClose={close} notesWhere="in the candidate’s Interviews tab in Recruitment" /></Overlay>;
     }
@@ -315,6 +326,9 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
                         </div>
                         {(i.interviewers || i.byName) && <p className="mt-0.5 text-xs text-text-secondary">{i.interviewers ? `With ${i.interviewers}` : ''}{i.interviewers && i.byName ? ' · ' : ''}{i.byName ? `scheduled by ${i.byName}` : ''}</p>}
                         {i.note && <p className="mt-1 text-xs italic text-text-secondary">“{i.note}”</p>}
+                        {i.meetingId && i.meeting && !['scheduled', 'live', 'recording', 'deleted', 'discarded'].includes(i.meeting.status) && (
+                            <button type="button" className={`${BTN_SECONDARY} mt-2`} onClick={() => setOpened({ kind: 'notes', meetingId: i.meetingId! })}>Full notes and transcript</button>
+                        )}
                         {i.mode === 'online' && i.meetingId && ahead && (!i.meeting || i.meeting.status === 'scheduled' || i.meeting.status === 'live') && (
                             <div className="mt-2.5 space-y-2">
                                 <button type="button" onClick={() => setOpened({ kind: 'call', meetingId: i.meetingId! })} className={BTN_PRIMARY}><Video className="h-4 w-4" />{i.meeting?.status === 'live' ? 'Join the call now' : 'Join call'}</button>
