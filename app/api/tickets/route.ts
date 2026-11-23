@@ -401,9 +401,19 @@ export async function POST(request: NextRequest) {
         let slaHours = 24;
 
         const ticketText = [title, description].map(s => String(s ?? '').trim()).filter(Boolean).filter((s, i, all) => all.indexOf(s) === i).join('\n');
-        const resolution = await resolveClassification(ticketText, { propertyId: propId, organizationId: orgId });
+        const [resolution, hierarchyRes] = await Promise.all([
+            resolveClassification(ticketText, { propertyId: propId, organizationId: orgId }),
+            adminClient
+                .from('escalation_hierarchies')
+                .select('id, property_id')
+                .eq('organization_id', orgId)
+                .eq('is_default', true)
+                .eq('is_active', true)
+                .or(`property_id.eq.${propId},property_id.is.null`)
+        ]);
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
+        const defaultHierarchy = (hierarchyRes.data || []).find((h: any) => h.property_id === propId) || (hierarchyRes.data || []).find((h: any) => !h.property_id);
 
         // 2. The chosen category's row (this property's own first, then the shared one): its team, usual priority, SLA.
         if (issue_code) {
@@ -490,7 +500,11 @@ export async function POST(request: NextRequest) {
                 llm_reasoning: resolution.llm_reasoning,
                 classification_source: decisionSource,
                 // The AI's own 0–100 rating (shown as "72% (Medium)"); the keyword rules keep the old fixed 100
-                confidence_score: resolution.confidenceScore ?? 100
+                confidence_score: resolution.confidenceScore ?? 100,
+                // Escalation hierarchy attached directly on insert (saves separate update & re-fetch)
+                hierarchy_id: defaultHierarchy?.id,
+                current_escalation_level: defaultHierarchy ? 0 : undefined,
+                escalation_last_action_at: defaultHierarchy ? new Date().toISOString() : undefined
             })
             .select('*')
             .single();
@@ -502,48 +516,7 @@ export async function POST(request: NextRequest) {
             }, { status: 500 });
         }
 
-        // Auto-attach the default escalation hierarchy (property-specific first, then org-wide fallback)
-        let { data: defaultHierarchy } = await adminClient
-            .from('escalation_hierarchies')
-            .select('id')
-            .eq('organization_id', orgId)
-            .eq('property_id', propId)
-            .eq('is_default', true)
-            .eq('is_active', true)
-            .maybeSingle();
-
-        // Fallback: try org-wide hierarchy (property_id IS NULL)
-        if (!defaultHierarchy) {
-            const { data: orgWideHierarchy } = await adminClient
-                .from('escalation_hierarchies')
-                .select('id')
-                .eq('organization_id', orgId)
-                .is('property_id', null)
-                .eq('is_default', true)
-                .eq('is_active', true)
-                .maybeSingle();
-            defaultHierarchy = orgWideHierarchy;
-        }
-
-        if (defaultHierarchy) {
-            await adminClient
-                .from('tickets')
-                .update({
-                    hierarchy_id: defaultHierarchy.id,
-                    current_escalation_level: 0,
-                    escalation_last_action_at: new Date().toISOString(),
-                })
-                .eq('id', ticket.id);
-        }
-
-        // Re-fetch the ticket for trigger updates
-        const { data: updatedTicket } = await supabase
-            .from('tickets')
-            .select('*')
-            .eq('id', ticket.id)
-            .single();
-
-        const finalTicket = updatedTicket || ticket;
+        const finalTicket = ticket;
 
         // Auto-assign ticket to a resolver if not already assigned
         if (!assignedTo && finalTicket.status === 'open') {
