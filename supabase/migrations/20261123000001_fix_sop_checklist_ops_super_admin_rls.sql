@@ -1,5 +1,5 @@
 -- Migration: Allow any authenticated user to see checklists (no role restriction on SELECT)
--- + allow org admins, ops super admin, and property admins to manage templates
+-- + robust admin management policies for templates & completions
 -- Date: 2026-11-23
 
 BEGIN;
@@ -16,11 +16,11 @@ SET search_path = public
 AS $$
 BEGIN
   RETURN EXISTS (
-    SELECT 1 FROM public.organization_memberships
-    WHERE user_id = auth.uid()
-      AND organization_id = p_org_id
-      AND lower(role) IN ('org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin', 'owner', 'admin')
-      AND is_active IS DISTINCT FROM false
+    SELECT 1 FROM public.organization_memberships om
+    WHERE om.user_id = auth.uid()
+      AND om.organization_id = p_org_id
+      AND lower(om.role::text) IN ('org_super_admin', 'ops_super_admin', 'master_admin', 'org_admin', 'owner', 'admin')
+      AND om.is_active IS DISTINCT FROM false
   );
 END;
 $$;
@@ -39,22 +39,39 @@ DROP POLICY IF EXISTS "sop_templates_authenticated_all" ON public.sop_templates;
 DROP POLICY IF EXISTS "sop_templates_manage" ON public.sop_templates;
 DROP POLICY IF EXISTS "sop_templates_ops_admin" ON public.sop_templates;
 DROP POLICY IF EXISTS "sop_templates_admin_manage" ON public.sop_templates;
+DROP POLICY IF EXISTS "sop_templates_insert" ON public.sop_templates;
+DROP POLICY IF EXISTS "sop_templates_update" ON public.sop_templates;
+DROP POLICY IF EXISTS "sop_templates_delete" ON public.sop_templates;
 
--- ANY authenticated user can see (SELECT) all checklist templates (no role restrictions)
+-- ANY authenticated user can view (SELECT) all checklist templates
 CREATE POLICY "sop_templates_authenticated_read" ON public.sop_templates
     FOR SELECT TO authenticated
     USING (true);
 
--- Manage (INSERT / UPDATE / DELETE): Org admins / Ops Super Admin / Property Admin
-CREATE POLICY "sop_templates_admin_manage" ON public.sop_templates
-    FOR ALL TO authenticated
+-- INSERT templates: Org Admins, Ops Super Admin, or Property Admin
+CREATE POLICY "sop_templates_insert" ON public.sop_templates
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        public.is_org_admin_or_ops_admin(organization_id)
+        OR EXISTS (
+            SELECT 1 FROM public.property_memberships pm
+            WHERE pm.user_id = auth.uid()
+            AND pm.property_id = sop_templates.property_id
+            AND lower(pm.role::text) IN ('property_admin', 'admin')
+            AND pm.is_active IS DISTINCT FROM false
+        )
+    );
+
+-- UPDATE templates: Org Admins, Ops Super Admin, or Property Admin
+CREATE POLICY "sop_templates_update" ON public.sop_templates
+    FOR UPDATE TO authenticated
     USING (
         public.is_org_admin_or_ops_admin(organization_id)
         OR EXISTS (
             SELECT 1 FROM public.property_memberships pm
             WHERE pm.user_id = auth.uid()
             AND pm.property_id = sop_templates.property_id
-            AND pm.role IN ('property_admin', 'admin')
+            AND lower(pm.role::text) IN ('property_admin', 'admin')
             AND pm.is_active IS DISTINCT FROM false
         )
     )
@@ -64,7 +81,21 @@ CREATE POLICY "sop_templates_admin_manage" ON public.sop_templates
             SELECT 1 FROM public.property_memberships pm
             WHERE pm.user_id = auth.uid()
             AND pm.property_id = sop_templates.property_id
-            AND pm.role IN ('property_admin', 'admin')
+            AND lower(pm.role::text) IN ('property_admin', 'admin')
+            AND pm.is_active IS DISTINCT FROM false
+        )
+    );
+
+-- DELETE templates: Org Admins, Ops Super Admin, or Property Admin
+CREATE POLICY "sop_templates_delete" ON public.sop_templates
+    FOR DELETE TO authenticated
+    USING (
+        public.is_org_admin_or_ops_admin(organization_id)
+        OR EXISTS (
+            SELECT 1 FROM public.property_memberships pm
+            WHERE pm.user_id = auth.uid()
+            AND pm.property_id = sop_templates.property_id
+            AND lower(pm.role::text) IN ('property_admin', 'admin')
             AND pm.is_active IS DISTINCT FROM false
         )
     );
@@ -80,15 +111,37 @@ DROP POLICY IF EXISTS "sop_items_authenticated_all" ON public.sop_checklist_item
 DROP POLICY IF EXISTS "sop_items_manage" ON public.sop_checklist_items;
 DROP POLICY IF EXISTS "sop_checklist_items_ops_admin" ON public.sop_checklist_items;
 DROP POLICY IF EXISTS "sop_checklist_items_admin_manage" ON public.sop_checklist_items;
+DROP POLICY IF EXISTS "sop_checklist_items_insert" ON public.sop_checklist_items;
+DROP POLICY IF EXISTS "sop_checklist_items_update" ON public.sop_checklist_items;
+DROP POLICY IF EXISTS "sop_checklist_items_delete" ON public.sop_checklist_items;
 
--- ANY authenticated user can see (SELECT) all checklist items (no role restrictions)
+-- ANY authenticated user can view (SELECT) all checklist items
 CREATE POLICY "sop_checklist_items_authenticated_read" ON public.sop_checklist_items
     FOR SELECT TO authenticated
     USING (true);
 
--- Manage items: Org admins / Ops Super Admin / Property Admin
-CREATE POLICY "sop_checklist_items_admin_manage" ON public.sop_checklist_items
-    FOR ALL TO authenticated
+-- Manage checklist items (inherit from template access)
+CREATE POLICY "sop_checklist_items_insert" ON public.sop_checklist_items
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM public.sop_templates t
+            WHERE t.id = sop_checklist_items.template_id
+            AND (
+                public.is_org_admin_or_ops_admin(t.organization_id)
+                OR EXISTS (
+                    SELECT 1 FROM public.property_memberships pm
+                    WHERE pm.user_id = auth.uid()
+                    AND pm.property_id = t.property_id
+                    AND lower(pm.role::text) IN ('property_admin', 'admin')
+                    AND pm.is_active IS DISTINCT FROM false
+                )
+            )
+        )
+    );
+
+CREATE POLICY "sop_checklist_items_update" ON public.sop_checklist_items
+    FOR UPDATE TO authenticated
     USING (
         EXISTS (
             SELECT 1 FROM public.sop_templates t
@@ -99,7 +152,7 @@ CREATE POLICY "sop_checklist_items_admin_manage" ON public.sop_checklist_items
                     SELECT 1 FROM public.property_memberships pm
                     WHERE pm.user_id = auth.uid()
                     AND pm.property_id = t.property_id
-                    AND pm.role IN ('property_admin', 'admin')
+                    AND lower(pm.role::text) IN ('property_admin', 'admin')
                     AND pm.is_active IS DISTINCT FROM false
                 )
             )
@@ -115,7 +168,26 @@ CREATE POLICY "sop_checklist_items_admin_manage" ON public.sop_checklist_items
                     SELECT 1 FROM public.property_memberships pm
                     WHERE pm.user_id = auth.uid()
                     AND pm.property_id = t.property_id
-                    AND pm.role IN ('property_admin', 'admin')
+                    AND lower(pm.role::text) IN ('property_admin', 'admin')
+                    AND pm.is_active IS DISTINCT FROM false
+                )
+            )
+        )
+    );
+
+CREATE POLICY "sop_checklist_items_delete" ON public.sop_checklist_items
+    FOR DELETE TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.sop_templates t
+            WHERE t.id = sop_checklist_items.template_id
+            AND (
+                public.is_org_admin_or_ops_admin(t.organization_id)
+                OR EXISTS (
+                    SELECT 1 FROM public.property_memberships pm
+                    WHERE pm.user_id = auth.uid()
+                    AND pm.property_id = t.property_id
+                    AND lower(pm.role::text) IN ('property_admin', 'admin')
                     AND pm.is_active IS DISTINCT FROM false
                 )
             )
@@ -139,22 +211,23 @@ DROP POLICY IF EXISTS "sop_completions_authenticated_insert" ON public.sop_compl
 DROP POLICY IF EXISTS "sop_completions_authenticated_update" ON public.sop_completions;
 DROP POLICY IF EXISTS "sop_completions_admin_delete" ON public.sop_completions;
 
--- ANY authenticated user can see (SELECT) all completions / history (no role restrictions)
+-- ANY authenticated user can view (SELECT) all completions / history
 CREATE POLICY "sop_completions_authenticated_read" ON public.sop_completions
     FOR SELECT TO authenticated
     USING (true);
 
--- Authenticated users can insert their own checklist runs
+-- Authenticated users can insert their own checklist completion runs
 CREATE POLICY "sop_completions_authenticated_insert" ON public.sop_completions
     FOR INSERT TO authenticated
-    WITH CHECK (completed_by = auth.uid());
+    WITH CHECK (completed_by = auth.uid() OR public.is_org_admin_or_ops_admin(organization_id));
 
--- Updating completion runs (by submitter or admins)
+-- Updating completion runs (by the submitter or by admins)
 CREATE POLICY "sop_completions_authenticated_update" ON public.sop_completions
     FOR UPDATE TO authenticated
-    USING (completed_by = auth.uid() OR public.is_org_admin_or_ops_admin(organization_id));
+    USING (completed_by = auth.uid() OR public.is_org_admin_or_ops_admin(organization_id))
+    WITH CHECK (completed_by = auth.uid() OR public.is_org_admin_or_ops_admin(organization_id));
 
--- Deleting completions: Org admins / Ops Super Admin / Property Admin
+-- Deleting completions: Org Admins, Ops Super Admin, or Property Admin
 CREATE POLICY "sop_completions_admin_delete" ON public.sop_completions
     FOR DELETE TO authenticated
     USING (
@@ -163,7 +236,7 @@ CREATE POLICY "sop_completions_admin_delete" ON public.sop_completions
             SELECT 1 FROM public.property_memberships pm
             WHERE pm.user_id = auth.uid()
             AND pm.property_id = sop_completions.property_id
-            AND pm.role IN ('property_admin', 'admin')
+            AND lower(pm.role::text) IN ('property_admin', 'admin')
             AND pm.is_active IS DISTINCT FROM false
         )
     );
@@ -178,16 +251,42 @@ DROP POLICY IF EXISTS "sop_completion_items_authenticated_read" ON public.sop_co
 DROP POLICY IF EXISTS "sop_completion_items_read" ON public.sop_completion_items;
 DROP POLICY IF EXISTS "sop_completion_items_ops_admin_read" ON public.sop_completion_items;
 DROP POLICY IF EXISTS "sop_completion_items_authenticated_all" ON public.sop_completion_items;
+DROP POLICY IF EXISTS "sop_completion_items_insert" ON public.sop_completion_items;
+DROP POLICY IF EXISTS "sop_completion_items_update" ON public.sop_completion_items;
+DROP POLICY IF EXISTS "sop_completion_items_delete" ON public.sop_completion_items;
 
--- ANY authenticated user can see (SELECT) completion items (no role restrictions)
+-- ANY authenticated user can view (SELECT) completion items
 CREATE POLICY "sop_completion_items_authenticated_read" ON public.sop_completion_items
     FOR SELECT TO authenticated
     USING (true);
 
 -- Authenticated users can insert/update completion items for runs
-CREATE POLICY "sop_completion_items_authenticated_all" ON public.sop_completion_items
-    FOR ALL TO authenticated
+CREATE POLICY "sop_completion_items_insert" ON public.sop_completion_items
+    FOR INSERT TO authenticated
+    WITH CHECK (true);
+
+CREATE POLICY "sop_completion_items_update" ON public.sop_completion_items
+    FOR UPDATE TO authenticated
     USING (true)
     WITH CHECK (true);
+
+CREATE POLICY "sop_completion_items_delete" ON public.sop_completion_items
+    FOR DELETE TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.sop_completions c
+            WHERE c.id = sop_completion_items.completion_id
+            AND (
+                public.is_org_admin_or_ops_admin(c.organization_id)
+                OR EXISTS (
+                    SELECT 1 FROM public.property_memberships pm
+                    WHERE pm.user_id = auth.uid()
+                    AND pm.property_id = c.property_id
+                    AND lower(pm.role::text) IN ('property_admin', 'admin')
+                    AND pm.is_active IS DISTINCT FROM false
+                )
+            )
+        )
+    );
 
 COMMIT;
