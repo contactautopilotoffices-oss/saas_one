@@ -110,7 +110,13 @@ export default function ProcurementDashboard() {
     const [activities, setActivities] = useState<any[]>([]);
     const [procurementUsers, setProcurementUsers] = useState<any[]>([]);
     const [allProperties, setAllProperties] = useState<any[]>([]);
-    const [dashboardTab, setActiveTabState] = useState<Tab>('overview');
+    const [dashboardTab, setActiveTabState] = useState<Tab>(() => {
+        const tabParam = searchParams?.get('tab') as string | null;
+        if (tabParam === 'urgency-tracker' || tabParam === 'task-sheet') return 'payment-tracker';
+        const linkableTabs = ['overview', 'vendor-discovery', 'tasks', 'payment-tracker', 'invoice-control', 'bounty', 'requests', 'vendor_tickets', 'monthly-requisitions', 'monthly-feedback', 'history', 'manage-items', 'stock-settings', 'po-generator', 'settings', 'profile', 'grievance', 'site-pricing', 'meeting-assistant'];
+        if (tabParam && linkableTabs.includes(tabParam)) return tabParam as Tab;
+        return 'overview';
+    });
     // When the dashboard is showing a content page (petty cash), that wins over the tab state.
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     // Stays mounted once opened (hidden on other tabs), so switching tabs never stops a recording
