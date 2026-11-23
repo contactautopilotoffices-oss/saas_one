@@ -11,6 +11,12 @@
  * The accuracy shown: of the tickets created in the last 30 days, the share nobody had to re-sort (judged wrong here,
  * or changed with the Override button on the ticket). Tickets nobody looked at count as right.
  *
+ * 2026-11-19 (owner: "with corrections, it must improve the classification accuracy and confidence"): every judgement,
+ * right ones too, is saved as a learning example (sortLearningStore.saveExample) that similar new tickets are shown;
+ * a judgement can be undone for UNDO_DAYS days (the example goes, and a ticket it moved goes back); near-identical
+ * examples that disagree are listed and a person keeps one. The screen also shows each ticket's similar tickets and
+ * why its confidence is what it is (sortLearningView.ts).
+ *
  * Server only, and only after the Tech-team check in the route (consoleGuard). Every query is limited to the
  * organisation in code (service-role client). Privacy (owner): the ticket's words are shown with phone numbers, emails
  * and ids masked, and nothing says who raised the ticket.
@@ -19,6 +25,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { maskIdentity } from '@/backend/lib/aiLayer/brain/console/view';
 import { CONFIDENCE_HIGH, categoryOptionsFrom, confidenceWord, forgetCorrections, type CategoryOption } from './aiClassifier';
 import type { SkillGroup } from './classifyTicket';
+import { learningSetting, removeExample, retireExamples, saveExample } from './sortLearningStore';
+import { learningView, type LearningView, type TicketLearningNote } from './sortLearningView';
+import { rulesView, type RulesView } from './sortRulesStore';
+import { photoDescriptionFor, photoView, type PhotoNote, type PhotoView } from './ticketPhoto';
 
 export const REVIEW_DAYS = 30;
 /** At most this many tickets are looked at for the queue, and this many are sent to the screen. */
@@ -28,6 +38,8 @@ const IN_CHUNK = 100;
 const DAY_MS = 86_400_000;
 /** A ticket in one of these states may still be moved to another team. */
 export const MOVABLE_STATUSES: readonly string[] = ['open', 'assigned', 'waitlist'];
+/** A judgement can be undone for this many days. */
+export const UNDO_DAYS = 7;
 
 const MISSING = new Set(['42P01', 'PGRST205', '42703', 'PGRST204']);
 const isMissing = (e: { code?: string } | null | undefined) => !!e && MISSING.has(String(e.code ?? ''));
@@ -57,9 +69,14 @@ export interface TicketReviewItem {
     canMove: boolean;
     /** Key into TicketReviewView.choices: the categories this ticket's property can use. */
     choicesKey: string;
+    /** 2026-11-19: the similar tickets used and why the confidence is what it is; null without a trace. */
+    learning: TicketLearningNote | null;
+    /** 2026-11-19: the ticket's photo (its address in the app) and what the AI read in it; null without a photo. */
+    photoUrl: string | null;
+    photo: PhotoNote | null;
 }
 
-export interface TicketJudgement { at: string; text: string; verdict: 'right' | 'wrong'; chosen: string | null; right: string | null; moved: boolean }
+export interface TicketJudgement { ticketId: string | null; at: string; text: string; verdict: 'right' | 'wrong'; chosen: string | null; right: string | null; moved: boolean; canUndo: boolean }
 
 export interface TicketReviewView {
     /** The table is not applied yet (migration 20261115000003): the queue can be read but not judged. */
@@ -81,6 +98,12 @@ export interface TicketReviewView {
         judgedWrong: number;
     };
     recent: TicketJudgement[];
+    /** 2026-11-19: the learning (examples, watch-only comparison, weeks, disagreements); null when unreadable. */
+    learning: LearningView | null;
+    /** 2026-11-19: the sorting rules (in use, waiting for approval, runs, history); null when unreadable. */
+    rules: RulesView | null;
+    /** 2026-11-19: photo reading (the setting, the photo against the words); null when unreadable. */
+    photos: PhotoView | null;
 }
 
 type Row = Record<string, unknown>;
@@ -123,7 +146,7 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
     const since = new Date(now.getTime() - REVIEW_DAYS * DAY_MS).toISOString();
 
     const read = await admin.from('tickets')
-        .select('id, ticket_number, title, description, created_at, status, priority, confidence_score, classification_source, llm_reasoning, risk_flag, property_id, issue_code, skill_group_code, category:issue_categories(code, name), skill_group:skill_groups(code, name), property:properties(name)')
+        .select('id, ticket_number, title, description, created_at, status, priority, confidence_score, classification_source, llm_reasoning, risk_flag, property_id, issue_code, skill_group_code, photo_before_url, category:issue_categories(code, name), skill_group:skill_groups(code, name), property:properties(name)')
         .eq('organization_id', orgId)
         .gte('created_at', since)
         .or(`classification_source.eq.rule,and(classification_source.eq.llm,confidence_score.lt.${CONFIDENCE_HIGH})`)
@@ -170,6 +193,9 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
             risk: str(t.risk_flag),
             canMove: MOVABLE_STATUSES.includes(String(t.status ?? '')),
             choicesKey: key,
+            learning: null,
+            photoUrl: str(t.photo_before_url),
+            photo: null,
         };
     });
 
@@ -186,13 +212,35 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
     if (!tableMissing) {
         const rv = () => admin.from('ticket_sort_reviews').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).gte('created_at', since);
         [judgedRight, judgedWrong] = await Promise.all([count(rv().eq('verdict', 'right')), count(rv().eq('verdict', 'wrong'))]);
-        const last = await admin.from('ticket_sort_reviews').select('created_at, ticket_text, verdict, chosen_code, right_code, ticket_moved')
+        const last = await admin.from('ticket_sort_reviews').select('ticket_id, created_at, ticket_text, verdict, chosen_code, right_code, ticket_moved')
             .eq('organization_id', orgId).order('created_at', { ascending: false }).limit(20);
         if (last.error) throw new Error(last.error.message);
         recent = ((last.data ?? []) as Row[]).map(r => ({
-            at: String(r.created_at), text: String(r.ticket_text ?? ''), verdict: r.verdict === 'wrong' ? 'wrong' : 'right',
+            ticketId: str(r.ticket_id), at: String(r.created_at), text: String(r.ticket_text ?? ''), verdict: r.verdict === 'wrong' ? 'wrong' : 'right',
             chosen: str(r.chosen_code), right: str(r.right_code), moved: r.ticket_moved === true,
+            canUndo: !!str(r.ticket_id) && now.getTime() - Date.parse(String(r.created_at)) < UNDO_DAYS * DAY_MS,
         }));
+    }
+
+    // The learning: never a reason for the screen to fail.
+    let learning: LearningView | null = null;
+    let rules: RulesView | null = null;
+    const setting = await learningSetting(orgId, admin);
+    try {
+        learning = await learningView(admin, orgId, setting, queue.map(q => q.id), now);
+        for (const q of queue) q.learning = learning.notes[q.id] ?? null;
+    } catch (err) {
+        console.warn('[TicketReview] the learning part could not be read:', err instanceof Error ? err.message : err);
+    }
+    try { rules = await rulesView(admin, orgId, setting.rulesDaily !== false); } catch (err) {
+        console.warn('[TicketReview] the sorting rules could not be read:', err instanceof Error ? err.message : err);
+    }
+    let photos: PhotoView | null = null;
+    try {
+        photos = await photoView(admin, orgId, setting.photos ?? 'off', queue.map(q => q.id), now);
+        for (const q of queue) q.photo = photos.notes[q.id] ?? null;
+    } catch (err) {
+        console.warn('[TicketReview] the photo readings could not be read:', err instanceof Error ? err.message : err);
     }
 
     return {
@@ -202,6 +250,9 @@ export async function ticketReviewView(admin: SupabaseClient, orgId: string, now
         choices,
         accuracy: { days: REVIEW_DAYS, sorted, byAi, byRules, resorted, percent: sorted ? Math.round((100 * (sorted - resorted)) / sorted) : null, judgedRight, judgedWrong },
         recent,
+        learning,
+        rules,
+        photos,
     };
 }
 
@@ -269,6 +320,15 @@ export async function judgeTicketSort(
         if (String(ins.error.code) === '23505') return { ok: false, status: 400, error: 'Someone has judged this ticket already.' };
         throw new Error(ins.error.message);
     }
+    // 2026-11-19: the judgement becomes a learning example (right ones too). Never a reason for the judgement to fail.
+    const setting = await learningSetting(orgId, admin);
+    // 2026-11-19: what the AI read in the ticket's photo is kept with the example ("port" + a switch board photo).
+    const photoNote = await photoDescriptionFor(admin, ticketId);
+    const text = `${maskIdentity(ticketText(t), 1000) ?? ''}${photoNote ? ` (photo: ${photoNote})` : ''}`;
+    const learnCode = right?.code ?? chosenCode;
+    if (learnCode) {
+        await saveExample({ orgId, propertyId: str(t.property_id), ticketId, text, code: learnCode, team: right ? right.team : asTeam(t.skill_group_code), source: right ? 'judged_wrong' : 'judged_right' }, { admin, meaning: setting.meaning });
+    }
     if (!right) return { ok: true, message: 'Marked right.' };
     forgetCorrections(orgId);
 
@@ -296,6 +356,7 @@ export async function judgeTicketSort(
         // Nothing half-done: the judgement is taken back, so it can simply be made again.
         console.error('[TicketReview] could not move the ticket:', moved.error.message);
         await admin.from('ticket_sort_reviews').delete().eq('ticket_id', ticketId).eq('organization_id', orgId);
+        await removeExample(admin, orgId, ticketId);
         forgetCorrections(orgId);
         return { ok: false, status: 400, error: 'The ticket could not be moved, so nothing was saved. Try again.' };
     }
@@ -314,4 +375,83 @@ export async function judgeTicketSort(
         }
     }
     return { ok: true, message: 'Marked wrong. The ticket moved to the right team and the AI learns from it.' };
+}
+
+const asTeam = (x: unknown): SkillGroup | null => (['technical', 'plumbing', 'vendor', 'soft_services', 'it'].includes(String(x)) ? (x as SkillGroup) : null);
+
+// ── undoing a judgement (2026-11-19) ────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Takes a judgement back, within UNDO_DAYS days: the judgement and its learning example are removed, so the ticket is
+ * back in the queue. A ticket the judgement moved goes back to the category and team it had, and is assigned again
+ * within that team, while it is still open; otherwise it stays where it is and the message says so.
+ */
+export async function undoTicketJudgement(admin: SupabaseClient, orgId: string, reviewerId: string, body: { ticketId?: unknown }, reassign: Reassign, now = new Date()): Promise<JudgeResult> {
+    const ticketId = typeof body.ticketId === 'string' && UUID.test(body.ticketId) ? body.ticketId : null;
+    if (!ticketId) return { ok: false, status: 404, error: 'That judgement could not be found.' };
+    const rv = await admin.from('ticket_sort_reviews').select('ticket_id, created_at, verdict, sorted_by, chosen_code, chosen_team, ticket_moved')
+        .eq('organization_id', orgId).eq('ticket_id', ticketId).maybeSingle();
+    if (rv.error) { if (isMissing(rv.error)) return { ok: false, status: 503, error: 'Ticket review needs migration 20261115000003 to be applied.' }; throw new Error(rv.error.message); }
+    const review = rv.data as Row | null;
+    if (!review) return { ok: false, status: 404, error: 'That judgement could not be found.' };
+    if (now.getTime() - Date.parse(String(review.created_at)) >= UNDO_DAYS * DAY_MS) return { ok: false, status: 400, error: `A judgement can only be undone within ${UNDO_DAYS} days.` };
+
+    let movedBack = false, leftAlone = false;
+    if (review.verdict === 'wrong' && review.ticket_moved === true) {
+        const read = await admin.from('tickets').select('id, property_id, title, description, status, classification_source, category_id')
+            .eq('id', ticketId).eq('organization_id', orgId).maybeSingle();
+        if (read.error) throw new Error(read.error.message);
+        const t = read.data as Row | null;
+        const chosen = str(review.chosen_code);
+        if (t && chosen && t.classification_source === 'manual' && MOVABLE_STATUSES.includes(String(t.status ?? ''))) {
+            const propertyId = str(t.property_id);
+            const cats = await categoryRows(admin);
+            const rows = cats.filter(c => c.code === chosen && c.is_active !== false);
+            const row = rows.find(c => propertyId && c.property_id === propertyId) ?? rows.find(c => !c.property_id) ?? rows[0];
+            const team = asTeam(review.chosen_team) ?? categoryOptionsFrom(cats as never, propertyId).find(o => o.code === chosen)?.team ?? null;
+            let skillGroupId = str(row?.skill_group_id);
+            if (!skillGroupId && team) {
+                const sg = await admin.from('skill_groups').select('id').eq('code', team).limit(1).maybeSingle();
+                skillGroupId = str((sg.data as Row | null)?.id);
+            }
+            const back = await admin.from('tickets').update({
+                category_id: str(row?.id), skill_group_id: skillGroupId, issue_code: chosen, skill_group_code: team,
+                classification_source: review.sorted_by === 'rules' ? 'rule' : 'llm', updated_at: new Date().toISOString(),
+            }).eq('id', ticketId).eq('organization_id', orgId).in('status', [...MOVABLE_STATUSES]).select('id');
+            if (back.error) return { ok: false, status: 400, error: 'The ticket could not be moved back, so nothing was undone. Try again.' };
+            movedBack = (back.data ?? []).length > 0;
+            if (movedBack) {
+                const logged = await admin.from('ticket_activity_log').insert({ ticket_id: ticketId, user_id: reviewerId, action: 'classification_override', old_value: str(t.category_id), new_value: str(row?.id) });
+                if (logged.error) console.warn('[TicketReview] activity log not written:', logged.error.message);
+                if (propertyId) {
+                    try { await reassign({ id: ticketId, property_id: propertyId, skill_group_code: team, title: String(t.title ?? ''), description: String(t.description ?? '') }); } catch (err) {
+                        console.error('[TicketReview] the ticket moved back could not be assigned again:', err instanceof Error ? err.message : err);
+                    }
+                }
+            }
+        }
+        leftAlone = !movedBack;
+    }
+
+    const del = await admin.from('ticket_sort_reviews').delete().eq('organization_id', orgId).eq('ticket_id', ticketId);
+    if (del.error) throw new Error(del.error.message);
+    await removeExample(admin, orgId, ticketId);
+    forgetCorrections(orgId);
+    if (movedBack) return { ok: true, message: 'Undone. The ticket went back to its first category and team, and is in the queue again.' };
+    if (leftAlone) return { ok: true, message: 'Undone. The AI no longer learns from it. The ticket was not moved back because it is no longer open or someone changed it since; change it on the ticket if needed.' };
+    return { ok: true, message: 'Undone. The ticket is in the queue again and the AI no longer learns from it.' };
+}
+
+// ── settling a disagreement (2026-11-19) ────────────────────────────────────────────────────────────────────────────
+
+/** Two near-identical examples disagree: `keep` stays, `drop` is no longer shown to the AI. Only this organisation's. */
+export async function keepExample(admin: SupabaseClient, orgId: string, body: { keep?: unknown; drop?: unknown }): Promise<JudgeResult> {
+    const keep = typeof body.keep === 'string' && UUID.test(body.keep) ? body.keep : null;
+    const drop = typeof body.drop === 'string' && UUID.test(body.drop) ? body.drop : null;
+    if (!keep || !drop || keep === drop) return { ok: false, status: 400, error: 'Choose which answer to keep.' };
+    const both = await admin.from('ticket_sort_examples').select('id').eq('organization_id', orgId).in('id', [keep, drop]);
+    if (both.error) { if (isMissing(both.error)) return { ok: false, status: 503, error: 'Learning needs migration 20261119000001 to be applied.' }; throw new Error(both.error.message); }
+    if ((both.data ?? []).length !== 2) return { ok: false, status: 404, error: 'Those examples could not be found.' };
+    await retireExamples(admin, orgId, [drop], `a person kept ${keep} instead`);
+    return { ok: true, message: 'Kept. The other answer is no longer shown to the AI.' };
 }

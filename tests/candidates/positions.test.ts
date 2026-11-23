@@ -1,4 +1,4 @@
-/** Positions and their pipelines (owner 2026-11-15): saving, adding people once, moving with the "Others" remark, closing. */
+/** Positions and their pipelines (owner 2026-11-15): saving, adding people once, moving between stages, closing. */
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 
@@ -71,21 +71,22 @@ describe("positions and pipelines", () => {
     assert.deepEqual(members.map((m) => [m.record?.fullName, m.stage]).sort(), [["Asha", "sourced"], ["Bilal", "sourced"]]);
     const ashaMember = members.find((m) => m.candidateId === asha.candidateId)!;
 
-    await assert.rejects(moveMember(client, ORG, ME, position.id, ashaMember.id, "others", ""), /remark is required/);
+    // Owner 2026-11-19: the built-in list (the HR tracker's statuses); "remark needed" stages are tested in stages.test.ts.
     await assert.rejects(moveMember(client, ORG, ME, position.id, ashaMember.id, "hired", "x"), /stage does not exist/);
-    const moved = await moveMember(client, ORG, ME, position.id, ashaMember.id, "screening", null);
-    assert.equal(moved.stage, "screening");
-    const parked = await moveMember(client, ORG, ME, position.id, ashaMember.id, "others", "Prefers the Noida role.");
-    assert.deepEqual([parked.stage, parked.remark], ["others", "Prefers the Noida role."]);
+    await assert.rejects(moveMember(client, ORG, ME, position.id, ashaMember.id, "screening", null), /stage does not exist/);
+    const moved = await moveMember(client, ORG, ME, position.id, ashaMember.id, "screening_pending", null);
+    assert.equal(moved.stage, "screening_pending");
+    const parked = await moveMember(client, ORG, ME, position.id, ashaMember.id, "on_hold", "Prefers the Noida role.");
+    assert.deepEqual([parked.stage, parked.remark], ["on_hold", "Prefers the Noida role."]);
 
     const counted = await getPosition(client, ORG, position.id);
-    assert.equal(counted.counts.others, 1);
+    assert.equal(counted.counts.on_hold, 1);
     assert.equal(counted.counts.sourced, 1);
 
     const history = await listActions(client, ORG, asha.candidateId);
     assert.deepEqual(history.map((a) => [a.action, a.toValue, a.remark]).slice(0, 3), [
-      ["stage_change", "Others", "Prefers the Noida role."],
-      ["stage_change", "Screening", null],
+      ["stage_change", "On hold", "Prefers the Noida role."],
+      ["stage_change", "Screening Pending", null],
       ["added_to_position", "Sr Technical Executive", null],
     ]);
     assert.equal(history[0].positionId, position.id);

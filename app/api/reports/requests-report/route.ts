@@ -131,7 +131,10 @@ export async function GET(request: NextRequest) {
             if (!categoryStats[key]) {
                 categoryStats[key] = { open: 0, closed: 0 };
             }
-            if (ticket.status === 'resolved' || ticket.status === 'closed') {
+            // `pending_validation` is closed from our side — the work is done and the ticket is only
+            // waiting for the tenant to sign it off — so it belongs with closed here, not open. This
+            // matches the KPI tiles above, which count it separately from `openSnags`.
+            if (['resolved', 'closed', 'pending_validation'].includes(ticket.status)) {
                 categoryStats[key].closed++;
             } else {
                 categoryStats[key].open++;

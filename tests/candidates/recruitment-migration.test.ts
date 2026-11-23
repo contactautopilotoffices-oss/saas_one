@@ -120,7 +120,8 @@ describe("recruitment migration: Others, blacklist, positions, history", () => {
       q("insert into public.candidate_position_members (organization_id, position_id, candidate_id) values ($1, $2, $3)", [ORG, pos.id, asha.candidateId]),
       /one_per_position/,
     );
-    await assert.rejects(q("update public.candidate_position_members set stage = 'hired' where position_id = $1", [pos.id]), /stage_check/);
+    // Owner 2026-11-19 (migration 20261119000001): any stage key of HR's list, but only a key.
+    await assert.rejects(q("update public.candidate_position_members set stage = 'Hired!' where position_id = $1", [pos.id]), /stage_key_check/);
     await q("update public.candidate_position_members set stage = 'others', remark = 'Moved to another role' where position_id = $1", [pos.id]);
     const [m] = await q<{ stage: string }>("select stage from public.candidate_position_members where position_id = $1", [pos.id]);
     assert.equal(m.stage, "others");

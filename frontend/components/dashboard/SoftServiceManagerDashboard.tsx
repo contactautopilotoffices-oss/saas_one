@@ -2,6 +2,7 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -241,6 +242,7 @@ const SoftServiceManagerDashboard: React.FC<SoftServiceManagerDashboardProps> = 
                                 Client Support
                             </button>
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                            <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                         </div>
                     </div>
 

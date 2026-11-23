@@ -11,7 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listActions, resetHistoryCheck, setBlacklist } from "../../backend/lib/candidates/actions";
 import { campaignFor, listOutreach, previewOutreach, sendOutreach, withinSendingHours, type OutreachSendOptions } from "../../backend/lib/candidates/outreach";
-import { createPosition } from "../../backend/lib/candidates/positions";
+import { addMembers, createPosition, listMembers, moveMember } from "../../backend/lib/candidates/positions";
 import { createRecord } from "../../backend/lib/candidates/records";
 
 import { freshDb, OUTREACH_MIGRATION } from "./db-stub";
@@ -59,6 +59,7 @@ describe("outreach on WhatsApp", () => {
     assert.equal(withinSendingHours(new Date("2026-11-15T05:30:00Z")), false); // Sunday
     assert.equal(campaignFor("shortlisted", {}), "candidate_shortlisted_v1");
     assert.equal(campaignFor("not_shortlisted", { AISENSY_CANDIDATE_NOT_SHORTLISTED_CAMPAIGN: " rejected_v2 " }), "rejected_v2");
+    assert.equal(campaignFor("stage_update", {}), "candidate_stage_update_v1");
   });
 
   it("previews the message with the name and the role filled in, and says what blocks a send", async () => {
@@ -132,5 +133,42 @@ describe("outreach on WhatsApp", () => {
     const before = sent.length;
     await assert.rejects(sendOutreach(client, ORG, ME, { applicationId: suresh.id, kind: "not_shortlisted" }, { send: okSender, now: WORKING_HOURS }), /blacklisted/);
     assert.equal(sent.length, before);
+  });
+  // Owner 2026-11-19: the editable stage update (fixed opening and closing, HR's text in the middle).
+  it("sends the stage update with HR's text, once per person, position and stage", async () => {
+    const { record } = await createRecord(client, ORG, USER, { fullName: "Farah N", phone: "9876500002", role: "Accountant" });
+    await addMembers(client, ORG, ME, positionId, [record.id]);
+    const member = (await listMembers(client, ORG, positionId)).find((m) => m.candidateId === record.candidateId)!;
+    await assert.rejects(previewOutreach(client, ORG, { applicationId: record.id, kind: "stage_update" }), /Choose the position/);
+    await moveMember(client, ORG, ME, positionId, member.id, "l1_pending", null);
+
+    const p = await previewOutreach(client, ORG, { applicationId: record.id, positionId, kind: "stage_update" }, WORKING_HOURS());
+    assert.equal(p.canSend, true);
+    assert.deepEqual([p.stageUpdate?.stageKey, p.stageUpdate?.stageName, p.campaign], ["l1_pending", "L1 Pending", "candidate_stage_update_v1"]);
+    assert.match(p.stageUpdate?.defaultText ?? "", /shortlisted for the first interview round/);
+    assert.match(p.message, /^Hello Farah,\n\nThis is an update on your application for the Sr Technical Executive role at Autopilot Offices\.\n\nYou have been shortlisted/);
+
+    const before = sent.length;
+    await assert.rejects(sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "   " }, { send: okSender, now: WORKING_HOURS }), /Write the update/);
+    await assert.rejects(sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "x".repeat(401) }, { send: okSender, now: WORKING_HOURS }), /under 400/);
+    assert.equal(sent.length, before);
+    const saved = await sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "Your L1 interview is on Friday at 11 am.\nPlease bring your ID proof." }, { send: okSender, now: WORKING_HOURS });
+    assert.deepEqual(sent[sent.length - 1].templateParams, ["Farah", "Sr Technical Executive", "Your L1 interview is on Friday at 11 am. Please bring your ID proof."]);
+    assert.equal(sent[sent.length - 1].campaignName, "candidate_stage_update_v1");
+    assert.deepEqual([saved.kind, saved.stageKey, saved.message], ["stage_update", "l1_pending", "Your L1 interview is on Friday at 11 am. Please bring your ID proof."]);
+    const [logged] = await listActions(client, ORG, record.candidateId);
+    assert.deepEqual([logged.action, logged.toValue, logged.meta.stage, logged.meta.message], ["outreach_sent", "Update: L1 Pending", "l1_pending", "Your L1 interview is on Friday at 11 am. Please bring your ID proof."]);
+
+    // The same stage again: refused. The next stage: its own message.
+    const again = await previewOutreach(client, ORG, { applicationId: record.id, positionId, kind: "stage_update" }, WORKING_HOURS());
+    assert.match(again.blockedBy ?? "", /Already told about L1 Pending by Roohi/);
+    await moveMember(client, ORG, ME, positionId, member.id, "l2_pending", null);
+    const next = await previewOutreach(client, ORG, { applicationId: record.id, positionId, kind: "stage_update" }, WORKING_HOURS());
+    assert.equal(next.canSend, true);
+    await sendOutreach(client, ORG, ME, { applicationId: record.id, positionId, kind: "stage_update", message: "Please complete the assignment by Monday." }, { send: okSender, now: WORKING_HOURS });
+    assert.deepEqual((await listOutreach(client, ORG, record.candidateId)).map((o) => o.stageKey), ["l2_pending", "l1_pending"]);
+
+    // Someone not in the position.
+    await assert.rejects(previewOutreach(client, ORG, { applicationId: noPhone.id, positionId, kind: "stage_update" }), /no longer in that position/);
   });
 });

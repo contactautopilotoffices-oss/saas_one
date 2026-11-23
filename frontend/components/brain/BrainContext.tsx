@@ -11,7 +11,7 @@ import type { ConsoleStatus, ReviewView, SettingsView, SkillView } from '@/backe
 import type { BrainApi, LabelBody, Result } from './api';
 import { describeChanges, riskyChanges } from './settingsDiff';
 
-export type ScreenId = 'overview' | 'switches' | 'skills' | 'conversations' | 'shadow' | 'review' | 'guidance' | 'memory' | 'cost' | 'models' | 'scorecard';
+export type ScreenId = 'overview' | 'switches' | 'skills' | 'conversations' | 'shadow' | 'review' | 'guidance' | 'memory' | 'cost' | 'models' | 'categories' | 'scorecard';
 
 export interface SettingsState {
     /** null until the first answer. */

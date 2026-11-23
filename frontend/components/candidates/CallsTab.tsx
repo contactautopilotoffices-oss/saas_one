@@ -4,10 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, FileAudio, FileText, Phone, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { CALL_AUDIO_ACCEPT, callFileType, formatClock, MAX_CALL_BYTES } from '@/backend/lib/candidates/call-files';
 import {
-    ANSWER_VERDICT_LABELS, CALL_CONCERN_LABELS, CALL_FACT_LABELS, CALL_ROUND_LABELS, CALL_ROUNDS, CALL_STATUS_LABELS, isInterviewRound, STAGE_LABELS,
+    ANSWER_VERDICT_LABELS, CALL_CONCERN_LABELS, CALL_FACT_LABELS, CALL_ROUND_LABELS, CALL_ROUNDS, CALL_STATUS_LABELS, isInterviewRound,
     type CallAnalysis, type CallFactKey, type CallInsights, type CallRound, type CallSentiment, type CallStatus, type CandidateRecord, type PayBasis, type Position, type PreparedCall, type Stage,
 } from '@/backend/lib/candidates/types';
+import { boardColumns, columnIndexOf, findStage, stageName, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { api, putSignedUpload, qs } from './api';
+import { useStages } from './stage-ui';
 import { formatDate, formatInr, formatNotice } from './format';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
 
@@ -47,13 +49,16 @@ function callTitle(c: CallAnalysis): string {
 }
 
 /**
- * The round a new call is most likely for, from the candidate's stage in that position (owner 2026-11-17): Sourced or
- * Screening = screening; Shortlisted or Interview = the next interview round after the ones already on file for this
- * position; Offer or Joined = the HR / offer discussion. HR can change it.
+ * The round a new call is most likely for, from the candidate's stage in that position (owner 2026-11-17): the first
+ * two board columns (Sourced, Screening) or out of the flow = screening; the last three columns (Salary discussion,
+ * Offer, Joined) = the HR / offer discussion; any round in between = the next interview round after the ones already
+ * on file for this position. HR can change it. (Owner 2026-11-19: from HR's stage list.)
  */
-function suggestRound(stage: Stage | null, calls: CallAnalysis[], positionId: string): CallRound {
-    if (stage === 'offer' || stage === 'joined') return 'hr_offer';
-    if (stage !== 'shortlisted' && stage !== 'interview') return 'screening';
+function suggestRound(stage: Stage | null, stages: StageDef[], calls: CallAnalysis[], positionId: string): CallRound {
+    const at = stage ? columnIndexOf(stages, stage) : -1;
+    const columns = boardColumns(stages, s => s.key === stage).length;
+    if (stage && (stage === 'offer' || stage === 'joined' || (at >= 0 && columns > 5 && at >= columns - 3))) return 'hr_offer';
+    if (!stage || at < 2 || findStage(stages, stage)?.kind === 'out') return 'screening';
     const done = calls.filter(c => c.positionId === positionId && isInterviewRound(c.round)).map(c => Number((c.round as string).slice(-1)));
     const next = Math.min(3, (done.length ? Math.max(...done) : 0) + 1);
     return `round_${next}` as CallRound;
@@ -215,7 +220,8 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
         return () => ctrl.abort();
     }, [orgId, record.id]);
     const stageHere = positionId && stages?.id === record.id ? stages.byPosition.get(positionId) ?? null : null;
-    const suggested = suggestRound(stageHere, calls, positionId);
+    const stageList = useStages(orgId)?.stages ?? [];
+    const suggested = suggestRound(stageHere, stageList, calls, positionId);
     // The round follows the suggestion until HR picks one.
     const [roundPick, setRoundPick] = useState<CallRound | null>(null);
     const round = roundPick ?? suggested;
@@ -311,7 +317,7 @@ function AddCall({ orgId, record, calls, onAdded }: { orgId: string; record: Can
                     </select>
                 </div>
                 <div>
-                    <label htmlFor="cand-call-round" className={LABEL}>Round {stageHere && <span className="text-text-tertiary">· now {STAGE_LABELS[stageHere]}</span>}</label>
+                    <label htmlFor="cand-call-round" className={LABEL}>Round {stageHere && <span className="text-text-tertiary">· now {stageName(stageList, stageHere)}</span>}</label>
                     <select id="cand-call-round" value={round} onChange={e => setRoundPick(e.target.value as CallRound)} disabled={!!busy} className={`${INPUT} mt-1.5`}>
                         {CALL_ROUNDS.map(r => <option key={r} value={r}>{CALL_ROUND_LABELS[r]}</option>)}
                     </select>

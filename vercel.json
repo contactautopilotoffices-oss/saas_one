@@ -164,6 +164,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/task-held-messages",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/task-manager?action=auto",
       "schedule": "*/15 * * * *"
     },
@@ -174,6 +178,10 @@
     {
       "path": "/api/cron/bot-autotune",
       "schedule": "45 20 * * *"
+    },
+    {
+      "path": "/api/cron/ticket-rules",
+      "schedule": "15 21 * * *"
     },
     {
       "path": "/api/cron/process-petty-cash-deliveries",

@@ -16,7 +16,12 @@ import { parseSettings, type AiSettings } from './settings';
 import { maskText, type LearningContext, type ReviewFlag } from './learning';
 import { BRAIN_INTERPRET_MODELS, HEDGE_UNDERSTAND_MS, engyBrainLlm, withModelFallback } from '@/task-manager/brain/llm';
 
-const CLOSED_STATUSES = ['resolved', 'completed', 'closed'];
+/**
+ * Work that is finished on our side. `pending_validation` belongs here, not with open: the team has
+ * done the job and the ticket is only waiting for the tenant's sign-off, so "how many open tickets"
+ * must not include it. Same split the dashboards and reports use.
+ */
+const CLOSED_STATUSES = ['resolved', 'completed', 'closed', 'pending_validation'];
 
 function ticketQuery(admin: SupabaseClient, select: string, q: TicketQuery) {
     let query = admin.from('tickets').select(select)

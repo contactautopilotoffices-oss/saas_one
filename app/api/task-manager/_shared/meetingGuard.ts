@@ -21,13 +21,21 @@ export async function requireMeetingSpace(request: NextRequest): Promise<Meeting
     const space = request.nextUrl.searchParams.get('space') || 'tech';
     if (!isMeetingSpace(space)) return deny(400, 'Unknown Meeting Assistant space');
 
+    const allowed = await meetingSpacesFor(user.id);
+    if (!allowed.has(space)) return deny(403, 'Forbidden: the Meeting Assistant here is not available for your role');
+    return { ok: true, userId: user.id, space };
+}
+
+/**
+ * The Meeting Assistant spaces a person has, from their active memberships (never from the request). Shared by the
+ * guard above and, owner 2026-11-18, by the online meeting link (/meet/<id>), which is opened without a space.
+ */
+export async function meetingSpacesFor(userId: string): Promise<Set<MeetingSpace>> {
     const [orgRes, propRes] = await Promise.all([
-        supabaseAdmin.from('organization_memberships').select('role').eq('user_id', user.id).eq('is_active', true),
-        supabaseAdmin.from('property_memberships').select('role').eq('user_id', user.id).eq('is_active', true),
+        supabaseAdmin.from('organization_memberships').select('role').eq('user_id', userId).eq('is_active', true),
+        supabaseAdmin.from('property_memberships').select('role').eq('user_id', userId).eq('is_active', true),
     ]);
     const roleList = (rows: unknown[] | null) => (rows ?? []).map(r => (r as { role: string | null }).role);
     // Organisation roles only (the same source as the Tech check), except HR and Procurement roles, which may also be property roles.
-    const allowed = spacesForMemberships(roleList(orgRes.data), roleList(propRes.data));
-    if (!allowed.has(space)) return deny(403, 'Forbidden: the Meeting Assistant here is not available for your role');
-    return { ok: true, userId: user.id, space };
+    return spacesForMemberships(roleList(orgRes.data), roleList(propRes.data));
 }

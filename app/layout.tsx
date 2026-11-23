@@ -62,8 +62,6 @@ export default function RootLayout({
                     dangerouslySetInnerHTML={{
                         __html: `
                             (function() {
-                                if (!('serviceWorker' in navigator)) return;
-
                                 // ── CHUNK LOAD ERROR RECOVERY ───────────────────────────────────
                                 // After a new deploy, an open page can ask for JS files that no longer exist;
                                 // one reload fetches the new version. Capped at 2 reloads per tab per minute
@@ -85,6 +83,15 @@ export default function RootLayout({
                                 window.addEventListener('error', function(e) {
                                     if (e.message && (e.message.includes('ChunkLoadError') || e.message.includes('Loading chunk'))) {
                                         recoverFromChunkError();
+                                        return;
+                                    }
+                                    // A <script> or stylesheet from /_next/static that fails to download
+                                    // (old file gone after a deploy, or a dropped connection) fires an error
+                                    // with no message, so the check above never saw it.
+                                    var t = e.target;
+                                    var src = t && (t.src || t.href);
+                                    if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK') && src && src.indexOf('/_next/static/') !== -1) {
+                                        recoverFromChunkError();
                                     }
                                 }, true);
 
@@ -94,6 +101,27 @@ export default function RootLayout({
                                         recoverFromChunkError();
                                     }
                                 });
+
+                                // ── STARTUP WATCHDOG ────────────────────────────────────────────
+                                // AuthProvider sets window.HYDRATED once the app has started and read the
+                                // session. If every file has finished downloading and the app still has not
+                                // started 10 s later, the page is stuck on its server-rendered "Loading..."
+                                // and nothing else will rescue it: reload, under the same 2-per-minute cap.
+                                // Waiting for 'load' means a slow download is never cut short; the 45 s
+                                // ceiling covers a download that hangs and never finishes.
+                                function checkStarted() {
+                                    if (!window.HYDRATED) recoverFromChunkError();
+                                }
+                                window.addEventListener('load', function() { setTimeout(checkStarted, 10000); });
+                                setTimeout(checkStarted, 45000);
+
+                                // An iPhone home-screen app is often resumed from memory instead of loaded
+                                // again, so a page that was stuck stays stuck. Reload it on resume.
+                                window.addEventListener('pageshow', function(e) {
+                                    if (e.persisted && !window.HYDRATED) recoverFromChunkError();
+                                });
+
+                                if (!('serviceWorker' in navigator)) return;
 
                                 // ── DEEP PURGE & RESET ───────────────────────────────────────────
                                 // We aggressively unregister ALL workers and clear ALL caches 

@@ -25,6 +25,21 @@ export interface ActorContext {
     ownRecordsOnly: boolean;
     /** Vendors see tickets assigned to them; tenants see tickets they raised. */
     recordRule: 'all_in_scope' | 'raised_by_me' | 'assigned_to_me';
+    /**
+     * Owner 2026-11-20 ("keep the whatsapp bot consistent with the fms"; "if the app doesnt allow, dont change the
+     * app"): properties where this person may book meeting rooms, when that is wider than propertyIds. HR, CRM/BD, IT,
+     * Design and Tech logins book at every property of the organisation, as on the app's Book Meeting Room page
+     * (/api/meeting-rooms/bookable-properties). Used by the room skills only; absent = propertyIds.
+     */
+    roomPropertyIds?: string[];
+    /** Property id → name for roomPropertyIds. */
+    roomPropertyNames?: Record<string, string>;
+    /**
+     * Owner 2026-11-20: an HR, CRM/BD, IT, Design or Tech login with NO property login is served for meeting rooms only
+     * (propertyIds is empty, roomPropertyIds is the organisation). Only the WhatsApp brain asks for such a person
+     * (loadActor roomsOnlyLogins), and only while the task assistant answers their tasks (channels/whatsapp.ts).
+     */
+    roomsOnly?: boolean;
 }
 
 export type EntryKind = 'question' | 'write';

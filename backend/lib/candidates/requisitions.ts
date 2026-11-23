@@ -18,8 +18,10 @@
  *                                 requisition, it goes to the Director." A level whose approver raised the request
  *                                 goes to that level's backup, else is skipped to the other level.
  *
- * Who the approvers are, the CTC level and the target days are set in the Tech dashboard (Settings -> Notifications
- * -> Recruitment; organization_settings.recruitment_config), never in code. Nothing here sends anything: every
+ * Who the approvers are, the CTC level and the target days are set in the Tech dashboard's HR Configs tab (owner
+ * 2026-11-20: "move this Hiring request approvals section to the tech login in HR configs tab"; the Tech team and admins
+ * change them; organization_settings.recruitment_config), never in code. The HR Head is picked from the HR team, the
+ * Director from the org super admins (approverPools). Nothing here sends anything: every
  * change hands an event to `deps.notify` (the routes pass requisition-notify.ts; tests pass a recorder).
  *
  * Access is the caller's job (the routes' requireOrgMember); everything here runs with the service role.
@@ -50,12 +52,16 @@ export const APPROVAL_SLA_WORKING_DAYS = 3;
 export const DEFAULT_TARGET_DAYS = 21;
 
 export const REQUISITIONS_MIGRATION_MESSAGE = "Hiring requests need a database update first: run 20261117000003_recruitment_requisitions.sql in Supabase.";
+/** Endorsing and "still needed" are new kinds of history entry (owner 2026-11-21). */
+export const REQUISITION_FOLLOWUPS_MIGRATION_MESSAGE = "This needs a database update first: run 20261121000001_recruitment_requisition_followups.sql in Supabase.";
 
 const missingRelation = (error: { code?: string; message?: string } | null | undefined) =>
   Boolean(error) && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error?.code ?? "") || /recruitment_requisition|recruitment_config|does not exist|schema cache/i.test(error?.message ?? ""));
 
 function fail(what: string, error: { code?: string; message?: string }): never {
   if (missingRelation(error)) throw new CandidateActionError(503, REQUISITIONS_MIGRATION_MESSAGE);
+  // Before 20261121000001 the history refuses "endorsed" and "still_needed".
+  if (error.code === "23514" && /approvals_action_check/.test(error.message ?? "")) throw new CandidateActionError(503, REQUISITION_FOLLOWUPS_MIGRATION_MESSAGE);
   console.error(`[candidates] requisitions: ${what}`, error);
   throw new CandidateActionError(500, `Couldn't ${what}. Please try again.`);
 }
@@ -81,7 +87,7 @@ export function workingDaysBetween(from: Date, to: Date): number {
 
 // Settings ------------------------------------------------------------------------------------------------------------
 
-const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS };
+const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [] };
 
 const uuidOrNull = z.string().regex(UUID).nullable().optional();
 const ConfigInput = z.object({
@@ -103,10 +109,40 @@ function toConfig(raw: unknown): RecruitmentConfig {
     director: slot(r.director),
     directorCtcLevel: typeof r.directorCtcLevel === "number" && r.directorCtcLevel >= 0 ? r.directorCtcLevel : null,
     targetDays: typeof r.targetDays === "number" && r.targetDays >= 1 ? Math.round(r.targetDays) : DEFAULT_TARGET_DAYS,
+    raisers: toRaisers(r.raisers),
+    departmentHeads: toDepartmentHeads(r.departmentHeads),
   };
 }
 
-/** The approvers and limits set in the Tech dashboard. Empty (nobody set) before the migration or when never saved. */
+/** One head per department (the first kept when a department is listed twice, ignoring case). */
+function toDepartmentHeads(raw: unknown): RecruitmentConfig["departmentHeads"] {
+  const out: RecruitmentConfig["departmentHeads"] = [];
+  const seen = new Set<string>();
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const department = typeof r.department === "string" ? r.department.replace(/\s+/g, " ").trim().slice(0, 80) : "";
+    const userId = typeof r.userId === "string" && UUID.test(r.userId) ? r.userId : null;
+    if (!department || !userId || seen.has(department.toLowerCase())) continue;
+    seen.add(department.toLowerCase());
+    out.push({ department, userId });
+  }
+  return out;
+}
+
+const deptKey = (d: string | null | undefined) => (d ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+/** The departments this person heads (lower case). */
+export const departmentsHeadedBy = (config: RecruitmentConfig, userId: string): string[] => config.departmentHeads.filter((h) => h.userId === userId).map((h) => deptKey(h.department));
+/** Who heads this department, if anyone. */
+export const headOfDepartment = (config: RecruitmentConfig, department: string | null | undefined): string | null =>
+  deptKey(department) ? config.departmentHeads.find((h) => deptKey(h.department) === deptKey(department))?.userId ?? null : null;
+
+function toRaisers(raw: unknown): RecruitmentConfig["raisers"] {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const list = (v: unknown, ok: (x: string) => boolean) => [...new Set((Array.isArray(v) ? v : []).filter((x): x is string => typeof x === "string" && ok(x)))];
+  return { roles: list(r.roles, (x) => /^[a-z0-9_]{1,64}$/.test(x)), userIds: list(r.userIds, (x) => UUID.test(x)) };
+}
+
+/** The approvers and limits set in Recruitment -> Configurations. Empty (nobody set) before the migration or when never saved. */
 export async function loadRecruitmentConfig(client: SupabaseClient, orgId: string): Promise<RecruitmentConfig> {
   const { data, error } = await client.from(SETTINGS).select("recruitment_config").eq("organization_id", orgId).maybeSingle();
   if (error) {
@@ -116,16 +152,220 @@ export async function loadRecruitmentConfig(client: SupabaseClient, orgId: strin
   return toConfig((data as { recruitment_config?: unknown } | null)?.recruitment_config);
 }
 
-/** Saves the settings (the Tech dashboard). Only the keys given change. */
-export async function saveRecruitmentConfig(client: SupabaseClient, orgId: string, body: unknown): Promise<RecruitmentConfig> {
+/**
+ * May this person change the approvers. Owner 2026-11-20: the section moved to the Tech dashboard's HR Configs tab, so
+ * the people who set the rest of it (the Tech team and admins, RAISER_SETTINGS_ROLES) set this too.
+ */
+export async function mayConfigureApprovals(client: SupabaseClient, userId: string, orgId: string): Promise<boolean> {
+  return mayConfigureRaisers(client, userId, orgId);
+}
+
+/** Someone to pick (the Task Manager's people list: name and department). */
+export interface PickablePerson { id: string; name: string; department: string | null; role: string | null }
+
+export const HR_ROLES: readonly string[] = ["hr", "hr_head", "hr_manager", "hr_ops"];
+export const DIRECTOR_ROLES: readonly string[] = ["org_super_admin"];
+const isHrDepartment = (d: string | null | undefined) => /^(hr|human\s*resources?)\b/i.test((d ?? "").trim());
+
+/**
+ * Owner 2026-11-20: "these dropdowns … must only have hr team members, and directors must have org super admins".
+ * HR Head (and backup): the Task Manager's Human Resources department, and anyone with an HR role. Director (and
+ * backup): the org super admins. `people` is the Task Manager's list; `roles` the organisation's active roles by person;
+ * `names` fills in someone with the role who is not on the Task Manager's list.
+ */
+export function approverPools(
+  people: { id: string; name: string; department: string | null }[],
+  roles: { userId: string; role: string }[],
+  names: Map<string, string | null> = new Map(),
+): { hr: PickablePerson[]; directors: PickablePerson[] } {
+  const byId = new Map(people.map((p) => [p.id, p]));
+  const roleOf = new Map<string, string[]>();
+  for (const r of roles) roleOf.set(r.userId, [...(roleOf.get(r.userId) ?? []), r.role.toLowerCase()]);
+  const person = (id: string): PickablePerson => {
+    const p = byId.get(id);
+    const role = (roleOf.get(id) ?? [])[0] ?? null;
+    return { id, name: p?.name ?? names.get(id) ?? "Unnamed", department: p?.department ?? null, role };
+  };
+  const has = (id: string, list: readonly string[]) => (roleOf.get(id) ?? []).some((r) => list.includes(r));
+  const ids = new Set([...people.map((p) => p.id), ...roles.map((r) => r.userId)]);
+  const sort = (list: PickablePerson[]) => list.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    hr: sort([...ids].filter((id) => isHrDepartment(byId.get(id)?.department) || has(id, HR_ROLES)).map(person)),
+    directors: sort([...ids].filter((id) => has(id, DIRECTOR_ROLES)).map(person)),
+  };
+}
+
+/** The organisation's active roles by person, and the names of those people (for approverPools). */
+export async function activeRoles(client: SupabaseClient, orgId: string): Promise<{ roles: { userId: string; role: string }[]; names: Map<string, string | null> }> {
+  const { data, error } = await client.from("organization_memberships").select("user_id, role, is_active").eq("organization_id", orgId).limit(5000);
+  if (error) fail("load the people", error);
+  const roles = ((data ?? []) as { user_id: string | null; role: string | null; is_active: boolean | null }[])
+    .filter((r) => r.user_id && r.role && r.is_active !== false).map((r) => ({ userId: r.user_id as string, role: r.role as string }));
+  return { roles, names: await namesOf(client, [...new Set(roles.map((r) => r.userId))]) };
+}
+
+// Who may raise a hiring request (owner 2026-11-20: "make it configurable somewhere in the tech login on who can have
+// that option in their sidebars"; "it must be only for the logins": HR no longer raises on their behalf) ---------------
+
+/** The Tech team and admins set who may raise requests (the roles that set the Omnichannel matrix). */
+export const RAISER_SETTINGS_ROLES: readonly string[] = ["tech", "org_super_admin", "org_admin", "owner", "admin", "master_admin", "super_admin"];
+
+export async function mayConfigureRaisers(client: SupabaseClient, userId: string, orgId: string): Promise<boolean> {
+  const [{ data: user }, { data: rows }] = await Promise.all([
+    client.from("users").select("is_master_admin").eq("id", userId).maybeSingle(),
+    client.from("organization_memberships").select("role, is_active").eq("user_id", userId).eq("organization_id", orgId),
+  ]);
+  if ((user as { is_master_admin?: boolean } | null)?.is_master_admin) return true;
+  return ((rows ?? []) as { role: string | null; is_active: boolean | null }[])
+    .some((r) => r.is_active !== false && RAISER_SETTINGS_ROLES.includes((r.role ?? "").toLowerCase()));
+}
+
+/** The person's active roles here: their organisation roles, and their roles on its properties. */
+async function rolesOf(client: SupabaseClient, userId: string, orgId: string): Promise<string[]> {
+  const [orgRows, propRows] = await Promise.all([
+    client.from("organization_memberships").select("role, is_active").eq("user_id", userId).eq("organization_id", orgId),
+    client.from("property_memberships").select("role, is_active").eq("user_id", userId).eq("organization_id", orgId),
+  ]);
+  const rows = [...((orgRows.data ?? []) as { role: string | null; is_active: boolean | null }[]), ...(propRows.error ? [] : ((propRows.data ?? []) as { role: string | null; is_active: boolean | null }[]))];
+  return [...new Set(rows.filter((r) => r.is_active !== false && r.role).map((r) => (r.role as string).toLowerCase()))];
+}
+
+/** May this person raise a hiring request: picked by name, or holding one of the roles picked. */
+export async function canRaiseRequisitions(client: SupabaseClient, userId: string, orgId: string, config?: RecruitmentConfig): Promise<boolean> {
+  const { raisers } = config ?? (await loadRecruitmentConfig(client, orgId));
+  if (raisers.userIds.includes(userId)) return true;
+  if (!raisers.roles.length) return false;
+  return (await rolesOf(client, userId, orgId)).some((r) => raisers.roles.includes(r));
+}
+
+const RaisersInput = z.object({
+  roles: z.array(z.string().regex(/^[a-z0-9_]{1,64}$/, "Unknown role.")).max(60),
+  userIds: z.array(z.string().regex(UUID, "Unknown person.")).max(500),
+});
+
+/** Saves who may raise requests (the Tech dashboard), recorded in the history of changes when it changed. */
+export async function saveRaisers(client: SupabaseClient, orgId: string, body: unknown, by?: Actor): Promise<RecruitmentConfig["raisers"]> {
+  const parsed = RaisersInput.safeParse(body ?? {});
+  if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Pick the roles and people.");
+  const current = await loadRecruitmentConfig(client, orgId);
+  const raisers = { roles: [...new Set(parsed.data.roles)].sort(), userIds: [...new Set(parsed.data.userIds)] };
+  const next: RecruitmentConfig = { ...current, raisers };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  const before = current.raisers;
+  if (by && JSON.stringify({ r: [...before.roles].sort(), u: [...before.userIds].sort() }) !== JSON.stringify({ r: raisers.roles, u: [...raisers.userIds].sort() })) {
+    const names = await namesOf(client, raisers.userIds);
+    const summary = `Who can raise hiring requests: ${raisers.roles.length ? `roles ${raisers.roles.map((r) => r.replace(/_/g, " ")).join(", ")}` : "no roles"}${raisers.userIds.length ? `; people ${raisers.userIds.map((id) => names.get(id) ?? "someone").join(", ")}` : ""}`;
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({
+      organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: summary.slice(0, 2000), before: { raisers: before }, after: { raisers }, created_at: now,
+    });
+    if (logError && !missingRelation(logError)) console.error("[candidates] raisers: the change was not recorded", logError);
+  }
+  return raisers;
+}
+
+/** The roles people hold in the organisation (on it, or on its properties), to pick who may raise requests. */
+export async function roleChoices(client: SupabaseClient, orgId: string): Promise<string[]> {
+  const [orgRows, propRows] = await Promise.all([
+    client.from("organization_memberships").select("role, is_active").eq("organization_id", orgId).limit(5000),
+    client.from("property_memberships").select("role, is_active").eq("organization_id", orgId).limit(5000),
+  ]);
+  const rows = [...((orgRows.data ?? []) as { role: string | null; is_active: boolean | null }[]), ...(propRows.error ? [] : ((propRows.data ?? []) as { role: string | null; is_active: boolean | null }[]))];
+  return [...new Set(rows.filter((r) => r.is_active !== false && r.role).map((r) => (r.role as string).toLowerCase()))].sort();
+}
+
+const DepartmentHeadsInput = z.object({
+  heads: z.array(z.object({
+    department: z.string().trim().min(1, "Name the department.").max(80, "A department name is at most 80 characters."),
+    userId: z.string().regex(UUID, "Pick the head from the list."),
+  })).max(100),
+});
+
+/**
+ * Owner 2026-11-21: saves the department heads (the Tech dashboard's HR Configs tab), recorded in the history of changes
+ * when they changed. `allowed`: the people who may be picked (the Task Manager's list); someone already set may stay.
+ */
+export async function saveDepartmentHeads(client: SupabaseClient, orgId: string, body: unknown, by?: Actor, allowed?: Set<string>): Promise<RecruitmentConfig["departmentHeads"]> {
+  const parsed = DepartmentHeadsInput.safeParse(body ?? {});
+  if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Pick a department and a person for each row.");
+  const keys = parsed.data.heads.map((h) => deptKey(h.department));
+  const twice = keys.find((k, i) => keys.indexOf(k) !== i);
+  if (twice) throw new CandidateActionError(400, `"${parsed.data.heads[keys.indexOf(twice)].department}" is listed twice. Give each department one head.`);
+  const current = await loadRecruitmentConfig(client, orgId);
+  if (allowed) {
+    const before = new Set(current.departmentHeads.map((h) => h.userId));
+    const stranger = parsed.data.heads.find((h) => !allowed.has(h.userId) && !before.has(h.userId));
+    if (stranger) throw new CandidateActionError(400, `The head of ${stranger.department} must be someone in the Task Manager's people list.`);
+  }
+  const heads = toDepartmentHeads(parsed.data.heads);
+  const next: RecruitmentConfig = { ...current, departmentHeads: heads };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  const sig = (list: RecruitmentConfig["departmentHeads"]) => JSON.stringify(list.map((h) => [deptKey(h.department), h.userId]).sort());
+  if (by && sig(current.departmentHeads) !== sig(heads)) {
+    const names = await namesOf(client, heads.map((h) => h.userId));
+    const summary = `Department heads: ${heads.length ? heads.map((h) => `${h.department} — ${names.get(h.userId) ?? "someone"}`).join(", ") : "none"}`;
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({
+      organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: summary.slice(0, 2000), before: { departmentHeads: current.departmentHeads }, after: { departmentHeads: heads }, created_at: now,
+    });
+    if (logError && !missingRelation(logError)) console.error("[candidates] department heads: the change was not recorded", logError);
+  }
+  return heads;
+}
+
+/** "HR Head: Priya Shah (was nobody) · CTC level: 15 LPA (was 12 LPA)": what a save changed, for the history. */
+async function describeConfigChange(client: SupabaseClient, before: RecruitmentConfig, after: RecruitmentConfig): Promise<string> {
+  const ids = [before.hrHead, before.director, after.hrHead, after.director].flatMap((s) => [s.userId, s.backupUserId]).filter((id): id is string => Boolean(id));
+  const names = await namesOf(client, ids);
+  const who = (id: string | null) => (id ? names.get(id) ?? "someone" : "nobody");
+  const lpa = (v: number | null) => (v === null ? "none" : `${(v / 100_000).toLocaleString("en-IN", { maximumFractionDigits: 1 })} LPA`);
+  const parts: string[] = [];
+  const pairs: [string, string | null, string | null][] = [
+    ["HR Head", before.hrHead.userId, after.hrHead.userId], ["HR Head backup", before.hrHead.backupUserId, after.hrHead.backupUserId],
+    ["Director", before.director.userId, after.director.userId], ["Director backup", before.director.backupUserId, after.director.backupUserId],
+  ];
+  for (const [label, was, now] of pairs) if (was !== now) parts.push(`${label}: ${who(now)} (was ${who(was)})`);
+  if (before.directorCtcLevel !== after.directorCtcLevel) parts.push(`Director above: ${lpa(after.directorCtcLevel)} (was ${lpa(before.directorCtcLevel)})`);
+  if (before.targetDays !== after.targetDays) parts.push(`target days: ${after.targetDays} (was ${before.targetDays})`);
+  return parts.length ? `Hiring approvals: ${parts.join(" · ")}` : "";
+}
+
+/**
+ * Saves the settings (Recruitment -> Configurations). Only the keys given change. `by`: who saved, for the history of
+ * changes (recruitment_stage_changes, migration 20261119000001; skipped before it).
+ */
+export async function saveRecruitmentConfig(client: SupabaseClient, orgId: string, body: unknown, by?: Actor, pools?: { hr: PickablePerson[]; directors: PickablePerson[] }): Promise<RecruitmentConfig> {
   const parsed = ConfigInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Those settings are not valid.");
   const current = await loadRecruitmentConfig(client, orgId);
+  // Owner 2026-11-20: the HR Head from the HR team, the Director from the org super admins (a person already set may stay).
+  if (pools) {
+    const check = (label: string, wanted: string | null | undefined, was: string | null, pool: PickablePerson[], who: string) => {
+      if (wanted && wanted !== was && !pool.some((p) => p.id === wanted)) throw new CandidateActionError(400, `The ${label} must be ${who}.`);
+    };
+    check("HR Head", parsed.data.hrHead?.userId, current.hrHead.userId, pools.hr, "someone in the HR team");
+    check("HR Head's backup", parsed.data.hrHead?.backupUserId, current.hrHead.backupUserId, pools.hr, "someone in the HR team");
+    check("Director", parsed.data.director?.userId, current.director.userId, pools.directors, "an org super admin");
+    check("Director's backup", parsed.data.director?.backupUserId, current.director.backupUserId, pools.directors, "an org super admin");
+  }
   const next: RecruitmentConfig = {
     hrHead: { userId: parsed.data.hrHead?.userId === undefined ? current.hrHead.userId : parsed.data.hrHead.userId, backupUserId: parsed.data.hrHead?.backupUserId === undefined ? current.hrHead.backupUserId : parsed.data.hrHead.backupUserId },
     director: { userId: parsed.data.director?.userId === undefined ? current.director.userId : parsed.data.director.userId, backupUserId: parsed.data.director?.backupUserId === undefined ? current.director.backupUserId : parsed.data.director.backupUserId },
     directorCtcLevel: parsed.data.directorCtcLevel === undefined ? current.directorCtcLevel : parsed.data.directorCtcLevel,
     targetDays: parsed.data.targetDays ?? current.targetDays,
+    // Who may raise requests and the department heads are set separately (saveRaisers, saveDepartmentHeads); kept here.
+    raisers: current.raisers,
+    departmentHeads: current.departmentHeads,
   };
   for (const level of APPROVAL_LEVELS) {
     const s = next[level === "hr_head" ? "hrHead" : "director"];
@@ -138,6 +378,15 @@ export async function saveRecruitmentConfig(client: SupabaseClient, orgId: strin
     ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
     : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
   if (error) fail("save the settings", error);
+  if (by) {
+    const summary = await describeConfigChange(client, current, next);
+    if (summary) {
+      const { error: logError } = await client.from("recruitment_stage_changes").insert({
+        organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary, before: { approvals: current }, after: { approvals: next }, created_at: now,
+      });
+      if (logError && !missingRelation(logError)) console.error("[candidates] recruitment config: the change was not recorded", logError);
+    }
+  }
   return next;
 }
 
@@ -162,7 +411,10 @@ export async function requisitionAccess(client: SupabaseClient, userId: string, 
   const roles = ((orgRows.data ?? []) as { role: string | null; is_active: boolean | null }[]).filter((r) => r.is_active !== false).map((r) => (r.role ?? "").toLowerCase());
   const seesAll = isMaster || roles.some((r) => (CANDIDATE_ACCESS_ROLES as readonly string[]).includes(r) || ["director", "org_admin", "owner", "master_admin", "super_admin"].includes(r));
   const approverLevels = APPROVAL_LEVELS.filter((level) => approversAt(config, level).includes(userId));
-  return { seesAll, approverLevels, configured: configured(config), config, member: isMaster || roles.length > 0 };
+  const canRaise = await canRaiseRequisitions(client, userId, orgId, config);
+  const headOf = departmentsHeadedBy(config, userId);
+  // Someone picked to raise requests, or a department head, counts as a member even with only property roles.
+  return { seesAll, approverLevels, configured: configured(config), canRaise, headOf, config, member: isMaster || roles.length > 0 || canRaise || headOf.length > 0 };
 }
 
 // Rows -----------------------------------------------------------------------------------------------------------------
@@ -224,15 +476,42 @@ async function previousFor(client: SupabaseClient, orgId: string, roleTitle: str
   return r ? { id: r.id as string, requisitionNo: (r.requisition_no as string | null) ?? null, status: r.status as RequisitionStatus, createdAt: iso(r.created_at) } : null;
 }
 
-/** The requests this person may see, newest first: all of them for HR and admins, else their own and those waiting on them. */
-export async function listRequisitions(client: SupabaseClient, orgId: string, viewer: { userId: string; seesAll: boolean }, now = new Date()): Promise<Requisition[]> {
+/** May this viewer see the request: HR and admins all; else their own, those waiting on them, and (department heads) their departments' submitted ones. */
+export function maySee(r: Pick<Requisition, "raisedBy" | "currentApproverId" | "department" | "status">, viewer: { userId: string; seesAll: boolean; headOf?: string[] }): boolean {
+  if (viewer.seesAll || r.raisedBy === viewer.userId || r.currentApproverId === viewer.userId) return true;
+  return r.status !== "draft" && Boolean(viewer.headOf?.includes(deptKey(r.department)));
+}
+
+/**
+ * The tracker's extras for these requests: "candidates in pipeline" (the people in the position opened from each) and
+ * who endorsed it. Neither stops the list loading when it cannot be read.
+ */
+async function withExtras(client: SupabaseClient, orgId: string, list: Requisition[]): Promise<Requisition[]> {
+  if (!list.length) return list;
+  const positionIds = [...new Set(list.map((r) => r.positionId).filter((id): id is string => Boolean(id)))];
+  const [members, endorsements] = await Promise.all([
+    positionIds.length ? client.from("candidate_position_members").select("position_id").eq("organization_id", orgId).in("position_id", positionIds).is("deleted_at", null) : Promise.resolve({ data: [], error: null }),
+    client.from(APPROVALS).select("requisition_id, by_name, created_at").eq("organization_id", orgId).eq("action", "endorsed").in("requisition_id", list.map((r) => r.id)).order("created_at", { ascending: false }),
+  ]);
+  const counts = new Map<string, number>();
+  for (const m of ((members.error ? [] : members.data) ?? []) as { position_id: string }[]) counts.set(m.position_id, (counts.get(m.position_id) ?? 0) + 1);
+  const endorsed = new Map<string, string[]>();
+  for (const e of ((endorsements.error ? [] : endorsements.data) ?? []) as { requisition_id: string; by_name: string | null }[]) {
+    endorsed.set(e.requisition_id, [...(endorsed.get(e.requisition_id) ?? []), e.by_name ?? "A department head"]);
+  }
+  return list.map((r) => ({ ...r, pipelineCount: r.positionId ? counts.get(r.positionId) ?? 0 : null, endorsedBy: endorsed.get(r.id) ?? [] }));
+}
+
+/** The requests this person may see (maySee), newest first. */
+export async function listRequisitions(client: SupabaseClient, orgId: string, viewer: { userId: string; seesAll: boolean; headOf?: string[] }, now = new Date()): Promise<Requisition[]> {
   let q = client.from(TABLE).select(COLUMNS).eq("organization_id", orgId).is("deleted_at", null).order("created_at", { ascending: false }).limit(300);
-  if (!viewer.seesAll) q = q.or(`raised_by.eq.${viewer.userId},current_approver_id.eq.${viewer.userId}`);
+  // A department head also sees their departments' requests: filtered below (department names may hold any character).
+  if (!viewer.seesAll && !viewer.headOf?.length) q = q.or(`raised_by.eq.${viewer.userId},current_approver_id.eq.${viewer.userId}`);
   const { data, error } = await q;
   if (error) fail("load the requests", error);
   const rows = (data ?? []) as unknown as Record<string, unknown>[];
   const names = await namesOf(client, rows.map((r) => r.current_approver_id as string).filter(Boolean));
-  return rows.map((r) => toRequisition(r, names, now));
+  return withExtras(client, orgId, rows.map((r) => toRequisition(r, names, now)).filter((r) => maySee(r, viewer)));
 }
 
 export async function getRequisition(client: SupabaseClient, orgId: string, id: string, now = new Date()): Promise<{ requisition: Requisition; approvals: RequisitionApproval[] }> {
@@ -242,7 +521,7 @@ export async function getRequisition(client: SupabaseClient, orgId: string, id: 
     client.from(APPROVALS).select("id, level, action, in_plan, reason, by_name, via, created_at").eq("organization_id", orgId).eq("requisition_id", row.id as string).order("created_at", { ascending: false }),
   ]);
   if (error) fail("load the request's history", error);
-  const requisition = toRequisition(row, names, now);
+  const [requisition] = await withExtras(client, orgId, [toRequisition(row, names, now)]);
   requisition.previous = await previousFor(client, orgId, requisition.roleTitle, requisition.id);
   const approvals = ((data ?? []) as Record<string, unknown>[]).map((a) => ({
     id: a.id as string,
@@ -319,7 +598,13 @@ function readyToSubmit(row: Record<string, unknown>): string | null {
 export type RequisitionEvent =
   | { kind: "awaiting"; requisition: Requisition; approverId: string; level: ApprovalLevel }
   | { kind: "decided"; requisition: Requisition; decision: "approved" | "rejected" | "sent_back" | "on_hold" | "resumed"; reason: string | null; byName: string | null }
-  | { kind: "director_informed"; requisition: Requisition; directorId: string };
+  | { kind: "director_informed"; requisition: Requisition; directorId: string }
+  /** Owner 2026-11-21: a request for a department went in; its head may endorse it. */
+  | { kind: "department_head"; requisition: Requisition; headId: string }
+  /** Spec A03: approved, the role is open; HR assigns a recruiter. */
+  | { kind: "role_opened"; requisition: Requisition }
+  /** Spec A24: the raiser confirmed a request on hold is still needed; the approver it waits on is told. */
+  | { kind: "still_needed"; requisition: Requisition; approverId: string | null; note: string | null };
 export type RequisitionNotifier = (event: RequisitionEvent) => Promise<void>;
 export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date }
 
@@ -384,7 +669,7 @@ export function firstLevelFor(config: RecruitmentConfig, raisedBy: string): { le
   if (hrHead) return { level: "hr_head", approverId: hrHead };
   const director = pick("director");
   if (director) return { level: "director", approverId: director };
-  if (!configured(config)) throw new CandidateActionError(409, "The approvers are not set yet. Ask the Tech team to set the HR Head and Director in Settings → Notifications → Recruitment.");
+  if (!configured(config)) throw new CandidateActionError(409, "The approvers are not set yet. Ask the Tech team to set them in the Tech dashboard → HR Configs.");
   throw new CandidateActionError(409, "You are the only approver set, and a request cannot be approved by the person who raised it. Ask the Tech team to add a backup approver in Settings.");
 }
 
@@ -414,6 +699,9 @@ export async function submitRequisition(client: SupabaseClient, orgId: string, b
   await record(client, orgId, row.id as string, by, { action: "submitted", level: first.level, reason: row.status === "sent_back" ? "Resubmitted after changes" : null });
   const { requisition } = await getRequisition(client, orgId, row.id as string);
   await emit(deps, { kind: "awaiting", requisition, approverId: first.approverId, level: first.level });
+  // Owner 2026-11-21: the department's head hears of it and may endorse it (not when they raised it, or approve it).
+  const head = headOfDepartment(config, requisition.department);
+  if (head && head !== by.id && head !== first.approverId) await emit(deps, { kind: "department_head", requisition, headId: head });
   return requisition;
 }
 
@@ -506,7 +794,7 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
     const needsDirector = !inPlan || aboveCtcLevel(config, num(row.budget_max_ctc));
     if (needsDirector) {
       const director = approversAt(config, "director").find((uid) => uid !== row.raised_by) ?? null;
-      if (!director) throw new CandidateActionError(409, "This request needs the Director's approval, and no Director is set in Settings → Notifications → Recruitment.");
+      if (!director) throw new CandidateActionError(409, "This request needs the Director's approval, and no Director is set in the Tech dashboard → HR Configs.");
       const { error } = await update({ in_plan: inPlan, needs_director: true, current_level: "director", current_approver_id: director, level_entered_at: now });
       if (error) fail("pass the request to the Director", error);
       await record(client, orgId, row.id as string, by, { level, action: "approved", inPlan, reason: reason ?? (inPlan ? "Above the CTC level: the Director approves" : "Out of plan: the Director approves"), via });
@@ -544,6 +832,8 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
       title: row.role_title, department: row.department ?? null, location: row.location ?? null, openings: Number(row.positions) || 1,
       education: row.qualification ?? null, hiringManager: row.raised_by_name ?? null, targetDays: config.targetDays, summary,
       filters: { ...EMPTY_FILTERS, keywords: skills.map((text) => ({ text, required: false })), ...(num(row.min_experience_years) !== null ? { expMin: num(row.min_experience_years) } : {}) },
+      // Spec A03: nobody recruits for it until HR assigns someone (the approver is not the recruiter).
+      recruiterId: null,
     });
     positionId = position.id;
     await client.from(TABLE).update({ position_id: position.id }).eq("organization_id", orgId).eq("id", id);
@@ -556,12 +846,92 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
   const requisition = (await getRequisition(client, orgId, id)).requisition;
   requisition.positionId = positionId ?? requisition.positionId;
   await emit(deps, { kind: "decided", requisition, decision: "approved", reason, byName: by.name });
+  // Spec A03: "notify the recruiter … open the role": HR is told to assign a recruiter.
+  if (positionId) await emit(deps, { kind: "role_opened", requisition });
   // Stage 2: in plan, the HR Head approves and the Director is notified.
   if (level === "hr_head") {
     const director = approversAt(config, "director")[0] ?? null;
     if (director && director !== by.id) await emit(deps, { kind: "director_informed", requisition, directorId: director });
   }
   return requisition;
+}
+
+// Department heads and the on-hold chaser (owner 2026-11-21) -------------------------------------------------------------
+
+/** Can this person endorse it now: they head its department, it waits on the approvers, they did not raise it or endorse it already. */
+export function canEndorse(requisition: Requisition, userId: string, access: RequisitionAccess, alreadyEndorsed: boolean): boolean {
+  return (requisition.status === "submitted" || requisition.status === "on_hold") && requisition.raisedBy !== userId && !alreadyEndorsed
+    && Boolean(access.headOf?.includes(deptKey(requisition.department)));
+}
+
+/**
+ * A department head endorses a request raised for their department, with an optional note. It is recorded in the
+ * history and shown to the approvers; it approves nothing and does not change who decides.
+ */
+export async function endorseRequisition(client: SupabaseClient, orgId: string, by: Actor, id: string, noteInput: unknown): Promise<Requisition> {
+  const row = await loadRow(client, orgId, id);
+  const config = await loadRecruitmentConfig(client, orgId);
+  if (!departmentsHeadedBy(config, by.id).includes(deptKey(row.department as string | null))) throw new CandidateActionError(403, "Only the head of this request's department can endorse it.");
+  if (row.raised_by === by.id) throw new CandidateActionError(403, "You raised this request, so it cannot be endorsed by you.");
+  if (row.status !== "submitted" && row.status !== "on_hold") throw new CandidateActionError(409, "Only a request waiting on the approvers can be endorsed.");
+  if (await hasEndorsed(client, orgId, row.id as string, by.id)) throw new CandidateActionError(409, "You have already endorsed this request.");
+  const note = typeof noteInput === "string" ? noteInput.trim().slice(0, 1000) || null : null;
+  await record(client, orgId, row.id as string, by, { action: "endorsed", reason: note });
+  return (await getRequisition(client, orgId, row.id as string)).requisition;
+}
+
+/** Has this person endorsed the request (for the drawer's button). */
+export async function hasEndorsed(client: SupabaseClient, orgId: string, requisitionId: string, userId: string): Promise<boolean> {
+  const { data } = await client.from(APPROVALS).select("id").eq("organization_id", orgId).eq("requisition_id", requisitionId).eq("action", "endorsed").eq("by_user", userId).limit(1);
+  return (data ?? []).length > 0;
+}
+
+/** Spec A24: the person who raised a request on hold confirms the role is still needed; the approver it waits on is told. */
+export async function confirmStillNeeded(client: SupabaseClient, orgId: string, by: Actor, id: string, noteInput: unknown, deps: RequisitionDeps = {}): Promise<Requisition> {
+  const row = await loadRow(client, orgId, id);
+  if (row.raised_by !== by.id) throw new CandidateActionError(403, "Only the person who raised the request can confirm it is still needed.");
+  if (row.status !== "on_hold") throw new CandidateActionError(409, "This request is not on hold.");
+  const note = typeof noteInput === "string" ? noteInput.trim().slice(0, 1000) || null : null;
+  await record(client, orgId, row.id as string, by, { action: "still_needed", level: (row.current_level as ApprovalLevel | null) ?? null, reason: note });
+  const requisition = (await getRequisition(client, orgId, row.id as string)).requisition;
+  await emit(deps, { kind: "still_needed", requisition, approverId: requisition.currentApproverId, note });
+  return requisition;
+}
+
+/** For the hourly job: requests on hold, with the days on hold and when (if) the raiser last confirmed it is still needed. */
+export async function heldRequisitions(client: SupabaseClient, orgId: string, now = new Date()): Promise<{ requisition: Requisition; daysOnHold: number; confirmedAt: string | null }[]> {
+  const { data, error } = await client.from(TABLE).select(COLUMNS).eq("organization_id", orgId).eq("status", "on_hold").is("deleted_at", null);
+  if (error) {
+    if (missingRelation(error)) return [];
+    fail("load the requests on hold", error);
+  }
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  if (!rows.length) return [];
+  const names = await namesOf(client, rows.map((r) => r.current_approver_id as string).filter(Boolean));
+  const { data: confirms } = await client.from(APPROVALS).select("requisition_id, created_at").eq("organization_id", orgId).eq("action", "still_needed").in("requisition_id", rows.map((r) => r.id as string));
+  return rows.map((r) => {
+    const requisition = toRequisition(r, names, now);
+    const since = requisition.holdSince ?? requisition.updatedAt;
+    const confirmedAt = ((confirms ?? []) as { requisition_id: string; created_at: unknown }[])
+      .filter((c) => c.requisition_id === requisition.id && new Date(iso(c.created_at)).getTime() >= new Date(since).getTime()).map((c) => iso(c.created_at)).sort().pop() ?? null;
+    return { requisition, daysOnHold: daysBetween(since, null, now), confirmedAt };
+  });
+}
+
+/** Spec A03's escalation: approved requests whose position still has no recruiter, approved at least `hours` ago (within 30 days). */
+export async function unassignedRoles(client: SupabaseClient, orgId: string, now = new Date(), hours = 48): Promise<Requisition[]> {
+  const from = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+  const to = new Date(now.getTime() - hours * 3_600_000).toISOString();
+  const { data, error } = await client.from(TABLE).select(COLUMNS).eq("organization_id", orgId).eq("status", "approved").is("deleted_at", null).not("position_id", "is", null).gte("decided_at", from).lte("decided_at", to);
+  if (error) {
+    if (missingRelation(error)) return [];
+    fail("load the approved requests", error);
+  }
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  if (!rows.length) return [];
+  const { data: positions } = await client.from("candidate_positions").select("id, recruiter_id, status").eq("organization_id", orgId).in("id", rows.map((r) => r.position_id as string)).is("deleted_at", null);
+  const open = new Set(((positions ?? []) as { id: string; recruiter_id: string | null; status: string }[]).filter((p) => !p.recruiter_id && p.status === "open").map((p) => p.id));
+  return rows.filter((r) => open.has(r.position_id as string)).map((r) => toRequisition(r, new Map(), now));
 }
 
 /** Who may decide now: it waits at a level this person approves at, and they did not raise it. */
@@ -585,9 +955,16 @@ export async function waitingRequisitions(client: SupabaseClient, orgId: string,
   });
 }
 
-/** Every organisation with a request waiting (the reminders job runs per organisation). */
-export async function organisationsWithWaiting(client: SupabaseClient): Promise<string[]> {
-  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "submitted").is("deleted_at", null).limit(2000);
-  if (error) return [];
-  return [...new Set(((data ?? []) as { organization_id: string }[]).map((r) => r.organization_id))];
+/**
+ * Every organisation the hourly job has work in: a request waiting or on hold, or one approved in the last 30 days (its
+ * role may still have no recruiter).
+ */
+export async function organisationsWithWaiting(client: SupabaseClient, now = new Date()): Promise<string[]> {
+  const since = new Date(now.getTime() - 30 * 86_400_000).toISOString();
+  const [waiting, approved] = await Promise.all([
+    client.from(TABLE).select("organization_id").in("status", ["submitted", "on_hold"]).is("deleted_at", null).limit(2000),
+    client.from(TABLE).select("organization_id").eq("status", "approved").gte("decided_at", since).is("deleted_at", null).limit(2000),
+  ]);
+  const rows = [...((waiting.error ? [] : waiting.data) ?? []), ...((approved.error ? [] : approved.data) ?? [])] as { organization_id: string }[];
+  return [...new Set(rows.map((r) => r.organization_id))];
 }

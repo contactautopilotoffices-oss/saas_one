@@ -2,6 +2,7 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@utils/supabase/client';
 import { 
@@ -807,6 +808,7 @@ export default function ProcurementDashboard() {
                                     </button>
                                 ))}
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                            <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                             </div>
                         </div>
 

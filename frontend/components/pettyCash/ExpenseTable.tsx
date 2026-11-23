@@ -1,12 +1,12 @@
 'use client';
-import { FileText, ReceiptText, MessageSquareText } from 'lucide-react';
+import { FileText, ReceiptText, MessageSquareText, Pencil, RotateCcw } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import { inr } from '@/frontend/lib/pettyCash/roles';
 import { pettyCashDate, type Expense } from './workflowTypes';
-export default function ExpenseTable({ expenses, org, showRequest = true, onOpen, onReview, onCorrect, onWithdraw, busy = false }: {
+export default function ExpenseTable({ expenses, org, showRequest = true, onOpen, onReview, onCorrect, onWithdraw, onEdit, busy = false }: {
     expenses: Expense[]; org: string; showRequest?: boolean; onOpen?: (id: string) => void;
     onReview?: (id: string, status: 'accepted' | 'rejected') => void; onCorrect?: (expense: Expense) => void;
-    onWithdraw?: (expense: Expense) => void; busy?: boolean;
+    onWithdraw?: (expense: Expense) => void; onEdit?: (expense: Expense) => void; busy?: boolean;
 }) {
     if (!expenses.length) return <div className="pc-empty"><ReceiptText size={24} /><h3>No expenses recorded</h3><p>Record any amount up to the remaining cash. Add bills or receipts if available.</p></div>;
     return <div className="pc-table-wrap"><table aria-label="Expense history" className="min-w-[850px]">
@@ -23,8 +23,38 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
                     {expense.spend_mode || 'Operation'}
                 </span>
             </td>
-            <td className="min-w-44 max-w-xs"><p className="font-medium break-words">{expense.vendor}</p><p className="mt-1 text-xs text-text-secondary break-words">{expense.description}</p></td>
-            <td>{expense.category}</td><td className="font-semibold whitespace-nowrap tabular-nums">{inr(expense.amount)}</td>
+            <td className="min-w-44 max-w-xs">
+                <p className="font-medium break-words">{expense.vendor}</p>
+                <p className="mt-1 text-xs text-text-secondary break-words">{expense.description}</p>
+                {onEdit && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                    <button
+                        type="button"
+                        onClick={() => onEdit(expense)}
+                        disabled={busy}
+                        className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                        title="Edit description or category"
+                    >
+                        <Pencil size={11} /> Edit description & category
+                    </button>
+                )}
+            </td>
+            <td>
+                <div className="flex items-center gap-1.5">
+                    <span>{expense.category}</span>
+                    {onEdit && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                        <button
+                            type="button"
+                            onClick={() => onEdit(expense)}
+                            disabled={busy}
+                            className="p-1 rounded-md text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Edit category or description"
+                            aria-label={`Edit category for ${expense.description}`}
+                        >
+                            <Pencil size={11} />
+                        </button>
+                    )}
+                </div>
+            </td><td className="font-semibold whitespace-nowrap tabular-nums">{inr(expense.amount)}</td>
             <td><p>{expense.payment_mode}</p>{expense.payment_ref && <p className="text-xs text-text-secondary mt-1 break-words">{expense.payment_ref}</p>}</td>
             <td className="min-w-36 max-w-56">
                 <div className="space-y-1.5">
@@ -76,7 +106,17 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
                     </div>
                 )}
                 {onCorrect && expense.review_status === 'rejected' && <button type="button" className="pc-button pc-button-secondary mt-3" disabled={busy} onClick={() => onCorrect(expense)}>Replace proof</button>}
-                {onWithdraw && expense.review_status === 'rejected' && <button type="button" className="pc-button pc-button-danger mt-3" disabled={busy} onClick={() => onWithdraw(expense)}>Withdraw expense</button>}
+                {onWithdraw && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                    <button
+                        type="button"
+                        className="pc-button pc-button-danger mt-2 text-xs gap-1 inline-flex items-center"
+                        disabled={busy}
+                        onClick={() => onWithdraw(expense)}
+                    >
+                        <RotateCcw size={12} />
+                        {expense.review_status === 'pending' ? 'Revert transaction' : 'Withdraw expense'}
+                    </button>
+                )}
             </td>
             {onOpen && <td><Button variant="solid" size="sm" disabled={busy} aria-label={`View ${expense.request?.request_no || 'request'} and proofs`} onClick={() => onOpen(expense.request_id)}>View request</Button></td>}
         </tr>)}</tbody>

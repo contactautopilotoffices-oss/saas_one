@@ -172,6 +172,12 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
         good: 'A confirmation card to attach the photo to the task "Paint the lobby wall".',
     }, { photo: true }),
 
+    // 2026-11-18, the owner's chat: "Which properties access i have" / "Show those 22 propertie" failed the fact check.
+    staff('p-my-properties', 'conversation', 'Show all the properties i have access to', [], {
+        outcome: ['answer'], mustCall: ['properties.mine'], maxReads: 2, replyHas: ['Work Square Andheri'],
+        good: 'Lists the property the person can access (Work Square Andheri), taken from the property list, with nothing added.',
+    }),
+
     // ── Meeting rooms ─────────────────────────────────────────────────────────────────────────────────────────────
     staff('r-free-at-four', 'rooms', 'is any meeting room free at 4 today?', [], {
         outcome: ['answer', 'ask'], mustCall: ['rooms.availability'], maxReads: 2, args: [{ skill: 'rooms.availability', has: { date: '2026-11-04', start_time: '16:00' } }], replyHas: ['Board Room'],
@@ -188,6 +194,23 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
     staff('r-my-bookings', 'rooms', 'what have I booked this week', ['booking'], {
         outcome: ['answer'], mustCall: ['rooms.my_bookings'], maxReads: 2, replyHas: ['Board Room'],
         good: 'Says the person has the Board Room tomorrow from 3 pm to 4 pm.',
+    }),
+    // 2026-11-18: the owner's room chats ("What time is it next available?", "What meeting rooms are available?").
+    staff('r-list', 'rooms', 'what meeting rooms are there?', [], {
+        outcome: ['answer'], mustCall: ['rooms.list'], maxReads: 2, replyHas: ['Board Room'],
+        good: 'Lists the Board Room and Huddle 2 at Work Square Andheri, and nothing else.',
+    }),
+    staff('r-free-slots', 'rooms', 'when is the board room free today?', [], {
+        outcome: ['answer'], mustCall: ['rooms.free_slots'], maxReads: 2, args: [{ skill: 'rooms.free_slots', has: { date: '2026-11-04' } }], replyHas: ['Board Room'],
+        good: 'Gives the free times of the Board Room today that have not started yet, as the tool returned them.',
+    }),
+    staff('r-cancel', 'rooms', 'cancel my board room booking tomorrow', ['booking'], {
+        outcome: ['propose'], skill: 'room.cancel', mustCall: ['rooms.my_bookings'], maxReads: 2,
+        good: 'A confirmation card to cancel the Board Room booking tomorrow from 3 pm to 4 pm. Nothing is cancelled yet.',
+    }),
+    staff('r-move', 'rooms', 'move my board room booking tomorrow to 5 pm', ['booking'], {
+        outcome: ['propose'], skill: 'room.move', mustCall: ['rooms.my_bookings'], maxReads: 3, args: [{ skill: 'room.move', has: { date: '2026-11-05', start_time: '17:00', end_time: '18:00' } }],
+        good: 'A confirmation card moving the Board Room booking tomorrow from 3 to 4 pm to 5 to 6 pm. Nothing changes yet.',
     }),
     staff('r-book-no-time', 'rooms', 'book a meeting room for tomorrow', [], {
         outcome: ['ask'], maxReads: 2,
