@@ -109,7 +109,7 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
     const [showSignOutModal, setShowSignOutModal] = useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKeyPrefix = `tenant-${propertyId}`;
     const [activeTickets, setActiveTickets] = useState<Ticket[]>([]);
     const [completedTickets, setCompletedTickets] = useState<Ticket[]>([]);
@@ -531,9 +531,8 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                             {/* Quick Action: New Request - Compact */}
                             <div className="mb-4">
                                 <button
-                                    onClick={() => { handleTabChange('create_request'); setSidebarOpen(false); }}
-                                    onClick={() => { handleTabChange('create_request'); setSidebarOpen(false); }}
                                     onClick={() => { setShowCreateTicketModal(true); setSidebarOpen(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2.5 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border border-primary/20 group shadow-sm"
                                 >
                                     <div className="w-7 h-7 bg-primary/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
                                         <Plus className="w-4 h-4 font-black" />
@@ -767,15 +766,6 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                                     onValidateClick={handleValidate}
                                 />
                             )}
-                            {activeTab === 'create_request' && property && user && (
-                                { activeTab === 'create_request' && property && user && (
-                                    <TenantTicketingDashboard
-                                        propertyId={property.id}
-                                        organizationId={property.organization_id}
-                                        user={{ id: user.id, full_name: user.user_metadata?.full_name || 'Client' }}
-                                        propertyName={property.name}
-                                        onSuccess={fetchTickets}
-                                    />
                             {activeTab === 'create_request' && (
                                 <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center bg-card border border-border rounded-2xl max-w-lg mx-auto my-8 space-y-4 shadow-sm">
                                     <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto">
@@ -790,6 +780,7 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                                         <Plus className="w-4 h-4" /> Open Request Form
                                     </button>
                                 </div>
+                            )}
                             {activeTab === 'visitors' && property && user && (
                                 <TenantVisitorManagement
                                     propertyId={property.id}

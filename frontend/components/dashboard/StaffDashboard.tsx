@@ -152,7 +152,7 @@ const StaffDashboard = () => {
     const [userRole, setUserRole] = useState('Staff Professional');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKeyPrefix = `staff-${propertyId}`;
 
     // Edit Modal State
