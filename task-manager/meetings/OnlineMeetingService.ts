@@ -116,6 +116,10 @@ export class OnlineMeetingService {
                 hostName: (host?.full_name as string | undefined) || 'Someone', isHost: m.created_by === userId,
                 open: this.isOpen(m), startedAt: m.online?.startedAt ?? null, problem: m.online?.problem ?? null,
                 purpose: m.purpose === 'interview' ? 'interview' : null,
+                // Owner 2026-11-24: after the call the page opens the notes; they live in this Meeting Assistant space,
+                // which this person may not have (an invited attendee from another team): then no notes link.
+                space: m.workspace ?? 'tech',
+                canSeeNotes: spaces.has(m.workspace ?? 'tech'),
             },
             setup: onlineSetupGaps(),
             // Stage 2: the guest link (if the host turned it on) and who asked to join through it
