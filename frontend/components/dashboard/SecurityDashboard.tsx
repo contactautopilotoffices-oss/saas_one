@@ -79,7 +79,7 @@ const SecurityDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'checkinout', 'visitors', 'diesel', 'checklist', 'meeting_rooms', 'settings', 'profile'].includes(tab)) {
+        if (tab && ['overview', 'requests', 'checkinout', 'visitors', 'diesel', 'checklist', 'meeting_rooms', 'settings', 'profile', 'grievance'].includes(tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -348,6 +348,17 @@ const SecurityDashboard = () => {
                                 <UsersRound className="w-3.5 h-3.5 text-indigo-600" />
                                 <span className="text-[9px] font-black text-text-secondary uppercase tracking-wider">VMS</span>
                             </button>
+                            <button
+                                onClick={() => handleTabChange('grievance')}
+                                className={`col-span-2 flex items-center gap-2 p-2 rounded-lg border transition-all ${activeTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse border-primary shadow-xs'
+                                    : 'bg-emerald-50/60 border-emerald-200 text-emerald-800 hover:bg-emerald-100/60'
+                                    }`}
+                                title="Raise HR Request / Grievance"
+                            >
+                                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                                <span className="text-[9px] font-bold uppercase tracking-wider">Raise Grievance</span>
+                            </button>
                         </div>
                     </div>
 
@@ -450,13 +461,13 @@ const SecurityDashboard = () => {
                         </p>
                         <div className="space-y-1">
                             <button
-                                onClick={() => {
-                                    if (dashboardContent !== undefined) navigateDashboard('grievance'); else setActiveTab('grievance');
-                                    setSidebarOpen(false);
-                                }}
-                                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm text-text-secondary hover:bg-muted hover:text-text-primary group"
+                                onClick={() => handleTabChange('grievance')}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'grievance'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
                             >
-                                <ShieldCheck className="w-4 h-4 text-primary" />
+                                <ShieldCheck className="w-4 h-4" />
                                 <span className="flex-1 text-left">My Grievances</span>
                             </button>
                             <button
@@ -525,7 +536,7 @@ const SecurityDashboard = () => {
                             <Menu className="w-6 h-6" />
                         </button>
                         <div>
-                            <h1 className="text-xl md:text-2xl font-black text-text-primary tracking-tight capitalize">{activeTab === 'meeting_rooms' ? 'Meeting Rooms' : activeTab}</h1>
+                            <h1 className="text-xl md:text-2xl font-black text-text-primary tracking-tight capitalize">{activeTab === 'meeting_rooms' ? 'Meeting Rooms' : activeTab === 'grievance' ? 'HR & Grievances' : activeTab}</h1>
                             {activeTab === 'overview' && (
                                 <p className="hidden sm:block text-text-tertiary text-[10px] font-black uppercase tracking-widest mt-0.5">
                                     Security Monitoring Hub
@@ -534,6 +545,18 @@ const SecurityDashboard = () => {
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={() => handleTabChange('grievance')}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border shadow-xs ${activeTab === 'grievance'
+                                ? 'bg-primary text-text-inverse border-primary'
+                                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-200'
+                            }`}
+                            title="Raise HR Request / Grievance"
+                        >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                            <span>Raise Grievance</span>
+                        </button>
                         <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-border rounded-lg">
                             <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
                             <span className="text-[10px] font-black text-text-secondary uppercase tracking-widest">System Live</span>

@@ -7,7 +7,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     BrainCircuit, Building2, ChevronDown, ClipboardList, DoorOpen, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap, ShieldCheck,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -50,13 +50,14 @@ const RequestsWorkspace = dynamic(() => import('@/frontend/components/tickets/Re
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 // Owner 2026-11-14: the Brain Console (Unified Brain control room), Tech only
 const BrainConsole = dynamic(() => import('@/frontend/components/brain/BrainConsole'), { loading: TabLoading });
+const HRTicketsContent = dynamic(() => import('@/frontend/components/hr/HRTicketsContent'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
     | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'meeting_room' | 'vms_face' | 'files' | 'candidates'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
-    | 'profile' | 'settings';
+    | 'profile' | 'settings' | 'grievance';
 
 interface NavItem { id: TechTab; label: string; icon: React.ComponentType<{ className?: string }> }
 
@@ -102,6 +103,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
     {
         section: 'Personal',
         items: [
+            { id: 'grievance', label: 'My Grievances', icon: ShieldCheck },
             { id: 'profile', label: 'Profile', icon: UserCircle },
             { id: 'settings', label: 'Settings', icon: Settings },
         ],
@@ -333,7 +335,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'meeting_room' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'meeting_room' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && activeTab !== 'grievance' && (
                         <div className="flex items-center gap-3">
                             {/* Owner 2026-11-15: on the Requests tab the property choice moves into the page below `lg`, and the
                                 header shows a New button on phones, so the "Requests" heading always has room. */}
@@ -373,6 +375,7 @@ export default function TechDashboard() {
                                 />
                             )}
                             {activeTab === 'settings' && <SettingsView />}
+                            {activeTab === 'grievance' && org && <HRTicketsContent orgId={org.id} />}
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
