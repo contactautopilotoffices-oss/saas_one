@@ -222,8 +222,8 @@ export default function TicketCreateModal({
                     description,
                     propertyId: finalPropId,
                     organizationId: finalOrgId,
-                    isInternal,
-                    assignedTo: taggedUser?.id,
+                    isInternal: showInternalToggle ? isInternal : false,
+                    assignedTo: showInternalToggle ? taggedUser?.id : undefined,
                     ...(showCriticalToggle && isCritical ? { priority: 'critical' } : {}),
                 }),
             });
