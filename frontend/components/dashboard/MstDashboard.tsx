@@ -206,6 +206,39 @@ const MstDashboard = () => {
         }
     }, [propertyId, user?.id]);
 
+    // Listen for globally raised tickets to instantly display in incomingTickets without loading delay
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
+            if (newTicket && newTicket.id) {
+                if (!newTicket.property_id || !propertyId || newTicket.property_id === propertyId) {
+                    setIncomingTickets(prev => {
+                        if (tempId && prev.some(t => t.id === tempId)) {
+                            return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                        }
+                        if (prev.some(t => t.id === newTicket.id)) {
+                            return prev.map(t => t.id === newTicket.id ? { ...t, ...newTicket } : t);
+                        }
+                        return [newTicket, ...prev];
+                    });
+                    setTicketStats(prev => ({
+                        total: prev.total + 1,
+                        open: prev.open + 1,
+                        closed: prev.closed,
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [propertyId]);
+
     // Global loading timeout to prevent infinite spinners
     useEffect(() => {
         let timeout: NodeJS.Timeout;
@@ -607,28 +640,32 @@ const MstDashboard = () => {
 
     const handleUpdateTicket = async () => {
         if (!editingTicket || !editTitle.trim()) return;
-        setIsUpdating(true);
+        const targetId = editingTicket.id;
+        const newTitle = editTitle;
+        const newDesc = editDescription;
+
+        // Instant optimistic update
+        setIncomingTickets(prev => prev.map(t => t.id === targetId ? { ...t, title: newTitle, description: newDesc } : t));
+        setEditingTicket(null);
+
         try {
-            const res = await fetch(`/api/tickets/${editingTicket.id}`, {
+            const res = await fetch(`/api/tickets/${targetId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: editTitle,
-                    description: editDescription
+                    title: newTitle,
+                    description: newDesc
                 })
             });
 
-            if (res.ok) {
-                setEditingTicket(null);
-                fetchTickets(); // Refresh list
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
-                alert(data.error || 'Failed to update ticket');
+                console.error(data.error || 'Failed to update ticket');
+                fetchTickets();
             }
         } catch (error) {
             console.error('Update ticket error:', error);
-        } finally {
-            setIsUpdating(false);
+            fetchTickets();
         }
     };
 

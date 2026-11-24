@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Activity, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
 import {
@@ -68,6 +69,7 @@ export default function TicketCreateModal({
     const [selectedPropId, setSelectedPropId] = useState(propertyId || '');
     const [availableProperties, setAvailableProperties] = useState<any[]>(properties || []);
     const supabase = createClient();
+    const { user } = useAuth();
 
     // @mention state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -209,75 +211,120 @@ export default function TicketCreateModal({
             return;
         }
 
-        setIsSubmitting(true);
-        setError(null);
+        const tempId = `temp-${Date.now()}`;
+        const currentDesc = description.trim();
+        const currentMedia = mediaFile;
+        const currentAttachments = [...attachments];
+        const currentTagged = taggedUser;
+        const currentCritical = isCritical;
+        const currentInternal = isInternal;
 
-        try {
-            // 1. Create the ticket
-            const response = await fetch('/api/tickets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    description,
-                    propertyId: finalPropId,
-                    organizationId: finalOrgId,
-                    isInternal,
-                    assignedTo: taggedUser?.id,
-                    ...(showCriticalToggle && isCritical ? { priority: 'critical' } : {}),
-                }),
-            });
+        // Build optimistic ticket for instant display
+        const optimisticTicket: any = {
+            id: tempId,
+            ticket_number: 'AP-CREATING...',
+            title: currentDesc.split('\n')[0].slice(0, 100),
+            description: currentDesc,
+            property_id: finalPropId,
+            organization_id: finalOrgId,
+            status: currentTagged ? 'assigned' : 'open',
+            priority: showCriticalToggle && currentCritical ? 'critical' : 'medium',
+            internal: currentInternal,
+            is_internal: currentInternal,
+            created_at: new Date().toISOString(),
+            photo_before_url: currentMedia ? currentMedia.preview : undefined,
+            video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : undefined,
+            raised_by: user?.id,
+            creator: {
+                id: user?.id,
+                full_name: user?.user_metadata?.full_name || user?.email || 'You',
+                user_photo_url: user?.user_metadata?.user_photo_url || null,
+            },
+            assignee: currentTagged ? { id: currentTagged.id, full_name: currentTagged.full_name } : null,
+        };
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to create ticket');
+        // Instant optimistic feedback: play sound, notify parent, close modal immediately
+        playTickleSound();
+        onSuccess?.(optimisticTicket);
 
-            // 2. Upload media if present
-            if (mediaFile && data.ticket?.id) {
-                const formData = new FormData();
-                formData.append('file', mediaFile.file);
-                formData.append('type', 'before');
-                formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
-
-                const endpoint = mediaFile.type === 'video'
-                    ? `/api/tickets/${data.ticket.id}/videos`
-                    : `/api/tickets/${data.ticket.id}/photos`;
-
-                const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
-                if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
-            }
-
-            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-            const failures: string[] = [];
-            if (attachments.length > 0 && data.ticket?.id) {
-                for (const file of attachments) {
-                    const err = await uploadTicketFile(data.ticket.id, file);
-                    if (err) failures.push(err);
-                }
-                if (failures.length) {
-                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
-                }
-            }
-
-            playTickleSound();
-            setClassification(data.classification);
-            setSuccess(true);
-            onSuccess?.(data.ticket);
-
-            // Dispatch global event so dashboards, lists, and boards update immediately
-            if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
-                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
-            }
-
-            // Keep the screen up longer when some files failed, so the warning can be read
-            setTimeout(() => {
-                handleReset();
-                onClose();
-            }, failures.length ? 7000 : 2000);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Something went wrong');
-        } finally {
-            setIsSubmitting(false);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: optimisticTicket } }));
+            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: optimisticTicket } }));
         }
+
+        handleReset();
+        onClose();
+
+        // Background sync to backend: create ticket + upload media and attachments
+        (async () => {
+            try {
+                const response = await fetch('/api/tickets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: currentDesc,
+                        propertyId: finalPropId,
+                        organizationId: finalOrgId,
+                        isInternal: currentInternal,
+                        assignedTo: currentTagged?.id,
+                        ...(showCriticalToggle && currentCritical ? { priority: 'critical' } : {}),
+                    }),
+                });
+
+                const data = await response.json();
+                if (!response.ok || !data.ticket) throw new Error(data.error || 'Failed to create ticket');
+
+                const serverTicket = data.ticket;
+                const ticketWithPreview = {
+                    ...serverTicket,
+                    photo_before_url: currentMedia ? currentMedia.preview : serverTicket.photo_before_url,
+                    video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : serverTicket.video_before_url,
+                };
+
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                    window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                }
+
+                // Background upload of media
+                if (currentMedia && serverTicket.id) {
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', currentMedia.file);
+                        formData.append('type', 'before');
+                        formData.append('takenAt', currentMedia.takenAt || new Date().toISOString());
+
+                        const endpoint = currentMedia.type === 'video'
+                            ? `/api/tickets/${serverTicket.id}/videos`
+                            : `/api/tickets/${serverTicket.id}/photos`;
+
+                        const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
+                        if (mediaResponse.ok) {
+                            const mediaJson = await mediaResponse.json();
+                            if (mediaJson.url && typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', {
+                                    detail: { ticket: { ...serverTicket, photo_before_url: mediaJson.url }, tempId: serverTicket.id }
+                                }));
+                            }
+                        }
+                    } catch (mediaErr) {
+                        console.error('[TicketCreateModal] Media upload failed in background:', mediaErr);
+                    }
+                }
+
+                // Background upload of attachments
+                if (currentAttachments.length > 0 && serverTicket.id) {
+                    for (const file of currentAttachments) {
+                        await uploadTicketFile(serverTicket.id, file);
+                    }
+                }
+            } catch (err) {
+                console.error('[TicketCreateModal] Background ticket creation failed:', err);
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-create-failed', { detail: { tempId } }));
+                }
+            }
+        })();
     };
 
     const handleAttachPick = (list: FileList | null) => {
@@ -286,7 +333,7 @@ export default function TicketCreateModal({
         if (!picked.length) return;
         const problem = picked.map(checkTicketFile).find(Boolean);
         if (problem) {
-            setError(problem);
+            setError(String(problem));
             return;
         }
         const room = MAX_TICKET_FILES - attachments.length;
