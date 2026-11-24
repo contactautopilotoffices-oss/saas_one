@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
         // Use admin client when user has verified admin permissions (or Tech, scoped to its organisations); else user client
         const queryClient = (isOrgSuperAdmin || isPropertyAdmin || isTechScope) ? adminSupabase : supabase;
 
-        let selectStr = `
+        const selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
                 resolved_at, sla_deadline, sla_breached, sla_hours, sla_paused, sla_paused_at, total_paused_minutes, sla_pause_reason,
                 needs_vendor_procurement, vendor_procurement_status, vendor_tagged_at,
@@ -249,10 +249,6 @@ export async function GET(request: NextRequest) {
         // Handle predefined periods (e.g., today)
         if (period === 'today') {
             const now = new Date();
-            // Offset for IST (UTC+5:30)
-            const offset = 5.5 * 60 * 60 * 1000;
-            const istNow = new Date(now.getTime() + offset);
-            
             const startOfDay = new Date(now.getTime());
             startOfDay.setUTCHours(0 - 5, 0 - 30, 0, 0); // 00:00 IST = 18:30 UTC yesterday
             
@@ -304,7 +300,7 @@ export async function GET(request: NextRequest) {
                 console.error('Error fetching members by role:', memberError);
             } else if (members && members.length > 0) {
                 // Deduplicate user IDs
-                const userIds = [...new Set(members.map((m: any) => m.user_id))];
+                const userIds = [...new Set(members.map((m: { user_id: string }) => m.user_id))];
                 query = query.in('raised_by', userIds);
             } else {
                 // No users with this role found – return empty result
@@ -418,7 +414,7 @@ export async function POST(request: NextRequest) {
         ]);
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
-        const defaultHierarchy = (hierarchyRes.data || []).find((h: any) => h.property_id === propId) || (hierarchyRes.data || []).find((h: any) => !h.property_id);
+        const defaultHierarchy = (hierarchyRes.data || []).find((h: { property_id?: string | null }) => h.property_id === propId) || (hierarchyRes.data || []).find((h: { property_id?: string | null }) => !h.property_id);
 
         // 2. The chosen category's row (this property's own first, then the shared one): its team, usual priority, SLA.
         if (issue_code) {
