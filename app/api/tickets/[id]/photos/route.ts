@@ -126,6 +126,13 @@ export async function POST(
             old_value: takenAt || new Date().toISOString(),
         });
 
+        // 2026-11-19: the AI reads the ticket's photo after this response (backend/lib/ticketing/ticketPhoto.ts;
+        // off / watch only / on in Brain → Switches). Never a reason for the upload to fail.
+        if (photoType === 'before') {
+            try { const { checkPhotoAfterResponse } = await import('@/backend/lib/ticketing/ticketPhoto'); await checkPhotoAfterResponse(ticketId); }
+            catch (err) { console.warn('[TicketPhoto] not started:', err instanceof Error ? err.message : err); }
+        }
+
         return NextResponse.json({ success: true, url: proxyUrl, type: photoType });
     } catch (error) {
         console.error('Photo upload error:', error);

@@ -1,6 +1,6 @@
 'use client';
 import React, { useMemo, useState } from 'react';
-import { ShiftConfig } from './ShiftConfigModal';
+import { ShiftConfig, getContrastTextColor } from './ShiftConfigModal';
 import { Pencil, Trash2 } from 'lucide-react';
 
 interface RosterAssignment {
@@ -93,7 +93,7 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
                 todayRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             }, 100);
         }
-    }, [month, year, staff.length, viewDate]);
+    }, [month, year, viewDate]);
 
     const getAssignment = (userId: string, dateStr: string) => {
         return rosters.find(r => r.user_id === userId && r.roster_date === dateStr);
@@ -260,7 +260,10 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
                                         let bgColor = 'transparent';
                                         let textColor = 'inherit';
                                         if (activeConfig) {
-                                            if (activeConfig.code === 'Leave' || activeConfig.code === 'L') {
+                                            if (activeConfig.color && activeConfig.color !== '#f1f5f9' && activeConfig.color !== 'transparent') {
+                                                bgColor = activeConfig.color;
+                                                textColor = getContrastTextColor(activeConfig.color);
+                                            } else if (activeConfig.code === 'Leave' || activeConfig.code === 'L') {
                                                 bgColor = '#ef4444'; // Red
                                                 textColor = 'white';
                                             } else if (activeConfig.code.includes('W/O') || !activeConfig.is_working_day) {

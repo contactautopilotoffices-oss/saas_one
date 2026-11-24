@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { holdIfScoped } from './heldMessages';
 
 /**
  * Owner 2026-10-20 — the dashboard bell (and phone push) for Task Manager events, next to the WhatsApp alert:
@@ -24,6 +25,8 @@ export function taskManagerLink(orgId: string | null, membershipRole: string | n
 export async function taskBell(input: { userId: string; kind: TaskBellKind; title: string; message: string; departmentName?: string | null }): Promise<void> {
     try {
         if (!input.userId) return;
+        // Owner 2026-11-21: a bell caused by a WhatsApp task-assistant change waits 1 minute, like its WhatsApp message.
+        if (await holdIfScoped('bell', input as unknown as Record<string, unknown>)) return;
         const { data: m } = await supabaseAdmin.from('organization_memberships').select('organization_id, role').eq('user_id', input.userId).limit(1).maybeSingle();
         const orgId = (m?.organization_id as string | undefined) ?? null;
         const link = taskManagerLink(orgId, (m?.role as string | undefined) ?? null, input.departmentName ?? null);

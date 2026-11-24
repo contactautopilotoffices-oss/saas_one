@@ -2,12 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import dynamic from 'next/dynamic';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import Image from 'next/image';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
     BrainCircuit, Building2, ChevronDown, ClipboardList, DoorOpen, Droplets, FlaskConical, FolderOpen, Fuel, GitBranch, Layers, LayoutDashboard, LogOut,
-    Menu, Mic, Plus, ScanFace, Settings, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
+    Menu, Mic, Plus, ScanFace, Settings, SlidersHorizontal, Ticket, TrendingUp, Gauge, UserCircle, UserSearch, Users, Wrench, X, Zap,
 } from 'lucide-react';
 import { createClient } from '@/frontend/utils/supabase/client';
 import { useAuth } from '@/frontend/context/AuthContext';
@@ -50,10 +51,15 @@ const RequestsWorkspace = dynamic(() => import('@/frontend/components/tickets/Re
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 // Owner 2026-11-14: the Brain Console (Unified Brain control room), Tech only
 const BrainConsole = dynamic(() => import('@/frontend/components/brain/BrainConsole'), { loading: TabLoading });
+// Owner 2026-11-20: "create a new sidebar tab named something like HR configs in the tech dashboard"
+const RecruitmentRaiserSettings = dynamic(() => import('@/frontend/components/admin/RecruitmentRaiserSettings'), { loading: TabLoading });
+// Owner 2026-11-20: "move this Hiring request approvals section to the tech login in HR configs tab"
+const ApprovalSettings = dynamic(() => import('@/frontend/components/candidates/ApprovalSettings'), { loading: TabLoading });
+const DepartmentHeadSettings = dynamic(() => import('@/frontend/components/admin/DepartmentHeadSettings'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
-    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'meeting_room' | 'vms_face' | 'files' | 'candidates'
+    | 'tasks' | 'control_centre' | 'brain' | 'meetings' | 'meeting_room' | 'vms_face' | 'files' | 'candidates' | 'hr_configs'
     | 'water_logger' | 'water' | 'diesel_logger' | 'diesel' | 'electricity_logger' | 'ppm'
     | 'org_progress' | 'org_efficiency' | 'visitors' | 'escalation'
     | 'profile' | 'settings';
@@ -77,6 +83,8 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
             { id: 'files', label: 'Files', icon: FolderOpen },
             { id: 'candidates', label: 'Candidate Search', icon: UserSearch },
+            // Owner 2026-11-20: HR settings the Tech team owns (who can raise hiring requests)
+            { id: 'hr_configs', label: 'HR Configs', icon: SlidersHorizontal },
         ],
     },
     {
@@ -295,6 +303,8 @@ export default function TechDashboard() {
                             </div>
                         </div>
                     ))}
+                    {/* Owner 2026-11-21: shown only to the people HR Configs picks */}
+                    <div className="mb-6"><HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} rail={sidebarCollapsed} /></div>
                 </nav>
                 <div className="shrink-0 border-t border-border p-4">
                     <div className={`mb-3 flex items-center gap-3 px-2 ${sidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}>
@@ -333,7 +343,7 @@ export default function TechDashboard() {
                         </button>
                         <h1 className="truncate font-display text-xl font-semibold tracking-tight text-text-primary md:text-2xl">{tabLabel}</h1>
                     </div>
-                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'meeting_room' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'profile' && activeTab !== 'settings' && (
+                    {activeTab !== 'tasks' && activeTab !== 'control_centre' && activeTab !== 'brain' && activeTab !== 'meetings' && activeTab !== 'meeting_room' && activeTab !== 'files' && activeTab !== 'candidates' && activeTab !== 'hr_configs' && activeTab !== 'profile' && activeTab !== 'settings' && (
                         <div className="flex items-center gap-3">
                             {/* Owner 2026-11-15: on the Requests tab the property choice moves into the page below `lg`, and the
                                 header shows a New button on phones, so the "Requests" heading always has room. */}
@@ -376,6 +386,7 @@ export default function TechDashboard() {
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
+                            {activeTab === 'hr_configs' && org && <div className="mx-auto max-w-5xl space-y-6"><RecruitmentRaiserSettings organizationId={org.id} /><DepartmentHeadSettings organizationId={org.id} /><ApprovalSettings orgId={org.id} /></div>}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'meeting_room' && <BookMeetingRoom />}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}

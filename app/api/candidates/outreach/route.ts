@@ -22,7 +22,8 @@ export async function GET(request: Request) {
 }
 
 /**
- * Send the update on WhatsApp: { orgId, applicationId, positionId?, kind: "shortlisted" | "not_shortlisted" }. The
+ * Send the update on WhatsApp: { orgId, applicationId, positionId?, kind: "stage_update" | "shortlisted" |
+ * "not_shortlisted", message? }. A stage update (owner 2026-11-19) needs the position and HR's text (`message`). The
  * checks run again here; a person's click is the only way a message goes out.
  */
 export async function POST(request: Request) {

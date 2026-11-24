@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, CheckSquare, ChevronRight, Download, FileText, Loader2, Lock, Mic, Pencil, Plus, Square, Users, X } from 'lucide-react';
+import { Check, CheckSquare, ChevronRight, Download, FileText, Loader2, Lock, Mic, Pencil, Square, Users, Video, X } from 'lucide-react';
 import MeetingRecorder from './MeetingRecorder';
 import MeetingReview from './MeetingReview';
 import NewMeeting from './NewMeeting';
 import PendingUploads from './PendingUploads';
 import { exportManyPdf, exportManyWord, type ExportInput } from './exportNotes';
-import { PROCESSING, STATUS_LABEL, call, clock, meetingUrl, meetingsUrl, niceDate, type MeetingDetail, type MeetingListItem, type MeetingPerson, type MeetingSpace, type MeetingTask } from './api';
+import { PROCESSING, STATUS_LABEL, call, clock, meetingUrl, meetingsUrl, niceDate, niceDateTime, type MeetingDetail, type MeetingListItem, type MeetingPerson, type MeetingSpace, type MeetingTask } from './api';
 
 /**
  * Owner 2026-10-29: the Tech dashboard's "Meetings" tab. The Tech team runs the meeting: they record it on one phone,
@@ -15,15 +15,20 @@ import { PROCESSING, STATUS_LABEL, call, clock, meetingUrl, meetingsUrl, niceDat
  * ("from Autopilot"). Plan: docs/MEETING_TASKS_SPEC.md
  * Owner 2026-11-13: a recovery banner for audio still on this phone, and "Select" to download the notes of several
  * meetings as one PDF or Word file.
+ * Owner 2026-11-18: two buttons at the top, "Record a meeting" and "New video meeting", instead of one "New meeting"
+ * with a choice inside. Both kinds stay in the one list below.
  */
 
 type View =
     | { kind: 'list' }
-    | { kind: 'new' }
+    | { kind: 'new'; meeting: 'room' | 'online' }
     | { kind: 'record'; id: string; title: string; file: File | null }
     | { kind: 'review'; id: string };
 
 const STATUS_STYLE: Record<string, string> = {
+    // Owner 2026-11-18: online meetings before and during the call
+    scheduled: 'bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
+    live: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300',
     recording: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300',
     ready: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
     failed: 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300',
@@ -96,7 +101,7 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
     };
 
     if (view.kind === 'new') {
-        return <NewMeeting space={space} people={people} onCancel={() => setView({ kind: 'list' })} onStarted={(id, title, file) => setView({ kind: 'record', id, title, file })} />;
+        return <NewMeeting space={space} people={people} kind={view.meeting} onCancel={() => setView({ kind: 'list' })} onStarted={(id, title, file) => setView({ kind: 'record', id, title, file })} onOnlineCreated={id => setView({ kind: 'review', id })} />;
     }
     if (view.kind === 'record') {
         return <MeetingRecorder space={space} meetingId={view.id} title={view.title} file={view.file} people={people} onDone={() => setView({ kind: 'review', id: view.id })} onBack={() => setView({ kind: 'review', id: view.id })} onDiscarded={() => setView({ kind: 'list' })} />;
@@ -111,7 +116,7 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
             <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h2 className="text-xl font-black text-zinc-900 dark:text-zinc-100">Meeting Assistant</h2>
-                    <p className="text-sm text-zinc-500">Record a meeting on this phone. You get the notes and a task list to send.</p>
+                    <p className="text-sm text-zinc-500">Record a meeting on this phone, or hold it online with a video link. You get the notes and a task list to send.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                     {ready.length > 0 && (
@@ -122,9 +127,13 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
                             {selecting ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />} {selecting ? 'Done' : 'Select'}
                         </button>
                     )}
-                    <button type="button" onClick={() => setView({ kind: 'new' })} disabled={!!error && !meetings?.length}
+                    <button type="button" onClick={() => setView({ kind: 'new', meeting: 'room' })} disabled={!!error && !meetings?.length}
                         className="flex items-center gap-2 rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-red-700 disabled:opacity-50">
-                        <Plus className="h-4 w-4" /> New meeting
+                        <Mic className="h-4 w-4" /> Record a meeting
+                    </button>
+                    <button type="button" onClick={() => setView({ kind: 'new', meeting: 'online' })} disabled={!!error && !meetings?.length}
+                        className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-black text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50">
+                        <Video className="h-4 w-4" /> New video meeting
                     </button>
                 </div>
             </div>
@@ -212,10 +221,11 @@ export default function MeetingsTab({ space }: { space: MeetingSpace }) {
                                 <div className="min-w-0 flex-1">
                                     <p className="flex items-center gap-1.5 truncate text-sm font-black text-zinc-900 dark:text-zinc-100">
                                         {m.confidential && <Lock className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-label="Confidential" />}
+                                        {m.kind === 'online' && <Video className="h-3.5 w-3.5 shrink-0 text-indigo-500" aria-label="Online meeting" />}
                                         <span className="truncate">{m.title}</span>
                                     </p>
                                     <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs font-semibold text-zinc-500">
-                                        <span>{niceDate(m.meetingDate)}</span>
+                                        <span>{m.status === 'scheduled' && m.scheduledFor ? niceDateTime(m.scheduledFor) : niceDate(m.meetingDate)}</span>
                                         {m.durationSeconds ? <span>· {clock(m.durationSeconds)}</span> : null}
                                         <span className="flex items-center gap-1">· <Users className="h-3 w-3" /> {m.peopleCount}</span>
                                         <span>· by {m.mine ? 'you' : m.createdByName}</span>

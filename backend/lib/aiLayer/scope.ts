@@ -11,6 +11,7 @@
  * management and includes super_tenant, tech, it, design and hr, which must not get org-wide reads here.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isCreditFreeBookingRole } from '@/frontend/lib/meetingRooms/creditFreeRoles';
 import type { ActorContext } from './types';
 
 /** Org-wide for every module this layer offers. Explicit on purpose (plan decision D9). */
@@ -40,7 +41,40 @@ function live(m: { is_active: boolean | null; approval_status?: string | null })
  * Mixed roles: if a person holds a staff role at any property, only those properties are used (and tenant-only
  * properties are dropped), so the narrower reading always wins.
  */
-export function computeActor(userId: string, orgId: string, rows: ScopeRows): ActorContext | null {
+export function computeActor(userId: string, orgId: string, rows: ScopeRows, opts: { roomsOnlyLogins?: boolean } = {}): ActorContext | null {
+    const actor = computeBaseActor(userId, orgId, rows);
+    if (!actor) return opts.roomsOnlyLogins ? roomsOnlyActor(userId, orgId, rows) : null;
+    if (actor.orgWide) return actor;
+    // Owner 2026-11-20 ("keep the whatsapp bot consistent with the fms"): an active HR, CRM/BD, IT, Design or Tech role
+    // in this org books meeting rooms at every property of the org, exactly as the app's Book Meeting Room page allows
+    // (bookable-properties route, isCreditExemptBooker: active org membership, no approval check). Rooms only: every
+    // other module keeps the narrower propertyIds above. The person's own properties come first.
+    if (!roomRoles(orgId, rows).length) return actor;
+    const ids = [...new Set([...actor.propertyIds, ...Object.keys(rows.orgProperties).sort((a, b) => rows.orgProperties[a].localeCompare(rows.orgProperties[b]))])];
+    return { ...actor, roomPropertyIds: ids, roomPropertyNames: Object.fromEntries(ids.map(id => [id, rows.orgProperties[id]])) };
+}
+
+/** The active org roles that book meeting rooms at every property (the app's Book Meeting Room page). */
+const roomRoles = (orgId: string, rows: ScopeRows) =>
+    rows.orgMemberships.filter(m => m.organization_id === orgId && m.is_active !== false && isCreditFreeBookingRole(m.role)).map(m => String(m.role).toLowerCase().trim());
+
+/**
+ * Owner 2026-11-20: a person with such a role and no property login (the HR team, for example) books rooms in the app
+ * at every property, so the WhatsApp brain serves them too: meeting rooms only, nothing else. Asked for by the brain's
+ * WhatsApp channel only; every other caller still gets null for them, as before.
+ */
+function roomsOnlyActor(userId: string, orgId: string, rows: ScopeRows): ActorContext | null {
+    if (!rows.userApproved) return null;
+    const roles = [...new Set(roomRoles(orgId, rows))];
+    const ids = Object.keys(rows.orgProperties).sort((a, b) => rows.orgProperties[a].localeCompare(rows.orgProperties[b]));
+    if (!roles.length || !ids.length) return null;
+    return {
+        userId, orgId, roles, orgWide: false, propertyIds: [], propertyNames: {}, ownRecordsOnly: false, recordRule: 'all_in_scope',
+        roomPropertyIds: ids, roomPropertyNames: Object.fromEntries(ids.map(id => [id, rows.orgProperties[id]])), roomsOnly: true,
+    };
+}
+
+function computeBaseActor(userId: string, orgId: string, rows: ScopeRows): ActorContext | null {
     if (!rows.userApproved) return null;
     const orgRoles = rows.orgMemberships
         .filter(m => m.organization_id === orgId && live(m) && m.role)
@@ -85,7 +119,7 @@ export function computeActor(userId: string, orgId: string, rows: ScopeRows): Ac
 }
 
 /** Load the rows for computeActor with the service-role client (reads only). */
-export async function loadActor(admin: SupabaseClient, userId: string, orgId: string): Promise<ActorContext | null> {
+export async function loadActor(admin: SupabaseClient, userId: string, orgId: string, opts: { roomsOnlyLogins?: boolean } = {}): Promise<ActorContext | null> {
     const [profile, orgMems, propMems, props, st] = await Promise.all([
         admin.from('users').select('is_approved, approval_status').eq('id', userId).maybeSingle(),
         admin.from('organization_memberships').select('organization_id, role, is_active, approval_status').eq('user_id', userId),
@@ -107,5 +141,5 @@ export async function loadActor(admin: SupabaseClient, userId: string, orgId: st
         orgProperties,
         // A missing super_tenant_properties table only narrows (no properties), never widens.
         superTenantPropertyIds: st.error ? [] : ((st.data || []) as Array<{ property_id: string }>).map(r => r.property_id),
-    });
+    }, opts);
 }

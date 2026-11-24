@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { slaHoursFor } from '@/backend/lib/ticketing/categorySla';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { resolveClassification, logClassification } from '@/backend/lib/ticketing';
@@ -468,6 +469,13 @@ export async function POST(request: NextRequest) {
             ? await generateNextTicketNumber(supabase, propId, orgId)
             : `AP-GEN-${Date.now()}`;
 
+        const ticketPriority = (() => {
+            if (explicitPriority) return explicitPriority;
+            // The AI may only raise the category's usual priority ('critical' counts as the top, never lowered).
+            const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
+            const groqP = resolution.priority?.toLowerCase() || '';
+            return (priorityRank[groqP] ?? -1) > (priorityRank[priority] ?? -1) ? groqP : priority;
+        })();
         const { data: ticket, error: insertError } = await supabase
             .from('tickets')
             .insert({
@@ -478,20 +486,15 @@ export async function POST(request: NextRequest) {
                 description,
                 category_id: categoryId,
                 skill_group_id: skillGroupId,
-                priority: (() => {
-                    if (explicitPriority) return explicitPriority;
-                    // The AI may only raise the category's usual priority ('critical' counts as the top, never lowered).
-                    const priorityRank: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3, critical: 3 };
-                    const groqP = resolution.priority?.toLowerCase() || '';
-                    return (priorityRank[groqP] ?? -1) > (priorityRank[priority] ?? -1) ? groqP : priority;
-                })(),
+                priority: ticketPriority,
                 status: assignedTo ? 'assigned' : 'open',
                 assigned_to: assignedTo || undefined,
                 raised_by: user.id,
                 internal: effectiveInternal,
                 is_internal: effectiveInternal,
                 is_vague: isVague,
-                sla_hours: slaHours,
+                // 2026-11-19: a category can have a different SLA per priority (Brain → Categories & SLAs).
+                sla_hours: await slaHoursFor(supabase, categoryId, ticketPriority, slaHours),
                 floor_number: extractFloorNumber(title || description) ?? undefined,
                 location: extractLocation(title || description) ?? undefined,
                 // Tracking fields

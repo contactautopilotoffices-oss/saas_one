@@ -1,6 +1,7 @@
 'use client';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -47,6 +48,7 @@ const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/gue
 const AdminRoomManager = dynamic(() => import('@/frontend/components/meeting-rooms/AdminRoomManager'), { loading: TabLoading });
 const StockDashboard = dynamic(() => import('@/frontend/components/stock/StockDashboard'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -59,6 +61,7 @@ const TAB_PRELOADS = [
     () => import('./SettingsView'),
     () => import('@/frontend/components/ops/TicketFlowMap'),
     () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('@/frontend/components/ppm/PPMCalendar'),
     () => import('@/frontend/components/assets/AssetsModule'),
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/meeting-rooms/AdminRoomManager'),
@@ -67,7 +70,13 @@ const TAB_PRELOADS = [
 ];
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water' | 'grievance' | 'assets';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'rooms' | 'diesel' | 'electricity' | 'stock' | 'checklist' | 'settings' | 'profile' | 'flow-map' | 'water' | 'grievance' | 'assets' | 'ppm';
+
+const VALID_STAFF_TABS: readonly Tab[] = [
+    'dashboard', 'requests', 'guest_experience', 'create_request', 'visitors',
+    'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings',
+    'profile', 'flow-map', 'water', 'grievance', 'assets', 'ppm'
+] as const;
 
 interface Property {
     id: string;
@@ -121,8 +130,14 @@ const StaffDashboard = () => {
     const router = useRouter();
     const propertyId = (params?.propertyId as string) || dashboardPropertyId;
 
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+
     // State
-    const [dashboardTab, setActiveTab] = useState<Tab>('dashboard');
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_STAFF_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'dashboard';
+    });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -135,7 +150,6 @@ const StaffDashboard = () => {
     const [userRole, setUserRole] = useState('Staff Professional');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const searchParams = useSearchParams();
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKeyPrefix = `staff-${propertyId}`;
 
@@ -228,7 +242,7 @@ const StaffDashboard = () => {
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'rooms', 'diesel', 'electricity', 'stock', 'checklist', 'settings', 'profile', 'flow-map', 'water', 'assets'].includes(tab)) {
+        if (tab && VALID_STAFF_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -704,6 +718,16 @@ const StaffDashboard = () => {
                                 Checklists
                             </button>
                             <button
+                                onClick={() => handleTabChange('ppm')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'ppm'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Calendar className="w-4 h-4" />
+                                PPM Calendar
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('assets')}
                                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'assets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -720,6 +744,7 @@ const StaffDashboard = () => {
                     <div className="mb-6" data-navigation-section="management-hub">
                         <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
                         <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                        <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                     </div>
                     {/* System & Personal */}
                     <div className="mb-4">
@@ -811,132 +836,142 @@ const StaffDashboard = () => {
                 </header>
 
                 {/* Page Content */}
-                <main className={`flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
-                    {dashboardContent ?? (<>
+                <main className={`flex-1 w-full min-h-0 overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' || activeTab === 'ppm' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
+                {dashboardContent ?? (<>
 
 
-                        <AnimatePresence mode="wait">
-                            <motion.div
-                                key={activeTab}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -10 }}
-                                transition={{ duration: 0.2 }}
-                            >
-                                {activeTab === 'dashboard' && property && user && (
-                                    <DashboardTab
-                                        tickets={incomingTickets.filter(t =>
-                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                        )}
-                                        completedTickets={completedTickets.filter(t =>
-                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                        )}
-                                        ticketStats={ticketStats}
-                                        onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
-                                        userId={user.id}
-                                        isLoading={isLoading}
-                                        propertyId={propertyId}
-                                        propertyName={property.name}
-                                        userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
-                                        onSettingsClick={() => handleTabChange('settings')}
-                                        onEditClick={handleEditClick}
-                                        userRole={userRole}
-                                        onFilterClick={(filter) => handleTabChange('requests', filter)}
-                                    />
-                                )}
-                                {activeTab === 'requests' && user && (
-                                    <RequestsTab
-                                        activeTickets={incomingTickets.filter(t =>
-                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                        )}
-                                        completedTickets={completedTickets.filter(t =>
-                                            t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                            t.description?.toLowerCase().includes(searchQuery.toLowerCase())
-                                        )}
-                                        onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
-                                        userId={user.id}
-                                        isLoading={isLoading}
-                                        propertyName={property?.name}
-                                        userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
-                                        onEditClick={handleEditClick}
-                                        userRole={userRole}
-                                        propertyId={propertyId}
-                                        onTabChange={handleTabChange}
-                                        filter={requestFilter}
-                                        onFilterChange={(newFilter) => {
-                                            setRequestFilter(newFilter);
-                                            const url = new URL(window.location.href);
-                                            url.searchParams.set('filter', newFilter);
-                                            window.history.pushState({}, '', url.toString());
-                                        }}
-                                    />
-                                )}
-                                {activeTab === 'create_request' && property && user && (
-                                    <TenantTicketingDashboard
-                                        propertyId={property.id}
-                                        organizationId={property.organization_id || ''}
-                                        user={{ id: user.id, full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff' }}
-                                        propertyName={property.name}
-                                        isStaff={true}
-                                        userRole={userRole}
-                                        showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
-                                    />
-                                )}
-                                {activeTab === 'flow-map' && (
-                                    <TicketFlowMap propertyId={propertyId} />
-                                )}
-                                {activeTab === 'guest_experience' && propertyId && (
-                                    <GuestExperienceDashboard propertyId={propertyId} />
-                                )}
-                                {activeTab === 'visitors' && <VMSAdminDashboard propertyId={propertyId} />}
-                                {activeTab === 'rooms' && property && user && <AdminRoomManager propertyId={property.id} user={user} />}
-                                {activeTab === 'diesel' && <DieselStaffDashboard />}
-                                {activeTab === 'electricity' && canAccessElectricityLogger(userRole) && (
-                                    property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />
-                                )}
-                                {activeTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
-                                {activeTab === 'stock' && property && (
-                                    <StockDashboard
-                                        propertyId={property.id}
-                                        hideReports={true}
-                                        initialItemId={searchParams.get('scanItem') ?? undefined}
-                                    />
-                                )}
-                                {activeTab === 'checklist' && property && (
-                                    <SOPDashboard propertyId={property.id} />
-                                )}
-                                {activeTab === 'assets' && property && (
-                                    <AssetsModule
-                                        organizationId={property.organization_id}
-                                        propertyId={property.id}
-                                        propertyName={property.name}
-                                        canManage={false}
-                                    />
-                                )}
-                                {activeTab === 'grievance' && (
-                                    <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
-                                )}
-                                {activeTab === 'settings' && <SettingsView />}
-                                {activeTab === 'profile' && (
-                                    <div className="flex justify-center items-start py-8">
-                                        <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
-                                            {/* Card Header with Autopilot Logo */}
-                                            <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
-                                                {/* Autopilot Logo */}
-                                                <div className="flex items-center justify-center mb-6">
-                                                    <img
-                                                        src="/autopilot-logo-new.png"
-                                                        alt="Autopilot Logo"
-                                                        className="h-10 w-auto object-contain invert mix-blend-screen"
-                                                    />
-                                                </div>
+                    <AnimatePresence mode="wait">
+                        <motion.div
+                            key={activeTab}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ duration: 0.2 }}
+                        >
+                            {activeTab === 'dashboard' && property && user && (
+                                <DashboardTab
+                                    tickets={incomingTickets.filter(t =>
+                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                    )}
+                                    completedTickets={completedTickets.filter(t =>
+                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                    )}
+                                    ticketStats={ticketStats}
+                                    onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
+                                    userId={user.id}
+                                    isLoading={isLoading}
+                                    propertyId={propertyId}
+                                    propertyName={property.name}
+                                    userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
+                                    onSettingsClick={() => handleTabChange('settings')}
+                                    onEditClick={handleEditClick}
+                                    userRole={userRole}
+                                    onFilterClick={(filter) => handleTabChange('requests', filter)}
+                                />
+                            )}
+                            {activeTab === 'requests' && user && (
+                                <RequestsTab
+                                    activeTickets={incomingTickets.filter(t =>
+                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                    )}
+                                    completedTickets={completedTickets.filter(t =>
+                                        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.ticket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                        t.description?.toLowerCase().includes(searchQuery.toLowerCase())
+                                    )}
+                                    onTicketClick={(id) => router.push(`/tickets/${id}?from=${activeTab}`)}
+                                    userId={user.id}
+                                    isLoading={isLoading}
+                                    propertyName={property?.name}
+                                    userName={user.user_metadata?.full_name || user.email?.split('@')[0] || 'Staff'}
+                                    onEditClick={handleEditClick}
+                                    userRole={userRole}
+                                    propertyId={propertyId}
+                                    onTabChange={handleTabChange}
+                                    filter={requestFilter}
+                                    onFilterChange={(newFilter) => {
+                                        setRequestFilter(newFilter);
+                                        const url = new URL(window.location.href);
+                                        url.searchParams.set('filter', newFilter);
+                                        window.history.pushState({}, '', url.toString());
+                                    }}
+                                />
+                            )}
+                            {activeTab === 'create_request' && property && user && (
+                                <TenantTicketingDashboard
+                                    propertyId={property.id}
+                                    organizationId={property.organization_id || ''}
+                                    user={{ id: user.id, full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff' }}
+                                    propertyName={property.name}
+                                    isStaff={true}
+                                    userRole={userRole}
+                                    showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
+                                />
+                            )}
+                            {activeTab === 'flow-map' && (
+                                <TicketFlowMap propertyId={propertyId} />
+                            )}
+                            {activeTab === 'guest_experience' && propertyId && (
+                                <GuestExperienceDashboard propertyId={propertyId} />
+                            )}
+                            {activeTab === 'visitors' && <VMSAdminDashboard propertyId={propertyId} />}
+                            {activeTab === 'rooms' && property && user && <AdminRoomManager propertyId={property.id} user={user} />}
+                            {activeTab === 'diesel' && <DieselStaffDashboard />}
+                            {activeTab === 'electricity' && canAccessElectricityLogger(userRole) && (
+                                property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />
+                            )}
+                            {activeTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
+                            {activeTab === 'stock' && property && (
+                                <StockDashboard
+                                    propertyId={property.id}
+                                    hideReports={true}
+                                    initialItemId={searchParams.get('scanItem') ?? undefined}
+                                />
+                            )}
+                            {activeTab === 'checklist' && property && (
+                                <SOPDashboard propertyId={property.id} />
+                            )}
+                            {activeTab === 'ppm' && property && (
+                                <PPMCalendar
+                                    organizationId={property.organization_id || ''}
+                                    propertyId={property.id}
+                                    properties={[{ id: property.id, name: property.name }]}
+                                    readOnly={false}
+                                    allowUpload={false}
+                                />
+                            )}
+                            {activeTab === 'assets' && property && (
+                                <AssetsModule
+                                    organizationId={property.organization_id}
+                                    propertyId={property.id}
+                                    propertyName={property.name}
+                                    canManage={false}
+                                />
+                            )}
+                            {activeTab === 'grievance' && (
+                                <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || user?.user_metadata?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
+                            )}
+                            {activeTab === 'settings' && <SettingsView />}
+                            {activeTab === 'profile' && (
+                                <div className="flex justify-center items-start py-8">
+                                    <div className="bg-white border border-slate-100 rounded-3xl shadow-lg w-full max-w-md overflow-hidden">
+                                        {/* Card Header with Autopilot Logo */}
+                                        <div className="bg-gradient-to-br from-slate-900 to-slate-800 p-8 flex flex-col items-center">
+                                            {/* Autopilot Logo */}
+                                            <div className="flex items-center justify-center mb-6">
+                                                <img
+                                                    src="/autopilot-logo-new.png"
+                                                    alt="Autopilot Logo"
+                                                    className="h-10 w-auto object-contain invert mix-blend-screen"
+                                                />
+                                            </div>
+
 
                                                 {/* User Avatar */}
                                                 <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden">

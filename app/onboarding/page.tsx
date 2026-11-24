@@ -47,7 +47,7 @@ const SKILL_OPTIONS: Record<string, { code: string; label: string; icon: any }[]
     staff: [
         { code: 'technical', label: 'Technical', icon: Wrench },
         { code: 'soft_services', label: 'Soft Services', icon: Sparkles },
-        { code: 'soft_service_manager', label: 'Soft Service Manager', icon: UserCircle2 },
+        { code: 'soft_service_manager', label: 'Soft Service Supervisor', icon: UserCircle2 },
     ],
 };
 

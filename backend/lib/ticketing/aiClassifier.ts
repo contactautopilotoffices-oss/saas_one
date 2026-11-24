@@ -44,16 +44,61 @@
  *    testing before scale `[BAA p.116]`: the eval script on real tickets, before any setting is changed.
  * **10. Laws knowingly violated**: L6 (rubric grader) is not used because the right answer is a category code that can be
  *    compared exactly. L9 (MCP) N/A, no tools.
+ *
+ * ### Amendment 2026-11-19 — learning from judgements (owner: "it must improve the classification accuracy and confidence")
+ * Behind Brain → Switches → "Ticket sorting learns" (config ticketLearning: off / watch only / on; default off = all of
+ * the above, unchanged). Code: sortLearning.ts (pure), sortLearningStore.ts, sortLearningRun.ts, resolver.ts.
+ * **1. Workflow or agent?** still a workflow `[BAA p.104]`: retrieve, then one model call or none, a fixed path. Hybrid
+ *    `[BAA p.121]`: a deterministic shortcut sorts near-identical repeats (≥2 agreeing examples, nothing disagreeing, no
+ *    danger words) without the model; everything else goes to the model.
+ * **2. Context** `[BAA p.112]`: plus the 8 most similar learning examples of the organisation, only of categories the
+ *    ticket's property can use, each marked corrected or confirmed.
+ * **3. Cost of a false positive** `[BAA p.112]`: unchanged; the shortcut never handles danger words, so a priority
+ *    raise is never skipped. Model tier unchanged (ticket_classify). Embeddings for "by meaning" are fixed to the
+ *    candidate-search model (inventory row with its why, docs/AI_MODELS.md).
+ * **5. Prompt** `[BAA pp.105, 114]`: unchanged system prompt; the examples replace the "past corrections" block.
+ * **6. Memory** `[BAA pp.100–103]`: retrieval over a written memory (ticket_sort_examples), not "the newest 30": the
+ *    book's finding is that retrieval does the early lifting and repeats are where memory pays `[BAA p.103]`, and ticket
+ *    work repeats. Writers are people only (a judgement, an Override); the model still has no write tool. A key outside
+ *    the property's category list is never shown `[BAA p.101]`. Examples can be undone or retired when two disagree
+ *    (the book's open question: grade and delete useless evidence `[BAA p.103]`).
+ * **8. Evaluation** `[BAA pp.118–119]`: the saved confidence is now measured, not self-rated: the model's rating
+ *    corrected by its track record per band, mixed with how many similar judged tickets agree. Both ways run side by side
+ *    in "watch only" and on the same past tickets in scripts/tickets/backtest_learning.ts (L2 `[BAA pp.94–95, 99]`);
+ *    Review → Tickets shows the comparison and a weekly trend. Baseline first: scripts/tickets/learning_baseline.ts.
+ * **9. Trace** `[BAA pp.119–120]`: ticket_sort_traces per ticket: old and new choice, the model's rating, the measured
+ *    confidence and why, the similar tickets used, latency.
+ * **10. Laws knowingly violated**: L5 tool axis N/A (no tools). L6 still not used (exact labels). Watch-only costs a
+ *    second model call per ticket while it is on; that is the price of L2 on live traffic, and it is off by default.
+ *
+ * ### Amendment 2026-11-20 — the IT team is decided by a fixed rule (owner: "only the ones who tag @Rahul Ramjiyawan
+ * in the ticket or specifically mention IT in the ticket must go to this"; "create IT as a team and not as category")
+ * **1. Workflow or agent?** still a workflow `[BAA p.104]`; a deterministic step runs before the model `[BAA p.121]`:
+ *    itRule.ts sends a ticket that tags an IT-role member to the IT team. With one IT category (team IT in
+ *    Brain → Categories & SLAs) there is no model call; with several, the model chooses among the IT categories only.
+ * **2. Context** `[BAA p.112]`: for every other ticket the model's list has no IT category (withoutIt), and the model
+ *    can never choose the IT team itself (asTeam has no 'it'; only a category's stored team can be IT, asRowTeam);
+ *    an answer naming a category not on the list is refused by checkVerdict `[BAA p.93]`.
+ * **3. Cost of a false positive** `[BAA p.112]`: low; an IT ticket goes to the IT person, who can re-sort it. Only a tag of
+ *    an IT-role person counts: the word "IT" alone was dropped the same day (owner: "SBI Dhruva IT Store cleaning" is
+ *    not an IT ticket), so an untagged IT problem is sorted among the other categories and moved by hand.
+ * **6. Guardrails** `[BAA p.93]`: if the model cannot choose an IT category, the starter one (it_support) is used.
+ * **8. Evaluation** `[BAA pp.118–119]`: the rule's reason is saved as the ticket's reasoning; a ticket the rule alone
+ *    sorted is classification_source 'rule' and shows in Brain → Review → Tickets; tests/ticketing/it-rule.test.ts.
+ * **10. Laws knowingly violated**: none added; the rule is the owner's exact condition, so no model judgement is needed
+ *    to pick the team.
  */
 import type { BrainLlm } from '@/task-manager/brain/llm';
 import type { SkillGroup } from './classifyTicket';
+import { rulesBlock } from './sortRules';
 
 export const TEAMS: readonly SkillGroup[] = ['technical', 'plumbing', 'vendor', 'soft_services'];
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 const PRIORITIES: readonly Priority[] = ['low', 'medium', 'high', 'urgent'];
 
 /** One category the model may choose. */
-export interface CategoryOption { code: string; name: string; team: SkillGroup | null; priority: Priority | null }
+/** hint: "what belongs here", set in Brain → Categories & SLAs (2026-11-19); shown to the AI when present. */
+export interface CategoryOption { code: string; name: string; team: SkillGroup | null; priority: Priority | null; hint?: string | null }
 
 /** What the model decided, after checking. `code` null = none of the categories fits ("other"). */
 export interface AiVerdict {
@@ -73,8 +118,12 @@ export { CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, confidenceWord } from './confidence
 /** A model that gives no usable rating gets this: Low, so a person checks it. */
 const CONFIDENCE_MISSING = 50;
 
-/** A ticket the Tech team said was sorted wrong, and the right answer (Brain → Review → Tickets). */
-export interface Correction { text: string; code: string; team: SkillGroup | null }
+/**
+ * A ticket the Tech team said was sorted wrong, and the right answer (Brain → Review → Tickets). With `kind` set it is
+ * a learning example found for this ticket (sortLearning.ts, owner 2026-11-19): 'corrected' (judged wrong, or re-sorted
+ * by hand) or 'confirmed' (judged right). Without `kind` the prompt is exactly as before.
+ */
+export interface Correction { text: string; code: string; team: SkillGroup | null; kind?: 'corrected' | 'confirmed' }
 /** How many of the newest corrections are shown to the model. */
 export const MAX_CORRECTIONS = 30;
 
@@ -112,8 +161,10 @@ export function normalPriority(p: unknown): Priority | null {
 }
 
 const asTeam = (s: unknown): SkillGroup | null => (TEAMS as readonly unknown[]).includes(s) ? (s as SkillGroup) : null;
+/** A category's stored team, which may also be the IT team (itRule.ts). The model itself can never choose IT (asTeam). */
+const asRowTeam = (s: unknown): SkillGroup | null => (s === 'it' ? 'it' : asTeam(s));
 
-interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_active?: unknown; property_id?: unknown; skill_group?: { code?: unknown } | null }
+interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_active?: unknown; property_id?: unknown; ai_hint?: unknown; skill_group?: { code?: unknown } | null }
 
 /**
  * The categories one property can use, one per code: the property's own row first, else the shared (global) row. A row
@@ -121,8 +172,10 @@ interface CategoryRow { code?: unknown; name?: unknown; priority?: unknown; is_a
  */
 export function categoryOptionsFrom(rows: readonly CategoryRow[], propertyId?: string | null): CategoryOption[] {
     const active = rows.filter(r => r && r.is_active !== false && typeof r.code === 'string' && r.code.trim());
+    // 2026-11-19: a category switched off at this property (Brain → Categories & SLAs) also hides the shared one there.
+    const offHere = new Set(rows.filter(r => r && propertyId && r.property_id === propertyId && r.is_active === false && typeof r.code === 'string').map(r => String(r.code).trim()));
     // Never another property's own categories (they may belong to another organisation): with no property, the shared ones.
-    const usable = active.filter(r => !r.property_id || (!!propertyId && r.property_id === propertyId));
+    const usable = active.filter(r => (!r.property_id && !offHere.has(String(r.code).trim())) || (!!propertyId && r.property_id === propertyId));
     const rank = (r: CategoryRow) => (propertyId && r.property_id === propertyId ? 0 : !r.property_id ? 1 : 2);
     const byCode = new Map<string, CategoryRow>();
     for (const r of [...usable].sort((a, b) => rank(a) - rank(b))) {
@@ -132,8 +185,9 @@ export function categoryOptionsFrom(rows: readonly CategoryRow[], propertyId?: s
     return [...byCode.entries()].map(([code, r]) => ({
         code,
         name: String(r.name ?? code).trim() || code,
-        team: asTeam(r.skill_group?.code) ?? asTeam(active.find(o => o.code === code && asTeam(o.skill_group?.code))?.skill_group?.code),
+        team: asRowTeam(r.skill_group?.code) ?? asRowTeam(active.find(o => o.code === code && asRowTeam(o.skill_group?.code))?.skill_group?.code),
         priority: normalPriority(r.priority),
+        ...(typeof r.ai_hint === 'string' && r.ai_hint.trim() ? { hint: r.ai_hint.trim().slice(0, 300) } : {}),
     }));
 }
 
@@ -146,9 +200,13 @@ export async function loadCategoryOptions(propertyId?: string | null): Promise<C
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_MS) return hit.options;
     const { supabaseAdmin } = await import('@/backend/lib/supabase/admin');
-    const { data, error } = await supabaseAdmin
+    // ai_hint (migration 20261119000006): until it is applied, the list is read as before.
+    let { data, error } = await supabaseAdmin
         .from('issue_categories')
-        .select('code, name, priority, is_active, property_id, skill_group:skill_groups(code)');
+        .select('code, name, priority, is_active, property_id, ai_hint, skill_group:skill_groups(code)');
+    if (error && ['42703', 'PGRST204'].includes(String(error.code ?? ''))) {
+        ({ data, error } = await supabaseAdmin.from('issue_categories').select('code, name, priority, is_active, property_id, skill_group:skill_groups(code)'));
+    }
     if (error) { console.error('[TicketAI] could not read the category list:', error.message); return []; }
     const options = categoryOptionsFrom((data ?? []) as CategoryRow[], propertyId);
     cache.set(key, { at: Date.now(), options });
@@ -194,7 +252,7 @@ Answer: {"category":"water_leakage","team":"plumbing","priority":"high","risk":"
 Answer with JSON only, in exactly that shape.`;
 
 function categoryLines(options: readonly CategoryOption[]): string {
-    return options.map(o => `- ${o.code}: ${o.name} (team: ${o.team ?? 'choose'}${o.priority ? `, usual priority: ${o.priority}` : ''})`).join('\n');
+    return options.map(o => `- ${o.code}: ${o.name} (team: ${o.team ?? 'choose'}${o.priority ? `, usual priority: ${o.priority}` : ''})${o.hint ? `, for: ${o.hint.replace(/\s+/g, ' ')}` : ''}`).join('\n');
 }
 
 /**
@@ -205,17 +263,21 @@ function correctionLines(corrections: readonly Correction[], options: readonly C
     const known = new Set(options.map(o => o.code));
     const usable = corrections.filter(c => known.has(c.code)).slice(0, MAX_CORRECTIONS);
     if (!usable.length) return '';
+    if (usable.some(c => c.kind)) {
+        return `\n\nSimilar past tickets of this organisation, most similar first, and the category its team decided:\n` +
+            usable.map(c => `- "${c.text.replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 200)}" → ${c.code} (${c.kind === 'confirmed' ? 'the AI chose this and the team confirmed it' : 'the team corrected it to this'})`).join('\n');
+    }
     return `\n\nPast corrections by this organisation's team (tickets that were sorted wrong, and the right category):\n` +
         usable.map(c => `- "${c.text.replace(/\s+/g, ' ').replace(/"/g, "'").slice(0, 200)}" → ${c.code}`).join('\n');
 }
 
-export function userPrompt(text: string, options: readonly CategoryOption[], corrections: readonly Correction[] = []): string {
-    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${correctionLines(corrections, options)}\n\nTicket:\n"""\n${text.slice(0, MAX_TEXT)}\n"""`;
+export function userPrompt(text: string, options: readonly CategoryOption[], corrections: readonly Correction[] = [], rules: string | null = null): string {
+    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${rulesBlock(rules)}${correctionLines(corrections, options)}\n\nTicket:\n"""\n${text.slice(0, MAX_TEXT)}\n"""`;
 }
 
-export function batchPrompt(texts: readonly string[], options: readonly CategoryOption[], corrections: readonly Correction[] = []): string {
+export function batchPrompt(texts: readonly string[], options: readonly CategoryOption[], corrections: readonly Correction[] = [], rules: string | null = null): string {
     const tickets = texts.map((t, i) => `${i + 1}. """${t.slice(0, MAX_TEXT).replace(/"""/g, '"')}"""`).join('\n');
-    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${correctionLines(corrections, options)}\n\n` +
+    return `Categories:\n${categoryLines(options)}\n- other: none of the above fits${rulesBlock(rules)}${correctionLines(corrections, options)}\n\n` +
         `Sort each of these ${texts.length} tickets separately, following the same steps for each.\n${tickets}\n\n` +
         `Answer with JSON only: {"results":[{"n":1,"category":…,"team":…,"priority":…,"risk":…,"reason":…,"vague":…,"confidence":…}, …]} with one entry per ticket, n = the ticket's number.`;
 }
@@ -301,7 +363,7 @@ async function llmOf(deps: AiDeps, timeoutMs: number): Promise<BrainLlm> {
  * Sorts one ticket. Tries the models in order (a slow one gets the next started alongside after a few seconds); the
  * first answer that passes the checks wins. Throws when every model failed; the caller then uses the keyword rules.
  */
-export async function classifyWithAi(text: string, options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = []): Promise<AiSorted> {
+export async function classifyWithAi(text: string, options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = [], rules: string | null = null): Promise<AiSorted> {
     const clean = String(text ?? '').trim();
     if (!clean) throw new Error('the ticket has no text');
     if (!options.length) throw new Error('the category list is empty');
@@ -309,7 +371,7 @@ export async function classifyWithAi(text: string, options: readonly CategoryOpt
     const { withModelFallback } = await import('@/task-manager/brain/llm');
     const started = Date.now();
     const { value, trace } = await withModelFallback(chain, async model => {
-        const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: userPrompt(clean, options, corrections), maxTokens: 300, json: true });
+        const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: userPrompt(clean, options, corrections, rules), maxTokens: 300, json: true });
         return { verdict: checkVerdict(jsonOf(res.text), options), tokensIn: res.tokensIn, tokensOut: res.tokensOut };
     }, 'ticket sorting', { hedgeMs: HEDGE_MS });
     return { verdict: value.verdict, model: trace.model, latencyMs: Date.now() - started, tokensIn: value.tokensIn, tokensOut: value.tokensOut, failures: trace.failures };
@@ -320,7 +382,7 @@ export async function classifyWithAi(text: string, options: readonly CategoryOpt
  * the verdict, or null where the model gave no usable answer for that row (the caller uses the keyword rules there).
  * Never throws.
  */
-export async function classifyManyWithAi(texts: readonly string[], options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = []): Promise<Array<{ verdict: AiVerdict; model: string } | null>> {
+export async function classifyManyWithAi(texts: readonly string[], options: readonly CategoryOption[], deps: AiDeps = {}, corrections: readonly Correction[] = [], rules: string | null = null): Promise<Array<{ verdict: AiVerdict; model: string } | null>> {
     const out: Array<{ verdict: AiVerdict; model: string } | null> = texts.map(() => null);
     if (!texts.length || !options.length) return out;
     let chain: readonly string[];
@@ -339,7 +401,7 @@ export async function classifyManyWithAi(texts: readonly string[], options: read
         const part = idx.map(i => String(texts[i] ?? '').trim() || '(empty)');
         try {
             const { value, trace } = await withModelFallback(chain, async model => {
-                const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: batchPrompt(part, options, corrections), maxTokens: 130 * part.length + 100, json: true });
+                const res = await llm.complete({ model, system: SYSTEM_PROMPT, user: batchPrompt(part, options, corrections, rules), maxTokens: 130 * part.length + 100, json: true });
                 const results = (jsonOf(res.text) as { results?: unknown })?.results;
                 if (!Array.isArray(results)) throw new Error('no results list in the answer');
                 const got = part.map((_, k) => {

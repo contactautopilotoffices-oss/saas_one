@@ -314,6 +314,11 @@ function resolveRecipient(name: string | null, ctx: BrainContext): PersonResolut
     return { ok: true, person: found[0] };
 }
 
+/** Changes that go straight through (with undo) only while deletes alone ask. */
+const DIRECT_WITH_UNDO = new Set<Action['type']>(['hand_over_task', 'rename_task', 'change_task', 'remind_tasks', 'add_note', 'lock_tasks', 'answer_request']);
+/** Owner 2026-11-21: a clear change goes straight through (with undo) when only deletes ask; otherwise it is previewed. */
+const asks = (policy: ConfirmPolicy): 'ACT' | 'CONFIRM' => (policy.onlyDeletesAsk ? 'ACT' : 'CONFIRM');
+
 const mayGiveWorkTo = (ctx: BrainContext, p: BrainPerson) =>
     p.id === ctx.sender.id || ctx.sender.role === 'superuser' || ctx.assignableIds.includes(p.id);
 
@@ -350,7 +355,9 @@ function decide(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy
     // 2026-11-02: when EVERY part would go straight through on its own (the policy allows it, e.g. "done 1" + "add a task" with
     // undo ON) and nothing was unclear, the combined change goes straight through too, with one undo for all of it. Before,
     // any message with two requests always waited for a yes. A part that would be previewed on its own keeps the preview.
-    const outcome = !unclear.length && clear.every(p => p.d.outcome === 'ACT') ? 'ACT' : 'CONFIRM';
+    // Owner 2026-11-21: with only deletes asking, a part that was not understood no longer holds back the clear ones (the
+    // reply says which part was left out); a delete among them still makes the whole message a preview.
+    const outcome = (!unclear.length || policy.onlyDeletesAsk) && clear.every(p => p.d.outcome === 'ACT') ? 'ACT' : 'CONFIRM';
     if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
     return { outcome, action: { type: 'batch', actions, unclear } };
 }
@@ -367,13 +374,16 @@ function decide(interp: Interpretation, ctx: BrainContext, policy: ConfirmPolicy
  *   • anything else with only a middling confidence → a preview (one yes).
  * Cost of a wrong guess on the person's own list is low (undo); anything touching other people still asks. [BAA p.112]
  */
-function softenDoubt(d: Decision, ctx: BrainContext, interp: Interpretation): Decision {
+function softenDoubt(d: Decision, ctx: BrainContext, interp: Interpretation, policy: ConfirmPolicy): Decision {
     if (d.outcome !== 'ACT' && d.outcome !== 'CONFIRM') return d;
     const doubt = interp.ambiguities.join('; ') || null;
     const ownCreate = (a: Action): boolean => a.type === 'create_tasks' && a.assigneeId === ctx.sender.id;
     const ownOnly = ownCreate(d.action) || (d.action.type === 'batch' && !d.action.unclear.length && d.action.actions.every(ownCreate));
     if (d.outcome === 'ACT' && ownOnly) return { ...d, aside: doubt };
     if (doubt) return { outcome: 'CLARIFY', reason: 'ai_flagged_ambiguity', options: [], detail: doubt, understood: interp.summary || null, question: interp.clarifyQuestion };
+    // Owner 2026-11-21: with only deletes asking, a middling confidence goes straight through too (undo for 10 minutes,
+    // others told after 1 minute); a delete stays a preview.
+    if (policy.onlyDeletesAsk) return d;
     return { outcome: 'CONFIRM', action: d.action };
 }
 
@@ -398,7 +408,7 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
     if (isChange && interp.confidence < SOFT_CHANGE_CONFIDENCE_MIN) return ownGuess(interp.ambiguities.length ? 'ai_flagged_ambiguity' : 'low_confidence', interp.ambiguities.join('; ') || null);
     if (doubted) {
         const d = decideOne({ ...interp, ambiguities: [], confidence: 1 }, ctx, policy);
-        return softenDoubt(d, ctx, interp);
+        return softenDoubt(d, ctx, interp, policy);
     }
     if (!isChange && intent !== 'help' && intent !== 'smalltalk' && interp.confidence < READ_CONFIDENCE_MIN) return ownGuess('low_confidence');
 
@@ -472,7 +482,7 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             // "Done" is asked first, unless undo is available (policy) AND these are the person's OWN tasks — a reply to someone's
             // reminder (ping) is relayed to other people and is not undoable, so it is always asked first.
             const finished = slots.state === 'done_all' || slots.state === 'done_some';
-            const mustConfirm = policy.confirmProgressUpdates || (finished && (policy.confirmCompletions !== false || ctx.pending?.kind === 'ping_reply'));
+            const mustConfirm = policy.confirmProgressUpdates || (finished && (policy.confirmCompletions !== false || (ctx.pending?.kind === 'ping_reply' && !policy.onlyDeletesAsk)));
             return mustConfirm ? { outcome: 'CONFIRM', action } : { outcome: 'ACT', action };
         }
 
@@ -505,7 +515,7 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             if (!mayGiveWorkTo(ctx, r.person)) return { outcome: 'REFUSE', reason: 'not_allowed_to_assign', detail: r.person.name };
             // Owner 2026-10-21: "give task 2 to Neeti, add note" (no text) → ask what the note should say.
             if (slots.wantsNote && !slots.note) return clarify('note_missing', [], r.person.name);
-            return { outcome: 'CONFIRM', action: { type: 'hand_over_task', taskId: t.tasks[0].id, toId: r.person.id, ...(slots.note ? { note: slots.note } : {}) } };
+            return { outcome: asks(policy), action: { type: 'hand_over_task', taskId: t.tasks[0].id, toId: r.person.id, ...(slots.note ? { note: slots.note } : {}) } };
         }
 
         case 'find_tasks': return resolveFind(slots.query, ctx);
@@ -522,14 +532,14 @@ function decideOne(interp: Interpretation, ctx: BrainContext, policy: ConfirmPol
             if (!r.ok) return r.decision;
             if (!slots.newTitle) return clarify('no_task_content', [], 'new name');
             if (norm(slots.newTitle) === norm(r.tasks[0].title)) return clarify('no_task_content', [], 'same name');
-            return { outcome: 'CONFIRM', action: { type: 'rename_task', taskId: r.tasks[0].id, title: slots.newTitle } };
+            return { outcome: asks(policy), action: { type: 'rename_task', taskId: r.tasks[0].id, title: slots.newTitle } };
         }
 
-        case 'add_note': return decideNote(slots, ctx);
-        case 'change_task': return decideChange(slots, ctx);
-        case 'answer_request': return decideAnswer(slots, ctx);
-        case 'remind_tasks': return decideRemind(slots, ctx);
-        case 'lock_task': return decideLock(slots, ctx);
+        case 'add_note': return decideNote(slots, ctx, policy);
+        case 'change_task': return decideChange(slots, ctx, policy);
+        case 'answer_request': return decideAnswer(slots, ctx, policy);
+        case 'remind_tasks': return decideRemind(slots, ctx, policy);
+        case 'lock_task': return decideLock(slots, ctx, policy);
 
         case 'answer_pending': {
             const p = ctx.pending;
@@ -614,7 +624,8 @@ function decideCreate(slots: Extract<Slots, { intent: 'create_tasks' }>, ctx: Br
 
     // Owner 2026-10-21: a clear request is saved straight away with undo (only while "One front door" is ON). When someone
     // named could not be given the work, the preview still asks first, so nobody is silently left out.
-    const outcome = policy.confirmCreates === false && !unclear.length && !similarFound ? 'ACT' : 'CONFIRM';
+    // Owner 2026-11-21: with only deletes asking, also with a similar task or someone left out (the reply says both).
+    const outcome = policy.confirmCreates === false && ((!unclear.length && !similarFound) || policy.onlyDeletesAsk) ? 'ACT' : 'CONFIRM';
     if (actions.length === 1 && !unclear.length) return { outcome, action: actions[0] };
     return { outcome, action: { type: 'batch', actions, unclear } };
 }
@@ -646,7 +657,7 @@ function findOwnOrGiven(which: Which, ctx: BrainContext): { ok: true; task: { id
  * their own list. A name in "person" only narrows whose task it is. Always previewed, then YES. The server allows it only for
  * the person who gave the task or a superuser (WorkspaceService.editTask), and checks the new person like a new task.
  */
-function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: BrainContext): Decision {
+function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     if (!slots.date && !slots.to) return clarify('no_task_content', [], 'new date or person');
     let to: BrainPerson | null = null;
     if (slots.to) {
@@ -673,7 +684,7 @@ function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: Bra
     }
     if (!found.ok) return found.decision;
     const t = found.task;
-    return { outcome: 'CONFIRM', action: { type: 'change_task', taskId: t.id, title: t.title, ownerName: t.ownerName, date: slots.date, toId: to?.id ?? null } };
+    return { outcome: asks(policy), action: { type: 'change_task', taskId: t.id, title: t.title, ownerName: t.ownerName, date: slots.date, toId: to?.id ?? null } };
 }
 
 /**
@@ -682,7 +693,7 @@ function decideChange(slots: Extract<Slots, { intent: 'change_task' }>, ctx: Bra
  * (kept when they give one, never asked for); one YES still confirms either answer.
  * Always previewed, then YES; the server checks everything again (CollaborationService.respond).
  */
-function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: BrainContext): Decision {
+function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     const waiting = ctx.supportRequests ?? [];
     const label = (r: { title: string; fromName: string }) => `${r.title} (from ${r.fromName})`;
     if (!waiting.length) return clarify('no_task_referenced', [], 'no support request is waiting for you');
@@ -695,7 +706,7 @@ function decideAnswer(slots: Extract<Slots, { intent: 'answer_request' }>, ctx: 
     }
     if (pick.length > 1) return clarify('several_tasks_match', pick.map(label), hint || null);
     const r = pick[0];
-    return { outcome: 'CONFIRM', action: { type: 'answer_request', requestId: r.id, title: r.title, fromName: r.fromName, accept: slots.decision === 'accept', reason: slots.decision === 'decline' ? slots.reason : null } };
+    return { outcome: asks(policy), action: { type: 'answer_request', requestId: r.id, title: r.title, fromName: r.fromName, accept: slots.decision === 'accept', reason: slots.decision === 'decline' ? slots.reason : null } };
 }
 
 /**
@@ -708,9 +719,9 @@ interface NoteCandidate { id: string; title: string; ownerId: string; ownerName:
 const MAX_NOTE_OPTIONS = 10;
 const noteLabel = (c: NoteCandidate) => (c.ownerName ? `${c.title} (${c.ownerName}${c.date ? `, ${fromLabel(c.date)}` : ''})` : `${c.title} (yours)`);
 
-function decideNote(slots: Extract<Slots, { intent: 'add_note' }>, ctx: BrainContext): Decision {
+function decideNote(slots: Extract<Slots, { intent: 'add_note' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     if (!slots.note) return clarify('no_task_content', [], 'note');
-    const toAction = (c: NoteCandidate): Decision => ({ outcome: 'CONFIRM', action: { type: 'add_note', taskId: c.id, note: slots.note!, title: c.title, ownerName: c.ownerName } });
+    const toAction = (c: NoteCandidate): Decision => ({ outcome: asks(policy), action: { type: 'add_note', taskId: c.id, note: slots.note!, title: c.title, ownerName: c.ownerName } });
     const own: NoteCandidate[] = ctx.tasks.map(t => ({ id: t.id, title: t.title, ownerId: ctx.sender.id, ownerName: null, date: t.from ?? null, open: t.status !== 'completed' }));
     const given: NoteCandidate[] = (ctx.noteTargets ?? []).filter((t: NoteTarget) => t.ownerId !== ctx.sender.id)
         .map(t => ({ id: t.id, title: t.title, ownerId: t.ownerId, ownerName: t.ownerName, date: t.date, open: true }));
@@ -758,7 +769,7 @@ function decideNote(slots: Extract<Slots, { intent: 'add_note' }>, ctx: BrainCon
  * tasks fit one task name → ask which. The server checks everything again (WorkspaceService.remindTasks).
  */
 const MAX_REMIND = 50;
-function decideRemind(slots: Extract<Slots, { intent: 'remind_tasks' }>, ctx: BrainContext): Decision {
+function decideRemind(slots: Extract<Slots, { intent: 'remind_tasks' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     const label = (t: NoteTarget) => `${t.title} (${t.ownerName}, ${fromLabel(t.date)})`;
     let pool = (ctx.noteTargets ?? []).filter(t => t.ownerId !== ctx.sender.id);
     if (slots.overdueOnly) pool = pool.filter(t => t.date < ctx.today);
@@ -784,14 +795,14 @@ function decideRemind(slots: Extract<Slots, { intent: 'remind_tasks' }>, ctx: Br
         return clarify('no_task_referenced', pool.slice(0, MAX_NOTE_OPTIONS).map(label));
     }
     picked = picked.slice(0, MAX_REMIND);
-    return { outcome: 'CONFIRM', action: { type: 'remind_tasks', taskIds: picked.map(t => t.id), lines: picked.map(label) } };
+    return { outcome: asks(policy), action: { type: 'remind_tasks', taskIds: picked.map(t => t.id), lines: picked.map(label) } };
 }
 
 /**
  * Owner 2026-10-20: lock / unlock the person's OWN tasks (repeat every working day), or list the repeating ones. Team fixed
  * tasks are set by an admin and are never changed here. The server checks again (WorkspaceService.setLocked).
  */
-function decideLock(slots: Extract<Slots, { intent: 'lock_task' }>, ctx: BrainContext): Decision {
+function decideLock(slots: Extract<Slots, { intent: 'lock_task' }>, ctx: BrainContext, policy: ConfirmPolicy): Decision {
     if (slots.action === 'list') return { outcome: 'ACT', action: { type: 'locked_list' } };
     const r = resolveOwnAny(slots.which, ctx, false);
     if (!r.ok) return r.decision;
@@ -802,7 +813,7 @@ function decideLock(slots: Extract<Slots, { intent: 'lock_task' }>, ctx: BrainCo
         if (fixed.length) return { outcome: 'REFUSE', reason: 'team_fixed', detail: fixed.map(t => t.title).join('; ') };
         return { outcome: 'REFUSE', reason: lock ? 'already_locked' : 'not_locked', detail: r.tasks.map(t => t.title).join('; ') };
     }
-    return { outcome: 'CONFIRM', action: { type: 'lock_tasks', taskIds: ok.map(t => t.id), lock } };
+    return { outcome: asks(policy), action: { type: 'lock_tasks', taskIds: ok.map(t => t.id), lock } };
 }
 
 /** Most people one group message may give work to (more → ask to narrow it down). */
@@ -1253,9 +1264,10 @@ function replyFactsBase(decision: Decision, ctx: BrainContext, result?: Executio
     // inserted by code. Without a result a reply may only ask or explain.
     const resultFacts = (kind: string, r: ExecutionResult, hint?: string): ReplyFacts => {
         const details = r.values.details || '';
-        return { kind, describe: `Tell the person what happened, in one or two short, warm sentences. Outcome: ${r.summary}${details ? ' (Do not repeat the numbers or titles: the system inserts the details.)' : ''}${hint ? ' End with the undo hint (inserted by the system).' : ''}`,
-            values: { ...(details ? { details } : {}), ...(hint ? { hint } : {}) }, required: [...(details ? ['details'] : []), ...(hint ? ['hint'] : [])], asksQuestion: false, claimsNothingDone: false, names: [sender.name],
-            fallback: [details ? `${r.summary}\n${details}` : r.summary, ...(hint ? [hint] : [])].join('\n\n') };
+        const leftOut = r.values.leftOut || '';                                // Owner 2026-11-21: what was not done, always said
+        return { kind, describe: `Tell the person what happened, in one or two short, warm sentences. Outcome: ${r.summary}${details ? ' (Do not repeat the numbers or titles: the system inserts the details.)' : ''}${leftOut ? ' The system also inserts what was not done.' : ''}${hint ? ' End with the undo hint (inserted by the system).' : ''}`,
+            values: { ...(details ? { details } : {}), ...(leftOut ? { leftOut } : {}), ...(hint ? { hint } : {}) }, required: [...(details ? ['details'] : []), ...(leftOut ? ['leftOut'] : []), ...(hint ? ['hint'] : [])], asksQuestion: false, claimsNothingDone: false, names: [sender.name],
+            fallback: [details ? `${r.summary}\n${details}` : r.summary, ...(leftOut ? [leftOut] : []), ...(hint ? [hint] : [])].join('\n\n') };
     };
 
     // Owner 2026-10-21: a suggested task saved straight away after a clear answer → say what was added, then the undo hint.
@@ -1265,6 +1277,8 @@ function replyFactsBase(decision: Decision, ctx: BrainContext, result?: Executio
     // Owner 2026-10-14: marked done straight away (no "Reply YES") → say what was done, then "Reply undo within 10 minutes".
     const finishedNow = a.type === 'complete_tasks' || (a.type === 'progress_update' && (a.state === 'done_all' || a.state === 'done_some'));
     if (!confirming && finishedNow && result && /^Marked\b/.test(result.summary)) return resultFacts('complete_result', result, UNDO_HINT);
+    // Owner 2026-11-21: with only deletes asking, these happen straight away too → what happened, then the undo hint.
+    if (!confirming && result && DIRECT_WITH_UNDO.has(a.type)) return resultFacts('direct_result', result, UNDO_HINT);
     if (a.type === 'answer_pending' && a.answer === 'yes' && result) return resultFacts('answer_yes_result', result);
     if (a.type === 'progress_update' && result) return resultFacts('progress_result', result);
     if (a.type === 'answer_pending') {

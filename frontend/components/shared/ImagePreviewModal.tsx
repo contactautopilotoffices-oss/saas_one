@@ -88,6 +88,14 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
     };
 
     const hasBoxes = boxes && boxes.length > 0;
+    const isDefect = Boolean(
+        activeBoxLabel && (
+            activeBoxLabel.toUpperCase().includes('FAIL') ||
+            activeBoxLabel.toUpperCase().includes('DEFECT') ||
+            activeBoxLabel.toUpperCase().includes('NEEDS_ATTENTION') ||
+            activeBoxLabel.toUpperCase().includes('NEEDS ATTENTION')
+        )
+    );
 
     return (
         <AnimatePresence>
@@ -117,13 +125,17 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                                         {title || 'Photo Preview'}
                                     </h3>
                                     {activeBoxLabel && (
-                                        <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+                                        <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                                            isDefect
+                                                ? 'bg-rose-100 text-rose-700 border-rose-200'
+                                                : 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                        }`}>
                                             {activeBoxLabel}
                                         </span>
                                     )}
                                 </div>
                                 <p className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
-                                    Checklist Visual Proof {hasBoxes ? `· ${boxes.length} Issue Mark${boxes.length > 1 ? 's' : ''}` : ''}
+                                    Checklist Visual Proof {hasBoxes ? `· ${boxes.length} ${isDefect ? 'Issue' : 'Visual'} Mark${boxes.length > 1 ? 's' : ''}` : ''}
                                 </p>
                             </div>
 
@@ -293,7 +305,11 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                                                 width: `${widthPct}%`,
                                                 height: `${heightPct}%`,
                                             }}
-                                            className="absolute border-2 sm:border-[2.5px] border-rose-500 bg-rose-500/20 rounded-md sm:rounded-lg shadow-[0_0_18px_rgba(244,63,94,0.7)] pointer-events-none transition-all duration-300 z-20"
+                                            className={`absolute border-2 sm:border-[2.5px] rounded-md sm:rounded-lg pointer-events-none transition-all duration-300 z-20 ${
+                                                isDefect
+                                                    ? 'border-rose-500 bg-rose-500/20 shadow-[0_0_18px_rgba(244,63,94,0.7)]'
+                                                    : 'border-emerald-500 bg-emerald-500/20 shadow-[0_0_18px_rgba(16,185,129,0.7)]'
+                                            }`}
                                         >
                                             {/* Corner brackets */}
                                             <span className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-white rounded-tl" />
@@ -302,9 +318,13 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                                             <span className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-white rounded-br" />
 
                                             {/* Tag Badge */}
-                                            <div className="absolute -top-6 sm:-top-7 left-0 bg-rose-600 text-white text-[8px] sm:text-[10px] font-black uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 border border-rose-400/50">
-                                                <AlertCircle size={9} />
-                                                <span>{box.label || activeBoxLabel || `Defect #${bIdx + 1}`}</span>
+                                            <div className={`absolute -top-6 sm:-top-7 left-0 text-white text-[8px] sm:text-[10px] font-black uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 border ${
+                                                isDefect
+                                                    ? 'bg-rose-600 border-rose-400/50'
+                                                    : 'bg-emerald-600 border-emerald-400/50'
+                                            }`}>
+                                                {isDefect ? <AlertCircle size={9} /> : <Crosshair size={9} />}
+                                                <span>{box.label || activeBoxLabel || (isDefect ? `Defect #${bIdx + 1}` : `Item #${bIdx + 1}`)}</span>
                                             </div>
                                         </div>
                                     );
@@ -317,10 +337,10 @@ const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({
                             <div className="flex items-center gap-2 flex-wrap">
                                 {hasBoxes ? (
                                     <div className="flex items-center gap-1.5 text-xs text-slate-700">
-                                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                                        <span className="font-bold">Detected Defect:</span>
+                                        <span className={`w-2 h-2 rounded-full ${isDefect ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`} />
+                                        <span className="font-bold">{isDefect ? 'Detected Defect:' : 'Verified / Located Feature:'}</span>
                                         <span className="text-slate-600 font-medium">
-                                            {boxes.map(b => b.label).filter(Boolean).join(', ') || activeBoxLabel || 'Defect flagged'}
+                                            {boxes.map(b => b.label).filter(Boolean).join(', ') || activeBoxLabel || (isDefect ? 'Defect flagged' : 'Feature located')}
                                         </span>
                                     </div>
                                 ) : isLoadingBoxes ? (

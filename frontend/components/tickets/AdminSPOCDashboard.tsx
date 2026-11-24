@@ -228,8 +228,9 @@ export default function AdminSPOCDashboard({
         };
     }, [fetchData, invalidateCache]);
 
-    const getSLAStatus = (deadline: string | null, breached: boolean) => {
+    const getSLAStatus = (deadline: string | null, breached: boolean, status?: string) => {
         if (breached) return { text: 'LATE', color: 'text-red-400 bg-red-500/20', urgent: true };
+        if (status && ['resolved', 'closed', 'completed'].includes(status.toLowerCase())) return null;
         if (!deadline) return null;
 
         // Ensure deadline is parsed correctly even if it lacks 'Z'
@@ -672,7 +673,7 @@ export default function AdminSPOCDashboard({
                             </div>
                         ) : (
                             tickets.map((ticket) => {
-                                const sla = getSLAStatus(ticket.sla_deadline, ticket.sla_breached);
+                                const sla = getSLAStatus(ticket.sla_deadline, ticket.sla_breached, ticket.status);
                                 return (
                                     <div
                                         key={ticket.id}

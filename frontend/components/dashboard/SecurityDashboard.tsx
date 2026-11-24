@@ -1,6 +1,7 @@
 'use client';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import HRTicketsContent from '@/frontend/components/hr/HRTicketsContent';
 
 import { useState, useEffect } from 'react';
@@ -29,6 +30,11 @@ import FeedbackModal from '@/frontend/components/ui/FeedbackModal';
 // Types
 type Tab = 'overview' | 'requests' | 'checkinout' | 'visitors' | 'diesel' | 'checklist' | 'meeting_rooms' | 'settings' | 'profile' | 'grievance';
 
+const VALID_SECURITY_TABS: readonly Tab[] = [
+    'overview', 'requests', 'checkinout', 'visitors', 'diesel',
+    'checklist', 'meeting_rooms', 'settings', 'profile', 'grievance'
+] as const;
+
 interface Property {
     id: string;
     name: string;
@@ -48,7 +54,13 @@ const SecurityDashboard = () => {
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKeyPrefix = `security-${propertyId}`;
     
-    const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+    
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_SECURITY_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'overview';
+    });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(() => getCachedData(`${cacheKeyPrefix}-details`));
     const [isLoading, setIsLoading] = useState(!property);
@@ -64,7 +76,6 @@ const SecurityDashboard = () => {
     });
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [showCreateForm, setShowCreateForm] = useState(false);
-    const searchParams = useSearchParams();
 
     const supabase = createClient();
 
@@ -79,7 +90,7 @@ const SecurityDashboard = () => {
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'checkinout', 'visitors', 'diesel', 'checklist', 'meeting_rooms', 'settings', 'profile'].includes(tab)) {
+        if (tab && VALID_SECURITY_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
@@ -399,6 +410,7 @@ const SecurityDashboard = () => {
                         </p>
                         <div className="space-y-1">
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                            <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('visitors')}
                                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'visitors'

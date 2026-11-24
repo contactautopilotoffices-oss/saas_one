@@ -21,9 +21,10 @@ import {
   MAX_RESUME_BYTES, RESUME_BATCH, RESUME_BUCKET, RESUME_DELETE_BATCH, RESUME_EXPORT_MAX, RESUME_LINK_BATCH, RESUME_LINK_SECONDS,
   RESUME_LIST_PAGE_SIZE, RESUME_TYPES,
 } from "./config";
-import { firstSourcing, flagKnownPeople, sourceColumns, sourceColumnsMissing } from "./known";
+import { firstSourcing, flagKnownPeople, sourceColumnsMissing } from "./known";
 import { CandidateActionError } from "./records";
 import { fileExtension } from "./resume-pick";
+import { resumeSourceLabel, sourceFromResumeName } from "./resume-source";
 import {
   MATCH_REASON_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
   type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse,
@@ -78,6 +79,7 @@ interface ResumeRow {
   // Migration 20261116000004 (owner 2026-11-16): where the upload came from, and a second CV of the same person.
   source_kind?: SourceKind | null;
   source_name?: string | null;
+  sourced_role?: string | null;
   duplicate_state?: "pending" | "updated" | null;
 }
 
@@ -115,6 +117,7 @@ function toFile(row: ResumeRow, names: Map<string, string> = new Map()): ResumeF
     matchReason: row.match_reason ?? null,
     sourceKind: row.source_kind ?? null,
     sourceName: row.source_name ?? null,
+    sourcedRole: row.sourced_role ?? null,
     duplicateState: row.duplicate_state ?? null,
     alreadyKnown: null,
   };
@@ -196,6 +199,9 @@ function migrationMissing(error: { code?: string; message?: string } | null | un
 }
 
 function fail(context: string, error: unknown): never {
+  if (/sourced_role/.test((error as { message?: string } | null)?.message ?? "")) {
+    throw new CandidateActionError(503, "Resume designations need a database update first: run 20261122000001_resume_sourcing.sql in Supabase.");
+  }
   if (migrationMissing(error as { code?: string } | null)) {
     console.error(`[candidates] ${context}: migration 20261107000002 not applied`, error);
     throw new CandidateActionError(503, RESUME_MIGRATION_MESSAGE);
@@ -265,10 +271,14 @@ function parseIds(value: unknown, max: number): string[] {
 
 // Upload ---------------------------------------------------------------------------------------------------------------
 
+const ResumeSourceInput = z.object({ kind: z.enum(SOURCE_KINDS).nullable(), name: z.string().trim().max(120).nullable() });
+const SourcedRoleInput = z.string().trim().max(200).nullable();
+
 const PrepareInput = z.object({
   device: z.string().max(200).nullish(),
   /** Owner 2026-11-16: where these resumes came from (optional). */
-  source: z.object({ kind: z.enum(SOURCE_KINDS).nullable(), name: z.string().max(200).nullable() }).nullish(),
+  source: ResumeSourceInput.nullish(),
+  sourcedRole: SourcedRoleInput.optional(),
   files: z
     .array(
       z.object({
@@ -278,6 +288,8 @@ const PrepareInput = z.object({
         sha256: z.string().regex(/^[0-9a-f]{64}$/),
         modifiedAt: z.string().max(40).nullish(),
         folder: z.string().max(1000).nullish(),
+        source: ResumeSourceInput.optional(),
+        sourcedRole: SourcedRoleInput.optional(),
       }),
     )
     .min(1)
@@ -332,8 +344,6 @@ export async function prepareResumeUploads(
   // which used to fail that person's batch of up to 50 files. The one refused now reads the rows again, finds the
   // other person's row and goes round once more, so nothing of its batch is lost and the file is stored once.
   const now = new Date().toISOString();
-  // Owner 2026-11-16: where the upload came from, on every row of it (nothing when the upload did not say).
-  const source = sourceColumns(parsed.data.source ? { kind: parsed.data.source.kind, name: parsed.data.source.name } : null);
   let slots: { index: number; id: string; path: string; contentType: string }[] = [];
   let repeats: Repeat[] = [];
   for (let round = 1; ; round += 1) {
@@ -375,6 +385,7 @@ export async function prepareResumeUploads(
       }
       const id = row?.id ?? randomUUID();
       const path = `${orgId}/${id}${ext}`;
+      const source = f.source ?? parsed.data.source ?? sourceFromResumeName(f.name);
       const values = {
         file_name: f.name.trim(),
         file_type: contentType,
@@ -387,13 +398,17 @@ export async function prepareResumeUploads(
         uploaded_by: user.id,
         uploaded_by_email: user.email,
         updated_at: now,
-        ...source,
+        // An older caller retrying an unfinished upload must not erase an already chosen source.
+        ...(!row || f.source !== undefined || parsed.data.source
+          ? { source_kind: source.kind, source_name: source.kind ? source.name || null : null } : {}),
+        ...(f.sourcedRole !== undefined || parsed.data.sourcedRole !== undefined
+          ? { sourced_role: (f.sourcedRole !== undefined ? f.sourcedRole : parsed.data.sourcedRole) || null } : {}),
       };
       if (row) {
         // A removed file coming back is read again from the start (its old verdict and text are gone).
         const reset = comingBack ? { text_status: "pending", text_error: null, text_attempts: 0, resume_text: null, extract_status: "pending", extract_error: null, candidate_id: null, match_reason: null, matched_at: null } : {};
         let { error: upErr } = await client.from(TABLE).update({ ...values, ...reset }).eq("id", id).eq("organization_id", orgId);
-        if (upErr && sourceColumnsMissing(upErr)) ({ error: upErr } = await client.from(TABLE).update({ ...withoutSource(values), ...reset }).eq("id", id).eq("organization_id", orgId));
+        if (upErr && !/sourced_role/.test(upErr.message ?? "") && sourceColumnsMissing(upErr)) ({ error: upErr } = await client.from(TABLE).update({ ...withoutSource(values), ...reset }).eq("id", id).eq("organization_id", orgId));
         if (upErr) fail("prepare the upload", upErr);
       } else {
         inserts.push({ id, organization_id: orgId, sha256: f.sha256, created_at: now, ...values });
@@ -404,7 +419,7 @@ export async function prepareResumeUploads(
       // One statement: either every row is in, or none is, so going round again starts clean.
       let { error: insErr } = await client.from(TABLE).insert(inserts);
       // Before migration 20261116000004 the source columns do not exist: the rows go in without them.
-      if (insErr && sourceColumnsMissing(insErr)) ({ error: insErr } = await client.from(TABLE).insert(inserts.map(withoutSource)));
+      if (insErr && !/sourced_role/.test(insErr.message ?? "") && sourceColumnsMissing(insErr)) ({ error: insErr } = await client.from(TABLE).insert(inserts.map(withoutSource)));
       if (insErr && (insErr as { code?: string }).code === UNIQUE_VIOLATION && round < PREPARE_ROUNDS) continue;
       if (insErr) fail("prepare the upload", insErr);
     }
@@ -566,6 +581,8 @@ export async function confirmResumeUploads(
 // Listing --------------------------------------------------------------------------------------------------------------
 
 export interface ResumeListQuery {
+  source?: string;
+  sourcedRole?: string;
   /** ISO date-times; a file with no download date is left out when either is set. */
   from: string | null;
   to: string | null;
@@ -596,6 +613,8 @@ export function parseResumeQuery(params: URLSearchParams): ResumeListQuery {
     to: parseIso(params.get("to")),
     q: (params.get("q") ?? "").trim().slice(0, 120),
     device: cleanDevice(params.get("device")),
+    source: ["naukri", "linkedin", "own", "portal", "vendor", "unknown"].includes(params.get("source") ?? "") ? params.get("source")! : "",
+    sourcedRole: (params.get("sourcedRole") ?? "").trim().slice(0, 200),
     candidateId: candidateId && UUID.test(candidateId) ? candidateId.toLowerCase() : null,
     link: link === "linked" || link === "unlinked" || link === "rejected" || link === "other" || link === "attention" || link === "duplicate" ? link : "",
     page,
@@ -621,6 +640,11 @@ function applyQuery<Q extends Filterable<Q>>(query: Q, q: ResumeListQuery): Q {
   if (q.from) query = query.gte("downloaded_at", q.from);
   if (q.to) query = query.lte("downloaded_at", q.to);
   if (q.q) query = query.ilike("file_name", `%${escapeLike(q.q)}%`);
+  if (q.sourcedRole) query = query.ilike("sourced_role", `%${escapeLike(q.sourcedRole)}%`);
+  if (q.source === "linkedin") query = query.eq("source_kind", "portal").ilike("source_name", "LinkedIn");
+  else if (q.source === "unknown") query = query.is("source_kind", null);
+  else if (q.source === "portal") query = query.eq("source_kind", "portal").or("source_name.is.null,source_name.not.ilike.LinkedIn");
+  else if (q.source) query = query.eq("source_kind", q.source);
   if (q.device === NO_DEVICE) query = query.is("device_label", null);
   else if (q.device) query = query.eq("device_label", q.device);
   if (q.candidateId) query = query.eq("candidate_id", q.candidateId);
@@ -647,14 +671,29 @@ export async function listResumeFiles(client: SupabaseClient, orgId: string, q: 
       : base.order("downloaded_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false });
     return ordered.range(from, from + q.pageSize - 1);
   };
-  let { data, error, count } = await run(COLUMNS + SOURCE_COLUMNS);
-  if (error && sourceColumnsMissing(error)) ({ data, error, count } = await run(COLUMNS));
+  let { data, error, count } = await run(COLUMNS + SOURCE_COLUMNS + ", sourced_role");
+  if (error && /sourced_role/.test(error.message ?? "") && !q.sourcedRole) ({ data, error, count } = await run(COLUMNS + SOURCE_COLUMNS));
+  if (error && sourceColumnsMissing(error) && !q.source && !q.sourcedRole) ({ data, error, count } = await run(COLUMNS));
   if (error) fail("load the resumes", error);
   const rows = (data ?? []) as unknown as ResumeRow[];
   const names = await candidateNames(client, orgId, rows.map((r) => r.candidate_id));
   const files = rows.map((row) => toFile(row, names));
   await attachAlreadyKnown(client, orgId, files);
   return { files, total: count ?? 0, page: q.page, pageSize: q.pageSize };
+}
+
+/** Changes the resume's labels without overwriting the candidate's current job title or original source. */
+export async function updateResumeMetadata(client: SupabaseClient, orgId: string, id: string, input: unknown): Promise<void> {
+  if (!UUID.test(id)) throw new CandidateActionError(400, "id must be a uuid.");
+  const parsed = z.object({ source: ResumeSourceInput, sourcedRole: SourcedRoleInput }).safeParse(input);
+  if (!parsed.success) throw new CandidateActionError(400, "Check the source and designation (up to 200 characters).");
+  const { source, sourcedRole } = parsed.data;
+  const { data, error } = await client.from(TABLE).update({
+    source_kind: source.kind, source_name: source.kind ? source.name || null : null,
+    sourced_role: sourcedRole || null, updated_at: new Date().toISOString(),
+  }).eq("organization_id", orgId).eq("id", id).eq("status", "ready").select("id").maybeSingle();
+  if (error) fail("save the resume details", error);
+  if (!data) throw new CandidateActionError(404, "That resume is no longer here.");
 }
 
 /** Files, bytes and dates per laptop, in all, and how many are linked, unlinked, still being read or unreadable. */
@@ -735,11 +774,13 @@ async function pageAll(client: SupabaseClient, orgId: string, q: ResumeListQuery
   const rows: ResumeRow[] = [];
   let truncated = false;
   for (let from = 0; ; from += PAGE) {
-    const base = client.from(TABLE).select(columns).eq("organization_id", orgId).eq("status", statusFor(q));
-    const { data, error } = await applyQuery(base, q)
+    const run = (select: string) => applyQuery(client.from(TABLE).select(select).eq("organization_id", orgId).eq("status", statusFor(q)), q)
       .order("downloaded_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
+    let { data, error } = await run(columns);
+    if (error && /sourced_role/.test(error.message ?? "") && !q.sourcedRole) ({ data, error } = await run(columns.replace(", sourced_role", "")));
+    if (error && sourceColumnsMissing(error) && !q.source && !q.sourcedRole) ({ data, error } = await run(columns.replace(", sourced_role", "").replace(SOURCE_COLUMNS, "")));
     if (error) fail("list the resumes", error);
     const page = (data ?? []) as unknown as ResumeRow[];
     rows.push(...page);
@@ -891,7 +932,7 @@ export async function resumeWorkbook(
   q: ResumeListQuery,
   linkBase: string,
 ): Promise<{ workbook: ExcelJS.Workbook; count: number; truncated: boolean }> {
-  const [{ rows, truncated }, summary] = await Promise.all([pageAll(client, orgId, q, COLUMNS), resumeSummary(client, orgId)]);
+  const [{ rows, truncated }, summary] = await Promise.all([pageAll(client, orgId, q, COLUMNS + SOURCE_COLUMNS + ", sourced_role"), resumeSummary(client, orgId)]);
   const names = await candidateNames(client, orgId, rows.map((r) => r.candidate_id));
 
   const workbook = new ExcelJS.Workbook();
@@ -903,7 +944,7 @@ export async function resumeWorkbook(
     { header: "Type", key: "type", width: 8 },
     { header: "Size (KB)", key: "kb", width: 10 },
     { header: "Downloaded on", key: "downloaded", width: 16, style: { numFmt: "dd-mmm-yyyy" } },
-    { header: "Laptop", key: "device", width: 20 },
+    { header: "User", key: "device", width: 20 },
     { header: "Folder", key: "folder", width: 32 },
     { header: "Uploaded by", key: "by", width: 28 },
     { header: "Uploaded on", key: "uploaded", width: 16, style: { numFmt: "dd-mmm-yyyy" } },
@@ -911,6 +952,8 @@ export async function resumeWorkbook(
     { header: "Matched by", key: "match", width: 14 },
     { header: "Text", key: "text", width: 16 },
     { header: "Open", key: "link", width: 16 },
+    { header: "Source", key: "source", width: 24 },
+    { header: "Designation / role sourced for", key: "role", width: 30 },
   ];
   sheet.getRow(1).font = { bold: true };
   rows.forEach((r, i) => {
@@ -918,6 +961,8 @@ export async function resumeWorkbook(
     const uploaded = iso(r.created_at);
     sheet.addRow({
       n: i + 1,
+      source: resumeSourceLabel({ kind: r.source_kind ?? null, name: r.source_name ?? null }),
+      role: r.sourced_role ?? "",
       name: r.file_name,
       type: fileExtension(r.file_name).slice(1).toUpperCase(),
       kb: Math.round((Number(r.file_size) || 0) / 1024),
@@ -932,11 +977,11 @@ export async function resumeWorkbook(
       link: { text: "Open resume", hyperlink: `${linkBase}/${r.id}?orgId=${encodeURIComponent(orgId)}` },
     });
   });
-  if (rows.length) sheet.autoFilter = { from: "A1", to: `M${rows.length + 1}` };
+  if (rows.length) sheet.autoFilter = { from: "A1", to: `O${rows.length + 1}` };
 
   const totals = workbook.addWorksheet("Summary");
   totals.columns = [
-    { header: "Laptop", key: "device", width: 24 },
+    { header: "User", key: "device", width: 24 },
     { header: "Files", key: "count", width: 10 },
     { header: "Size (MB)", key: "mb", width: 12 },
     { header: "Oldest download", key: "oldest", width: 18, style: { numFmt: "dd-mmm-yyyy" } },
@@ -952,7 +997,7 @@ export async function resumeWorkbook(
       newest: d.newest ? new Date(d.newest) : "",
     });
   }
-  const all = totals.addRow({ device: "All laptops", count: summary.total, mb: Math.round((summary.totalBytes / 1024 / 1024) * 10) / 10, oldest: summary.oldest ? new Date(summary.oldest) : "", newest: summary.newest ? new Date(summary.newest) : "" });
+  const all = totals.addRow({ device: "All users", count: summary.total, mb: Math.round((summary.totalBytes / 1024 / 1024) * 10) / 10, oldest: summary.oldest ? new Date(summary.oldest) : "", newest: summary.newest ? new Date(summary.newest) : "" });
   all.font = { bold: true };
 
   return { workbook, count: rows.length, truncated };

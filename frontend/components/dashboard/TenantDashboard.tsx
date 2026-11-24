@@ -33,6 +33,11 @@ import { CalendarDays, ChevronDown } from 'lucide-react';
 // Types
 type Tab = 'overview' | 'requests' | 'create_request' | 'visitors' | 'room_booking' | 'ppm' | 'settings' | 'profile';
 
+const VALID_TENANT_TABS: readonly Tab[] = [
+    'overview', 'requests', 'create_request', 'visitors',
+    'room_booking', 'ppm', 'settings', 'profile'
+] as const;
+
 interface Property {
     id: string;
     name: string;
@@ -86,8 +91,14 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
 
     const propertyId = selectedPropertyId || paramPropId || initialPropertyId || '';
 
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+
     // State
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const [activeTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_TENANT_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'overview';
+    });
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState('');
@@ -118,12 +129,10 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
         profile: { title: 'Profile', subtitle: 'Your account' },
     };
 
-    const searchParams = useSearchParams();
-
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'create_request', 'visitors', 'room_booking', 'ppm', 'settings', 'profile'].includes(tab)) {
+        if (tab && VALID_TENANT_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);

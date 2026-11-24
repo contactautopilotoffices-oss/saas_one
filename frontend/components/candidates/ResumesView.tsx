@@ -4,12 +4,14 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Search, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
 import {
     MATCH_REASON_LABELS, SOURCE_KIND_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
-    type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeRepeat, type ResumeSummary, type SourceKind,
+    type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeRepeat, type ResumeSummary, type SourceKind, type UploadSource,
 } from '@/backend/lib/candidates/types';
 import { daysSince, PICK_LABELS, pickVerdict, RESUME_BATCH, RESUME_LINK_BATCH, RESUME_REMIND_AFTER_DAYS, sinceLastUpload, thisYearRange, type PickVerdict } from '@/backend/lib/candidates/resume-pick';
+import { resumeSourceLabel, sourceFromResumeName } from '@/backend/lib/candidates/resume-source';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, qs } from './api';
 import CandidatePicker from './CandidatePicker';
+import ResumeMail from './ResumeMail';
 import { canRememberFolder, ensureReadable, folderAllowed, forgetFolder, isBrave, listFolderFiles, loadFolder, pickFolder } from './folder-store';
 import { formatCount, formatDate } from './format';
 import { Avatar, BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, FIELD, INPUT, LABEL, NUM_MD, NUM_SM, Spinner, Tag, Toggle, useUi, WELL } from './ui';
@@ -42,7 +44,7 @@ const PARALLEL = 4;
 const ATTEMPTS = 3;
 const PAGE_SIZE = 50;
 /** Rows of the picked-files list drawn at once (a Downloads folder can hold thousands). */
-const PICK_ROWS = 400;
+const PICK_ROWS = 50;
 /** A ZIP part kept in memory (browsers without a save-to-disk stream) before it is handed to the user. */
 const ZIP_PART_MEMORY = 500 * 1024 * 1024;
 /**
@@ -69,6 +71,25 @@ type Run = {
     current: string;
 };
 type Preset = 'year' | 'all' | 'custom';
+
+function ResumeSourceFields({ value, onChange, label, disabled, automatic = false }: {
+    value: UploadSource | null; onChange: (source: UploadSource | null) => void; label: string; disabled?: boolean; automatic?: boolean;
+}) {
+    const choice = value === null ? 'auto' : value.kind === 'portal' && value.name?.toLowerCase() === 'linkedin' ? 'linkedin' : value.kind ?? 'unknown';
+    return <div className="flex flex-wrap items-center gap-2">
+        <select aria-label={label} value={choice} disabled={disabled} className={`${FIELD} max-w-full`} onChange={e => {
+            const kind = e.target.value;
+            onChange(kind === 'auto' ? null : kind === 'unknown' ? { kind: null, name: null } : kind === 'linkedin' ? { kind: 'portal', name: 'LinkedIn' } : { kind: kind as SourceKind, name: null });
+        }}>
+            {automatic && <option value="auto">Detect from filename</option>}
+            <option value="unknown">Unknown</option>
+            <option value="linkedin">LinkedIn</option>
+            {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
+        </select>
+        {(choice === 'portal' || choice === 'vendor') && <input aria-label={`${label} name`} placeholder={choice === 'vendor' ? 'Vendor name' : 'Portal name'}
+            maxLength={120} disabled={disabled} value={value?.name ?? ''} onChange={e => onChange({ kind: choice, name: e.target.value })} className={`${FIELD} w-40 max-w-full`} />}
+    </div>;
+}
 
 /**
  * "Already in the database" (owner 2026-11-16: its own section under Team uploads, not tags in the list). A second CV
@@ -374,7 +395,22 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const [showAll, setShowAll] = useState(false);
     const folderInput = useRef<HTMLInputElement | null>(null);
     // Owner 2026-11-16: where these resumes came from (optional): own search, a job portal, a vendor and its name.
-    const [uploadSource, setUploadSource] = useState<{ kind: '' | SourceKind; name: string }>({ kind: '', name: '' });
+    const [uploadSource, setUploadSource] = useState<UploadSource | null>(null);
+    const [batchRole, setBatchRole] = useState('');
+    const [fileDetails, setFileDetails] = useState<Record<string, { source?: UploadSource; sourcedRole?: string | null }>>({});
+    const [previewPage, setPreviewPage] = useState(0);
+    const [roleTitles, setRoleTitles] = useState<string[]>([]);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ positions: { title: string }[] }>(`/api/candidates/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (!ctrl.signal.aborted && res.ok) setRoleTitles([...new Set(res.data.positions.map(p => p.title))]);
+        });
+        return () => ctrl.abort();
+    }, [orgId]);
+    const detailsFor = (p: Picked) => ({
+        source: fileDetails[p.key]?.source ?? uploadSource ?? sourceFromResumeName(p.file.name),
+        sourcedRole: fileDetails[p.key]?.sourcedRole !== undefined ? fileDetails[p.key].sourcedRole : batchRole.trim() || null,
+    });
     const filesInput = useRef<HTMLInputElement | null>(null);
 
     const picked = useMemo(() => (raw ?? []).map(p => {
@@ -389,14 +425,15 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         return c;
     }, [picked]);
     const visibleRows = useMemo(() => (showAll ? picked : picked.filter(p => p.ticked)), [picked, showAll]);
+    const pickPage = Math.min(previewPage, Math.max(0, Math.ceil(visibleRows.length / PICK_ROWS) - 1));
 
     const fromFileList = (list: FileList | null): Picked[] => Array.from(list ?? []).map(file => {
         const rel = file.webkitRelativePath || '';
         const folder = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
         return { key: `${rel || file.name}|${file.size}|${file.lastModified}`, file, folder };
     });
-    /** Shows the files; with `autoStart` (phase 3's one click) the likely resumes are uploaded at once. */
-    const takeFiles = (next: Picked[], autoStart: boolean) => {
+    /** Every upload path stops here so HR can review sources and roles before any bytes are sent. */
+    const takeFiles = (next: Picked[]) => {
         if (folderInput.current) folderInput.current.value = '';
         if (filesInput.current) filesInput.current.value = '';
         if (!next.length) { notify('No files in that folder', 'info'); return; }
@@ -404,14 +441,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         setOverrides({});
         setShowAll(false);
         setRun(null);
-        if (autoStart) {
-            const ready = next.filter(p => pickVerdict(p.file, range) === 'ok');
-            if (ready.length) void startUpload(ready);
-            else notify('Nothing new to upload since your last upload', 'info');
-        }
+        setFileDetails({});
+        setPreviewPage(0);
     };
 
-    // Phase 3: the remembered Downloads folder (Chrome / Edge). One click reads it and uploads what is new.
+    // Phase 3: the remembered Downloads folder (Chrome / Edge). One click reads it for review.
     // Owner 2026-11-11: it is the "source folder", shown by name with Change and Forget, so it is chosen once and
     // seen every time. Looked up after the page is on screen (the server cannot know what this browser remembers).
     const [source, setSource] = useState<Source>({ state: 'unknown' });
@@ -428,7 +462,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     /**
      * Owner 2026-11-12: with no source folder set, the button opens the ordinary folder window, in every browser. That
      * window accepts Downloads (the newer folder picker refuses it: "contains system files"), and the upload of what is
-     * new then starts by itself. With a source folder set, that folder is read with no window.
+     * new is shown for review. With a source folder set, that folder is read with no window.
      */
     const uploadNew = async () => {
         if (uploading || scanning) return;
@@ -448,7 +482,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             }
             setSource({ state: 'remembered', name: handle.name, allowed: true });
             const found = await listFolderFiles(handle);
-            takeFiles(found.map(({ file, folder }) => ({ key: `${folder}/${file.name}|${file.size}|${file.lastModified}`, file, folder })), true);
+            takeFiles(found.map(({ file, folder }) => ({ key: `${folder}/${file.name}|${file.size}|${file.lastModified}`, file, folder })));
         } catch (e) {
             notify(e instanceof Error && e.message ? e.message : 'Could not read the folder', 'error');
         } finally {
@@ -479,7 +513,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         // A dropped folder arrives as an entry with no size and no type: only real files are taken.
         const dropped = Array.from(e.dataTransfer.files).filter(file => file.size > 0);
         if (!dropped.length) { notify('Drop PDF or Word files; for a whole folder use Upload new resumes', 'info'); return; }
-        takeFiles(dropped.map(file => ({ key: `${file.name}|${file.size}|${file.lastModified}`, file, folder: null })), false);
+        takeFiles(dropped.map(file => ({ key: `${file.name}|${file.size}|${file.lastModified}`, file, folder: null })));
     };
     const tick = (key: string, on: boolean) => setOverrides(o => ({ ...o, [key]: on }));
     const tickAll = (on: boolean) => setOverrides(Object.fromEntries(picked.map(p => [p.key, on])));
@@ -534,10 +568,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             const prepared = await api<{ files: PreparedUpload[] }>('/api/candidates/resumes', {
                 json: {
                     orgId,
-                    source: uploadSource.kind ? { kind: uploadSource.kind, name: uploadSource.name.trim() || null } : null,
                     files: toSend.map((p, index) => ({
                         index, name: p.file.name, size: p.file.size, sha256: hashes.get(p.key),
                         modifiedAt: new Date(p.file.lastModified).toISOString(), folder: p.folder,
+                        ...detailsFor(p),
                     })),
                 },
             });
@@ -620,6 +654,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const [preset, setPreset] = useState<Preset>('year');
     const [custom, setCustom] = useState({ from: '', to: '' });
     const [deviceFilter, setDeviceFilter] = useState('');
+    const [sourceFilter, setSourceFilter] = useState('');
+    const [roleFilter, setRoleFilter] = useState('');
+    const [roleDebounced, setRoleDebounced] = useState('');
+    useEffect(() => { const t = setTimeout(() => setRoleDebounced(roleFilter.trim()), 300); return () => clearTimeout(t); }, [roleFilter]);
     const [linkFilter, setLinkFilter] = useState<LinkFilter>('');
     const [q, setQ] = useState('');
     const [qDebounced, setQDebounced] = useState('');
@@ -632,8 +670,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
         return { from: f ? new Date(f).toISOString() : null, to: t ? new Date(t).toISOString() : null };
     }, [preset, custom]);
     const listParams = useMemo(
-        () => ({ orgId, from: listRange.from, to: listRange.to, q: qDebounced, device: deviceFilter, link: linkFilter }),
-        [orgId, listRange, qDebounced, deviceFilter, linkFilter],
+        () => ({ orgId, from: listRange.from, to: listRange.to, q: qDebounced, device: deviceFilter, link: linkFilter, source: sourceFilter, sourcedRole: roleDebounced }),
+        [orgId, listRange, qDebounced, deviceFilter, linkFilter, sourceFilter, roleDebounced],
     );
     const filtersKey = JSON.stringify(listParams);
     // The page belongs to one set of filters: a changed filter starts again at page 1 without an effect.
@@ -655,6 +693,19 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const loading = loaded?.key !== key;
     const files = loaded?.data?.files ?? [];
     const total = loaded?.data?.total ?? 0;
+    const [editing, setEditing] = useState<{ file: ResumeFile; source: UploadSource; sourcedRole: string } | null>(null);
+    const [savingDetails, setSavingDetails] = useState(false);
+    const editDetails = (f: ResumeFile) => setEditing({ file: f, source: { kind: f.sourceKind, name: f.sourceName }, sourcedRole: f.sourcedRole ?? '' });
+    const saveDetails = async () => {
+        if (!editing) return;
+        setSavingDetails(true);
+        const res = await api<{ ok: true }>(`/api/candidates/resumes/${editing.file.id}`, { method: 'PATCH', json: { orgId, metadata: { source: editing.source, sourcedRole: editing.sourcedRole.trim() || null } } });
+        setSavingDetails(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        setEditing(null);
+        reloadLibrary();
+        notify('Resume details saved', 'success');
+    };
 
     // Tick boxes (owner 2026-11-10): the selection belongs to one page of one filter; another page starts empty.
     const [markedState, setMarkedState] = useState<{ key: string; ids: string[] }>({ key: '', ids: [] });
@@ -887,11 +938,12 @@ export default function ResumesView({ orgId }: { orgId: string }) {
 
     return (
         <div className="space-y-6">
+            <ResumeMail orgId={orgId} onImported={reloadLibrary} />
             <div className="grid items-start gap-x-4 gap-y-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             {/* Add resumes */}
             <section className={`${CARD} px-4 py-4 sm:px-6 sm:py-5`} aria-labelledby="resume-add-heading">
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
                         <h2 id="resume-add-heading" className="font-display text-base font-semibold text-text-primary">Add resumes</h2>
                         <p className="mt-0.5 text-sm text-text-secondary">
                             {mine?.lastUploadedAt
@@ -931,7 +983,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
                                 {source.state === 'remembered' ? (
                                     <>
-                                        Upload new resumes reads this folder and the folders inside it, and sends the files downloaded since {formatDate(new Date(startOfDay(pickRange.from) ?? 0).toISOString())}. No file window opens.
+                                        Upload new resumes reads this folder and the folders inside it, and previews the files downloaded since {formatDate(new Date(startOfDay(pickRange.from) ?? 0).toISOString())}. No file window opens.
                                         {!source.allowed && <> When the browser asks, choose &ldquo;Allow on every visit&rdquo; and it stops asking.</>}
                                     </>
                                 ) : source.state === 'none' ? (
@@ -968,8 +1020,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             <p className="text-sm font-semibold text-text-primary">{dropping ? 'Drop the files to review them' : 'Drop PDF or Word files here'}</p>
                             <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
                                 {source.state === 'remembered'
-                                    ? 'Or click Upload new resumes: it reads the source folder and sends what is new.'
-                                    : 'Or click Upload new resumes and pick your Downloads folder: the files downloaded since your last upload are sent.'}
+                                    ? 'Or click Upload new resumes: it reads the source folder for you to review.'
+                                    : 'Or click Upload new resumes and pick your Downloads folder: review the files downloaded since your last upload before sending them.'}
                                 {' '}Keep this tab open while it uploads.
                             </p>
                         </div>
@@ -992,23 +1044,21 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     )}
                     {/* webkitdirectory (folder picking) is not in React's typings, so it is set on the element itself. */}
                     <input ref={el => { folderInput.current = el; el?.setAttribute('webkitdirectory', ''); }} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden
-                        onChange={e => takeFiles(fromFileList(e.target.files), true)} />
-                    <input ref={filesInput} type="file" multiple accept=".pdf,.doc,.docx" className="sr-only" tabIndex={-1} aria-hidden onChange={e => takeFiles(fromFileList(e.target.files), false)} />
+                        onChange={e => takeFiles(fromFileList(e.target.files))} />
+                    <input ref={filesInput} type="file" multiple accept=".pdf,.doc,.docx" className="sr-only" tabIndex={-1} aria-hidden onChange={e => takeFiles(fromFileList(e.target.files))} />
                 </div>
 
-                {/* Owner 2026-11-16: where these resumes came from. Optional; it is kept on every file of the upload, so a
-                    vendor's copy of someone the team already had can be told apart later. */}
-                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
-                    <label htmlFor="resume-source-kind">These resumes are from</label>
-                    <select id="resume-source-kind" value={uploadSource.kind} onChange={e => setUploadSource(s => ({ ...s, kind: e.target.value as '' | SourceKind }))} disabled={uploading} className={FIELD}>
-                        <option value="">Not said (optional)</option>
-                        {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
-                    </select>
-                    {(uploadSource.kind === 'vendor' || uploadSource.kind === 'portal') && (
-                        <input value={uploadSource.name} onChange={e => setUploadSource(s => ({ ...s, name: e.target.value }))} disabled={uploading} maxLength={120}
-                            placeholder={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name (LinkedIn, Indeed…)'} aria-label={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name'} className={`${FIELD} w-56`} />
-                    )}
+                <div className="mt-3 flex flex-wrap items-end gap-4">
+                    <div><p className={`${LABEL} mb-1`}>Batch source</p>
+                        <ResumeSourceFields value={uploadSource} onChange={setUploadSource} label="Batch source" disabled={uploading} automatic />
+                    </div>
+                    <label className={LABEL}>Designation / role sourced for
+                        <input list="resume-role-titles" value={batchRole} onChange={e => setBatchRole(e.target.value)} disabled={uploading} maxLength={200}
+                            placeholder="Choose or type a role" className={`${INPUT} mt-1 block sm:w-64`} />
+                    </label>
                 </div>
+                <datalist id="resume-role-titles">{roleTitles.map(title => <option key={title} value={title} />)}</datalist>
+                <p className="mt-2 text-xs text-text-secondary">Review each file below before uploading. The batch role applies unless you change a row; it does not change the candidate&rsquo;s current job title. Unclear sources stay Unknown.</p>
 
                 {raw && (
                     <div className="mt-5 space-y-3">
@@ -1038,8 +1088,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 <p className="px-4 py-6 text-center text-sm text-text-secondary">{picked.length ? 'Nothing ticked. Tick the files to upload, or widen the dates.' : 'No files in that folder.'}</p>
                             ) : (
                                 <ul className="divide-y divide-border-subtle">
-                                    {visibleRows.slice(0, PICK_ROWS).map(p => (
-                                        <li key={p.key} className="flex items-center gap-x-3 gap-y-3 px-3 py-2 text-sm">
+                                    {visibleRows.slice(pickPage * PICK_ROWS, (pickPage + 1) * PICK_ROWS).map(p => (
+                                        <li key={p.key} className="flex flex-wrap items-center gap-x-3 gap-y-3 px-3 py-2 text-sm">
                                             <button type="button" role="checkbox" aria-checked={p.ticked} aria-label={`${p.ticked ? 'Untick' : 'Tick'} ${p.file.name}`} onClick={() => tick(p.key, !p.ticked)} disabled={uploading || p.verdict === 'type' || p.verdict === 'size'}
                                                 className="shrink-0 text-text-secondary disabled:opacity-40">
                                                 {p.ticked ? <SquareCheck className="h-5 w-5 text-primary" /> : <Square className="h-5 w-5" />}
@@ -1048,6 +1098,14 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                 <span className="block truncate text-text-primary" title={p.file.name}>{p.file.name}</span>
                                                 {p.folder && <span className="block truncate text-xs text-text-tertiary" title={p.folder}>{p.folder}</span>}
                                             </span>
+                                            <div className="flex w-full flex-wrap gap-2 pl-8 sm:w-auto sm:pl-0">
+                                                <ResumeSourceFields value={detailsFor(p).source} label={`Source for ${p.file.name}`} disabled={uploading}
+                                                    onChange={source => setFileDetails(d => ({ ...d, [p.key]: { ...d[p.key], source: source ?? undefined } }))} />
+                                                <input aria-label={`Designation for ${p.file.name}`} list="resume-role-titles" maxLength={200} disabled={uploading}
+                                                    value={detailsFor(p).sourcedRole ?? ''} placeholder="Designation / role"
+                                                    onChange={e => setFileDetails(d => ({ ...d, [p.key]: { ...d[p.key], sourcedRole: e.target.value || null } }))}
+                                                    className={`${FIELD} w-48 max-w-full`} />
+                                            </div>
                                             <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-text-tertiary sm:block">{fmtSize(p.file.size)}</span>
                                             <span className="hidden w-24 shrink-0 text-right text-xs tabular-nums text-text-tertiary sm:block">{formatDate(new Date(p.file.lastModified).toISOString())}</span>
                                             <span className={`w-32 shrink-0 truncate text-right text-xs ${VERDICT_TONE[p.verdict]}`}>{p.verdict === 'ok' ? '' : PICK_LABELS[p.verdict]}</span>
@@ -1056,7 +1114,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 </ul>
                             )}
                             {visibleRows.length > PICK_ROWS && (
-                                <p className="border-t border-border-subtle px-4 py-2 text-xs text-text-tertiary">and {formatCount(visibleRows.length - PICK_ROWS)} more (all of them count)</p>
+                                <div className="flex items-center justify-between gap-2 border-t border-border-subtle px-4 py-2 text-xs text-text-secondary">
+                                    <span>Preview {pickPage + 1} of {Math.ceil(visibleRows.length / PICK_ROWS)} ? all ticked files will upload</span>
+                                    <div><button type="button" disabled={pickPage === 0} onClick={() => setPreviewPage(pickPage - 1)} className={BTN_GHOST}>Previous</button>
+                                        <button type="button" disabled={(pickPage + 1) * PICK_ROWS >= visibleRows.length} onClick={() => setPreviewPage(pickPage + 1)} className={BTN_GHOST}>Next</button></div>
+                                </div>
                             )}
                         </div>
 
@@ -1293,9 +1355,14 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         <option value="other">Other documents</option>
                         <option value="rejected">Removed</option>
                     </select>
+                    <select aria-label="Resume source" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} className={FIELD}>
+                        <option value="">All sources</option><option value="naukri">Naukri</option><option value="linkedin">LinkedIn</option>
+                        <option value="own">Our own search</option><option value="portal">Other job portals</option><option value="vendor">Vendor</option><option value="unknown">Unknown</option>
+                    </select>
+                    <input aria-label="Filter by designation" placeholder="Filter by designation" list="resume-role-titles" value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className={`${FIELD} w-48`} maxLength={200} />
                     <select aria-label="Uploaded by" value={deviceFilter} onChange={e => setDeviceFilter(e.target.value)} className={FIELD}>
-                        <option value="">Any laptop</option>
-                        {deviceOptions.map(d => <option key={d.label ?? 'none'} value={d.label ?? 'none'}>{d.label ?? 'Not named'} ({formatCount(d.count)})</option>)}
+                        <option value="">All users</option>
+                        {deviceOptions.map(d => <option key={d.label ?? 'none'} value={d.label ?? 'none'}>{d.label ?? 'Unknown user'} ({formatCount(d.count)})</option>)}
                     </select>
                     <div role="group" aria-label="Download date" className="inline-grid grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
                         {([['year', 'This year'], ['all', 'All dates'], ['custom', 'Custom']] as const).map(([id, label]) => (
@@ -1323,7 +1390,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     ) : !loaded?.data && loading ? (
                         <div className="space-y-3 px-4 py-4 sm:p-6">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                     ) : files.length === 0 ? (
-                        <EmptyState icon={FileText} title={total === 0 && preset === 'year' && !qDebounced && !deviceFilter && summary && summary.total > 0 ? 'No resumes downloaded this year' : 'No resumes yet'}>
+                        <EmptyState icon={FileText} title={total === 0 && preset === 'year' && !qDebounced && !deviceFilter && !sourceFilter && !roleDebounced && summary && summary.total > 0 ? 'No resumes downloaded this year' : 'No resumes yet'}>
                             {summary && summary.total > 0 ? 'Change the dates or the other filters above.' : 'Upload the first ones from the panel above.'}
                         </EmptyState>
                     ) : (
@@ -1344,7 +1411,9 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                             {f.candidateName ? <>Linked to <span className="font-medium text-text-primary">{f.candidateName}</span></> : 'Not linked'} · <TextStatus f={f} />
                                         </p>
                                         <p className="text-xs text-text-tertiary">Uploaded by {f.deviceLabel ?? f.uploadedByEmail ?? 'someone'} · <span className="tabular-nums">{formatDate(f.createdAt)}</span></p>
+                                        <p className="text-xs text-text-secondary">Source: {resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })} ? Role: {f.sourcedRole || 'Not assigned'}</p>
                                         <div className="flex justify-end gap-x-1 gap-y-1">
+                                            {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={BTN_GHOST}>Edit details</button>}
                                             {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`}><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                             {!f.removed && (
                                                 <>
@@ -1366,9 +1435,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                             </th>
                                             <th scope="col" className="px-3 py-3 font-semibold">File</th>
                                             <th scope="col" className="px-3 py-3 font-semibold">Candidate</th>
+                                            <th scope="col" className="px-3 py-3 font-semibold">Source</th>
+                                            <th scope="col" className="px-3 py-3 font-semibold">Designation / role sourced for</th>
                                             <th scope="col" className="px-3 py-3 font-semibold">Details</th>
                                             <th scope="col" className="px-3 py-3 font-semibold">Uploaded</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Laptop</th>
+                                            <th scope="col" className="px-3 py-3 font-semibold">User</th>
                                             <th scope="col" className="sticky right-0 bg-surface-elevated px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
                                         </tr>
                                     </thead>
@@ -1390,11 +1461,14 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                         : f.removed || f.other ? <span className="text-text-tertiary">—</span>
                                                         : <span className="block text-xs leading-snug text-text-secondary">Not linked · no record with this email or phone</span>}
                                                 </td>
+                                                <td className="px-3 py-3 text-text-secondary">{resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })}</td>
+                                                <td className="max-w-[220px] truncate px-3 py-3 text-text-secondary" title={f.sourcedRole ?? ''}>{f.sourcedRole || 'Not assigned'}</td>
                                                 <td className="whitespace-nowrap px-3 py-3 text-xs"><TextStatus f={f} /></td>
                                                 <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-secondary">{formatDate(f.createdAt)}</td>
                                                 <td className="max-w-[200px] truncate px-3 py-3 text-text-secondary" title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
                                                 <td className="sticky right-0 whitespace-nowrap bg-surface px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
                                                     <div className="flex justify-end gap-0.5">
+                                                        {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={BTN_GHOST} aria-label={`Edit source and designation for ${f.fileName}`}>Edit details</button>}
                                                         {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`} title="Upload this file again and it will be kept as a resume"><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                                         {!f.removed && !f.other && !f.candidateName && f.textStatus === 'ready' && (
                                                             <button type="button" onClick={() => void createCandidateFor(f)} disabled={markBusy} className={`${BTN_SECONDARY} h-9 px-3`} title="Make a new candidate record and attach this resume to it">Create candidate</button>
@@ -1432,6 +1506,19 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </p>
                 )}
             </section>
+
+            <Dialog open={editing !== null} onClose={() => { if (!savingDetails) setEditing(null); }} labelId="resume-details-title" title="Edit resume details" size="sm"
+                description={editing?.file.fileName} footer={<>
+                    <button type="button" disabled={savingDetails} onClick={() => setEditing(null)} className={BTN_SECONDARY}>Cancel</button>
+                    <button type="button" disabled={savingDetails} onClick={() => void saveDetails()} className={BTN_PRIMARY}>{savingDetails && <Spinner />}Save</button>
+                </>}>
+                {editing && <div className="space-y-4">
+                    <ResumeSourceFields value={editing.source} label="Resume source" onChange={source => setEditing({ ...editing, source: source ?? { kind: null, name: null } })} disabled={savingDetails} />
+                    <label className={`block ${LABEL}`}>Designation / role sourced for<input list="resume-role-titles" value={editing.sourcedRole} maxLength={200} disabled={savingDetails}
+                        onChange={e => setEditing({ ...editing, sourcedRole: e.target.value })} className={`${INPUT} mt-1 w-full`} /></label>
+                    <p className="text-xs text-text-secondary">The candidate&rsquo;s current job title and original sourcing history stay unchanged.</p>
+                </div>}
+            </Dialog>
 
             <Dialog
                 open={deleteOpen}

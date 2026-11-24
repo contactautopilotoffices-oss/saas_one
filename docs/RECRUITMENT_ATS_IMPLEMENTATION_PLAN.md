@@ -1,11 +1,72 @@
 # Recruitment Module (ATS): Implementation Plan
 
+**22 Nov 2026: assessment invitations and interview notes (local implementation).** The candidate panel now has **Send assessment**: select an active assessment from the existing Assessments module, select a connected sending mailbox for email, and click **Send by email** or **Send on WhatsApp**. Existing Recruitment and assessment-author permissions both apply. Links use the assessment's existing `/t/<public_token>` page; questions, answer keys, test-taking and results stay in the Assessments module. Candidates enter their own name/email there. This does not introduce candidate-specific attempt tokens or automatic result matching.
+
+Apply `20261122000005_candidate_assessments.sql` after the assessment tables and Stage 3 email migration, then deploy. Email reuses the connected Recruitment Zoho mailbox and appears in its outgoing history. WhatsApp requires the approved `candidate_assessment_invite_v1` template and an active AiSensy API campaign; its body and four parameters are documented in `docs/whatsapp_templates_hr.md`. The optional `AISENSY_CANDIDATE_ASSESSMENT_CAMPAIGN` overrides the campaign name. No credentials or production configuration were changed.
+
+Invitations are recorded in the candidate's activity. A database claim prevents duplicate sends, including concurrent clicks. Each candidate can receive each assessment once per channel; definite failures can be retried. Uncertain or interrupted sends are held instead of blindly resent: check Zoho Sent/AiSensy delivery before any further action. Delivery acceptance is not proof that the candidate read the message or completed the test. No real assessment invitations were sent during implementation.
+
+**Interviews:** notes already attach to the candidate's interview and stay out of the standalone Meeting Assistant list. **Full notes and transcript** opens the existing meeting review inside Recruitment, with summary, topic notes, decisions, open questions and timestamped speaker transcript, plus existing export/retry controls. The interview list refreshes while notes are processing. The HR policy assistant is hidden on `/guest`, `/meet`, standalone meeting routes and embedded meeting screens, including an already-open policy chat.
+
+The owner explicitly selected **transcript and notes only**. Audio is still deleted after transcription, and video is not stored. This is the existing browser-based capture flow, not a separate Fireflies bot: a staff browser must remain connected, recording permissions must work, and upload/processing must complete. Speakers are shown with the labels actually produced; automatic hiring decisions or scores are not added. No changes to model selection, prompts, audio retention or guest access were needed.
+
+Validation: 22 focused assessment, interview and email tests passed. Real-component desktop/phone browser checks passed for both send buttons, duplicate prevention, full notes/transcript, bot hiding and the ended-interview notes destination. Changed-file lint, SQL lint and whitespace checks passed. Type checking still reports the same eight unrelated existing test errors. Delivery and meeting capture used local fixtures; live sends, live calls, production migration and deployment were not performed.
+
+**22 Nov 2026: implementation stage 4, reviewed tracker imports (built locally).** This stage number is the agreed build sequence, not the roadmap's sourcing stage.
+
+- Connecting a tracker saves its settings and opens an actual-candidate preview. It creates no candidates. The default is manual sync. Even if a new connection selects hourly/daily, scheduling waits for its first reviewed import.
+- Every sheet column appears in preview. Known columns are suggested; unknown columns require a choice: map to an HRMS field, **Keep as extra column**, or **Don't import**. Extra values stay in the saved tracker row, visible under **Tracker values** in candidate details. They are not added to profiles, reports or stage rules. Ignored columns are shown for review but excluded from newly saved raw rows (unless explicitly used as the status column).
+- Preview shows new candidates, existing matches, proposed field changes, duplicate rows, invalid rows, and all source values. Select rows and press **Import selected**. Duplicate candidate/role rows use the last row, visibly flagged. Ambiguous contacts and rows without a usable email/phone are blocked until corrected in the sheet.
+- Skipped changed rows remain excluded on subsequent syncs, keyed by the tracker's contact and role. They can be selected in a later preview. A changed contact/role is a different tracker identity. Scheduling explicitly authorizes future new/changed rows without individual previews; new columns stop imports until their mapping is reviewed.
+- Preview and import share the same preparation and matching helpers. Import rechecks the sheet, settings, snapshots and affected app values against the review fingerprint. Concurrent syncs/settings changes are guarded. App fields whose source cells did not change remain untouched. Snapshots and record matching page past the database's 1,000-row default.
+- Results show added/updated/skipped records and pipeline moves/pending work. A failure requires a fresh preview before retrying; completed rows are matched on retry. Merge imports retain the existing non-transactional behavior: a mid-import database failure can leave some rows saved. The source sheet is never written.
+
+**Stage 4 activation:** A person must apply `supabase/migrations/20261122000004_tracker_preview.sql` after the existing tracker migration, then deploy the code. Existing successfully synced connections retain their scheduling approval. New or remapped connections wait for review. Rerunning the migration does not reapprove remapped connections. No production migration, deployment or real tracker import was performed by this implementation.
+
+**Stage 4 checks:** Actual-schema tests cover read-only preview, exact field changes, selection/exclusions, extras/ignored columns, organisation isolation, stale previews, new-column blocking, ambiguous contacts, duplicate handling, concurrent sync protection and a 1,002-row tracker. A real-component browser test exercises setup, manual default, column decisions, cancel, row selection and final import on desktop and phone with mocked API responses.
+
+Stage 4 validation: all 440 recruitment tests passed, including eight tracker review cases and the pending-stage retry check. The desktop/phone browser test and SQL migration lint passed. The type check reports the same eight unrelated errors in meeting-room, task-manager-report and ticket-reply tests; these were left unchanged.
+
 **Sources:**
 - *Recruitment Module – Workflow & Build Specification* (HR, 12 Nov 2026), the full target system
 - *ATS tracking system (HR) Meeting* (12 Nov 2026: Roohi, Sanil, Lohitaksha, Sahil), which set the build order
 
 **Branch:** `feat/hr-ats-update`
 **Status:** 15 Nov 2026. **Scope narrowed:** we are *not* building the full spec yet. We are building only the **Priority Track** in §3. The full spec stays as the roadmap in §6.
+**Status, 20 Nov 2026.** The Priority Track is built, apart from the P1 accuracy run and the P7 evaluation baseline. The requisition flow and the HRMS meeting items 1–4 are built too. **§6 is now the working plan:** what the spec still needs, stage by stage, and the order to build it in. Every step there is approved by the owner before it starts.
+
+**22 Nov 2026, resume uploads Stage 1 (implemented locally; deployment pending).** Every file/folder upload now stops at a preview. HR can choose or type a batch designation / role sourced for and override individual files; Naukri / LinkedIn are detected per filename, with unknown or conflicting markers left Unknown. The assigned role is stored on the resume, separately from the candidate's current job title. The library shows source and designation, allows corrections, filters both, and includes both in Excel. "Any laptop" is now "All users". Duplicate files keep their existing metadata.
+
+**Database step:** apply `20261122000001_resume_sourcing.sql` after `20261116000004_sourcing_duplicates.sql`. It adds the resume role and fills only previously unlabelled, unambiguous Naukri / LinkedIn sources from stored filenames; no re-upload needed. Existing source labels are preserved, and rerunning does not overwrite HR corrections. No live migration was run. Zoho Mail and Standard Tracker changes are outside this stage.
+
+**22 Nov 2026, Zoho Mail Stage 2 (local implementation; deployment and live mailbox check pending).** Recruitment → Resumes → **Zoho Mail** connects a recruitment mailbox with read-only consent. HR chooses the mailbox, folder, starting date (UTC) and default designation. **Sync now — preview** reads attachment metadata only: sender, subject, filename, date, size and filename-based Naukri / LinkedIn source. A same-name warning is only a possible duplicate; import checks the actual bytes. Select up to ten attachments, assign a designation and import; failed files remain available for retry. Originals use the existing private resume store and background parsing. Imported / Already stored history retains the originating email and links to the stored resume. Disconnect clears this Recruitment grant and stops imports, while preserving resumes and history; it does not revoke other modules' Zoho connections or delete mail. Sending mail, candidate reply threads and email-to-requisition drafts are Stage 3, not this change.
+
+Stage 2 setup (operator action, not performed by the implementation):
+
+1. Apply `supabase/migrations/20261122000002_recruitment_mail.sql` **after Stage 1's migration**. It adds three Recruitment-only tables with service-role access and encrypted grants; existing candidate data is unchanged.
+2. Reuse the server-based Zoho application's `ZOHO_MAIL_APP_CLIENT_ID`, `ZOHO_MAIL_APP_CLIENT_SECRET`, `MAIL_TOKEN_KEY` and `ZOHO_MAIL_APP_DC` (or `ZOHO_MAIL_DC`). Keep the token key stable. Register **`<app-origin>/api/candidates/resume-mail/callback`** as an additional exact redirect URI on that Zoho client (localhost separately if used). Existing login, Task Manager and Agent Console redirect URIs stay registered. The selected account's data centre must be enabled in the client.
+3. Deploy the code, then connect from Recruitment. Finish Zoho consent in the new tab, return and click **Refresh connections**. The requested scopes are `ZohoMail.messages.READ`, `ZohoMail.accounts.READ`, `ZohoMail.folders.READ`; no send, write or delete scope is requested.
+4. Save a folder and starting date in manual mode. Preview reads ten emails per request; **Continue preview** walks the next page. Nothing enters the resume library until **Import selected**. Unsupported types and files whose reported size exceeds 15 MB are omitted; downloads enforce the size limit too. Filename source can be corrected in the library. Matching bytes retain the first stored resume's source/designation.
+5. Optional: finish the first preview, skip unwanted attachments, then explicitly enable **Every hour — automatic import**. This imports **all pending and future supported attachments**, not only previously ticked rows, with the connection's default designation. The `/api/cron/resume-mail` schedule is included at minute 50 each hour and requires `CRON_SECRET`. Each scheduled run scans ten emails and imports up to three attachments per connection; larger queues continue on later runs. Failed attachments rotate behind unattempted ones. Pause stops scanning/importing; a running operation must finish before settings can change.
+
+The connector uses [Zoho's folder-filtered email listing](https://www.zoho.com/mail/help/api/get-emails-list.html) and [folder-scoped attachment metadata](https://www.zoho.com/mail/help/api/get-attach-info.html). Offset pagination is not a mailbox snapshot: a completed pass restarts from the newest email to catch changes, and stored message/attachment identities prevent reimport. New mail may wait until the next pass when walking a long history. No email body is stored, no email is marked read, and no mail is sent or deleted. The initial live check should use a dedicated recruitment folder with a few known resumes, including a duplicate and a non-resume attachment.
+
+Stage 2 verification: the combined Recruitment + existing Zoho Task Manager regression run passed **459 tests**. The final focused mail run passed **9 tests**, including the later storage-retry and direct-database-access checks. Browser tests cover the real resume-upload and mail components on desktop and phone with mocked APIs; no external mailbox or storage was contacted. New code passes lint and migrations pass SQL lint. The full type check retains eight unrelated existing test errors; the shared Zoho service retains four pre-existing `any` lint errors (five before this change). No live migration, build, deployment, commit or push was performed.
+
+**22 Nov 2026, Zoho Mail Stage 3 (implemented locally; deployment and live mail check pending).** The new **Recruitment → Email** tab sends individual candidate emails, reads incoming replies and converts reviewed incoming hiring requests into ordinary requisition drafts. It shares Stage 2's connections, selected folder and starting date. Emails loaded into this tab are visible to users with Recruitment access in that organisation.
+
+Stage 3 setup and use:
+
+1. Apply `supabase/migrations/20261122000003_recruitment_email.sql` after Stage 2, then deploy. It adds correspondence storage, optional sending consent and a unique email reference on hiring requests. Existing grants remain read-only. No additional server secrets or redirect URI are needed beyond Stage 2.
+2. In **Email**, choose **Connect Zoho for sending**, approve the additional `ZohoMail.messages.CREATE` permission, then **Refresh connections**. The existing read scopes remain. The connection resets to manual resume syncing on reconnect. A later read-only reconnect from Resumes removes the app's sending capability for that grant.
+3. Choose a candidate, write the subject/message, **Save draft and review**, check From/To and the full message, then **Send email**. Drafts send nothing. Only their author can edit/send them. A draft changed after its preview must be reviewed again. Recipient addresses come from the candidate record or selected incoming email; send-time checks recheck the candidate address, blacklist, connection and permissions. Sending is plain text to one recipient, without attachments, CC/BCC, bulk campaigns or automated sends. Outgoing history covers messages composed here; pre-existing Zoho Sent history is not imported.
+4. **Check emails** loads 30 messages from the configured folder and date per call; **Continue checking** walks older messages. Checks are manual. Candidate matching uses a unique exact sender address; shared or unknown addresses remain unassigned. Read the email to load its body as plain text without external images. **Reply** uses Zoho's original message ID; the conversation shows loaded messages in that thread, and the candidate filter shows correspondence across threads. Mail elsewhere in Zoho is not silently imported.
+5. A confirmed send means Zoho accepted the request, not proof of delivery or reading. An uncertain response is marked **unknown** and is never automatically resent. If a process stops after starting a send, it remains **sending**. Check the mailbox's Sent folder in Zoho, then confirm sent/not sent in the email details; a confirmed “not sent” returns to draft for another review. A mailbox lock can take up to ten minutes to expire after a server interruption. Blindly confirming “not sent” can duplicate an email.
+6. Open an incoming request and choose **Create hiring request draft**. Review the role, department, location, headcount, budget and reason. Only users already permitted to raise hiring requests can create it. The signed-in user raises the draft; an email sender is never granted access or treated as an authenticated requester. A source-email reference prevents duplicate requests. **Open Requisitions** to complete missing details and submit through the existing approval flow. No AI extraction, automatic submission or approval is introduced.
+
+Provider references: [Zoho send API](https://www.zoho.com/mail/help/api/post-send-an-email.html), [Zoho reply API](https://www.zoho.com/mail/help/api/post-reply-to-an-email.html). Stage 3 reuses the existing mailbox transport, encrypted-token helper, candidate picker, dialog, plain-text email conversion and requisition creation/permissions. The initial live check should send one message to a controlled test candidate, receive a reply in the chosen folder, and convert a test hiring-request email into a draft; no live test message has been sent by this implementation.
+
+Stage 3 verification: **469 regression tests passed** across Recruitment and existing Zoho Task Manager behaviour; the final **10 focused email tests** also passed after adding stale-preview and interrupted-send checks. Desktop (1440 px) and phone (390 px) browser checks passed for candidate selection, draft/review/send, incoming mail and reviewed hiring-request creation, including plain-text handling and no premature send. New/changed feature code and SQL pass lint; the same eight unrelated test type errors and four pre-existing shared Zoho service lint errors remain. No build, live migration, deployment, commit, push or real email send was performed.
 
 **Progress (15 Nov 2026).** Built on the branch, not yet merged: search fixes (phrase matching, dropdown counts = search counts, `/` alternative groups, typed AND / OR / NOT, "matched in" tags); JD upload and the reader's skill groups and conflicts; migration `20261115000002` (positions, insert-only history, blacklist, "Others", `keep_as_resume`) — **to be applied by a person**; remarks, "Others" and blacklisting; the Pipeline tab per position; Needs attention actions; the screens rebuilt to the approved mockup (header row, Positions tab, JD strip, compact cards, one-column candidate panel with the inline status change, pipeline board, Needs attention rows and the resume library table). Details and decisions: `docs/features/candidate_search.md`, "Decisions (owner, 2026-11-15)". Still to do: the accuracy run on the three sample JDs (P1).
 
@@ -16,6 +77,68 @@
 **16 Nov 2026, later.** Owner asks after the first look: the module marked **Beta**; a **"Search for"** dropdown in Search (a saved position with its JD, or a role people were sourced for); and **"already in the database"** (owner: keep and flag, sheets too, the source dropdown optional): a vendor's resume or sheet row for a person the team already had is kept, flagged on the file / row and in the person's history with where the copy came from and how the person was first sourced, with a filter and an export for vendor disputes. Migration `20261116000004` (to be applied by a person) also fixes the permanent deletes, which the insert-only history had been refusing. Details: `docs/features/candidate_search.md`.
 
 **16 Nov 2026, the position as a job record.** Owner, after pasting a long JD: "only 3 parameters were extracted … this is definitely not how a tier 1 company would work"; the reader had in fact found 11, but a position was only a saved search, with nowhere for the job's own details. Built (owner: "go ahead with the create position form, no approvals for now"): the **Create / Edit position form** with the JD, the basics, the requirements and a summary, filled from the JD by two readers and checked by HR; migration `20261116000005` (to be applied by a person). "Search for" now lists only the positions created there. Requisition approval (§6 Phase 1) stays out for now.
+
+**19 Nov 2026, configurable stages and editable WhatsApp (HRMS meeting MOM: "add more stages", "editable WhatsApp messages").** Owner: the stages are the HR team's standard-tracker statuses (Screening Pending/Reject, L1 Pending/Select/Reject, L2/Assignment Pending/Reject, L3 Pending, Director Round Pending, Final round select/reject, Salary discussion pending, Backout, Already Sourced, L1/L2/L3 Feedback Pending), keeping Sourced, Offer and Joined; "make the stages customizable" in a **Configurations** tab; one list for every position; anyone in HR may change it. Built:
+- `backend/lib/candidates/stage-list.ts` (the built-in list, the rules a saved list must keep, the board's grouping) and `stages.ts` (load and save; a stage's key never changes, so a rename never moves anyone; no delete while people are in a stage, hide instead; two people saving at once cannot overwrite each other; every save is in `recruitment_stage_changes`, insert-only). `GET/PUT /api/candidates/stages`.
+- **Recruitment → Configurations**: each stage's name, board column (round), type (Active / Rejected / Out of the flow, with a one-line hint under it; 20 Nov the owner merged "In progress" and "Selected" into Active, as they behaved the same; lists saved earlier read "selected" as Active), colour, "Offer a WhatsApp update" with its default text, and "Remark needed"; reorder, add, hide, delete; Save / Discard; the recent changes.
+- **The board**: one column per round, scrolling sideways; each status is an area in its column to drop a card on; Rejected areas fold to a count; out-of-the-flow stages are the strip under it. The table, the candidate panel ("Next round" and "Reject" for the round), the Positions funnel and the Calls tab's round all follow the list.
+- **Editable WhatsApp**: one new template `candidate_stage_update_v1` (`docs/whatsapp_templates_hr.md` §1b, Template 12) with a fixed opening and closing and HR's text in the middle, prefilled from the stage's default and edited before each send; once per person, position and stage. The two earlier fixed messages are no longer offered (kept in the history).
+- **Migration `20261119000001_recruitment_stages.sql`, to be applied by a person.** It also moves people at the old stages that the new list renames: Screening → Screening Pending, Shortlisted and Interview → L1 Pending (days in the stage kept). People at Rejected or Others stay there, shown out of the flow until moved. Until it is applied the app keeps the old ten stages and the Configurations tab is read-only.
+- **To do by a person:** apply the migration; submit `candidate_stage_update_v1` in AiSensy for Meta's approval (until then sends are recorded as failed). Tests: `tests/candidates/stages.test.ts`, `outreach.test.ts`.
+
+**19 Nov 2026, interviews with a video link (HRMS meeting: "video meeting link generation"; owner: "go ahead with 3").** **Schedule interview** on the candidate's pipeline panel (`frontend/components/candidates/InterviewScheduler.tsx`, `backend/lib/candidates/interviews.ts`, `POST /api/candidates/interviews`):
+- Round (prefilled from the person's column, e.g. L1), date and time (India time), **Online / In person** (owner: "hybrid mode is not required"), the venue, interviewers picked from the Task Manager's people, a note, and optionally a stage to move to.
+- Online makes the Meeting Assistant's **online meeting** in the **HR space** (one link for everyone: the interviewers picked go straight in, the candidate waits to be let in; recorded in a team member's browser; notes written, tasks not looked for). In person makes no call.
+- **Everything stays in Recruitment** (owner: "i dont want the user to go to meeting assistant"): the candidate's Interviews tab has **Join call** (the video call opens over the Recruitment page) and, for an in-person interview, **Record interview** (the Meeting Assistant's recorder, over the page; `POST /api/candidates/interviews/record`). These meetings carry `meeting_notes.purpose = 'interview'` and are **not listed in the Meeting Assistant** (owner: "yes hide it").
+- The interview is a history entry under the position (`remark`, meta.kind "interview", with the meeting it made), so no new table.
+- Invites only where HR ticks: the candidate on WhatsApp (new template `candidate_interview_invite_v1`, §1b Template 13, recorded in `candidate_outreach` as `interview_invite`) and by email, the interviewers by email. Never to a blacklisted person. A failed send never undoes the interview; the form lists what went, and gives the link with **Copy** and **Share on WhatsApp** (the meeting's "WhatsApp copy-link sharing").
+- The candidate panel's new **Interviews** tab lists each interview, its link while it is ahead, and the call's notes (summary, decisions, open questions) once written.
+- **Migration `20261119000002_recruitment_interviews.sql`, to be applied by a person, after 20261119000001** (the invite kind, `interview_id`, one invite per interview, `meeting_notes.purpose`; before it, interview meetings still show in the Meeting Assistant). Before it, interviews are scheduled but the WhatsApp invite is not sent (the form says so). **Submit `candidate_interview_invite_v1` in AiSensy.** Online interviews also need the LiveKit keys (as the Meeting Assistant). Tests: `tests/candidates/interviews.test.ts`.
+- Someone from the team must be in the call for it to be recorded and to let the candidate in (guests never record). Joining and recording use the Meeting Assistant's HR-space access: people with an HR role (and, for joining, the person who scheduled it and the interviewers picked).
+
+**17–20 Nov 2026, manpower requisition (spec Stages 1–2; HRMS meeting item 4).** Paused and resumed on 17 Nov ("follow these stages and rules"). Built:
+- **Raising a request** (Stage 1). The form has the spec's fields, generates a requisition ID and can be saved as a draft. Requests are raised **only from the logins**: a **Hiring requests** sidebar item (`/[orgId]/hiring-requests`, `frontend/components/recruitment/HiringRequestsPage.tsx`) shows for the roles and people picked in the Tech dashboard. Nobody gets it until someone is picked. The raiser can withdraw their own request; the button is hidden for everyone else.
+- **Approval** (Stage 2). The HR Head reviews first and ticks "in plan" (a simple tick box, no headcount list). Out of plan, or above the CTC level, also goes to the Director. Each level has a backup. **Nobody approves a request they raised**: that level's backup takes it, or the other level does. Actions: approve, reject with reason, send back, hold. Alerts go by email and WhatsApp with a **one-time phone link**, so approvers can act without a desktop login. Reminders fire at 24 h and 48 h and escalation at 72 h, once each per level, from the hourly cron `/api/cron/requisition-reminders`. **An approved request opens a position** in the Positions tab, with the target days.
+- **HR's Recruitment → Requisitions tab is a tracker only**: who raised what, the status, and who it is waiting on. It has no "Raise a request" button.
+- **Tech dashboard → HR Configs** (a sidebar tab, not Settings) holds who can raise requests (roles and people) and the approvers (HR Head and Director, each with a backup), the CTC level for the Director, and the target days. It is changed by the Tech team and admins. The people lists are the **Task Manager's employee list**. The HR Head dropdowns list only the HR team; the Director dropdowns list only org super admins. Every change is logged in `recruitment_stage_changes`.
+- **21 Nov 2026, the requisition gaps (owner: "go ahead with all"):**
+  - The tracker filters by **department, location and status** and shows **candidates in pipeline** for each approved request.
+  - The form **keeps what was typed through a page refresh**, in this browser until it is saved or cancelled.
+  - **Department heads** are set in HR Configs (department and person, from the Task Manager's list). A head gets Hiring requests in their sidebar, sees their department's submitted requests, is emailed when one is raised, and can **endorse** it. Endorsing is shown to the approvers and approves nothing; the HR Head and Director still decide.
+  - **A24 on-hold chaser:** after 15 and 20 days the raiser is asked "still needed, or withdraw?". **Still needed** tells the approver and stops the raiser's chasers. Day 25 goes to the HR Head.
+  - **A03:** an approved request opens its position with **no recruiter**. The HR team is emailed to assign one, using a new Recruiter picker on Recruitment → Positions (HR team only). The person picked is emailed, and the HR Head is emailed if nobody is assigned after 48 h.
+  - All alerts are by email; WhatsApp is parked.
+  - **Migration `20261121000001_recruitment_requisition_followups.sql`, to be applied by a person.** It adds the "endorsed" and "still needed" history entries. Until it is applied those two buttons say a database update is needed; everything else works.
+- **21 Nov 2026, connected trackers (HRMS meeting item 5).** In Recruitment → Sheets, **Connect a tracker**: a Google Sheet or Excel (OneDrive/SharePoint) share link, the tab, the header row, the column matching (guessed, HR corrects it), the status values matched to pipeline stages, and how often to sync (hourly, daily, manual). Owner's rules:
+  - **one way, sheet → app**, through the upload's cleaning and Merge, so nothing is deleted;
+  - statuses move people in the **open position whose title matches the row's role**;
+  - a cell only changes the app if it **changed in the sheet since the last sync**;
+  - the sheet is shared **"Anyone with the link can view"** (no Google sign-in);
+  - **duplicates are flagged**: the same person and role twice in the tracker (the last row is used and flagged for review), and a person already in the database (the import's "already in the database" flag).
+
+  A tab that **repeats its header row** (the owner's tracker has 116 blocks with columns in different orders) is read block by block. Code: `backend/lib/candidates/trackers.ts`, `/api/candidates/trackers*`, hourly cron `/api/cron/tracker-sync` (vercel.json), `TrackerConnections.tsx`. **Migration `20261121000002_candidate_tracker_connections.sql`, to be applied by a person.** Tests: `tests/candidates/trackers.test.ts`.
+- **21 Nov 2026, Phase 1 steps 1–6 (owner: "go on with all the steps").** Everything is by email; WhatsApp is parked.
+  1. **Rejection reasons.** A fixed list in Configurations (HR edits it). A rejection asks for a reason; moving someone back a round asks for a remark. This is enforced on the server too.
+  2. **Interview follow-up.**
+     - Mark done, no-show or cancelled; reschedule. Cancelling and rescheduling email the candidate and the panel.
+     - Reminders 24 h and about 2 h before, sent by the hourly job.
+     - Once the time has passed, the person who booked it is asked to mark it; the HR Head is told the next day.
+  3. **Scorecards.**
+     - One per interviewer, from a one-time link in their invite, with no login.
+     - Four skills rated 1–5, an overall rating, proceed / hold / reject. Comments are required to reject.
+     - The other interviewers' ratings are shown only after submitting. Chasers go at 24 h and 48 h, and the HR Head at 72 h.
+  4. **Selection and offer** (Interviews tab → "Select and make an offer"; the new **Offers** tab).
+     - The CTC is checked against the request's band. The HR Head approves, and the Director too when above the band; the proposer never approves.
+     - The letter comes from HR's template (Configurations), and release is blocked while a `{{blank}}` is unfilled.
+     - HR releases it by email and records the answer. Chasers cover A14–A17.
+  5. **Joining.**
+     - Weekly call reminders, and the HR team is told 7 days before.
+     - Joined: the person moves to Joined, and the position closes when every opening is filled.
+     - Dropped: the position reopens, and the HR Head and Director are told.
+  6. **Dashboard tab.** Today, Roles and Funnel, each with an Excel (CSV) export.
+
+  **Migration `20261121000003_recruitment_hiring_flow.sql`, to be applied by a person.** Code: `backend/lib/candidates/hiring.ts`, `recruitment-dashboard.ts`, `/api/candidates/{interviews/follow-up,scorecards/[token],offers,offer-letter,dashboard,rejection-reasons}`. Tests: `tests/candidates/hiring.test.ts`.
+- Tables (migration `20261117000003_recruitment_requisitions.sql`, applied by a person): `recruitment_requisitions`, `recruitment_requisition_approvals` (insert-only), `recruitment_requisition_notices`, `recruitment_requisition_counters`. Code: `backend/lib/candidates/requisitions.ts`, `requisition-notify.ts`, `app/api/recruitment/*`. Tests: `tests/candidates/requisitions.test.ts`.
 
 ---
 
@@ -330,20 +453,78 @@ Each step is one small PR with its migration file (rollback block included, **ap
 
 ---
 
-## 6. Later: the full specification roadmap
+## 6. The full specification: what is left, and the plan
 
-These become the next phases once the Priority Track is in use. P4, P6 and P7 are designed to fold into them: `candidate_actions` becomes the stage history, the blacklist becomes the spec's do-not-contact, and `call_analyses` feeds the screening stage.
+The Priority Track is in use, so this is now the working plan. P4, P6 and P7 fold into it: `candidate_actions` is the stage history, the blacklist is the spec's do-not-contact, and `call_analyses` feeds screening.
+
+### 6.1 Where we stand against the spec (checked against the code, 20 Nov 2026)
+
+| Spec part | Built | Left out |
+|---|---|---|
+| Stage 1 Requisition | Form with all fields, ID, draft, in-plan tick, raised from the sidebar | The last request for the same role, shown on the form |
+| Stage 2 Approval | HR Head → Director, backups, no self-approval, approve / reject / send back / hold, phone link, 24 h / 48 h / 72 h | — |
+| Stage 3 JD and posting | JD library with versions (`jd-library.ts`) | Job post draft from the JD; channels (career page, portals, referral, consultants) with the date |
+| Stage 4 Sourcing | Database search, resume upload and reading, duplicate check ("already in the database") | **Search before source** (A04): "sourcing done" stays locked until the database has been searched |
+| Stage 5 Screening | Configurable stages, Call Insights, mandatory remarks | Screening questionnaire (T03), chasers at 24 h / 48 h and the move to "No response" (A08); CTC / notice capture as one screening step |
+| Stage 6 Interviews | Scheduling, video link, WhatsApp / email invites, recording, notes | **Scorecards** (blind until submitted; reject needs a comment); reminders 24 h and 2 h before (A10, T06); interview status (done / no-show / cancelled, A12); reschedule and cancel (T07); feedback chasers (A11, T08) |
+| Stage 7 Selection | — | Combined scorecard to the hiring manager (A13); select / hold / reject; proposed CTC against the band with the variance |
+| Stage 8 Offer | — | Offer approval (HR Head; Director above the band, A14 / A15); salary breakup; letter from a template, with unfilled placeholders blocking it; release by HR (T10); acceptance and chasers (A16, A17, T11) |
+| Stage 9 Joining | A "Joined" stage only | Joining date; weekly contact (A18, T12); joined / dropped (A19, A20, T16); reopen the request with a Director alert; close it when filled; hand over to onboarding |
+| Roles and permissions | HR access, raisers, approvers | Hiring manager, department head, Director, panel member and recruiter views; CTC hidden from panel members and hiring managers |
+| Candidate search | Filters, keyword, meaning, blacklist | Saved searches, last contacted date and filter, "not contacted in 6 months", the spec's status filter |
+| Audit log | Insert-only stage history, approvals, config changes, search logs | Exports, CTC edits, merges and permission changes in one log nobody can edit; the monthly export report |
+| Consent and retention | Do-not-contact (blacklist), consent tick on calls | Consent flag, date and basis per record; retention periods and the monthly review (A23); removal request |
+| Configuration | Stages, approvers, raisers, CTC level, target days | SLA days, **fixed rejection reasons**, sources list, editable email templates |
+| Automations | A01, A02, A03 (position opened), A05, A22 | A04, A06–A21, A23, A24 |
+| Templates | T01, T04 (candidate), the stage update | T02, T03, T05–T17 |
+| Dashboards | A small funnel on the Positions tab | Today, Roles and Funnel views; time to fill / hire; offer acceptance and drop; rejection reasons; Excel export; the monthly pack |
+| Integrations | WhatsApp (AiSensy), email, video (LiveKit) | Qandle, calendar, resume intake mailbox, career page form, e-signature, daily health checks |
+| Every screen | — | "Last changed by and when"; unsaved forms survive a refresh; a reason when moving backwards |
+| HRMS meeting item 5 | — | Standard tracker Excel integration (needs a sample tracker from HR) |
+
+### 6.2 Phase 1: the order to build it in
+
+Each step is one small change with its migration (rollback block, **applied by a person**), tests, type check and lint. The owner approves each step before it starts.
+
+| Step | What | Spec | Needs first |
+|---|---|---|---|
+| 1 | **Rejection reasons and backward moves.** A fixed list of reasons in Configurations. Picking a reason is required on any Rejected or out-of-the-flow stage, and a reason is required when moving someone back a round. | Common behaviour; A22; report "rejection reasons" | HR's reason list (spec open question 3) |
+| 2 | **Interview follow-through.** Status (scheduled / done / no-show / cancelled), reschedule and cancel with the update sent to everyone, reminders 24 h and 2 h before, "mark it" ask after the time passes. | Stage 6; A10, A12; T06, T07 | Two more WhatsApp templates in AiSensy |
+| 3 | **Panel scorecards.** Per-round competencies (set in Configurations), ratings, proceed / hold / reject, comment required for reject, **blind until the panel member submits**, chasers at 24 h / 48 h and escalation at 72 h. Panel members open only their assigned candidates and rounds, with no CTC. | Stage 6; screen 10; A11; T08; scenario 12, 20 | **Owner approval: panel-member access (access control)**; the competency list |
+| 4 | **Selection.** The combined scorecard to the hiring manager; select / hold / reject; proposed CTC against the request's budget band, with the variance shown. | Stage 7; A13 | Step 3; the salary-unit decision (§6.4) |
+| 5 | **Offer.** Offer record with its approvals (same pattern as requisition approvals: HR Head, then Director above the band, no self-approval, phone link), salary breakup, letter from an HR template with a placeholder check, release by HR only after every approval, acceptance and chasers. | Stage 8; A14–A17; T10, T11; scenarios 13–17 | Step 4; HR's offer letter template and CTC bands by grade |
+| 6 | **Joining.** Joining date, weekly contact reminder to the recruiter, HR Ops alert 7 days before, joined / dropped with reason; dropped reopens the request and alerts the HR Head and Director; the request closes when all positions are filled; handover note to onboarding. | Stage 9; A18–A20; T12, T13, T16; scenarios 18, 19 | Step 5; where the onboarding handover goes |
+| 7 | **Sourcing and screening automations.** Search before source (A04), unscreened reminders (A06, A07), screening questionnaire with chasers and "No response" (A08, T03), shortlist sent to the hiring manager (A09, T09), approval result to the manager (T02), job post channels (Stage 3). | Stages 3–5 | Questionnaire wording from HR; one more template |
+| 8 | **Recruitment roles.** Hiring manager (own requests and their candidates, no CTC of employees), department head (own department), Director (dashboards, all requests), recruiter. In a module-only table, following `backend/lib/candidates/access.ts`. | Roles and permissions; scenario 21 | **Owner approval: access control** |
+| 9 | **Audit, consent and search.** One append-only log for exports, CTC edits, merges and permission changes, with the monthly export report; consent flag / date / basis; saved searches; last contacted; the status filter. | Audit log; consent; search; scenarios 22–24 | — |
+| 10 | **Dashboards and digests.** Today (recruiter), Roles (ageing, A21, T15), Funnel; time to fill / hire, offer rates; Excel export of every view; the daily recruiter digest (T17); SLA days in Configurations. | Reports; screen 12; scenario 25 | Agreed metric definitions from HR |
+| 11 | **Acceptance run.** Walk the spec's 27 scenarios with HR on test data; fix and retest any failure. HR Head signs off. | Acceptance criteria | Steps 1–10 |
+| — | **Standard tracker Excel integration** (HRMS meeting item 5). Slots in as soon as HR shares the tracker. | — | A sample tracker file and where it lives |
+
+### 6.3 Phase 2 and Phase 3 (unchanged from the spec)
 
 | Phase | Contents |
 |---|---|
-| Phase 1 (spec "must have") | Requisition form, tracker and approval chain (HR Head → Director, no self-approval) · per-position pipeline board with stage events · interview scheduling and panel scorecards (blind until submitted) · offer approval, band variance, letter with placeholder check · automations A01–A22 and templates T01–T17 · recruitment roles and append-only audit log · dashboards Today / Roles / Funnel · the spec's 27 acceptance scenarios |
-| Phase 2 | Calendar integration · Qandle write-back on joining · WhatsApp inbound · consultant login · source effectiveness and cost per hire · e-signature · A23 retention review, A24 on-hold chaser |
+| Phase 2 | Calendar integration (panel availability) · Qandle write-back on joining · WhatsApp inbound replies · consultant / vendor login · source effectiveness and cost per hire · e-signature on offers · A23 retention review, A24 on-hold chaser · resume intake mailbox and career page form · integration health checks |
 | Phase 3 | Candidate self-service portal · portal API resume pull · background verification · assessment tests · referral programme |
 
-Design notes for when we get there:
-- New pipeline tables use a `rec_` prefix (`rec_requisitions`, `rec_applications`, …). The existing `candidate_applications` means a *sourcing record*, not the spec's candidate-applies-to-requisition "application".
-- Recruitment roles go in a module-only table, following the `backend/lib/candidates/access.ts` pattern. **This still needs explicit approval because it is access control.**
-- Salary is stored as ₹/month in hand today. The spec uses annual CTC. Decide before offers are built.
+### 6.4 Decisions needed before the steps that use them
+
+| Decision | For step |
+|---|---|
+| The rejection reasons list (spec open question 3) | 1 |
+| Competencies per round, and the rating scale | 3 |
+| Panel-member access, and later the full recruitment roles (access control, owner approval) | 3, 8 |
+| **Salary unit.** Candidate records hold ₹/month in hand; requisitions and the spec use annual CTC. Pick one for selection and offers, or store both. | 4, 5 |
+| CTC bands by grade, and the variance above which the Director approves | 4, 5 |
+| The offer letter template and the salary breakup structure | 5 |
+| Where the joining handover goes (onboarding is a separate module) | 6 |
+| Screening questionnaire wording; SLA day defaults; retention periods | 7, 10, Phase 2 |
+
+Design notes:
+- New tables keep the `recruitment_` prefix the requisition tables use (`recruitment_offers`, `recruitment_scorecards`, …). The existing `candidate_applications` means a *sourcing record*; a person in a position is `candidate_position_members`.
+- Approvals for offers reuse the requisition approval pattern (insert-only rows, backups, no self-approval, phone link, the reminder cron).
+- Every candidate-facing message stays a template, sent through the existing outreach checks (blacklist, once per event); offers and rejections are sent by a person.
 
 ---
 

@@ -3,6 +3,7 @@
 import { resolveOrgDashboardTab, pushDashboardNavigation, type OrgDashboardTab } from '@/frontend/lib/dashboard/orgTabs';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     LayoutDashboard, Building2, Users, UserPlus, Ticket, Settings, UserCircle,
@@ -887,6 +888,9 @@ const OrgAdminDashboard = () => {
         } else {
             params.delete('propertyId');
         }
+        if (activeTab) {
+            params.set('tab', activeTab);
+        }
         
         router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
     };
@@ -1134,6 +1138,7 @@ const OrgAdminDashboard = () => {
                         </p>
                         <div className="space-y-1">
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                            <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                             <button
                                 onClick={() => handleTabChange('properties')}
                                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 font-bold text-sm ${activeTab === 'properties'

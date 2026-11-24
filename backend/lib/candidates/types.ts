@@ -12,27 +12,15 @@ import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
 import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
+import type { Stage } from "./stage-list";
 
 // Positions and their pipelines (owner 2026-11-15; the logic is in positions.ts, which is server-only: these constants
 // and shapes live here so the client components can import them without pulling the model transport in).
-export const FLOW_STAGES = ["sourced", "screening", "shortlisted", "interview", "offer", "joined"] as const;
-export const SIDE_STAGES = ["on_hold", "not_responding", "rejected", "others"] as const;
-export const STAGES = [...FLOW_STAGES, ...SIDE_STAGES] as const;
-export type Stage = (typeof STAGES)[number];
-export const STAGE_LABELS: Record<Stage, string> = {
-  sourced: "Sourced",
-  screening: "Screening",
-  shortlisted: "Shortlisted",
-  interview: "Interview",
-  offer: "Offer",
-  joined: "Joined",
-  on_hold: "On hold",
-  not_responding: "Not responding",
-  rejected: "Rejected",
-  others: "Others",
-};
-/** Stages a person must explain with a remark when they move someone there. */
-export const STAGE_REMARK_REQUIRED: readonly Stage[] = ["others"];
+// Owner 2026-11-19: the stages are a list HR edits (Recruitment -> Configurations); see stage-list.ts.
+export {
+  DEFAULT_STAGES, LEGACY_STAGES, STAGE_KIND_HINTS, STAGE_KIND_LABELS, STAGE_KINDS, STAGE_TONES,
+  type Stage, type StageDef, type StageKind, type StageList, type StageTone,
+} from "./stage-list";
 
 export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "internship"] as const;
 export type EmploymentType = (typeof EMPLOYMENT_TYPES)[number];
@@ -76,6 +64,8 @@ export interface Position {
   budgetMaxInhand: number | null;
   /** The role in 2–3 sentences, from the JD and edited by HR. */
   summary: string | null;
+  /** Owner 2026-11-21: who recruits for it (null: nobody assigned yet; a role opened from a hiring request starts so). */
+  recruiterId?: string | null;
   /** The recruiter's name (the person who saved it, unless changed); null when unknown. */
   recruiterName: string | null;
   createdAt: string;
@@ -236,6 +226,7 @@ export const TOP_N_MAX = 30;
 export const TOP_N_DEFAULT = 10;
 
 export interface CandidateRecord {
+  trackerValues?: Record<string, string> | null;
   /** The record (candidate_applications) id. */
   id: string;
   candidateId: string;
@@ -671,6 +662,8 @@ export interface ResumeFile {
   /** Where the upload said it came from (owner 2026-11-16); null when it did not say. */
   sourceKind: SourceKind | null;
   sourceName: string | null;
+  /** HR-assigned role for this resume, separate from the current job title. */
+  sourcedRole?: string | null;
   /** 'pending': a second CV for this person, waiting for HR (Update the CV or delete it); 'updated': HR made it the CV. */
   duplicateState: "pending" | "updated" | null;
   /** Filled for a pending duplicate. */
@@ -905,11 +898,16 @@ export interface PreparedCall {
 
 // Outreach (owner 2026-11-16, mockup board 7; migration 20261116000003) --------------------------------------------------
 
-export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted"] as const;
-export type OutreachKind = (typeof OUTREACH_KINDS)[number];
+// Owner 2026-11-19: "stage_update" is the editable message (fixed opening and closing, HR's text in the middle) sent
+// for the stage the person is in; the first two are the earlier fixed messages, kept for the history.
+export const OUTREACH_KINDS = ["shortlisted", "not_shortlisted", "stage_update"] as const;
+export type OutreachKind = (typeof OUTREACH_KINDS)[number] | "interview_invite";
 export const OUTREACH_KIND_LABELS: Record<OutreachKind, string> = {
   shortlisted: "Shortlisted",
   not_shortlisted: "Not shortlisted",
+  stage_update: "Stage update",
+  // Owner 2026-11-19: sent by "Schedule interview" (interviews.ts), not by the Send panel.
+  interview_invite: "Interview invite",
 };
 
 /** What the Send panel shows before anyone clicks Send (GET /api/candidates/outreach/preview). */
@@ -925,9 +923,11 @@ export interface OutreachPreview {
   phoneMasked: string | null;
   /** The template (= AiSensy campaign) that would be used. */
   campaign: string;
-  /** The message as the candidate would read it, with the name and role filled in. */
+  /** The message as the candidate would read it, with the name and role filled in (and the default middle text). */
   message: string;
   footer: string;
+  /** Owner 2026-11-19, a stage update: the fixed parts around HR's text, and the stage's default text. */
+  stageUpdate?: { stageKey: string; stageName: string; opening: string; closing: string; defaultText: string } | null;
   checks: {
     notBlacklisted: boolean;
     phoneValid: boolean;
@@ -1008,6 +1008,59 @@ export interface OutreachRecord {
   error: string | null;
   byName: string | null;
   at: string;
+  /** Owner 2026-11-19, a stage update: the stage it was for and the text HR sent (null for the fixed messages). */
+  stageKey?: string | null;
+  message?: string | null;
+}
+
+// Interviews (owner 2026-11-19, HRMS meeting: "video meeting link generation"; migration 20261119000002) ---------------
+
+// Owner 2026-11-19: "hybrid mode is not required".
+export const INTERVIEW_MODES = ["online", "in_person"] as const;
+export type InterviewMode = (typeof INTERVIEW_MODES)[number];
+export const INTERVIEW_MODE_LABELS: Record<InterviewMode, string> = {
+  online: "Online (video call)",
+  in_person: "In person",
+};
+
+/** One interview scheduled for a candidate (GET /api/candidates/interviews), newest first. */
+export interface Interview {
+  /** The history entry's id. */
+  id: string;
+  positionId: string | null;
+  positionTitle: string | null;
+  round: string | null;
+  /** India time, as the form gave it: "2026-11-21T11:00". */
+  at: string;
+  /** online / in_person; older entries may say video / phone. */
+  mode: string | null;
+  venue: string | null;
+  interviewers: string | null;
+  note: string | null;
+  /** The meeting: an online interview's video call (with its one link for everyone), or an in-person interview's recording. */
+  meetingId: string | null;
+  joinUrl: string | null;
+  /** The meeting as it is now: scheduled, live, the notes being written, ready (with the notes), failed. */
+  meeting: { status: string; summary: { summary: string; decisions: string[]; openQuestions: string[] } | null } | null;
+  byName: string | null;
+  createdAt: string;
+  /** The follow-up's id (the interview as filed by migration 20261121000003); null for one booked before it. */
+  followUpId?: string | null;
+  /** Owner 2026-11-21 (migration 20261121000003): done, no-show, cancelled; "scheduled" before it or until marked. */
+  status?: InterviewStatus;
+  statusReason?: string | null;
+  /** The panel's scorecards (HR sees all of them). */
+  scorecards?: Scorecard[];
+}
+
+/** What scheduling sent, for the form to say. */
+export interface InterviewSend {
+  to: "candidate" | "interviewer";
+  channel: "whatsapp" | "email";
+  name: string;
+  ok: boolean;
+  /** Why not, in plain words. */
+  note: string | null;
 }
 
 // Manpower requisitions (owner 2026-11-17; migration 20261117000003). Stages 1 and 2 of the Recruitment Module spec. ---
@@ -1032,7 +1085,7 @@ export type RequestType = (typeof REQUEST_TYPES)[number];
 export const REQUISITION_DECISIONS = ["approve", "reject", "send_back", "hold", "resume"] as const;
 export type RequisitionDecision = (typeof REQUISITION_DECISIONS)[number];
 
-/** Settings -> Notifications -> Recruitment in the Tech dashboard (organization_settings.recruitment_config). */
+/** Recruitment -> Configurations, "Hiring request approvals" (owner 2026-11-20; organization_settings.recruitment_config). */
 export interface RecruitmentConfig {
   hrHead: { userId: string | null; backupUserId: string | null };
   director: { userId: string | null; backupUserId: string | null };
@@ -1040,6 +1093,22 @@ export interface RecruitmentConfig {
   directorCtcLevel: number | null;
   /** Days to fill a role opened from an approved request. */
   targetDays: number;
+  /**
+   * Owner 2026-11-20: who may raise a hiring request (they get "Hiring requests" in their sidebar). Set by the Tech
+   * team and admins in the Tech dashboard's HR Configs tab: roles, and people one by one.
+   * Nobody until set.
+   */
+  raisers: { roles: string[]; userIds: string[] };
+  /**
+   * Owner 2026-11-21: the department heads (the spec's "Department head: see own department's requisitions and status;
+   * endorse requisitions"). A head sees the requests raised for their department and may endorse them; endorsing does
+   * not approve anything. Set in the Tech dashboard's HR Configs tab. Departments match ignoring case.
+   */
+  departmentHeads: { department: string; userId: string }[];
+  /** Owner 2026-11-21: the rejection reasons HR picks from (Recruitment -> Configurations). */
+  rejectionReasons: string[];
+  /** Owner 2026-11-21: the offer letter template ({{candidate_name}}, {{role}}, {{ctc}}, {{joining_date}}, …). Empty: the default. */
+  offerLetter: string;
 }
 
 export interface Requisition {
@@ -1081,12 +1150,17 @@ export interface Requisition {
   ageDays: number;
   /** Stage 1: the last requisition for the same role title, when there was one. */
   previous?: { id: string; requisitionNo: string | null; status: RequisitionStatus; createdAt: string } | null;
+  /** The tracker's "candidates in pipeline": people in the position opened from it (null before it is approved). */
+  pipelineCount?: number | null;
+  /** Owner 2026-11-21: the department heads who endorsed it, newest first. */
+  endorsedBy?: string[];
 }
 
 export interface RequisitionApproval {
   id: string;
   level: ApprovalLevel | null;
-  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened";
+  /** "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001. */
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed";
   inPlan: boolean | null;
   reason: string | null;
   byName: string | null;
@@ -1100,13 +1174,19 @@ export interface RequisitionAccess {
   seesAll: boolean;
   /** The levels this person approves at (primary or backup). */
   approverLevels: ApprovalLevel[];
-  /** The approvers are set in Settings (a request cannot be submitted until they are). */
+  /** The approvers are set in Recruitment -> Configurations (a request cannot be submitted until they are). */
   configured: boolean;
+  /** Owner 2026-11-20: this person may raise a hiring request (set in the Tech dashboard). */
+  canRaise?: boolean;
+  /** Owner 2026-11-21: the departments this person heads (lower case): they see those requests and may endorse them. */
+  headOf?: string[];
 }
 
 export interface RequisitionListResponse {
   requisitions: Requisition[];
   access: RequisitionAccess;
+  /** Owner 2026-11-21: the departments that have a head (the form suggests them, so the head sees the request). */
+  departments?: string[];
 }
 export interface RequisitionResponse {
   requisition: Requisition;
@@ -1115,4 +1195,199 @@ export interface RequisitionResponse {
   /** The signed-in person may decide on it now (it waits at their level, and they did not raise it). */
   canDecide: boolean;
   canEdit: boolean;
+  /** Owner 2026-11-20: only the person who raised it may withdraw it, while it is still open (HR only follows it). */
+  canWithdraw?: boolean;
+  /** Owner 2026-11-21: the caller heads the request's department, it waits on the approvers, and they have not endorsed it. */
+  canEndorse?: boolean;
+  /** Owner 2026-11-21 (spec A24): the raiser may confirm a request on hold is still needed. */
+  canConfirmNeeded?: boolean;
+}
+
+// Connected trackers (owner 2026-11-21; HRMS meeting item 5; migration 20261121000002). A Google Sheet or Excel file,
+// by its share link, synced one way into the app: rows into the candidate database, statuses onto pipeline stages. ---
+
+/** The candidate fields a tracker column can fill (the sheet upload's fields). */
+export const TRACKER_FIELDS = [
+  "fullName", "email", "phone", "location", "currentOrganization", "currentDesignation", "role", "totalExp", "relevantExp",
+  "notice", "currentInhand", "expectedInhand", "candidateSource", "sourcingDate", "remark",
+] as const satisfies readonly import("./parse-sheet").SheetField[];
+export type TrackerField = (typeof TRACKER_FIELDS)[number];
+export type TrackerColumnTarget = TrackerField | "extra" | null;
+export const TRACKER_FIELD_LABELS: Record<TrackerField, string> = {
+  fullName: "Candidate name", email: "Email", phone: "Phone", location: "Location", currentOrganization: "Current organisation",
+  currentDesignation: "Current designation", role: "Role (matches an open position)", totalExp: "Total experience",
+  relevantExp: "Relevant experience", notice: "Notice period", currentInhand: "Current in-hand (₹/month)",
+  expectedInhand: "Expected in-hand (₹/month)", candidateSource: "Source / vendor", sourcingDate: "Sourcing date", remark: "Remark",
+};
+export const TRACKER_SYNC_EVERY = ["hourly", "daily", "manual"] as const;
+export type TrackerSyncEvery = (typeof TRACKER_SYNC_EVERY)[number];
+export const TRACKER_SYNC_LABELS: Record<TrackerSyncEvery, string> = { hourly: "Every hour", daily: "Once a day", manual: "Manual (preview before import)" };
+
+/** What a sync did, for the card and the history. */
+export interface TrackerSyncSummary {
+  rowsRead: number;
+  rowsChanged: number;
+  rowsUnchanged: number;
+  rowsSkipped: number;
+  recordsAdded: number;
+  recordsUpdated: number;
+  stageMoves: number;
+  /** Rows whose stage move waits for the next sync (time ran out, or it failed: see `notes`). */
+  stagePending: number;
+  /** Roles with a mapped status but no open position of that title. */
+  rolesWithoutPosition: string[];
+  notes: string[];
+  /** Owner 2026-11-21: rows repeating another row's person and role (the last is used and flagged for review). */
+  duplicateRows?: number;
+  /** "Amit Babu (BMS Operator): rows 4, 12", up to 10. */
+  duplicates?: string[];
+  /** Imported rows whose person the app already had from another sheet or by hand (flagged "already in the database"). */
+  alreadyInDatabase?: number;
+}
+
+export interface TrackerConnection {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  sourceKind: "google_sheet" | "excel_link";
+  tabName: string;
+  headerRow: number;
+  columnMap: Record<string, TrackerColumnTarget>;
+  statusColumn: string | null;
+  statusMap: Record<string, string>;
+  syncEvery: TrackerSyncEvery;
+  active: boolean;
+  sheetId: string | null;
+  syncing: boolean;
+  lastSyncedAt: string | null;
+  lastOk: boolean | null;
+  lastError: string | null;
+  lastSummary: TrackerSyncSummary | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  skippedKeys: string[];
+}
+
+/** Reading a link before saving: its tabs, and the chosen tab's header row, columns and values. */
+export interface TrackerPreview {
+  sourceKind: "google_sheet" | "excel_link";
+  tabs: string[];
+  tab: string;
+  headerRow: number;
+  headers: string[];
+  /** The app's guess for each column (the sheet upload's matching). */
+  guess: Record<string, TrackerField | null>;
+  /** A guess at the column holding the stage, when one looks like it. */
+  statusColumnGuess: string | null;
+  /** The first value seen in each column, for the person to check the matching. */
+  examples: Record<string, string>;
+  rowCount: number;
+  /** How many header rows the tab has (a tracker that starts its columns again lower down has more than one). */
+  blocks: number;
+  /** Each column's distinct values (up to 60; columns with more are left out), for matching statuses to stages. */
+  distinct: Record<string, string[]>;
+}
+
+export interface TrackerImportRow {
+  rowNumber: number;
+  key: string | null;
+  name: string;
+  role: string | null;
+  raw: Record<string, string>;
+  outcome: "new" | "existing" | "unchanged" | "duplicate" | "invalid";
+  issues: string[];
+  selected: boolean;
+  changes: { field: string; before: string | number | null; after: string | number | null }[];
+  stage: string | null;
+}
+
+export interface TrackerImportPreview {
+  token: string;
+  headers: string[];
+  rows: TrackerImportRow[];
+  newCandidates: number;
+  existingCandidates: number;
+  changedRows: number;
+  duplicateRows: number;
+  invalidRows: number;
+}
+
+// The hiring flow after booking (owner 2026-11-21; migration 20261121000003): interview follow-up, scorecards, the
+// offer, joining, the dashboard. ------------------------------------------------------------------------------------
+
+export const INTERVIEW_STATUSES = ["scheduled", "done", "no_show", "cancelled"] as const;
+export type InterviewStatus = (typeof INTERVIEW_STATUSES)[number];
+export const INTERVIEW_STATUS_LABELS: Record<InterviewStatus, string> = { scheduled: "Scheduled", done: "Done", no_show: "No-show", cancelled: "Cancelled" };
+
+/** The skills a scorecard rates 1-5 (owner 2026-11-21, defaults). */
+export const SCORECARD_SKILLS = ["Technical skill", "Communication", "Attitude", "Relevant experience"] as const;
+export const RECOMMENDATIONS = ["proceed", "hold", "reject"] as const;
+export type Recommendation = (typeof RECOMMENDATIONS)[number];
+export const RECOMMENDATION_LABELS: Record<Recommendation, string> = { proceed: "Proceed", hold: "Hold", reject: "Reject" };
+
+export interface Scorecard {
+  id: string;
+  interviewId: string;
+  panelName: string | null;
+  ratings: Record<string, number>;
+  overall: number | null;
+  recommendation: Recommendation | null;
+  comments: string | null;
+  submittedAt: string | null;
+}
+
+export const OFFER_STATUSES = ["pending", "approved", "rejected", "released", "accepted", "declined", "joined", "dropped", "withdrawn"] as const;
+export type OfferStatus = (typeof OFFER_STATUSES)[number];
+export const OFFER_STATUS_LABELS: Record<OfferStatus, string> = {
+  pending: "Awaiting approval", approved: "Approved: ready to release", rejected: "Not approved", released: "Released: awaiting answer",
+  accepted: "Accepted: joining", declined: "Declined", joined: "Joined", dropped: "Dropped before joining", withdrawn: "Withdrawn",
+};
+
+export interface Offer {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  applicationId: string | null;
+  positionId: string | null;
+  positionTitle: string | null;
+  requisitionNo: string | null;
+  /** Rupees per year (CTC). */
+  proposedCtc: number;
+  bandMin: number | null;
+  bandMax: number | null;
+  /** How far above the band's top, in percent (null when within it or no band). */
+  variancePct: number | null;
+  breakup: Record<string, number>;
+  joiningDate: string | null;
+  status: OfferStatus;
+  currentLevel: "hr_head" | "director" | null;
+  currentApproverName: string | null;
+  needsDirector: boolean;
+  letter: string | null;
+  /** Blanks still in the letter ("{{joining_date}}"): release is blocked until there are none. */
+  letterGaps: string[];
+  releasedAt: string | null;
+  responseAt: string | null;
+  responseReason: string | null;
+  joinedAt: string | null;
+  droppedReason: string | null;
+  lastContactAt: string | null;
+  selectedNote: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  events: { action: string; level: string | null; reason: string | null; byName: string | null; at: string }[];
+  /** What the signed-in person may do with it now. */
+  canDecide?: boolean;
+}
+
+/** The dashboard (spec: Today, Roles, Funnel). */
+export interface RecruitmentDashboard {
+  today: {
+    interviews: { id: string; candidateName: string; round: string | null; positionTitle: string | null; at: string; mode: string | null; status: InterviewStatus }[];
+    scorecardsPending: { interviewId: string; candidateName: string; panelName: string | null; round: string | null; at: string }[];
+    waiting: { candidateName: string; positionTitle: string; stageName: string; days: number }[];
+    offersAwaiting: { id: string; candidateName: string; positionTitle: string | null; status: OfferStatus; days: number }[];
+  };
+  roles: { id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string }[];
+  funnel: { column: string; count: number; rejected: number }[];
 }

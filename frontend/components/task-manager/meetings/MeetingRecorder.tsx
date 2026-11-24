@@ -25,8 +25,8 @@ import AttendeesEditor, { type Attendees } from './AttendeesEditor';
  */
 
 export const PIECE_MS = 15_000;
-/** Low bit rate for speech: an hour is ~11 MB. */
-const BITS_PER_SECOND = 24_000;
+/** Low bit rate for speech: an hour is ~11 MB. (Also used by an online call's recording browser, CallRecorder.tsx.) */
+export const BITS_PER_SECOND = 24_000;
 /** Sarvam takes up to 2 hours per recording; stop a little before. */
 const MAX_RECORD_MS = 115 * 60 * 1000;
 // Owner 2026-10-29: 100 MB (Supabase Pro; the bucket limit is set to match)
@@ -60,7 +60,7 @@ type Phase = 'starting' | 'recording' | 'paused' | 'mic_lost' | 'stopping' | 'fi
 type Retry = { kind: 'finish'; force: boolean } | { kind: 'mic' } | { kind: 'file' } | null;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-function pickMime(): string {
+export function pickMime(): string {
     if (typeof MediaRecorder === 'undefined') return '';
     for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']) {
         if (MediaRecorder.isTypeSupported(m)) return m;

@@ -81,8 +81,21 @@ export const REQUISITIONS_STUBS = `
   create table if not exists public.email_action_tokens (id uuid primary key default gen_random_uuid(), token_hash text not null unique, organization_id uuid not null, user_id uuid not null, entity_type text not null, entity_id uuid not null, action text not null, payload jsonb not null default '{}'::jsonb, expires_at timestamptz not null, consumed_at timestamptz, consumed_ip text, result text, created_at timestamptz not null default now());
 `;
 export const REQUISITIONS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261117000003_recruitment_requisitions.sql"), "utf8");
+/** The pipeline's stages as a list HR edits, and the editable WhatsApp update (owner 2026-11-19). */
+export const STAGES_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261119000001_recruitment_stages.sql"), "utf8");
+/** Interviews (owner 2026-11-19): the WhatsApp interview invite in candidate_outreach. */
+export const INTERVIEWS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261119000002_recruitment_interviews.sql"), "utf8");
+/** Hiring-request follow-ups (owner 2026-11-21): the "endorsed" and "still_needed" history entries. */
+export const REQUISITION_FOLLOWUPS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000001_recruitment_requisition_followups.sql"), "utf8");
+/** Connected trackers (owner 2026-11-21): Google Sheet / Excel links synced into the candidate database. */
+export const TRACKERS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000002_candidate_tracker_connections.sql"), "utf8");
+export const TRACKER_PREVIEW_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261122000004_tracker_preview.sql"), "utf8");
+/** The hiring flow after booking (owner 2026-11-21): interviews, scorecards, offers. */
+export const HIRING_FLOW_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000003_recruitment_hiring_flow.sql"), "utf8");
 
-export async function freshDb(options: { resumeFields?: boolean } = {}): Promise<PGlite> {
+export const RESUME_SOURCING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261122000001_resume_sourcing.sql"), "utf8");
+
+export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?: boolean; stages?: boolean; interviews?: boolean; requisitionFollowups?: boolean; trackers?: boolean; hiringFlow?: boolean } = {}): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(STUBS);
   await db.exec(MIGRATION);
@@ -105,6 +118,13 @@ export async function freshDb(options: { resumeFields?: boolean } = {}): Promise
   if (options.resumeFields !== false) await db.exec(CALL_ROUNDS_MIGRATION);
   if (options.resumeFields !== false) await db.exec(JD_LIBRARY_MIGRATION);
   if (options.resumeFields !== false) { await db.exec(REQUISITIONS_STUBS); await db.exec(REQUISITIONS_MIGRATION); }
+  if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_FOLLOWUPS_MIGRATION);
+  if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKERS_MIGRATION);
+  if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKER_PREVIEW_MIGRATION);
+  if (options.resumeFields !== false && options.hiringFlow !== false) await db.exec(HIRING_FLOW_MIGRATION);
+  if (options.resumeFields !== false && options.stages !== false) await db.exec(STAGES_MIGRATION);
+  if (options.resumeFields !== false && options.stages !== false && options.interviews !== false) await db.exec(INTERVIEWS_MIGRATION);
+  if (options.resumeFields !== false && options.resumeSourcing !== false) await db.exec(RESUME_SOURCING_MIGRATION);
   return db;
 }
 

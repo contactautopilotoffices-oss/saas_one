@@ -2,6 +2,7 @@
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     LayoutDashboard, Users, Ticket, Settings, UserCircle, UsersRound,
@@ -98,6 +99,15 @@ const TAB_PRELOADS = [
 
 // Types
 type Tab = 'overview' | 'requests' | 'guest_experience' | 'reports' | 'users' | 'visitors' | 'rooms' | 'diesel' | 'diesel_analytics' | 'electricity' | 'electricity_analytics' | 'cafeteria' | 'settings' | 'profile' | 'units' | 'vendor_revenue' | 'stock' | 'checklist' | 'escalation' | 'ppm' | 'procurement' | 'roster' | 'water' | 'water_analytics' | 'ai_tickets' | 'grievance' | 'assets' | 'tasks' | 'meeting_assistant' | 'petty-cash';
+
+const VALID_PROPERTY_TABS: readonly Tab[] = [
+    'overview', 'requests', 'guest_experience', 'reports', 'users', 'visitors',
+    'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics',
+    'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock',
+    'checklist', 'escalation', 'ppm', 'procurement', 'roster', 'water',
+    'water_analytics', 'ai_tickets', 'grievance', 'assets', 'tasks',
+    'petty-cash', 'meeting_assistant'
+] as const;
 
 interface Property {
     id: string;
@@ -355,10 +365,15 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const propertyId = activePropId || (params?.propertyId as string) || '';
 
     // State
-    const [dashboardTab, setActiveTab] = useState<Tab>('overview');
+    const activeTabFromSearch = searchParams?.get('tab');
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (activeTabFromSearch && VALID_PROPERTY_TABS.includes(activeTabFromSearch as Tab)) {
+            return activeTabFromSearch as Tab;
+        }
+        return 'overview';
+    });
     // Reports tab: the property-wide report (default) or the ticket import history.
     const [reportsView, setReportsView] = useState<'overview' | 'imports'>('overview');
-    const activeTabFromSearch = searchParams?.get('tab');
     const openTab = (dashboardContent !== undefined || dashboardTab === 'petty-cash' || activeTabFromSearch === 'petty-cash') ? 'petty-cash' as Tab : dashboardTab;
     const supabase = useMemo(() => createClient(), []);
     const { getCachedData, setCachedData, invalidateCache } = useDataCache();
@@ -459,14 +474,19 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
         fetchedPropertyId.current = null;
 
         const currentUrl = new URL(window.location.href);
+        const currentTab = openTab || currentUrl.searchParams.get('tab');
+        if (currentTab) {
+            currentUrl.searchParams.set('tab', currentTab);
+        }
+
         if (currentUrl.pathname.includes('/property/')) {
             const newPath = currentUrl.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
-            router.push(newPath + currentUrl.search);
+            router.push(`${newPath}?${currentUrl.searchParams.toString()}`);
         } else {
             currentUrl.searchParams.set('propertyId', id);
-            router.push(currentUrl.pathname + '?' + currentUrl.searchParams.toString());
+            router.push(`${currentUrl.pathname}?${currentUrl.searchParams.toString()}`);
         }
-    }, [orgProperties, membership, router]);
+    }, [orgProperties, membership, router, openTab]);
 
     useEffect(() => {
         if (propertyId && fetchedPropertyId.current !== propertyId) {
@@ -489,8 +509,12 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     // Restore tab from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'reports', 'users', 'visitors', 'rooms', 'diesel', 'diesel_analytics', 'electricity', 'electricity_analytics', 'cafeteria', 'settings', 'profile', 'units', 'vendor_revenue', 'stock', 'checklist', 'roster', 'water', 'water_analytics', 'facility_qr', 'ai_tickets', 'grievance', 'assets', 'tasks', ...(isOpsSuperAdmin ? ['meeting_assistant'] : [])].includes(tab)) {
-            setActiveTab(tab as Tab);
+        if (tab && VALID_PROPERTY_TABS.includes(tab as Tab)) {
+            if (tab === 'meeting_assistant' && !isOpsSuperAdmin) {
+                // ops only
+            } else {
+                setActiveTab(tab as Tab);
+            }
         }
         const filter = searchParams.get('filter');
         if (filter) {
@@ -750,6 +774,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         </p>
                         <div className="space-y-1">
                             <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                            <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
 
                             <button
                                 onClick={() => handleTabChange('users')}
@@ -1216,11 +1241,16 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         {openTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} />}
                         {openTab === 'electricity_analytics' && property && <ElectricityAnalyticsDashboard propertyId={property.id} />}
                         {openTab === 'stock' && property && <StockDashboard propertyId={property.id} initialItemId={searchParams.get('scanItem') ?? undefined} />}
-                        {openTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                        {openTab === 'checklist' && property && (
+                            <SOPDashboard
+                                propertyId={property.id === 'all' ? undefined : property.id}
+                                propertyIds={property.id === 'all' ? (assignedProperties.filter(p => p.id !== 'all').map(p => p.id).length > 0 ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined) : undefined}
+                            />
+                        )}
                         {openTab === 'ppm' && property && (
                             <PPMModule
                                 organizationId={property.organization_id}
-                                propertyId={property.id}
+                                propertyId={property.id === 'all' ? undefined : property.id}
                             />
                         )}
                         {openTab === 'assets' && property && (
@@ -1558,7 +1588,7 @@ const OverviewTab = memo(function OverviewTab({
                 let resolvedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('status', ['resolved', 'closed', 'satisfied', 'pending_validation']);
                 let totalQuery = supabase.from('tickets').select('id', { count: 'exact', head: true });
                 let pendingValQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).eq('status', 'pending_validation');
-                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied")');
+                let urgentOpenQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).in('priority', ['urgent', 'high', 'critical']).not('status', 'in', '("resolved","closed","satisfied","pending_validation")');
                 let slaBreachedQuery = supabase.from('tickets').select('id', { count: 'exact', head: true }).or(`sla_deadline.lt.${new Date().toISOString()},sla_breached.eq.true`).not('status', 'in', '("resolved","closed")');
                 let recentsQuery = supabase.from('tickets').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(5);
 

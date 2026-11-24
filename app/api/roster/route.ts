@@ -75,31 +75,42 @@ export async function GET(request: NextRequest) {
 
         const combinedStaff = [...(registeredStaff || []), ...offlineStaffMapped];
 
-        // Fetch rosters
-        const { data: rosters, error: rosterError } = await supabase
-            .from('staff_rosters')
-            .select(`
-                id,
-                user_id,
-                roster_date,
-                shift_id,
-                is_reliever,
-                relieving_user_id,
-                updated_by,
-                updater:users!staff_rosters_updated_by_fkey ( full_name )
-            `)
-            .eq('property_id', propertyId)
-            .gte('roster_date', startDate)
-            .lte('roster_date', endDate);
+        // Fetch rosters with range pagination to avoid PostgREST 1000-row cap
+        const allRosters: any[] = [];
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+            const { data: page, error: rosterError } = await supabase
+                .from('staff_rosters')
+                .select(`
+                    id,
+                    user_id,
+                    roster_date,
+                    shift_id,
+                    is_reliever,
+                    relieving_user_id,
+                    updated_by,
+                    updater:users!staff_rosters_updated_by_fkey ( full_name )
+                `)
+                .eq('property_id', propertyId)
+                .gte('roster_date', startDate)
+                .lte('roster_date', endDate)
+                .range(from, from + pageSize - 1);
 
-        if (rosterError) {
-            console.error('[GET /api/roster] Roster fetch error:', rosterError);
-            return NextResponse.json({ error: 'Failed to fetch rosters' }, { status: 500 });
+            if (rosterError) {
+                console.error('[GET /api/roster] Roster fetch error:', rosterError);
+                return NextResponse.json({ error: 'Failed to fetch rosters' }, { status: 500 });
+            }
+
+            if (!page || page.length === 0) break;
+            allRosters.push(...page);
+            if (page.length < pageSize) break;
+            from += pageSize;
         }
 
         return NextResponse.json({ 
             staff: combinedStaff,
-            rosters: rosters || []
+            rosters: allRosters
         });
 
     } catch (error) {

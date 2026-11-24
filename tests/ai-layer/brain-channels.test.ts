@@ -432,3 +432,148 @@ describe('voice notes: which assistant is offered the words', () => {
         assert.equal(await offerToBrains(note, { unified: async () => false, tasks: async () => false }), false);
     });
 });
+
+describe('WhatsApp: several quick messages get ONE reply (2026-11-18)', () => {
+    /** A fake inbox: the first calls are "deferred" (a newer message answers), the last one gets the whole batch. */
+    function batching(deps: BrainWhatsAppDeps, w: ReturnType<typeof world>['w'], texts: string[]) {
+        const finished: string[] = [];
+        let n = 0;
+        deps.batch = async () => (++n < texts.length ? { kind: 'deferred' } : { kind: 'batch', texts, messageIds: texts.map((_, i) => `m${i}`), token: 'tok-1' });
+        deps.finishBatch = async token => { w.order.push('finish'); finished.push(token); };
+        return finished;
+    }
+
+    it('three messages typed together: one model turn reading all three lines, one reply', async () => {
+        const model = new ScriptedModel(['You can raise a ticket here, and I can check meeting rooms for you.']);
+        const { w, deps } = world({ model });
+        const texts = ['hi', 'can i raise a ticket here?', 'and book a room?'];
+        const finished = batching(deps, w, texts);
+        const claims = [];
+        for (const t of texts) claims.push(await claimBrain(deps, msg(t)));
+        assert.deepEqual(claims.map(c => c.handled), [true, true, true]);
+        for (const c of claims) if (c.handled) await c.background();
+        assert.equal(model.calls.length, 1);
+        assert.match(model.lastUserText(), /<message>\nhi\ncan i raise a ticket here\?\nand book a room\?\n<\/message>/);
+        assert.equal(w.sent.length, 1, 'one reply, not three');
+        assert.deepEqual(finished, ['tok-1']);
+        assert.deepEqual(w.order.filter(x => x !== 'record'), ['save', 'finish', 'send'], 'the next batch may start only after the thread is saved');
+    });
+
+    it('a batch the brain passes on carries ALL its words to the other bots, and the batch is released', async () => {
+        const { w, deps } = world({ model: new ScriptedModel([call('handoff', { to: 'tasks_assistant', reason: 'tasks' })]) });
+        const finished = batching(deps, w, ['my tasks', 'for today']);
+        await claimBrain(deps, msg('my tasks'));
+        const claim = await claimBrain(deps, msg('for today'));
+        assert.equal(claim.handled, false);
+        assert.equal((claim as { rewriteText?: string }).rewriteText, 'my tasks\nfor today');
+        assert.deepEqual(finished, ['tok-1']);
+        assert.equal(w.sent.length, 0);
+    });
+
+    it('"yes" sent together with another question while a card waits: the card is answered first, then the question, in one reply', async () => {
+        const data = new FakeBrainData();
+        const model = new ScriptedModel([create, 'There are no meeting rooms set up here.']);
+        const { w, deps } = world({ model, data });
+        const first = await claimBrain(deps, msg('AC leaking in cabin 4'));
+        assert.ok(first.handled); await first.background();
+        batching(deps, w, ['yes', 'is the board room free?']);
+        await claimBrain(deps, msg('yes'));
+        const claim = await claimBrain(deps, msg('is the board room free?'));
+        assert.ok(claim.handled); await claim.background();
+        assert.equal(data.created.length, 1, 'the ticket was raised');
+        const reply = w.sent.at(-1)!.text;
+        assert.match(reply, /✅ Ticket TKT-901 raised[\s\S]*\n\nThere are no meeting rooms set up here\./);
+    });
+
+    it('the inbox not available (or failing): every message is answered on its own, as before', async () => {
+        const { w, deps } = world({ model: new ScriptedModel(['Hello!']) });
+        deps.batch = async () => { throw new Error('db down'); };
+        const claim = await claimBrain(deps, msg('hi there'));
+        assert.ok(claim.handled); await claim.background();
+        assert.equal(w.sent.length, 1);
+    });
+});
+
+describe('WhatsApp: two turns saving at once never lose an exchange (2026-11-18)', () => {
+    it('a save that finds the thread changed reads it again and merges, instead of overwriting', async () => {
+        const { w, deps } = world({ model: new ScriptedModel(['You have no open tickets.']) });
+        const key = `${ORG}:${USER}:false`;
+        let conflicts = 0;
+        deps.saveThreadIf = async (o, u, shadow, state, expectedRev) => {
+            const stored = w.threads.get(key) as { rev?: number } | undefined;
+            const rev = stored ? stored.rev ?? 0 : null;
+            if (rev !== expectedRev) { conflicts++; return 'conflict'; }
+            w.threads.set(key, state); return 'ok';
+        };
+        const claim = await claimBrain(deps, msg('any open tickets?'));
+        assert.ok(claim.handled);
+        // Meanwhile another turn of the same person saved its own exchange.
+        w.threads.set(key, { rev: 1, lastActiveAt: NOW.toISOString(), history: [{ role: 'user', text: 'my lan wire is broken', at: NOW.toISOString() }, { role: 'assistant', text: 'Please check before I raise the ticket', at: NOW.toISOString() }] });
+        await claim.background();
+        assert.equal(conflicts, 1);
+        const saved = w.threads.get(key) as { rev: number; history: Array<{ text: string }> };
+        assert.deepEqual(saved.history.map(h => h.text), ['my lan wire is broken', 'Please check before I raise the ticket', 'any open tickets?', 'You have no open tickets.']);
+        assert.equal(saved.rev, 2);
+    });
+
+    it('a store that cannot do a checked save falls back to the plain save', async () => {
+        const { w, deps } = world({ model: new ScriptedModel(['Hello!']) });
+        deps.saveThreadIf = async () => { throw new Error('filter not supported'); };
+        const claim = await claimBrain(deps, msg('hi there'));
+        assert.ok(claim.handled); await claim.background();
+        assert.ok(w.threads.get(`${ORG}:${USER}:false`));
+        assert.equal(w.sent.length, 1);
+    });
+});
+
+describe('WhatsApp: swipe-replies (2026-11-18)', () => {
+    it('a sent reply keeps its WhatsApp id, and a later swipe on it reaches the model with the quoted words', async () => {
+        const model = new ScriptedModel(['Your AC ticket is assigned to Suresh.', 'Okay, noted.']);
+        const { w, deps } = world({ model });
+        deps.sendReplyTracked = async (phone, text) => { w.sent.push({ phone, text }); return { sent: true, messageIds: ['wamid.OUT1'] }; };
+        const first = await claimBrain(deps, msg('status of my ac ticket'));
+        assert.ok(first.handled); await first.background();
+        const saved = w.threads.get(`${ORG}:${USER}:false`) as { history: Array<{ role: string; ids?: string[] }> };
+        assert.deepEqual(saved.history.find(h => h.role === 'assistant')!.ids, ['wamid.OUT1']);
+        const swipe = await claimBrain(deps, msg('who is suresh?', { quotedIds: ['wamid.OUT1'] }));
+        assert.ok(swipe.handled); await swipe.background();
+        assert.match(model.lastUserText(), /replying_to: the person swiped to reply to your message[\s\S]*Your AC ticket is assigned to Suresh\./);
+    });
+
+    it('a swipe-reply is answered on its own, never folded into a batch', async () => {
+        const { deps } = world({ model: new ScriptedModel(['Okay.']) });
+        let asked = 0;
+        deps.batch = async () => { asked++; return { kind: 'unavailable' }; };
+        const claim = await claimBrain(deps, msg('this one', { quotedIds: ['wamid.X'] }));
+        assert.ok(claim.handled);
+        assert.equal(asked, 0);
+    });
+});
+
+// 2026-11-20 (owner: "fix both"): an HR/CRM/IT/Design/Tech login with no property login is served for meeting rooms
+// only, and only while the task assistant answers their tasks, so their task messages reach it exactly as before.
+describe('WhatsApp: a login with no property login, for meeting rooms', () => {
+    const hr = (): ActorContext => ({ ...actor({ propertyIds: [], propertyNames: {} }), roles: ['hr'], roomsOnly: true, roomPropertyIds: [PAREL], roomPropertyNames: { [PAREL]: 'C Mafatlal Chambers' } });
+
+    it('"Tasks through the task assistant" off: left alone, exactly as before', async () => {
+        const model = new ScriptedModel([]);
+        const { w, deps } = world({ actor: hr(), model, settings: brainSettings({ taskEngine: false }) });
+        assert.deepEqual(await claimBrain(deps, msg('book a meeting room at C Mafatlal tomorrow 4 to 5')), { handled: false, why: 'rooms_only_task_engine_off' });
+        assert.equal(model.calls.length, 0);
+        assert.equal(w.sent.length, 0);
+    });
+
+    it('switch on: the brain answers a room question, with only the room tools', async () => {
+        const data = new FakeBrainData(); data.rooms = [{ id: 'r-c1', name: 'Conference room 1', propertyId: PAREL }];
+        const model = new ScriptedModel([call('rooms_list', { property: null }), 'C Mafatlal Chambers has Conference room 1.']);
+        const { w, deps } = world({ actor: hr(), model, data, settings: brainSettings({ taskEngine: true }) });
+        const claim = await claimBrain(deps, msg('which meeting rooms are there'));
+        assert.equal(claim.handled, true);
+        await (claim as { background: () => Promise<void> }).background();
+        const tools = model.calls[0].tools.map(t => t.name);
+        assert.ok(tools.includes('rooms_list') && tools.includes('room_book'));
+        assert.ok(!tools.some(n => n.startsWith('ticket') || n.startsWith('electricity') || n === 'properties_mine'), tools.join(','));
+        assert.match(model.toolResults()[0], /Meeting rooms at C Mafatlal Chambers/);
+        assert.equal(w.sent.length, 1);
+    });
+});

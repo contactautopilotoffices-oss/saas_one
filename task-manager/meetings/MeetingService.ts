@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { TaskDatabaseService } from '../TaskDatabaseService';
 import { isMissingSchema } from '../TaskLinks';
@@ -18,6 +19,8 @@ import { TaskAccessService } from '../TaskAccessService';
 import { health as voiceHealth, identify as voiceIdentify, voiceIdConfig, VOICEPRINT_DIM } from '../voice/VoiceIdClient';
 import { applyNames, segmentsFor, voiceLabels } from './MeetingSpeakers';
 import { mergeCapture, missingFromCapture, reportedSegments, type Capture } from './capture';
+import { OnlineMeetingService } from './OnlineMeetingService';
+import { meetingLinkPath, onlineSetupGaps, parseScheduledFor, roomNameFor, type MeetingKind, type OnlineState } from './online';
 
 /**
  * Meeting Notes → Tasks (owner 2026-10-29). The Tech dashboard's "Meetings" tab.
@@ -45,7 +48,8 @@ export class MeetingError extends Error {
     }
 }
 
-export type MeetingStatus = 'recording' | 'uploaded' | 'transcribing' | 'identifying' | 'extracting' | 'ready' | 'failed' | 'discarded';
+// Owner 2026-11-18: 'scheduled' and 'live' are online meetings before and during the call (see ./online.ts)
+export type MeetingStatus = 'scheduled' | 'live' | 'recording' | 'uploaded' | 'transcribing' | 'identifying' | 'extracting' | 'ready' | 'failed' | 'discarded';
 // LiveVoice ID (2026-11-03): 'identifying' = naming who spoke from the voices people set up, while the audio still exists
 export const PROCESSING: readonly MeetingStatus[] = ['uploaded', 'transcribing', 'identifying', 'extracting'];
 
@@ -59,6 +63,8 @@ interface MeetingRow {
     workspace?: MeetingSpace;
     /** Owner 2026-11-13: what the recording phone reported (absent before migration 20261113000001) */
     capture?: Capture | null;
+    /** Owner 2026-11-18: online meetings (absent before migration 20261118000001 = 'room') */
+    kind?: MeetingKind | null; scheduled_for?: string | null; online?: OnlineState | null;
 }
 /** The phone's account of the recording (heartbeats) lives in ./capture.ts. */
 export type { Capture };
@@ -184,13 +190,20 @@ export class MeetingService {
 
     static async list(userId: string, space: MeetingSpace) {
         await this.sweep().catch(err => console.warn('[MeetingService] sweep failed:', err instanceof Error ? err.message : err));
-        const { data, error } = await supabaseAdmin.from('meeting_notes')
-            .select('id, title, meeting_date, created_by, attendee_ids, extra_names, confidential, status, error, duration_seconds, created_at')
-            .eq('workspace', space)
-            .neq('status', 'discarded').or(`confidential.eq.false,created_by.eq.${userId}`)
-            .order('created_at', { ascending: false }).limit(60);
+        const BASE = 'id, title, meeting_date, created_by, attendee_ids, extra_names, confidential, status, error, duration_seconds, created_at';
+        const query = (cols: string, hideInterviews = true) => {
+            let q = supabaseAdmin.from('meeting_notes').select(cols).eq('workspace', space);
+            // Owner 2026-11-19: interviews made from Recruitment live there only ("hide it"; column from migration 20261119000002)
+            if (hideInterviews) q = q.is('purpose', null);
+            return q.neq('status', 'discarded').or(`confidential.eq.false,created_by.eq.${userId}`)
+                .order('created_at', { ascending: false }).limit(60);
+        };
+        // Owner 2026-11-18: online meetings carry their kind and planned time (columns from migration 20261118000001)
+        let { data, error } = await query(`${BASE}, kind, scheduled_for`);
+        if (error && isMissingSchema(error)) ({ data, error } = await query(`${BASE}, kind, scheduled_for`, false));
+        if (error && isMissingSchema(error)) ({ data, error } = await query(BASE, false));
         if (error) dbFail(error, 'Could not load meetings');
-        const rows = (data ?? []) as Array<Pick<MeetingRow, 'id' | 'title' | 'meeting_date' | 'created_by' | 'attendee_ids' | 'extra_names' | 'confidential' | 'status' | 'error' | 'duration_seconds' | 'created_at'>>;
+        const rows = (data ?? []) as unknown as Array<Pick<MeetingRow, 'id' | 'title' | 'meeting_date' | 'created_by' | 'attendee_ids' | 'extra_names' | 'confidential' | 'status' | 'error' | 'duration_seconds' | 'created_at' | 'kind' | 'scheduled_for'>>;
         const ids = rows.map(r => r.id);
         const [tasksRes, namesRes] = await Promise.all([
             ids.length ? supabaseAdmin.from('meeting_note_tasks').select('meeting_id, status').in('meeting_id', ids).neq('status', 'deleted') : Promise.resolve({ data: [], error: null }),
@@ -209,6 +222,7 @@ export class MeetingService {
             durationSeconds: r.duration_seconds, createdAt: r.created_at, createdByName: nameOf.get(r.created_by) || 'Someone', mine: r.created_by === userId,
             peopleCount: (r.attendee_ids?.length ?? 0) + (r.extra_names?.length ?? 0),
             tasks: counts.get(r.id) ?? { total: 0, sent: 0 },
+            kind: (r.kind ?? 'room') as MeetingKind, scheduledFor: r.scheduled_for ?? null,
         }));
     }
 
@@ -271,6 +285,19 @@ export class MeetingService {
                 // Time on the clock so far (the recorder continues from here after "Continue recording")
                 elapsedSeconds: capture.elapsedSeconds ?? 0,
                 segments: Object.keys(capture.segments ?? {}).length,
+            } : null,
+            // Owner 2026-11-18: online meetings — the link and the call's times (the video is never recorded)
+            // Owner 2026-11-19: false when "Find tasks in this meeting" was unticked
+            findTasks: m.llm?.findTasks !== false,
+            kind: (m.kind ?? 'room') as MeetingKind,
+            scheduledFor: m.scheduled_for ?? null,
+            online: m.kind === 'online' ? {
+                // Owner 2026-11-18: one link for everyone (team straight in, others wait to be let in)
+                joinPath: meetingLinkPath(m.id, m.online?.guestToken),
+                startedAt: m.online?.startedAt ?? null, endedAt: m.online?.endedAt ?? null,
+                problem: m.online?.problem ?? null, joinedCount: m.online?.joined?.length ?? 0,
+                // Stage 2: the guest link and who asked to join through it (never a guest's own key)
+                guests: OnlineMeetingService.guestsView(m),
             } : null,
         };
     }
@@ -340,17 +367,41 @@ export class MeetingService {
 
     // ── recording ─────────────────────────────────────────────────────────────
 
-    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown }, space: MeetingSpace) {
+    /**
+     * Owner 2026-11-18: `kind` 'online' makes a video call with its own link instead of a phone recording; it may be
+     * planned for later (`scheduledFor`, an ISO date-time). It starts as 'scheduled' and goes live when someone joins.
+     */
+    static async create(userId: string, input: { title?: unknown; attendeeIds?: unknown; extraNames?: unknown; confidential?: unknown; kind?: unknown; scheduledFor?: unknown; findTasks?: unknown; purpose?: unknown }, space: MeetingSpace) {
         const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : '';
         if (title.length < 1 || title.length > 150) throw new MeetingError(400, 'Give the meeting a name (up to 150 characters).');
+        const online = input.kind === 'online';
+        let scheduledFor: string | null = null;
+        if (online) {
+            const gaps = onlineSetupGaps();
+            if (gaps.length) throw new MeetingError(503, `Online meetings are not set up yet. ${gaps.join(' ')}`, 'NOT_READY');
+            try { scheduledFor = parseScheduledFor(input.scheduledFor); } catch (e) { throw new MeetingError(400, e instanceof Error ? e.message : 'The meeting time is not valid.'); }
+        }
         const { attendeeIds, extraNames } = await this.checkPeople(input);
-        const { data, error } = await supabaseAdmin.from('meeting_notes').insert({
-            title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
-            meeting_date: todayIST(), status: 'recording', workspace: space,
-        }).select('id').single();
+        // The meeting's date is the planned day (India time) when it is scheduled, else today
+        const meetingDate = scheduledFor ? new Date(Date.parse(scheduledFor) + 330 * 60_000).toISOString().slice(0, 10) : todayIST();
+        const id = randomUUID();
+        // Owner 2026-11-18: the meeting's one link — a secret nobody can guess, made with the meeting
+        const linkSecret = online ? randomBytes(24).toString('base64url') : null;
+        const row = {
+            id, title, created_by: userId, attendee_ids: attendeeIds, extra_names: extraNames, confidential: input.confidential === true,
+            meeting_date: meetingDate, status: online ? 'scheduled' : 'recording', workspace: space,
+            // Owner 2026-11-19: "Find tasks in this meeting" (ticked by default); kept in `llm`, which the notes step keeps
+            ...(input.findTasks === false ? { llm: { findTasks: false } } : {}),
+            ...(online ? { kind: 'online', scheduled_for: scheduledFor, online: { room: roomNameFor(id), guestToken: linkSecret } satisfies OnlineState } : {}),
+        };
+        // Owner 2026-11-19: an interview made from Recruitment is not listed in the Meeting Assistant (`purpose`,
+        // migration 20261119000002; before it, the meeting is made without it and shows in the list as before)
+        const insert = (values: Record<string, unknown>) => supabaseAdmin.from('meeting_notes').insert(values).select('id').single();
+        let { data, error } = await insert(input.purpose === 'interview' ? { ...row, purpose: 'interview' } : row);
+        if (error && input.purpose === 'interview' && isMissingSchema(error)) ({ data, error } = await insert(row));
         if (error || !data) dbFail(error, 'Could not start the meeting');
-        await TaskDatabaseService.logAudit({ eventType: 'meeting_created', actorId: userId, details: { meetingId: data.id, people: attendeeIds.length + extraNames.length } });
-        return { id: data.id as string };
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_created', actorId: userId, details: { meetingId: data.id, people: attendeeIds.length + extraNames.length, kind: online ? 'online' : 'room' } });
+        return { id: data.id as string, joinPath: online ? meetingLinkPath(data.id as string, linkSecret) : null };
     }
 
     /** The recordings already stored for a meeting: folder s00, s01, … — one per continuous recording. */
@@ -414,6 +465,14 @@ export class MeetingService {
     static async uploadUrls(userId: string, id: string, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
         const m = await this.owned(userId, id);
         this.stillRecording(m);
+        return this.pieceUploadUrls(id, input);
+    }
+
+    /**
+     * The upload links themselves, after the caller has checked who may upload. Owner 2026-11-19: also used by an online
+     * call's recording browser (OnlineMeetingService.uploadUrls), so call pieces land exactly where phone pieces do.
+     */
+    static async pieceUploadUrls(id: string, input: { segment?: unknown; from?: unknown; count?: unknown; mimeType?: unknown }) {
         const { segment, seq: from, ext } = this.checkPieceNumbers({ segment: input.segment, seq: input.from, mimeType: input.mimeType });
         const count = Math.min(UPLOAD_URL_BATCH, Math.max(1, Number(input.count) || 1));
         const urls: Array<{ seq: number; path: string; token: string; signedUrl: string }> = [];
@@ -480,7 +539,9 @@ export class MeetingService {
     }
 
     static async discard(userId: string, id: string) {
-        await this.owned(userId, id);
+        const m = await this.owned(userId, id);
+        // Owner 2026-11-18: an online meeting's call and its sound recording are stopped too (the sound is deleted below)
+        if (m.kind === 'online') await OnlineMeetingService.cleanup(m);
         // Deleting removes the transcript and notes too; tasks already sent stay with the people
         const { error } = await supabaseAdmin.from('meeting_notes')
             .update({ status: 'discarded', transcript: null, summary: null, updated_at: new Date().toISOString() }).eq('id', id);
@@ -729,8 +790,10 @@ export class MeetingService {
      * closed. Takes the few meetings that are processing and not currently leased (oldest first), one step each, then
      * the usual sweep. The review screen's polling still works alongside: the lease stops both running the same step.
      */
-    static async tick(limit = 3): Promise<{ advanced: string[]; swept: boolean }> {
+    static async tick(limit = 3): Promise<{ advanced: string[]; swept: boolean; live?: string[] }> {
         const swept = await this.sweep().then(() => true).catch(err => { console.warn('[MeetingService] sweep failed:', err instanceof Error ? err.message : err); return false; });
+        // Owner 2026-11-18: online calls that ended are handed to the steps below once their recordings are saved
+        const live = await OnlineMeetingService.tickLive().catch(err => { console.warn('[MeetingService] live check failed:', err instanceof Error ? err.message : err); return [] as string[]; });
         const { data, error } = await supabaseAdmin.from('meeting_notes').select('id')
             .in('status', PROCESSING as MeetingStatus[]).or(`lease_until.is.null,lease_until.lt.${new Date().toISOString()}`)
             .order('updated_at', { ascending: true }).limit(limit);
@@ -740,7 +803,7 @@ export class MeetingService {
             await this.advance(r.id);
             advanced.push(r.id);
         }
-        return { advanced, swept };
+        return { advanced, swept, live };
     }
 
     /** Moves a processing meeting forward by one step. Safe to call from several polls at once. Never throws. */
@@ -946,7 +1009,10 @@ export class MeetingService {
         }
         // A retry replaces earlier drafts that were never sent
         await supabaseAdmin.from('meeting_note_tasks').delete().eq('meeting_id', m.id).eq('status', 'draft').eq('source', 'ai');
-        if (result.tasks.length) {
+        // Owner 2026-11-19: "Find tasks in this meeting" was unticked — the notes are written the same way (same AI call,
+        // same prompt), only the tasks it found are not kept. Tasks added by hand still work.
+        const findTasks = m.llm?.findTasks !== false;
+        if (findTasks && result.tasks.length) {
             const { error } = await supabaseAdmin.from('meeting_note_tasks').insert(result.tasks.map((t, i) => ({
                 meeting_id: m.id, position: i, title: t.title, note: t.note, owner_name: t.ownerName, owner_user_id: t.ownerUserId, owner_user_ids: t.ownerUserId ? [t.ownerUserId] : [],
                 due_date: t.dueDate, due_time: t.dueTime, quote: t.quote, quote_at_seconds: t.quoteAtSeconds, quote_found: t.quoteFound,
@@ -957,9 +1023,9 @@ export class MeetingService {
         }
         await this.update(m.id, {
             status: 'ready', error: null, summary: result.summary,
-            llm: { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut, failures: result.failures, tasks: result.tasks.length },
+            llm: { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut, failures: result.failures, tasks: findTasks ? result.tasks.length : 0, ...(findTasks ? {} : { findTasks: false }) },
         });
-        await TaskDatabaseService.logAudit({ eventType: 'meeting_ready', details: { meetingId: m.id, tasks: result.tasks.length, model: result.model, provider: m.stt?.provider ?? null } });
+        await TaskDatabaseService.logAudit({ eventType: 'meeting_ready', details: { meetingId: m.id, tasks: findTasks ? result.tasks.length : 0, findTasks, model: result.model, provider: m.stt?.provider ?? null } });
     }
 
     // ── the task list ─────────────────────────────────────────────────────────

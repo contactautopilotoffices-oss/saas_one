@@ -49,8 +49,9 @@ const PRIORITY_COLORS: Record<string, string> = {
     urgent: 'bg-red-500/20 text-red-400',
 };
 
-function getSLAStatus(deadline: string | null, breached: boolean) {
+function getSLAStatus(deadline: string | null, breached: boolean, status?: string) {
     if (breached) return { text: 'Late', color: 'text-red-400' };
+    if (status && ['resolved', 'closed', 'completed'].includes(status.toLowerCase())) return null;
     if (!deadline) return null;
 
     // Ensure deadline is parsed correctly even if it lacks 'Z'
@@ -139,7 +140,7 @@ export default function TicketList({
         <div className="space-y-3">
             {tickets.map((ticket) => {
                 // Show SLA status unless the ticket is pending validation and was completed on time
-                const slaStatus = (ticket.status === 'pending_validation' && !ticket.sla_breached) ? null : getSLAStatus(ticket.sla_deadline, ticket.sla_breached);
+                const slaStatus = (ticket.status === 'pending_validation' && !ticket.sla_breached) ? null : getSLAStatus(ticket.sla_deadline, ticket.sla_breached, ticket.status);
 
                 return (
                     <div
