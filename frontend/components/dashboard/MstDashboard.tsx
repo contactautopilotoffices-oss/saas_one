@@ -8,7 +8,7 @@ import {
     LayoutDashboard, Ticket, Clock, CheckCircle2, AlertCircle, Plus,
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, ChevronLeft, Cog, X,
-    AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets
+    AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets, CalendarDays
 ,
   MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
@@ -47,6 +47,7 @@ const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsMo
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: TabLoading });
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -63,15 +64,16 @@ const TAB_PRELOADS = [
     () => import('@/frontend/components/assets/AssetsModule'),
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/water/WaterDashboard'),
+    () => import('@/frontend/components/roster/RosterDashboard'),
 ];
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm' | 'roster';
 
 const VALID_MST_TABS: readonly Tab[] = [
     'dashboard', 'requests', 'guest_experience', 'create_request', 'visitors',
     'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist',
-    'water', 'grievance', 'assets', 'ppm'
+    'water', 'grievance', 'assets', 'ppm', 'roster'
 ] as const;
 
 interface Property {
@@ -871,6 +873,16 @@ const MstDashboard = () => {
                                 <Wrench className="w-4 h-4" />
                                 Assets
                             </button>
+                            <button
+                                onClick={() => handleTabChange('roster')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'roster'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <CalendarDays className="w-4 h-4" />
+                                Roster Management
+                            </button>
                         </div>
                     </div>
 
@@ -1069,6 +1081,9 @@ const MstDashboard = () => {
                                     propertyName={property.name}
                                     canManage={false}
                                 />
+                            )}
+                            {activeTab === 'roster' && property && (
+                                <RosterDashboard propertyId={property.id} />
                             )}
                             {activeTab === 'grievance' && (
                                 <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />
