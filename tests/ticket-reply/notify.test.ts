@@ -33,7 +33,7 @@ const payload = {
 let sent: Options[];
 beforeEach(() => {
     sent = [];
-    WhatsAppEventProcessor.dispatch = async options => { sent.push(options); };
+    WhatsAppEventProcessor.dispatch = (async (options: any) => { sent.push(options); return []; }) as any;
     admin.from = () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { full_name: 'Rahul Verma' } }) }) }) });
 });
 afterEach(() => {

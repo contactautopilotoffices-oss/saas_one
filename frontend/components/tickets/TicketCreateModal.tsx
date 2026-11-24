@@ -26,6 +26,7 @@ interface TicketCreateModalProps {
     properties?: any[];
     showInternalToggle?: boolean; // shown for all roles except tenant
     showCriticalToggle?: boolean; // shown for ops_super_admin and org_super_admin
+    userRole?: string;
 }
 
 interface Classification {

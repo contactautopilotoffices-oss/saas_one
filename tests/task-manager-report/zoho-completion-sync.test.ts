@@ -110,7 +110,7 @@ beforeEach(() => {
     calls = [];
     zoho = () => ok;
     (supabaseAdmin as unknown as { from: unknown }).from = query;
-    TaskDatabaseService.createTaskAssignment = (async (p: { externalId?: string }) => { imported.push(String(p.externalId)); return {}; }) as typeof TaskDatabaseService.createTaskAssignment;
+    TaskDatabaseService.createTaskAssignment = (async (p: { externalId?: string }) => { imported.push(String(p.externalId)); return {}; }) as unknown as typeof TaskDatabaseService.createTaskAssignment;
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
         const { pathname, search } = new URL(url);
         if (pathname === '/oauth/v2/token') {
