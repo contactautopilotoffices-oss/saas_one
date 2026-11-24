@@ -22,6 +22,7 @@ import {
 } from "../../backend/lib/candidates/requisitions";
 
 import { DEFAULT_REJECTION_REASONS } from "../../backend/lib/candidates/stage-list";
+import { DEFAULT_OUTREACH } from "../../backend/lib/candidates/outreach-settings";
 
 import { freshDb, REQUISITIONS_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -81,7 +82,7 @@ describe("manpower requisitions", () => {
 
     await assert.rejects(saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_HEAD } }), /different person/);
     const saved = await saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR }, directorCtcLevel: 1_000_000, targetDays: 30 });
-    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [] });
+    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [], outreach: DEFAULT_OUTREACH });
     const access = await requisitionAccess(client, HR_HEAD, ORG);
     assert.deepEqual([access.seesAll, access.approverLevels, access.configured], [true, ["hr_head"], true]);
     assert.deepEqual((await requisitionAccess(client, MANAGER, ORG)).approverLevels, []);

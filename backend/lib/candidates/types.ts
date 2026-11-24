@@ -10,6 +10,7 @@
 
 import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
+import type { OutreachSettings } from "./outreach-settings";
 import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
 import type { Stage } from "./stage-list";
@@ -1124,6 +1125,8 @@ export interface RecruitmentConfig {
    * active employees). A role not in the list is raised under "Others".
    */
   hierarchy: { department: string; designations: string[] }[];
+  /** Owner 2026-11-24: the job application form, the outreach templates and automatic outreach (outreach-settings.ts). */
+  outreach: OutreachSettings;
 }
 
 /** The request form's dropdowns, and where they came from. */

@@ -1,0 +1,458 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, Copy, ExternalLink, FileText, Inbox, Link2, Plus, RotateCcw, Send, Trash2 } from 'lucide-react';
+import type { ApplicationEntry } from '@/backend/lib/candidates/applications';
+import type { CampaignSendEntry, CampaignSummary } from '@/backend/lib/candidates/outreach-campaigns';
+import {
+    APPLICATION_FIELD_TYPES, REQUIRED_TARGETS,
+    type ApplicationField, type ApplicationTarget, type OutreachSettings, type OutreachTemplate, type Placeholder,
+} from '@/backend/lib/candidates/outreach-settings';
+import type { Position } from '@/backend/lib/candidates/types';
+import { api, qs } from './api';
+import { formatDate } from './format';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Drawer, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+
+/*
+ * Recruitment → Outreach (owner 2026-11-24, from the 23 Nov HR meeting): bulk and automatic outreach and the job
+ * application form, all HR's to configure ("keep it configurable"):
+ *   Sends            : every bulk or automatic send, with each person's result.
+ *   Applications     : the forms candidates submitted; a position's link for job postings.
+ *   Application form : the questions (and where each answer goes on the record).
+ *   Templates        : the WhatsApp (Meta-approved, through AiSensy) and email messages, with placeholders.
+ *   Automatic        : what happens when a hiring request is approved.
+ */
+
+type Section = 'sends' | 'applications' | 'form' | 'templates' | 'auto';
+const SECTIONS: { id: Section; label: string }[] = [
+    { id: 'sends', label: 'Sends' }, { id: 'applications', label: 'Applications' }, { id: 'form', label: 'Application form' }, { id: 'templates', label: 'Templates' }, { id: 'auto', label: 'Automatic' },
+];
+const TYPE_LABELS: Record<ApplicationField['type'], string> = { text: 'Short answer', textarea: 'Paragraph', number: 'Number', email: 'Email', phone: 'Mobile number', select: 'Choice', date: 'Date', file: 'File (resume)' };
+const STATUS_TONE: Record<CampaignSummary['status'], 'info' | 'success' | 'neutral' | 'warn'> = { queued: 'info', sending: 'info', done: 'success', cancelled: 'neutral' };
+const SEND_TONE: Record<CampaignSendEntry['status'], 'info' | 'success' | 'neutral' | 'warn'> = { queued: 'info', sending: 'info', sent: 'success', failed: 'warn', unknown: 'warn', skipped: 'neutral' };
+
+interface SettingsResponse { settings: OutreachSettings; placeholders: Record<Placeholder, string>; targets: Record<ApplicationTarget, string> }
+
+export default function OutreachView({ orgId }: { orgId: string }) {
+    const [section, setSection] = useState<Section>('sends');
+    return (
+        <div className="space-y-4">
+            <div role="tablist" aria-label="Outreach" className="inline-flex flex-wrap gap-1 rounded-xl bg-surface-elevated p-1 ring-1 ring-inset ring-border-subtle">
+                {SECTIONS.map(s => (
+                    <button key={s.id} type="button" role="tab" aria-selected={section === s.id} onClick={() => setSection(s.id)}
+                        className={`h-8 rounded-lg px-3 text-sm font-semibold transition-colors ${section === s.id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>{s.label}</button>
+                ))}
+            </div>
+            {section === 'sends' && <SendsPanel orgId={orgId} />}
+            {section === 'applications' && <ApplicationsPanel orgId={orgId} />}
+            {(section === 'form' || section === 'templates' || section === 'auto') && <SettingsPanel orgId={orgId} section={section} />}
+        </div>
+    );
+}
+
+// Sends ----------------------------------------------------------------------------------------------------------------
+
+function SendsPanel({ orgId }: { orgId: string }) {
+    const { notify } = useUi();
+    const [list, setList] = useState<CampaignSummary[] | null>(null);
+    const [nonce, setNonce] = useState(0);
+    const [openId, setOpenId] = useState<string | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ campaigns: CampaignSummary[] }>(`/api/candidates/outreach/campaigns${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (!res.ok) { notify(res.error, 'error'); setList([]); return; }
+            setList(res.data.campaigns);
+        });
+        return () => ctrl.abort();
+    }, [orgId, nonce, notify]);
+    return (
+        <section className={`${CARD} overflow-hidden`} aria-label="Sends">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-6">
+                <h2 className="font-display text-base font-semibold text-text-primary">Sends</h2>
+                <p className="text-sm text-text-secondary">Start one from Search: tick the candidates, then <span className="font-semibold">Send message</span>.</p>
+                <button type="button" onClick={() => setNonce(n => n + 1)} className={`${BTN_GHOST} ml-auto h-8`}><RotateCcw className="h-3.5 w-3.5" />Refresh</button>
+            </div>
+            {!list ? <p className="flex items-center gap-2 px-6 pb-5 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
+                : !list.length ? <EmptyState icon={Send} title="Nothing sent yet">Bulk WhatsApp and email sends, and the automatic ones after a hiring request is approved, appear here.</EmptyState>
+                    : (
+                        <ul className="divide-y divide-border-subtle">
+                            {list.map(c => (
+                                <li key={c.id}>
+                                    <button type="button" onClick={() => setOpenId(c.id)} className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left hover:bg-surface-elevated sm:px-6">
+                                        <span className="min-w-0 flex-1 basis-64">
+                                            <span className="flex flex-wrap items-center gap-2">
+                                                <span className="font-semibold text-text-primary">{c.positionTitle ?? 'No position'}</span>
+                                                <Tag tone={STATUS_TONE[c.status]}>{c.status === 'sending' ? 'Sending' : c.status === 'queued' ? 'Queued' : c.status === 'done' ? 'Done' : 'Stopped'}</Tag>
+                                                {c.source === 'auto' && <Tag tone="info">Automatic</Tag>}
+                                            </span>
+                                            <span className="block text-xs text-text-secondary">{[c.whatsappTemplateName && `WhatsApp: ${c.whatsappTemplateName}`, c.emailTemplateName && `Email: ${c.emailTemplateName}`, `${c.total} ${c.total === 1 ? 'person' : 'people'}`, c.createdByName, formatDate(c.createdAt)].filter(Boolean).join(' · ')}</span>
+                                        </span>
+                                        <span className="text-sm tabular-nums text-text-secondary"><span className="font-semibold text-success">{c.counts.sent}</span> sent{c.counts.failed + c.counts.unknown ? <> · <span className="font-semibold text-error">{c.counts.failed + c.counts.unknown}</span> failed</> : null}{c.counts.skipped ? ` · ${c.counts.skipped} skipped` : ''}{c.counts.queued + c.counts.sending ? ` · ${c.counts.queued + c.counts.sending} waiting` : ''}</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+            <CampaignDrawer orgId={orgId} id={openId} onClose={() => setOpenId(null)} onChanged={() => setNonce(n => n + 1)} />
+        </section>
+    );
+}
+
+function CampaignDrawer({ orgId, id, onClose, onChanged }: { orgId: string; id: string | null; onClose: () => void; onChanged: () => void }) {
+    const { notify } = useUi();
+    const [state, setState] = useState<{ campaign: CampaignSummary; sends: CampaignSendEntry[] } | null>(null);
+    const [nonce, setNonce] = useState(0);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        if (!id) return;
+        const ctrl = new AbortController();
+        void api<{ campaign: CampaignSummary; sends: CampaignSendEntry[] }>(`/api/candidates/outreach/campaigns/${encodeURIComponent(id)}${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (!ctrl.signal.aborted && res.ok) setState(res.data);
+        });
+        return () => ctrl.abort();
+    }, [id, orgId, nonce]);
+    const s = state && state.campaign.id === id ? state : null;
+    const act = async (action: 'continue' | 'cancel') => {
+        if (!id) return;
+        setBusy(true);
+        const res = await api<{ waiting?: string }>(`/api/candidates/outreach/campaigns/${encodeURIComponent(id)}`, { json: { orgId, action } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        if (res.data.waiting === 'hours') notify('Automatic sends go out between 9 am and 7 pm IST, Monday to Saturday.', 'info');
+        setNonce(n => n + 1);
+        onChanged();
+    };
+    const open = s && (s.campaign.status === 'queued' || s.campaign.status === 'sending');
+    return (
+        <Drawer open={!!id} onClose={onClose} labelId="campaign-title" title={s ? (s.campaign.positionTitle ?? 'Send') : 'Send'}
+            footer={open ? <>
+                <button type="button" onClick={() => void act('cancel')} disabled={busy} className={`${BTN_GHOST} mr-auto text-error`}>Stop the rest</button>
+                <button type="button" onClick={() => void act('continue')} disabled={busy} className={BTN_PRIMARY}>{busy ? <Spinner /> : <Send className="h-4 w-4" />}Send the next ones</button>
+            </> : undefined}>
+            {!s ? <p className="flex items-center gap-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p> : (
+                <ul className="divide-y divide-border-subtle">
+                    {s.sends.map(x => (
+                        <li key={x.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+                            <span className="min-w-0 flex-1 font-medium text-text-primary">{x.name}</span>
+                            <span className="text-xs text-text-tertiary">{x.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}</span>
+                            <Tag tone={SEND_TONE[x.status]}>{x.status === 'unknown' ? 'Not confirmed' : x.status[0].toUpperCase() + x.status.slice(1)}</Tag>
+                            {x.reason && <p className="basis-full text-xs text-text-secondary">{x.reason}</p>}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </Drawer>
+    );
+}
+
+// Applications ---------------------------------------------------------------------------------------------------------
+
+function ApplicationsPanel({ orgId }: { orgId: string }) {
+    const { notify } = useUi();
+    const [data, setData] = useState<{ applications: ApplicationEntry[]; total: number; form: OutreachSettings['applicationForm'] } | null>(null);
+    const [positions, setPositions] = useState<Position[]>([]);
+    const [positionId, setPositionId] = useState('');
+    const [page, setPage] = useState(1);
+    const [openId, setOpenId] = useState<string | null>(null);
+    const [linkFor, setLinkFor] = useState('');
+    const [link, setLink] = useState<string | null>(null);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ positions: Position[] }>(`/api/candidates/positions${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setPositions(res.data.positions); });
+        return () => ctrl.abort();
+    }, [orgId]);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<NonNullable<typeof data>>(`/api/candidates/applications${qs({ orgId, positionId, page })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (!res.ok) { notify(res.error, 'error'); return; }
+            setData(res.data);
+        });
+        return () => ctrl.abort();
+    }, [orgId, positionId, page, notify]);
+    const makeLink = async () => {
+        const res = await api<{ link: { url: string } }>('/api/candidates/applications', { json: { orgId, action: 'open-link', positionId: linkFor || null } });
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        setLink(res.data.link.url);
+    };
+    const copy = async (text: string) => { try { await navigator.clipboard.writeText(text); notify('Link copied', 'success'); } catch { notify('Copy it from the box.', 'info'); } };
+    const openResume = async (id: string) => {
+        const tab = window.open('about:blank', '_blank');
+        const res = await api<{ url: string }>(`/api/candidates/applications${qs({ orgId, resume: id })}`);
+        if (!res.ok) { tab?.close(); notify(res.error, 'error'); return; }
+        if (tab) tab.location.href = res.data.url;
+    };
+    const current = data?.applications.find(a => a.id === openId) ?? null;
+    return (
+        <div className="space-y-4">
+            <section className={`${CARD} px-4 py-4 sm:px-6`} aria-label="Link for job postings">
+                <h2 className="font-display text-base font-semibold text-text-primary">A link for job postings</h2>
+                <p className="mt-0.5 text-sm text-text-secondary">One link per position, to paste in a LinkedIn or portal post. Everyone who applies through it lands in that position&apos;s pipeline. (WhatsApp and email outreach give each person their own link.)</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <select aria-label="Position for the link" value={linkFor} onChange={e => { setLinkFor(e.target.value); setLink(null); }} className={`${INPUT} h-9 w-auto min-w-[220px]`}>
+                        <option value="">General (no position)</option>
+                        {positions.map(p => <option key={p.id} value={p.id}>{p.title}{p.location ? ` · ${p.location}` : ''}</option>)}
+                    </select>
+                    <button type="button" onClick={() => void makeLink()} className={BTN_SECONDARY}><Link2 className="h-4 w-4" />Get the link</button>
+                </div>
+                {link && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <input readOnly value={link} aria-label="Application link" className={`${INPUT} h-9 min-w-0 flex-1 font-mono text-xs`} onFocus={e => e.currentTarget.select()} />
+                        <button type="button" onClick={() => void copy(link)} className={BTN_SECONDARY}><Copy className="h-4 w-4" />Copy</button>
+                        <a href={link} target="_blank" rel="noopener noreferrer" className={BTN_GHOST}><ExternalLink className="h-4 w-4" />Open</a>
+                    </div>
+                )}
+            </section>
+            <section className={`${CARD} overflow-hidden`} aria-label="Applications received">
+                <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
+                    <h2 className="font-display text-base font-semibold text-text-primary">Applications received{data ? <span className="ml-2 text-sm font-normal tabular-nums text-text-tertiary">{data.total}</span> : null}</h2>
+                    <select aria-label="Filter by position" value={positionId} onChange={e => { setPositionId(e.target.value); setPage(1); }} className={`${INPUT} ml-auto h-8 w-auto min-w-[180px] text-sm`}>
+                        <option value="">All positions</option>
+                        {positions.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                </div>
+                {!data ? <p className="flex items-center gap-2 px-6 pb-5 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
+                    : !data.applications.length ? <EmptyState icon={Inbox} title="No applications yet">Applications from the form&apos;s links appear here, and the person is added (or updated) in Candidates.</EmptyState>
+                        : (
+                            <ul className="divide-y divide-border-subtle">
+                                {data.applications.map(a => (
+                                    <li key={a.id}>
+                                        <button type="button" onClick={() => setOpenId(a.id)} className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left hover:bg-surface-elevated sm:px-6">
+                                            <span className="min-w-0 flex-1 basis-56"><span className="font-semibold text-text-primary">{a.name}</span><span className="block truncate text-xs text-text-secondary">{[a.positionTitle ?? 'General', a.email, a.phone].filter(Boolean).join(' · ')}</span></span>
+                                            {a.hasResume && <Tag icon={FileText}>Resume</Tag>}
+                                            <span className="text-xs text-text-tertiary">{formatDate(a.createdAt)}</span>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                {data && data.total > 30 && (
+                    <div className="flex items-center justify-end gap-2 px-6 py-3">
+                        <button type="button" disabled={page <= 1} onClick={() => setPage(p => p - 1)} className={BTN_GHOST}>Newer</button>
+                        <button type="button" disabled={page * 30 >= data.total} onClick={() => setPage(p => p + 1)} className={BTN_GHOST}>Older</button>
+                    </div>
+                )}
+            </section>
+            <Drawer open={!!current} onClose={() => setOpenId(null)} labelId="application-title" title={current?.name ?? 'Application'} subtitle={current ? `${current.positionTitle ?? 'General'} · ${formatDate(current.createdAt)}` : undefined}
+                footer={current?.hasResume ? <button type="button" onClick={() => void openResume(current.id)} className={BTN_PRIMARY}><FileText className="h-4 w-4" />Open the resume</button> : undefined}>
+                {current && data && (
+                    <dl className="space-y-3 text-sm">
+                        {data.form.fields.filter(f => f.type !== 'file').map(f => (
+                            <div key={f.id}><dt className={LABEL}>{f.label}</dt><dd className="mt-0.5 whitespace-pre-wrap break-words text-text-primary">{current.answers[f.id] === null || current.answers[f.id] === undefined || current.answers[f.id] === '' ? <span className="text-text-tertiary">—</span> : String(current.answers[f.id])}</dd></div>
+                        ))}
+                    </dl>
+                )}
+            </Drawer>
+        </div>
+    );
+}
+
+// Settings: form, templates, automatic ----------------------------------------------------------------------------------
+
+function SettingsPanel({ orgId, section }: { orgId: string; section: 'form' | 'templates' | 'auto' }) {
+    const { notify } = useUi();
+    const [meta, setMeta] = useState<Omit<SettingsResponse, 'settings'> | null>(null);
+    const [saved, setSaved] = useState<OutreachSettings | null>(null);
+    const [draft, setDraft] = useState<OutreachSettings | null>(null);
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<SettingsResponse>(`/api/candidates/outreach/settings${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
+            if (ctrl.signal.aborted) return;
+            if (!res.ok) { notify(res.error, 'error'); return; }
+            setMeta({ placeholders: res.data.placeholders, targets: res.data.targets });
+            setSaved(res.data.settings);
+            setDraft(res.data.settings);
+        });
+        return () => ctrl.abort();
+    }, [orgId, notify]);
+    const dirty = useMemo(() => !!saved && !!draft && JSON.stringify(saved) !== JSON.stringify(draft), [saved, draft]);
+    const save = async () => {
+        if (!draft) return;
+        setBusy(true);
+        const res = await api<{ settings: OutreachSettings }>('/api/candidates/outreach/settings', { method: 'PATCH', json: { orgId, settings: draft } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        setSaved(res.data.settings);
+        setDraft(res.data.settings);
+        notify('Saved', 'success');
+    };
+    if (!draft || !meta) return <p className="flex items-center gap-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>;
+    return (
+        <div className="space-y-4 pb-16">
+            {section === 'form' && <FormEditor value={draft.applicationForm} targets={meta.targets} onChange={applicationForm => setDraft(d => d && { ...d, applicationForm })} />}
+            {section === 'templates' && <TemplatesEditor value={draft.templates} placeholders={meta.placeholders} onChange={templates => setDraft(d => d && { ...d, templates })} />}
+            {section === 'auto' && <AutoEditor value={draft} onChange={setDraft} />}
+            <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-end gap-2 rounded-xl bg-surface/95 px-4 py-2.5 shadow-[var(--w-shadow-hover)] ring-1 ring-border-subtle backdrop-blur">
+                <span className="mr-auto text-sm text-text-secondary">{dirty ? 'Unsaved changes' : 'All changes saved'}</span>
+                <button type="button" onClick={() => setDraft(saved)} disabled={!dirty || busy} className={BTN_GHOST}><RotateCcw className="h-4 w-4" />Discard</button>
+                <button type="button" onClick={() => void save()} disabled={!dirty || busy} className={BTN_PRIMARY}>{busy && <Spinner />}Save</button>
+            </div>
+        </div>
+    );
+}
+
+const slug = (s: string, taken: string[]) => {
+    const base = s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 30) || 'question';
+    let id = base;
+    for (let i = 2; taken.includes(id); i += 1) id = `${base}_${i}`;
+    return id;
+};
+
+function FormEditor({ value, targets, onChange }: { value: OutreachSettings['applicationForm']; targets: Record<ApplicationTarget, string>; onChange: (v: OutreachSettings['applicationForm']) => void }) {
+    const set = (patch: Partial<OutreachSettings['applicationForm']>) => onChange({ ...value, ...patch });
+    const setField = (i: number, patch: Partial<ApplicationField>) => set({ fields: value.fields.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
+    const move = (i: number, by: -1 | 1) => { const fields = [...value.fields]; const [f] = fields.splice(i, 1); fields.splice(i + by, 0, f); set({ fields }); };
+    const used = value.fields.map(f => f.target).filter(Boolean);
+    const locked = (f: ApplicationField) => !!f.target && REQUIRED_TARGETS.includes(f.target);
+    return (
+        <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Application form">
+            <div>
+                <h2 className="font-display text-base font-semibold text-text-primary">Application form</h2>
+                <p className="mt-0.5 text-sm text-text-secondary">The questions candidates answer from the link in WhatsApp, email or a job posting. &quot;Fills on the record&quot; puts the answer on the candidate&apos;s record (so Search finds it); other answers are kept with the application. Name, email and mobile are always asked.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block"><span className={LABEL}>Title</span><input value={value.title} onChange={e => set({ title: e.target.value })} maxLength={120} className={`${INPUT} mt-1`} /></label>
+                <label className="block"><span className={LABEL}>Thank-you message</span><input value={value.thanks} onChange={e => set({ thanks: e.target.value })} maxLength={500} className={`${INPUT} mt-1`} /></label>
+                <label className="block sm:col-span-2"><span className={LABEL}>Introduction</span><textarea value={value.intro} onChange={e => set({ intro: e.target.value })} rows={2} maxLength={1000} className={`${INPUT} mt-1 h-auto py-2`} /></label>
+            </div>
+            <ol className="space-y-2">
+                {value.fields.map((f, i) => (
+                    <li key={f.id} className={`${WELL} grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-end`}>
+                        <label className="block"><span className={LABEL}>Question</span><input value={f.label} onChange={e => setField(i, { label: e.target.value })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
+                        <label className="block"><span className={LABEL}>Answer type</span>
+                            <select value={f.type} disabled={locked(f) || f.target === 'resume'} onChange={e => setField(i, { type: e.target.value as ApplicationField['type'], ...(e.target.value === 'select' && !f.options?.length ? { options: ['Yes', 'No'] } : {}) })} className={`${INPUT} mt-1 h-9`}>
+                                {APPLICATION_FIELD_TYPES.filter(t => t !== 'file' || f.target === 'resume').map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                            </select>
+                        </label>
+                        <label className="block"><span className={LABEL}>Fills on the record</span>
+                            <select value={f.target ?? ''} disabled={locked(f)} onChange={e => setField(i, { target: (e.target.value || null) as ApplicationTarget | null, ...(e.target.value === 'resume' ? { type: 'file' } : f.type === 'file' ? { type: 'text' } : {}) })} className={`${INPUT} mt-1 h-9`}>
+                                <option value="">Kept with the application only</option>
+                                {(Object.keys(targets) as ApplicationTarget[]).filter(t => t === f.target || !used.includes(t)).map(t => <option key={t} value={t}>{targets[t]}</option>)}
+                            </select>
+                        </label>
+                        <div className="flex items-center gap-1">
+                            <label className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-text-secondary"><input type="checkbox" checked={f.required} disabled={locked(f)} onChange={e => setField(i, { required: e.target.checked })} className="h-4 w-4" />Required</label>
+                            <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowUp className="h-4 w-4" /></button>
+                            <button type="button" aria-label="Move down" disabled={i === value.fields.length - 1} onClick={() => move(i, 1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowDown className="h-4 w-4" /></button>
+                            <button type="button" aria-label={`Remove "${f.label}"`} disabled={locked(f)} onClick={() => set({ fields: value.fields.filter((_, j) => j !== i) })} className={`${BTN_GHOST} h-8 w-8 px-0 text-error`} title={locked(f) ? 'Always asked' : undefined}><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                        <label className="block md:col-span-2"><span className={LABEL}>Hint (optional)</span><input value={f.help ?? ''} onChange={e => setField(i, { help: e.target.value || undefined })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
+                        {f.type === 'select' && <label className="block md:col-span-2"><span className={LABEL}>Options, comma-separated</span><input value={(f.options ?? []).join(', ')} onChange={e => setField(i, { options: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} className={`${INPUT} mt-1 h-9`} /></label>}
+                    </li>
+                ))}
+            </ol>
+            <button type="button" onClick={() => set({ fields: [...value.fields, { id: slug('question', value.fields.map(x => x.id)), label: '', type: 'text', required: false, target: null }] })} className={BTN_SECONDARY}><Plus className="h-4 w-4" />Add a question</button>
+            <label className="block"><span className={LABEL}>Consent (the candidate must tick it)</span><textarea value={value.consentText} onChange={e => set({ consentText: e.target.value })} rows={2} maxLength={1000} className={`${INPUT} mt-1 h-auto py-2`} /></label>
+        </section>
+    );
+}
+
+function TemplatesEditor({ value, placeholders, onChange }: { value: OutreachTemplate[]; placeholders: Record<Placeholder, string>; onChange: (v: OutreachTemplate[]) => void }) {
+    const setT = (i: number, patch: Partial<OutreachTemplate>) => onChange(value.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+    const keys = Object.keys(placeholders) as Placeholder[];
+    const add = (channel: 'whatsapp' | 'email') => onChange([...value, channel === 'whatsapp'
+        ? { id: slug('wa_template', value.map(t => t.id)), name: 'New WhatsApp template', channel, campaign: '', params: ['first_name'], body: 'Hello {{first_name}},' }
+        : { id: slug('email_template', value.map(t => t.id)), name: 'New email template', channel, subject: '{{role}} at {{company}}', body: 'Hello {{first_name}},' }]);
+    return (
+        <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Message templates">
+            <div>
+                <h2 className="font-display text-base font-semibold text-text-primary">Message templates</h2>
+                <p className="mt-0.5 text-sm text-text-secondary">WhatsApp and email each have their own. Placeholders: {keys.map(k => <code key={k} title={placeholders[k]} className="mr-1">{`{{${k}}}`}</code>)}. A message whose placeholders cannot all be filled is not sent to that person.</p>
+                <p className="mt-1 text-xs text-text-tertiary">WhatsApp only sends templates Meta approved: submit the wording in AiSensy, then enter its campaign name and its variables {'{{1}}, {{2}}, …'} in order here. The text below is what the preview shows; it must say what the approved template says.</p>
+            </div>
+            <ol className="space-y-3">
+                {value.map((t, i) => (
+                    <li key={t.id} className={`${WELL} space-y-2 px-3 py-3`}>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Tag tone={t.channel === 'whatsapp' ? 'success' : 'info'}>{t.channel === 'whatsapp' ? 'WhatsApp' : 'Email'}</Tag>
+                            <input aria-label="Template name" value={t.name} onChange={e => setT(i, { name: e.target.value })} maxLength={80} className={`${INPUT} h-9 min-w-0 flex-1`} />
+                            <button type="button" aria-label={`Remove ${t.name}`} onClick={() => onChange(value.filter((_, j) => j !== i))} className={`${BTN_GHOST} h-9 w-9 px-0 text-error`}><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                        {t.channel === 'whatsapp' ? (
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                                <label className="block"><span className={LABEL}>AiSensy campaign name</span><input value={t.campaign ?? ''} onChange={e => setT(i, { campaign: e.target.value })} maxLength={120} placeholder="candidate_job_opening_v1" className={`${INPUT} mt-1 h-9 font-mono text-xs`} /></label>
+                                <div><span className={LABEL}>Variables in order</span>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        {(t.params ?? []).map((p, j) => (
+                                            <span key={j} className="inline-flex items-center gap-1">
+                                                <span className="text-xs text-text-tertiary">{`{{${j + 1}}}`}</span>
+                                                <select aria-label={`Variable ${j + 1}`} value={p} onChange={e => setT(i, { params: (t.params ?? []).map((x, k) => (k === j ? e.target.value as Placeholder : x)) })} className={`${INPUT} h-8 w-auto text-xs`}>
+                                                    {keys.map(k => <option key={k} value={k}>{k}</option>)}
+                                                </select>
+                                                <button type="button" aria-label={`Remove variable ${j + 1}`} onClick={() => setT(i, { params: (t.params ?? []).filter((_, k) => k !== j) })} className="text-text-tertiary hover:text-error">×</button>
+                                            </span>
+                                        ))}
+                                        {(t.params?.length ?? 0) < 10 && <button type="button" onClick={() => setT(i, { params: [...(t.params ?? []), 'first_name'] })} className={`${BTN_GHOST} h-8`}><Plus className="h-3.5 w-3.5" />Variable</button>}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <label className="block"><span className={LABEL}>Subject</span><input value={t.subject ?? ''} onChange={e => setT(i, { subject: e.target.value })} maxLength={250} className={`${INPUT} mt-1 h-9`} /></label>
+                        )}
+                        <label className="block"><span className={LABEL}>{t.channel === 'whatsapp' ? 'What the approved template says (preview)' : 'Message'}</span><textarea value={t.body} onChange={e => setT(i, { body: e.target.value })} rows={6} maxLength={5000} className={`${INPUT} mt-1 h-auto py-2 leading-relaxed`} /></label>
+                    </li>
+                ))}
+            </ol>
+            <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => add('whatsapp')} className={BTN_SECONDARY}><Plus className="h-4 w-4" />WhatsApp template</button>
+                <button type="button" onClick={() => add('email')} className={BTN_SECONDARY}><Plus className="h-4 w-4" />Email template</button>
+            </div>
+        </section>
+    );
+}
+
+function AutoEditor({ value, onChange }: { value: OutreachSettings; onChange: (v: OutreachSettings) => void }) {
+    const a = value.auto;
+    const set = (patch: Partial<OutreachSettings['auto']>) => onChange({ ...value, auto: { ...a, ...patch } });
+    const wa = value.templates.filter(t => t.channel === 'whatsapp');
+    const em = value.templates.filter(t => t.channel === 'email');
+    return (
+        <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Automatic outreach">
+            <div>
+                <h2 className="font-display text-base font-semibold text-text-primary">When a hiring request is approved</h2>
+                <p className="mt-0.5 text-sm text-text-secondary">Search the database for the new position (its skills and experience{a.matchLocation ? ', and its location' : ''}) and send the matches the job opening with their own application link. Blacklisted people, and anyone messaged about a job lately, are left out. Messages go between 9 am and 7 pm IST, Monday to Saturday.</p>
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={a.enabled} onChange={e => set({ enabled: e.target.checked })} className="h-4 w-4" />Contact matching candidates automatically</label>
+            <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block"><span className={LABEL}>WhatsApp template</span>
+                    <select value={a.whatsappTemplateId ?? ''} onChange={e => set({ whatsappTemplateId: e.target.value || null })} className={`${INPUT} mt-1`}>
+                        <option value="">No WhatsApp</option>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                </label>
+                <label className="block"><span className={LABEL}>Email template (needs Zoho Mail connected)</span>
+                    <select value={a.emailTemplateId ?? ''} onChange={e => set({ emailTemplateId: e.target.value || null })} className={`${INPUT} mt-1`}>
+                        <option value="">No email</option>{em.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                </label>
+                <label className="block"><span className={LABEL}>At most this many people per request</span><input type="number" min={1} max={500} value={a.maxPerRequest} onChange={e => set({ maxPerRequest: Math.max(1, Math.min(500, Number(e.target.value) || 1)) })} className={`${INPUT} mt-1`} /></label>
+                <label className="block"><span className={LABEL}>Skip anyone messaged in the last (days)</span><input type="number" min={0} max={365} value={a.skipContactedDays} onChange={e => set({ skipContactedDays: Math.max(0, Math.min(365, Number(e.target.value) || 0)) })} className={`${INPUT} mt-1`} /></label>
+            </div>
+            <label className="inline-flex items-center gap-2 text-sm text-text-primary"><input type="checkbox" checked={a.matchLocation} onChange={e => set({ matchLocation: e.target.checked })} className="h-4 w-4" />Only people in the role&apos;s location (or willing to move there)</label>
+            <label className="block max-w-md"><span className={LABEL}>Company name in messages ({'{{company}}'})</span><input value={value.companyName} onChange={e => onChange({ ...value, companyName: e.target.value })} maxLength={120} className={`${INPUT} mt-1`} /></label>
+        </section>
+    );
+}
+
+/** The bulk send dialog's data, loaded once per opening. */
+export function useOutreachChoices(orgId: string, open: boolean) {
+    const [state, setState] = useState<{ settings: OutreachSettings; mailboxes: { id: string; address: string }[]; positions: Position[] } | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    useEffect(() => {
+        if (!open) return;
+        const ctrl = new AbortController();
+        const signal = ctrl.signal;
+        void Promise.all([
+            api<SettingsResponse>(`/api/candidates/outreach/settings${qs({ orgId })}`, { signal }),
+            api<{ mailboxes: { id: string; address: string }[] }>(`/api/candidates/outreach/campaigns${qs({ orgId })}`, { signal }),
+            api<{ positions: Position[] }>(`/api/candidates/positions${qs({ orgId })}`, { signal }),
+        ]).then(([s, c, p]) => {
+            if (signal.aborted) return;
+            if (!s.ok) { setError(s.error); return; }
+            setState({ settings: s.data.settings, mailboxes: c.ok ? c.data.mailboxes : [], positions: p.ok ? p.data.positions : [] });
+        });
+        return () => ctrl.abort();
+    }, [open, orgId]);
+    return { state, error };
+}

@@ -351,6 +351,22 @@ Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only
   ```
 * `{{1}}` manager's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` approved / rejected / sent back for changes / put on hold / taken off hold / approved in plan by the HR Head · `{{5}}` the reason, or "-"
 
+#### Template: Job opening, with the application form — owner 2026-11-24
+The default WhatsApp template for bulk and automatic outreach (Recruitment → Outreach → Templates). HR can add others there: each names its AiSensy campaign and the order of its variables.
+* **Template Name**: `candidate_job_opening_v1`
+* **Category**: MARKETING (it invites someone to apply) · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  We at Autopilot Offices found your profile a good fit for the {{2}} role in {{3}}.
+
+  If you are interested, please apply here: {{4}}
+
+  Autopilot Offices Recruitment Team
+  ```
+* `{{1}}` first name · `{{2}}` role · `{{3}}` location · `{{4}}` the candidate's own application form link
+
 #### Template: Hiring request update (for your information) — owner 2026-11-24
 Sent to the department head, the HR Head and the Director when a request is raised and when it is decided (not to the person who decided, and not to the approver it now waits on: they get the "awaiting" message). Campaign: `AISENSY_REQUISITION_UPDATE_CAMPAIGN`; unset, these go by email and in-app only.
 * **Template Name**: `requisition_update_v1`

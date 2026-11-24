@@ -63,6 +63,11 @@ export interface NotifyDeps {
   decisionLink: (orgId: string, requisition: Requisition, approverId: string, level: RequisitionLevel) => Promise<string | null>;
   /** Stops every unused decision link for this request (before new ones are issued). Optional: tests leave it out. */
   revokeLinks?: (requisitionId: string) => Promise<void>;
+  /**
+   * Owner 2026-11-24: an approved request opened a role: match the database and queue the job opening to the matches
+   * (when HR switched automatic outreach on). Optional: tests leave it out.
+   */
+  autoOutreach?: (orgId: string, requisition: Requisition) => Promise<void>;
   /** Owner 2026-11-24: the in-app notification (the bell, and a push where the person allowed it). Optional: tests record it. */
   notifyInApp?: (orgId: string, userIds: string[], note: { title: string; message: string; deepLink: string }) => Promise<void>;
   /** Extra recipients from the Omnichannel matrix for an event key. */
@@ -115,6 +120,20 @@ export function defaultNotifyDeps(): NotifyDeps {
     async revokeLinks(requisitionId) {
       const { revokeTokensForEntity } = await import("@/backend/lib/emailActions/tokens");
       await revokeTokensForEntity(TOKEN_ENTITY, requisitionId);
+    },
+    async autoOutreach(orgId, requisition) {
+      const [{ getCandidatesAdmin }, campaigns] = await Promise.all([import("./access"), import("./outreach-campaigns")]);
+      const admin = getCandidatesAdmin();
+      const campaign = await campaigns.createAutoCampaign(admin, orgId, requisition);
+      if (!campaign) return;
+      // The first batch goes after the approver's page has its answer; the hourly job sends the rest.
+      const run = () => campaigns.processCampaign(admin, orgId, campaign.id, campaigns.defaultCampaignSenders(admin, orgId)).then(() => undefined, (e) => console.error("[candidates] auto outreach first batch failed", e));
+      try {
+        const { after } = await import("next/server");
+        after(run);
+      } catch {
+        await run();
+      }
     },
     async notifyInApp(orgId, userIds, note) {
       if (!userIds.length) return;
@@ -423,7 +442,16 @@ export function requisitionNotifier(client: SupabaseClient, orgId: string, deps:
     }
     else if (event.kind === "director_informed") await notifyDirectorInformed(client, orgId, deps, event.requisition, event.directorId);
     else if (event.kind === "department_head") await notifyDepartmentHead(client, orgId, deps, event.requisition, event.headId);
-    else if (event.kind === "role_opened") await notifyRoleOpened(client, orgId, deps, event.requisition);
+    else if (event.kind === "role_opened") {
+      await notifyRoleOpened(client, orgId, deps, event.requisition);
+      if (deps.autoOutreach) {
+        try {
+          await deps.autoOutreach(orgId, event.requisition);
+        } catch (error) {
+          console.error("[candidates] automatic outreach failed", error);
+        }
+      }
+    }
     else if (event.kind === "still_needed") await notifyStillNeeded(client, orgId, deps, event.requisition, event.approverId, event.note);
   };
 }

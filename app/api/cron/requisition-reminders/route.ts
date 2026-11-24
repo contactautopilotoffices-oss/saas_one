@@ -4,6 +4,7 @@ import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { runRequisitionReminders } from "@/backend/lib/candidates/requisition-notify";
 import { defaultFlowDeps, organisationsWithFlow, runInterviewJobs, runOfferJobs } from "@/backend/lib/candidates/hiring";
 import { organisationsWithWaiting } from "@/backend/lib/candidates/requisitions";
+import { defaultCampaignSenders, organisationsWithOpenCampaigns, processOpenCampaigns } from "@/backend/lib/candidates/outreach-campaigns";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -51,5 +52,15 @@ export async function GET(request: NextRequest) {
       console.error(`[candidates] hiring follow-ups failed for ${orgId}`, error);
     }
   }
-  return NextResponse.json({ ok: true, ...totals, ms: Date.now() - started });
+  // Owner 2026-11-24: bulk and automatic outreach still queued get their next batches (automatic ones in working hours).
+  let outreachSent = 0;
+  for (const orgId of await organisationsWithOpenCampaigns(admin)) {
+    if (Date.now() - started > 55_000) break;
+    try {
+      outreachSent += await processOpenCampaigns(admin, orgId, defaultCampaignSenders(admin, orgId), started + 55_000);
+    } catch (error) {
+      console.error(`[candidates] outreach batches failed for ${orgId}`, error);
+    }
+  }
+  return NextResponse.json({ ok: true, ...totals, outreachSent, ms: Date.now() - started });
 }

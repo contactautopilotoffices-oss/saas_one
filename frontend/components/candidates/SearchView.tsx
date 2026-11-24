@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleAlert, Download, ListFilter, Sparkles, X } from 'lucide-react';
+import { CircleAlert, Download, ListFilter, Send, Sparkles, X } from 'lucide-react';
 import {
     allKeywordTerms, blankFields, EMPTY_FILTERS, filterChips, hasActiveFilter, SORT_LABELS, SORTS,
     type ConflictChoice, type FieldAvailability, type FilterResponse, type FilterSort, type PreferredItem, type SearchFilters, type UnderstandResponse,
@@ -10,6 +10,7 @@ import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type Position, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
 import { api, type ApiResult } from './api';
+import BulkOutreachDialog from './BulkOutreachDialog';
 import CandidateDetails from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import type { PanelToggleVariant } from '@/frontend/components/ui/PanelToggle';
@@ -372,6 +373,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
         downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(pickedRecords));
         notify(`${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
     };
+    const [bulkSend, setBulkSend] = useState(false);
     // Owner 2026-11-15: "Others" needs a remark; one remark covers every ticked record.
     const [bulkRemark, setBulkRemark] = useState<RecordStatus | null>(null);
     const bulkStatus = async (status: RecordStatus, remark: string | null = null) => {
@@ -403,6 +405,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
     return (
         <div className="space-y-4">
             {statusRemarkDialog}
+            <BulkOutreachDialog orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} open={bulkSend} onClose={() => setBulkSend(false)} />
             <RemarkDialog
                 open={bulkRemark !== null} required busy={bulkBusy}
                 title={bulkRemark ? `${formatCount(pickedRecords.length)} ${pickedRecords.length === 1 ? 'candidate' : 'candidates'}: ${STATUS_LABELS[bulkRemark]}` : ''}
@@ -587,6 +590,8 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                                 <>
                                     {bulkBusy && <Spinner className="h-3.5 w-3.5 text-white/80" />}
                                     <AddToPositionSelect orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} disabled={bulkBusy} onAdded={onDataChanged} dark />
+                                    {/* Owner 2026-11-24: bulk WhatsApp / email with the application form link */}
+                                    <button type="button" onClick={() => setBulkSend(true)} disabled={bulkBusy} className="inline-flex h-8 items-center gap-x-1.5 rounded-lg border border-white/40 px-3 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"><Send className="h-4 w-4" />Send message</button>
                                     <select
                                         aria-label="Set the status of the selected candidates"
                                         value=""

@@ -33,6 +33,7 @@ import { namesOf, type Actor } from "./actions";
 import { CANDIDATE_ACCESS_ROLES } from "./config";
 import { DEFAULT_REJECTION_REASONS } from "./stage-list";
 import { EMPTY_FILTERS } from "./filters";
+import { DEFAULT_OUTREACH, SettingsError, toOutreachSettings, validateOutreachSettings, type OutreachSettings } from "./outreach-settings";
 import { createPosition } from "./positions";
 import { CandidateActionError } from "./records";
 import {
@@ -94,7 +95,7 @@ export function workingDaysBetween(from: Date, to: Date): number {
 
 // Settings ------------------------------------------------------------------------------------------------------------
 
-const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [] };
+const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [], outreach: DEFAULT_OUTREACH };
 
 const uuidOrNull = z.string().regex(UUID).nullable().optional();
 const ConfigInput = z.object({
@@ -121,7 +122,45 @@ function toConfig(raw: unknown): RecruitmentConfig {
     rejectionReasons: toReasons(r.rejectionReasons),
     offerLetter: typeof r.offerLetter === "string" ? r.offerLetter.slice(0, 20_000) : "",
     hierarchy: toHierarchy(r.hierarchy),
+    outreach: toOutreachSettings(r.outreach),
   };
+}
+
+/**
+ * Owner 2026-11-24: saves the outreach settings (Recruitment → Outreach: the application form, the message templates,
+ * automatic outreach), HR's to change. Recorded in the history of changes.
+ */
+export async function saveOutreachSettings(client: SupabaseClient, orgId: string, body: unknown, by?: Actor): Promise<OutreachSettings> {
+  let outreach: OutreachSettings;
+  try {
+    outreach = validateOutreachSettings(body);
+  } catch (error) {
+    if (error instanceof SettingsError) throw new CandidateActionError(400, error.message);
+    throw error;
+  }
+  const current = await loadRecruitmentConfig(client, orgId);
+  const next: RecruitmentConfig = { ...current, outreach };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  if (by && JSON.stringify(current.outreach) !== JSON.stringify(outreach)) {
+    const parts = [
+      JSON.stringify(current.outreach.applicationForm) !== JSON.stringify(outreach.applicationForm) ? `application form (${outreach.applicationForm.fields.length} questions)` : null,
+      JSON.stringify(current.outreach.templates) !== JSON.stringify(outreach.templates) ? `message templates (${outreach.templates.length})` : null,
+      JSON.stringify(current.outreach.auto) !== JSON.stringify(outreach.auto) ? `automatic outreach ${outreach.auto.enabled ? "on" : "off"}` : null,
+      current.outreach.companyName !== outreach.companyName ? `company name "${outreach.companyName}"` : null,
+    ].filter(Boolean);
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({
+      organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: `Outreach: ${parts.join(" · ") || "saved"}`.slice(0, 2000),
+      before: { outreach: current.outreach }, after: { outreach }, created_at: now,
+    });
+    if (logError && !missingRelation(logError)) console.error("[candidates] outreach settings: the change was not recorded", logError);
+  }
+  return outreach;
 }
 
 // The company hierarchy for the request form (owner 2026-11-24) ----------------------------------------------------------
@@ -531,6 +570,7 @@ export async function saveRecruitmentConfig(client: SupabaseClient, orgId: strin
     rejectionReasons: current.rejectionReasons,
     offerLetter: current.offerLetter,
     hierarchy: current.hierarchy,
+    outreach: current.outreach,
   };
   for (const level of APPROVAL_LEVELS) {
     const s = next[level === "hr_head" ? "hrHead" : "director"];
