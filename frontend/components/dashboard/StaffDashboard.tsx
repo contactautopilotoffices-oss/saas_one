@@ -40,6 +40,7 @@ const DieselStaffDashboard = dynamic(() => import('@/frontend/components/diesel/
 const ElectricityStaffDashboard = dynamic(() => import('@/frontend/components/electricity/ElectricityStaffDashboard'), { loading: TabLoading });
 const VMSAdminDashboard = dynamic(() => import('@/frontend/components/vms/VMSAdminDashboard'), { loading: TabLoading });
 const TenantTicketingDashboard = dynamic(() => import('@/frontend/components/tickets/TenantTicketingDashboard'), { loading: TabLoading });
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 const SettingsView = dynamic(() => import('./SettingsView'), { loading: TabLoading });
 const TicketFlowMap = dynamic(() => import('@/frontend/components/ops/TicketFlowMap'), { loading: TabLoading });
 const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboard'), { loading: TabLoading });
@@ -139,6 +140,7 @@ const StaffDashboard = () => {
         return 'dashboard';
     });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
+    const [showCreateTicketModal, setShowCreateTicketModal] = useState(false);
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState('');
@@ -150,7 +152,7 @@ const StaffDashboard = () => {
     const [userRole, setUserRole] = useState('Staff Professional');
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKeyPrefix = `staff-${propertyId}`;
 
     // Edit Modal State
@@ -250,6 +252,11 @@ const StaffDashboard = () => {
     // Helper to change tab with URL persistence
     const handleTabChange = (tab: Tab, filter?: 'all' | 'active' | 'completed') => {
         if (dashboardContent !== undefined) { navigateDashboard(tab); setSidebarOpen(false); return; }
+        if (tab === 'create_request') {
+            setShowCreateTicketModal(true);
+            setSidebarOpen(false);
+            return;
+        }
         setActiveTab(tab);
         if (filter) {
             setRequestFilter(filter);
@@ -565,7 +572,7 @@ const StaffDashboard = () => {
                     {showQuickActions && (
                         <div className="grid grid-cols-1 gap-2">
                             <button
-                                onClick={() => handleTabChange('create_request')}
+                                onClick={() => setShowCreateTicketModal(true)}
                                 className="w-full flex items-center gap-2.5 px-3 py-2 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border border-border group shadow-sm"
                             >
                                 <div className="w-7 h-7 bg-primary/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
@@ -895,6 +902,7 @@ const StaffDashboard = () => {
                                     propertyId={propertyId}
                                     onTabChange={handleTabChange}
                                     filter={requestFilter}
+                                    onNewRequest={() => setShowCreateTicketModal(true)}
                                     onFilterChange={(newFilter) => {
                                         setRequestFilter(newFilter);
                                         const url = new URL(window.location.href);
@@ -903,16 +911,20 @@ const StaffDashboard = () => {
                                     }}
                                 />
                             )}
-                            {activeTab === 'create_request' && property && user && (
-                                <TenantTicketingDashboard
-                                    propertyId={property.id}
-                                    organizationId={property.organization_id || ''}
-                                    user={{ id: user.id, full_name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Staff' }}
-                                    propertyName={property.name}
-                                    isStaff={true}
-                                    userRole={userRole}
-                                    showInternalToggle={userRole !== 'Client' && userRole?.toLowerCase() !== 'tenant'}
-                                />
+                            {activeTab === 'create_request' && (
+                                <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center bg-card border border-border rounded-2xl max-w-lg mx-auto my-8 space-y-4 shadow-sm">
+                                    <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto">
+                                        <Plus className="w-7 h-7" />
+                                    </div>
+                                    <h3 className="text-lg font-bold text-text-primary">Create New Service Request</h3>
+                                    <p className="text-xs text-text-secondary">Open the ticket creation popup to quickly raise and assign requests without full page refresh.</p>
+                                    <button
+                                        onClick={() => setShowCreateTicketModal(true)}
+                                        className="px-6 py-3 bg-primary text-text-inverse font-bold text-xs uppercase tracking-wider rounded-xl shadow-md hover:opacity-95 transition-all flex items-center gap-2"
+                                    >
+                                        <Plus className="w-4 h-4" /> Open Request Form
+                                    </button>
+                                </div>
                             )}
                             {activeTab === 'flow-map' && (
                                 <TicketFlowMap propertyId={propertyId} />
@@ -1083,6 +1095,26 @@ const StaffDashboard = () => {
                 onClose={() => setShowSignOutModal(false)}
                 onConfirm={signOut}
             />
+            {property && (
+                <TicketCreateModal
+                    isOpen={showCreateTicketModal}
+                    onClose={() => setShowCreateTicketModal(false)}
+                    propertyId={property.id}
+                    organizationId={property.organization_id || ''}
+                    showInternalToggle={true}
+                    showCriticalToggle={false}
+                    userRole={userRole}
+                    onSuccess={(ticket) => {
+                        fetchTickets();
+                        invalidateCache('tickets-');
+                        invalidateCache('spoc-dashboard-');
+                        if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                        }
+                    }}
+                />
+            )}
             <ShiftToast
                 message={toast.message}
                 type={toast.type}
@@ -1309,7 +1341,7 @@ const ProjectsTab = () => (
 );
 
 // Requests Tab
-const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick, userId, isLoading, propertyName, userName, onEditClick, onDeleteClick, userRole = '', propertyId, onTabChange, filter = 'all', onFilterChange }: { activeTickets?: any[], completedTickets?: any[], onTicketClick?: (id: string) => void, userId: string, isLoading: boolean, propertyName?: string, userName?: string, onEditClick?: (e: React.MouseEvent, t: Ticket) => void, onDeleteClick?: (e: React.MouseEvent, id: string) => void, userRole?: string, propertyId?: string, onTabChange?: (tab: Tab) => void, filter?: 'all' | 'active' | 'completed' | 'assigned_to_me' | 'completed_by_me' | 'raised_by_me', onFilterChange?: (filter: any) => void }) => {
+const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick, userId, isLoading, propertyName, userName, onEditClick, onDeleteClick, userRole = '', propertyId, onTabChange, filter = 'all', onFilterChange, onNewRequest }: { activeTickets?: any[], completedTickets?: any[], onTicketClick?: (id: string) => void, userId: string, isLoading: boolean, propertyName?: string, userName?: string, onEditClick?: (e: React.MouseEvent, t: Ticket) => void, onDeleteClick?: (e: React.MouseEvent, id: string) => void, userRole?: string, propertyId?: string, onTabChange?: (tab: Tab) => void, filter?: 'all' | 'active' | 'completed' | 'assigned_to_me' | 'completed_by_me' | 'raised_by_me', onFilterChange?: (filter: any) => void, onNewRequest?: () => void }) => {
 
     const getFilteredTickets = () => {
         const uId = userId || '';
@@ -1372,6 +1404,14 @@ const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick,
                             className="flex items-center justify-center gap-2 px-4 py-2 bg-primary/10 text-primary text-xs font-bold rounded-xl border border-primary/20 hover:bg-primary/20 transition-all active:scale-[0.98]"
                         >
                             <Activity className="w-4 h-4" /> <span>Live Flow Map</span>
+                        </button>
+                    )}
+                    {onNewRequest && (
+                        <button
+                            onClick={onNewRequest}
+                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-primary text-text-inverse text-xs font-bold rounded-xl shadow-sm hover:opacity-95 transition-all active:scale-[0.98]"
+                        >
+                            <Plus className="w-4 h-4" /> <span>New Request</span>
                         </button>
                     )}
                 </div>

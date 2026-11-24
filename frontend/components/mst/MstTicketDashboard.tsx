@@ -124,7 +124,7 @@ export default function MstTicketDashboard({
             setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'paused' } : t));
         } else if (action === 'complete') {
             setActiveTicket(null);
-            setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'completed' } : t));
+            setAllTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'resolved' } : t));
         }
 
         try {

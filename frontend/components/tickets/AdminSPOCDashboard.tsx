@@ -585,14 +585,34 @@ export default function AdminSPOCDashboard({
                         </button>
                     </div>
 
-                    {/* Manual Assignment — hidden on mobile */}
-                    <div className="hidden lg:block bg-white border border-slate-100 rounded-[24px] p-5 shadow-sm">
-                        <h2 className="text-xs font-black text-slate-400 mb-4 uppercase tracking-widest">Manual Assignment</h2>
+                    {/* Manual Assignment / Reassign — visible on mobile and desktop */}
+                    <div id="manual-assignment-box" className="block bg-white border border-slate-100 rounded-[24px] p-5 shadow-sm scroll-mt-24">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest">Manual Assignment / Reassign</h2>
+                            {selectedTicket && (
+                                <button
+                                    onClick={() => { setSelectedTicket(null); setAssignTo(''); }}
+                                    className="text-[11px] font-bold text-slate-400 hover:text-slate-600 flex items-center gap-1"
+                                >
+                                    <X className="w-3.5 h-3.5" /> Clear
+                                </button>
+                            )}
+                        </div>
                         {selectedTicket ? (
                             <div className="space-y-4">
                                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">Assigning Ticket</p>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase">
+                                            {selectedTicket.assignee ? 'Reassigning Ticket' : 'Assigning Ticket'}
+                                        </p>
+                                        <span className="text-[10px] font-black text-slate-400">{selectedTicket.ticket_number}</span>
+                                    </div>
                                     <p className="text-sm font-bold text-slate-900 line-clamp-2">{selectedTicket.title}</p>
+                                    {selectedTicket.assignee?.full_name && (
+                                        <p className="text-[11px] text-slate-500 mt-1">
+                                            Current: <span className="font-semibold text-slate-700">{selectedTicket.assignee.full_name}</span>
+                                        </p>
+                                    )}
                                 </div>
                                 <select
                                     value={assignTo}
@@ -611,13 +631,14 @@ export default function AdminSPOCDashboard({
                                     disabled={!assignTo || actionLoading === 'assign'}
                                     className="w-full py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-50 shadow-lg shadow-slate-200"
                                 >
-                                    {actionLoading === 'assign' ? 'Assigning...' : 'Force Assign'}
+                                    {actionLoading === 'assign' ? 'Assigning...' : (selectedTicket.assignee ? 'Confirm Reassign' : 'Force Assign')}
                                 </button>
                             </div>
                         ) : (
                             <div className="text-center py-8 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
                                 <User className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                                <p className="text-xs font-bold text-slate-400">Select a ticket to assign</p>
+                                <p className="text-xs font-bold text-slate-600">Select a ticket to assign or reassign</p>
+                                <p className="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto">Tap &quot;Assign&quot; on any ticket to assign or reassign a resolver</p>
                             </div>
                         )}
                     </div>
@@ -698,6 +719,26 @@ export default function AdminSPOCDashboard({
                                                         {sla.text}
                                                     </span>
                                                 )}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setSelectedTicket(ticket);
+                                                        setAssignTo('');
+                                                        const el = document.getElementById('manual-assignment-box');
+                                                        if (el) {
+                                                            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                                        }
+                                                    }}
+                                                    className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition-colors flex items-center gap-1 ${
+                                                        selectedTicket?.id === ticket.id
+                                                            ? 'bg-slate-900 text-white'
+                                                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                                                    }`}
+                                                    title={ticket.assignee ? 'Reassign resolver' : 'Assign resolver'}
+                                                >
+                                                    <User className="w-2.5 h-2.5" />
+                                                    {ticket.assignee ? 'Reassign' : 'Assign'}
+                                                </button>
                                                 <button
                                                     onClick={(e) => handleDeleteTicket(e, ticket.id)}
                                                     className="p-1 text-slate-300 hover:text-rose-500 rounded transition-colors"
