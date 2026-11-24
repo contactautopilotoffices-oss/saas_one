@@ -224,6 +224,10 @@ export interface ConfirmPolicy {
     /** Owner 2026-10-21: false = a clear "add task …" / "assign Neeti …" is saved straight away with "Reply undo within
      *  10 minutes" (no yes/no). Set false only while "One front door" (which provides undo) is ON. Absent / true = asked first. */
     confirmCreates?: boolean;
+    /** Owner 2026-11-21 ("ask for a yes only for a Delete option. nothing else"): true = every clear change goes straight
+     *  through with "Reply undo within 10 minutes", and only deleting still asks first. Set true only while "One front door"
+     *  (which provides undo) is ON. Absent / false = as before. */
+    onlyDeletesAsk?: boolean;
 }
 export const DEFAULT_CONFIRM_POLICY: ConfirmPolicy = { confirmProgressUpdates: false, confirmCompletions: true };
 

@@ -1,0 +1,38 @@
+import { NextResponse } from "next/server";
+
+import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
+import { createOffer, defaultFlowDeps, listOffers } from "@/backend/lib/candidates/hiring";
+
+import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
+
+export const runtime = "nodejs";
+
+/** Offers (owner 2026-11-21; spec Stages 7-9). Query: orgId, candidateId? -> { offers }, newest first. */
+export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const auth = await requireCandidateAccess(params.get("orgId"));
+  if (auth.error) return auth.error;
+  const candidateId = params.get("candidateId");
+  try {
+    return NextResponse.json({ offers: await listOffers(auth.admin, auth.orgId, { userId: auth.user.id }, candidateId && UUID.test(candidateId) ? { candidateId } : {}) });
+  } catch (error) {
+    return errorResponse(error, "Couldn't load the offers");
+  }
+}
+
+/** Select with an offer: { orgId, applicationId, positionId, proposedCtc (rupees per year), joiningDate?, breakup?, note? }. */
+export async function POST(request: Request) {
+  const body = await readJson(request);
+  if (body instanceof NextResponse) return body;
+  const auth = await requireCandidateAccess(body.orgId);
+  if (auth.error) return auth.error;
+  const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
+  if (limited) return limited;
+  const fields = { ...body };
+  delete fields.orgId;
+  try {
+    return NextResponse.json({ offer: await createOffer(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), fields, defaultFlowDeps()) }, { status: 201 });
+  } catch (error) {
+    return errorResponse(error, "Couldn't make the offer");
+  }
+}

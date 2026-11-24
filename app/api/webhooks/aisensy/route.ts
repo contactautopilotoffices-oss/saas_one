@@ -10,7 +10,7 @@ import { TaskMessageRouter } from '@/task-manager/TaskMessageRouter';
 import { TaskIdempotencyService } from '@/task-manager/TaskIdempotencyService';
 import { claimTaskImport } from '@/task-manager/TaskImportInbound';
 import { scheduleShadow } from '@/task-manager/brain/shadow';
-import { claimSmartChat } from '@/task-manager/brain/live';
+import { bodyWithText, claimSmartChat } from '@/task-manager/brain/live';
 import { claimVoiceNote } from '@/task-manager/voice/VoiceIntake';
 import { markRoute, markReplied, recordInbound } from '@/task-manager/InboundLedger';
 import { apologiseAfterCrash } from '@/task-manager/NeverSilentWatchdog';
@@ -134,6 +134,11 @@ export async function POST(req: NextRequest) {
     // Group 3 (2026-10-13): a caption-less photo the person said is for a facility issue ("ticket") → carry on with THAT
     // photo, exactly as if it had just arrived, so the facility assistant handles it as before.
     if (taskImport.rewrite) { body = taskImport.rewrite; input = normalizeInbound(body); }
+    // 2026-11-18: the brain read several quick messages as one batch and passed them on: the bots below answer ALL of
+    // them as one message, and Smart chat must not batch them again (they are already claimed). Applied AFTER the task
+    // importer, which reads any text of two or more lines as a task list (the same order as Smart chat's own batches).
+    const brainBatched = !!brain.rewriteText && !!input;
+    if (brainBatched && input) { body = bodyWithText(body, input.phone, input.messageId, brain.rewriteText!); input = normalizeInbound(body); }
 
     // AI Action Layer on WhatsApp (docs/AI_ACTION_LAYER_PLAN.md). Owner 2026-11-04: for the people an org super admin
     // switched the AI on for, it reads the message FIRST (before Smart chat). It answers tickets / meter readings / its own
@@ -156,7 +161,9 @@ export async function POST(req: NextRequest) {
     // Batching (2026-11-02): several messages sent back to back are answered ONCE, by the newest message's webhook; the earlier
     // ones come back handled with nothing to do. A batch that is not Smart chat's (only greetings, a ticket request) comes
     // back with `rewrite` = their words, and the code below carries on with that, as for a confirmed voice note.
-    const smartChat = await claimSmartChat(body);
+    // 2026-11-18: with the task assistant as the brain's task engine, the brain listens to its reply (never changes it).
+    const smartOpts = { ...(brainBatched ? { noBatch: true } : {}), ...(!brain.handled && brain.onTaskReply ? { onReply: brain.onTaskReply } : {}) };
+    const smartChat = Object.keys(smartOpts).length ? await claimSmartChat(body, undefined, smartOpts) : await claimSmartChat(body);
     if (smartChat.handled) {
         if (smartChat.background) {
             await markRoute(input?.messageId, 'smart_chat', input?.phone, input?.text);

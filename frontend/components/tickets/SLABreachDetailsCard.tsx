@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { AlertCircle, Clock, Pause } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Pause } from 'lucide-react';
 import { formatDuration } from '@/frontend/utils/date';
 
 export function SLABadge({ slaDeadline, isBreached, isPaused = false, pauseReason, readable = false }: {
@@ -58,18 +58,58 @@ export function SLABadge({ slaDeadline, isBreached, isPaused = false, pauseReaso
 export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
     if (!ticket?.sla_deadline && !ticket?.sla_breached && !ticket?.sla_paused) return null;
 
-    const referenceTime = new Date();
-    const slaDeadline = ticket.sla_deadline ? new Date(ticket.sla_deadline) : null;
-    const isPendingValidation = ticket.status === 'pending_validation';
+    const normalizedStatus = (ticket?.status || '').toLowerCase().replace(/\s+/g, '_');
+    const isResolved = ['resolved', 'closed', 'completed'].includes(normalizedStatus);
+    const isPendingValidation = normalizedStatus === 'pending_validation';
     const isPaused = Boolean(ticket.sla_paused);
-    
-    // Evaluate if breached (never breached while paused)
-    const isSLABreached = !isPaused && (Boolean(ticket.sla_breached) || 
-        (slaDeadline !== null && slaDeadline < referenceTime && !isPendingValidation));
 
-    // Overdue duration calculation
-    const breachMs = slaDeadline && isSLABreached ? referenceTime.getTime() - slaDeadline.getTime() : 0;
-    const resolvedAt = ticket.resolved_at ? new Date(ticket.resolved_at) : null;
+    const slaDeadline = ticket.sla_deadline ? new Date(ticket.sla_deadline) : null;
+    const resolvedAt = ticket.resolved_at
+        ? new Date(ticket.resolved_at)
+        : (isResolved && ticket.updated_at ? new Date(ticket.updated_at) : null);
+
+    // Reference time: for resolved tickets, evaluate SLA at the exact moment of resolution
+    const referenceTime = isResolved && resolvedAt
+        ? resolvedAt
+        : (isPendingValidation && resolvedAt ? resolvedAt : new Date());
+
+    // SLA is breached if explicitly flagged in DB or resolved after deadline (or active & deadline passed)
+    const isSLABreached = !isPaused && (
+        Boolean(ticket.sla_breached) ||
+        (slaDeadline !== null && (
+            isResolved && resolvedAt
+                ? resolvedAt.getTime() > slaDeadline.getTime()
+                : !isPendingValidation && !isResolved && referenceTime.getTime() > slaDeadline.getTime()
+        ))
+    );
+
+    // Overdue / Late duration calculation
+    const breachMs = slaDeadline && isSLABreached && referenceTime.getTime() > slaDeadline.getTime()
+        ? referenceTime.getTime() - slaDeadline.getTime()
+        : 0;
+
+    // Early duration calculation when resolved within SLA
+    const earlyMs = slaDeadline && isResolved && resolvedAt && !isSLABreached && slaDeadline.getTime() > resolvedAt.getTime()
+        ? slaDeadline.getTime() - resolvedAt.getTime()
+        : 0;
+
+    // Unified target hours calculation
+    const calculateTargetHours = () => {
+        if (typeof ticket.sla_hours === 'number' && ticket.sla_hours > 0) return ticket.sla_hours;
+        if (ticket.sla_deadline && (ticket.created_at || ticket.assigned_at)) {
+            const start = new Date(ticket.created_at || ticket.assigned_at).getTime();
+            const end = new Date(ticket.sla_deadline).getTime();
+            const hrs = Math.round((end - start) / (1000 * 60 * 60));
+            if (hrs > 0) return hrs;
+        }
+        const priority = String(ticket.priority || '').toLowerCase();
+        if (priority === 'critical') return 4;
+        if (priority === 'high') return 8;
+        if (priority === 'medium') return 24;
+        if (priority === 'low') return 48;
+        return 24;
+    };
+    const targetHours = calculateTargetHours();
 
     return (
         <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-6 space-y-6">
@@ -83,31 +123,39 @@ export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
                                 ? 'bg-red-500/10 text-red-400 border border-red-500/20' 
                                 : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                     }`}>
-                        {isPaused ? <Pause className="w-5 h-5" /> : isSLABreached ? <AlertCircle className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                        {isPaused ? <Pause className="w-5 h-5" /> : isSLABreached ? <AlertCircle className="w-5 h-5" /> : isResolved ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
                     </div>
                     <div>
                         <h3 className="text-base font-bold text-white flex items-center gap-2">
-                            SLA Status: {isPaused ? 'PAUSED' : isSLABreached ? 'BREACHED' : 'ON TRACK'}
+                            SLA Status: {isPaused ? 'PAUSED' : isSLABreached ? 'BREACHED' : isResolved ? 'MET' : 'ON TRACK'}
                         </h3>
                         <p className="text-xs text-gray-400">
                             {isPaused
                                 ? `SLA is currently paused${ticket.sla_pause_reason ? ` (${ticket.sla_pause_reason})` : ''}. Target deadline will be extended when resumed.`
                                 : isSLABreached
-                                    ? `Resolution target (${ticket.sla_hours || 4}h ${ticket.priority ? String(ticket.priority).toUpperCase() : ''} Priority) was missed.`
-                                    : 'Ticket is progressing within target SLA window.'}
+                                    ? `Resolution target (${targetHours}h ${ticket.priority ? String(ticket.priority).toUpperCase() : ''} Priority) was missed.`
+                                    : isResolved
+                                        ? `Resolution target (${targetHours}h ${ticket.priority ? String(ticket.priority).toUpperCase() : ''} Priority) was met within SLA.`
+                                        : 'Ticket is progressing within target SLA window.'}
                         </p>
                     </div>
                 </div>
                 {/* Overdue / Target Stats Pills */}
                 <div className="flex items-center gap-2">
                     <div className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-center">
-                        <div className="text-sm font-black text-white">{ticket.sla_hours || 24}h</div>
+                        <div className="text-sm font-black text-white">{targetHours}h</div>
                         <div className="text-[9px] text-gray-400 uppercase tracking-wide">Target</div>
                     </div>
-                    {isSLABreached && (
+                    {isSLABreached && breachMs > 0 && (
                         <div className="px-3 py-1.5 bg-red-500/15 border border-red-500/30 rounded-lg text-center">
                             <div className="text-sm font-black text-red-400">{formatDuration(breachMs)}</div>
-                            <div className="text-[9px] text-gray-400 uppercase tracking-wide">Overdue By</div>
+                            <div className="text-[9px] text-gray-400 uppercase tracking-wide">{isResolved ? 'Late By' : 'Overdue By'}</div>
+                        </div>
+                    )}
+                    {isResolved && !isSLABreached && earlyMs > 0 && (
+                        <div className="px-3 py-1.5 bg-emerald-500/15 border border-emerald-500/30 rounded-lg text-center">
+                            <div className="text-sm font-black text-emerald-400">{formatDuration(earlyMs)}</div>
+                            <div className="text-[9px] text-gray-400 uppercase tracking-wide">Early By</div>
                         </div>
                     )}
                     {(ticket.total_paused_minutes || 0) > 0 && (
@@ -156,12 +204,11 @@ export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
                     <div className={`w-3.5 h-3.5 rounded-full border-2 border-[#0d1117] flex-shrink-0 z-10 ${isSLABreached ? 'bg-red-500' : 'bg-emerald-500'}`} />
                     <div className="flex-1 flex items-center justify-between text-xs font-bold">
                         <span className={isSLABreached ? 'text-red-400' : 'text-emerald-400'}>
-                            SLA Deadline {isSLABreached ? '— Missed' : '— Met'}
+                            SLA Deadline {isSLABreached ? '— Missed' : (isResolved ? '— Met' : '— Target')}
                         </span>
                         <span className={isSLABreached ? 'text-red-400' : 'text-emerald-400'}>
                             {slaDeadline ? slaDeadline.toLocaleString() : 'Missed Deadline'}
                         </span>
-
                     </div>
                 </div>
                 {/* 5. Resolution / Work Completed */}
@@ -171,7 +218,12 @@ export function SLABreachDetailsCard({ ticket }: { ticket: any }) {
                         <div className="flex-1 flex items-center justify-between text-xs">
                             <span className="text-emerald-400 font-medium">
                                 Resolved
-                                {isSLABreached && <span className="text-red-400/70 ml-1.5">(+{formatDuration(breachMs)} late)</span>}
+                                {isSLABreached && breachMs > 0 && (
+                                    <span className="text-red-400/70 ml-1.5">(+{formatDuration(breachMs)} late)</span>
+                                )}
+                                {!isSLABreached && earlyMs > 0 && (
+                                    <span className="text-emerald-400/70 ml-1.5">({formatDuration(earlyMs)} early)</span>
+                                )}
                             </span>
                             <span className="text-gray-500">{resolvedAt.toLocaleString()}</span>
                         </div>

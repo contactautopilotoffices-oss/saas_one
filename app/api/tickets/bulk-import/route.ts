@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { slaHoursFrom } from '@/backend/lib/ticketing/categorySla';
 import { createClient } from '@/frontend/utils/supabase/server';
 import { classifyTicket } from '@/backend/lib/ticketing';
 import { resolveImportRows } from '@/backend/lib/ticketing/resolver';
@@ -293,6 +294,13 @@ export async function POST(request: NextRequest) {
             .from('skill_groups')
             .select('id, code');
 
+        // 2026-11-19: per-priority SLAs (Brain → Categories & SLAs). Read apart, so a missing column changes nothing.
+        const slaPlans = new Map<string, unknown>();
+        try {
+            const plans = await supabase.from('issue_categories').select('id, sla_by_priority');
+            if (!plans.error) for (const p of plans.data ?? []) if (p.sla_by_priority) slaPlans.set(String(p.id), p.sla_by_priority);
+        } catch { /* as before */ }
+
         // One row per code: this property's own first, then the shared one, then any other (as before).
         const categoryRank = (c: { property_id: string | null }) => (c.property_id === propertyId ? 2 : !c.property_id ? 1 : 0);
         const categoryMap = new Map([...(allCategories ?? [])].sort((a, b) => categoryRank(a) - categoryRank(b)).map(c => [c.code, c]));
@@ -369,7 +377,7 @@ export async function POST(request: NextRequest) {
                 llm_reasoning: row.llm_reasoning ?? null,
                 classification_source: row.classification_source || 'rule',
                 ...(row.confidence_score != null ? { confidence_score: row.confidence_score } : {}),
-                sla_hours: cat?.sla_hours || 24,
+                sla_hours: slaHoursFrom(cat ? slaPlans.get(String(cat.id)) : null, finalPriority, cat?.sla_hours, 24),
                 floor_number: floorNumber,
                 location: location,
                 is_internal: false

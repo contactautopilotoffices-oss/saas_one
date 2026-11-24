@@ -14,6 +14,10 @@ import { analyzeConfidence, ConfidenceAnalysis, ClassificationZone } from './con
 import { classifyWithAi, classifyManyWithAi, loadCategoryOptions, loadCorrections, type AiDeps, type AiVerdict, type CategoryOption, type Correction } from './aiClassifier';
 import { createClient } from '@supabase/supabase-js';
 import { emitWebhook } from './webhooks';
+import { settingFor, sortNewWay, type LearningDeps, type NewWayResult } from './sortLearningRun';
+import { writeTrace, type LearningTrace } from './sortLearningStore';
+import { activeRulesText } from './sortRulesStore';
+import { getOrgItMembers, itRuleFor, withoutIt, IT_TEAM, type ItMember } from './itRule';
 
 export type DecisionSource = 'rule' | 'llm' | 'human';
 
@@ -61,6 +65,12 @@ export interface ResolvedClassification {
             total_tokens: number;
         };
     };
+
+    /**
+     * 2026-11-19: while ticket sorting learning is "watch only" or "on" (Brain → Switches), what the old and the new way
+     * chose, saved by logClassification as the ticket's trace (ticket_sort_traces). Absent when learning is off.
+     */
+    learningTrace?: LearningTrace;
 }
 
 export interface ClassificationLogEntry {
@@ -92,7 +102,16 @@ export interface ResolveOptions {
     deps?: AiDeps;
     categories?: CategoryOption[];
     corrections?: Correction[];
+    /** For tests: the learning setting, examples and track record (sortLearningRun.ts). */
+    learning?: LearningDeps;
+    /** For tests: the organisation's approved sorting rules (sortRules.ts). Default: read from the database. */
+    rules?: string | null;
+    /** For tests: the organisation's IT-role members (itRule.ts). Default: read from the database when needed. */
+    itMembers?: ItMember[];
 }
+
+/** Watch only: after the old way has sorted the ticket, the new way may take at most this much longer. */
+const SHADOW_EXTRA_MS = 2_500;
 
 const TITLE_PRIORITY: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' };
 
@@ -121,37 +140,126 @@ export async function resolveClassification(ticketText: string, options?: string
         confidenceAnalysis,
     };
 
-    // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
-    try {
-        const [categories, corrections] = await Promise.all([
-            opts.categories ?? loadCategoryOptions(opts.propertyId),
-            opts.corrections ?? loadCorrections(opts.organizationId),
-        ]);
-        const sorted = await classifyWithAi(ticketText, categories, opts.deps, corrections);
-        applyVerdict(finalResult, sorted.verdict);
-        finalResult.llmResult = {
-            model: sorted.model,
-            selectedBucket: sorted.verdict.team,
-            secondaryBucket: null,
-            priority: TITLE_PRIORITY[sorted.verdict.priority],
-            riskFlag: sorted.verdict.risk,
-            reason: sorted.verdict.reason,
-            latencyMs: sorted.latencyMs,
-            usage: { prompt_tokens: sorted.tokensIn, completion_tokens: sorted.tokensOut, total_tokens: sorted.tokensIn + sorted.tokensOut },
-        };
-        if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
-        emitWebhook('llm.invoked', 'pending', {
-            ticket_id: 'pending',
-            source: 'resolver',
-            model: sorted.model,
-            latency_ms: sorted.latencyMs,
-            result: sorted.verdict,
-        });
-    } catch (err) {
-        console.warn('[Resolver] AI sorting failed; the keyword rules decide this ticket:', err instanceof Error ? err.message.slice(0, 500) : err);
+    // Owner 2026-11-20: the IT rule comes first (itRule.ts). A ticket that tags the IT person goes to the
+    // IT team: one IT category, or the AI chooses among the IT categories only. Every other ticket is sorted by the AI
+    // without the IT categories, so nothing else lands in IT.
+    let allCategories: CategoryOption[] = [];
+    try { allCategories = opts.categories ?? await loadCategoryOptions(opts.propertyId); } catch { allCategories = []; }
+    const it = await itRuleFor(ticketText, allCategories, opts.propertyId, opts.itMembers);
+    if (it) {
+        finalResult.issue_code = it.fallback.code;
+        finalResult.skill_group = IT_TEAM;
+        finalResult.confidence = 'high';
+        finalResult.llm_reasoning = it.reason;
+        if (it.categories.length > 1) {
+            try {
+                const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
+                const corrections = opts.corrections ?? await loadCorrections(opts.organizationId);
+                const sorted = await classifyWithAi(ticketText, it.categories, opts.deps, corrections, rules);
+                applyAi(finalResult, sorted.verdict, sorted.model, sorted.latencyMs, sorted.tokensIn, sorted.tokensOut);
+                finalResult.issue_code = sorted.verdict.code ?? it.fallback.code;
+                finalResult.llm_reasoning = `${it.reason} ${sorted.verdict.reason}`.trim();
+            } catch (err) {
+                console.warn('[Resolver] AI could not choose the IT category; using the default one:', err instanceof Error ? err.message.slice(0, 300) : err);
+            }
+        }
+        finalResult.skill_group = IT_TEAM;
+        return finalResult;
     }
 
+    // The AI sorts every ticket. Any failure (no key, every model down, only bad answers) leaves the rules' answer.
+    let categories: CategoryOption[] = withoutIt(allCategories);
+    // 2026-11-19: the organisation's approved sorting rules (none until a person approves a version).
+    const rules = opts.rules !== undefined ? opts.rules : await activeRulesText(opts.organizationId);
+    /** Today's way: the newest corrections, the AI's own rating. Returns the verdict it applied, or null. */
+    const oldWay = async (): Promise<AiVerdict | null> => {
+        try {
+            const [cats, corrections] = await Promise.all([
+                categories.length ? Promise.resolve(categories) : (opts.categories ? Promise.resolve(opts.categories) : loadCategoryOptions(opts.propertyId)).then(withoutIt),
+                opts.corrections ?? loadCorrections(opts.organizationId),
+            ]);
+            const sorted = await classifyWithAi(ticketText, cats, opts.deps, corrections, rules);
+            applyAi(finalResult, sorted.verdict, sorted.model, sorted.latencyMs, sorted.tokensIn, sorted.tokensOut);
+            if (sorted.failures.length) console.warn(`[Resolver] ticket sorted by ${sorted.model} after ${sorted.failures.length} model(s) failed`);
+            return sorted.verdict;
+        } catch (err) {
+            console.warn('[Resolver] AI sorting failed; the keyword rules decide this ticket:', err instanceof Error ? err.message.slice(0, 500) : err);
+            return null;
+        }
+    };
+
+    // 2026-11-19: ticket sorting that learns (Brain → Switches). Off = exactly the old way, nothing else runs.
+    const orgId = opts.organizationId ?? null;
+    const setting = orgId ? await settingFor(orgId, opts.learning) : { mode: 'off' as const, meaning: false };
+    if (setting.mode === 'off' || !orgId) {
+        await oldWay();
+        return finalResult;
+    }
+
+    if (!categories.length) { try { categories = withoutIt(opts.categories ?? await loadCategoryOptions(opts.propertyId)); } catch { categories = []; } }
+    const started = Date.now();
+    const newWay = sortNewWay(ticketText, categories, orgId, setting, opts.deps, opts.learning, rules)
+        .catch(err => { console.warn('[Resolver] the learning way failed:', err instanceof Error ? err.message.slice(0, 300) : err); return 'failed' as const; });
+
+    if (setting.mode === 'shadow') {
+        // Watch only: the old way decides; the new way is recorded next to it and changes nothing.
+        const old = await oldWay();
+        const nw = await withDeadline(newWay, SHADOW_EXTRA_MS);
+        if (nw) finalResult.learningTrace = traceOf(orgId, 'shadow', old, nw, started);
+        return finalResult;
+    }
+
+    // On: the new way decides. If it could not (every model failed), the old way runs, then the keyword rules.
+    const nw = await newWay;
+    if (nw && nw !== 'failed') {
+        applyAi(finalResult, nw.verdict, nw.model, nw.latencyMs, nw.tokensIn, nw.tokensOut);
+        if (nw.failures.length) console.warn(`[Resolver] ticket sorted by ${nw.model} after ${nw.failures.length} model(s) failed`);
+        finalResult.learningTrace = traceOf(orgId, 'live', null, nw, started);
+        return finalResult;
+    }
+    const old = await oldWay();
+    if (nw === 'failed') finalResult.learningTrace = traceOf(orgId, 'live', old, 'failed', started);
     return finalResult;
+}
+
+/** Writes an AI verdict onto a resolution with the model's details, and tells the webhook (one ticket). */
+function applyAi(r: ResolvedClassification, v: AiVerdict, model: string, latencyMs: number, tokensIn: number, tokensOut: number): void {
+    applyVerdict(r, v);
+    r.llmResult = {
+        model,
+        selectedBucket: v.team,
+        secondaryBucket: null,
+        priority: TITLE_PRIORITY[v.priority],
+        riskFlag: v.risk,
+        reason: v.reason,
+        latencyMs,
+        usage: { prompt_tokens: tokensIn, completion_tokens: tokensOut, total_tokens: tokensIn + tokensOut },
+    };
+    emitWebhook('llm.invoked', 'pending', {
+        ticket_id: 'pending',
+        source: 'resolver',
+        model,
+        latency_ms: latencyMs,
+        result: v,
+    });
+}
+
+/** The promise's value, or null when it takes longer than `ms`. */
+async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([p, new Promise<null>(ok => { timer = setTimeout(() => ok(null), ms); })]);
+    } finally { if (timer) clearTimeout(timer); }
+}
+
+function traceOf(orgId: string, mode: 'shadow' | 'live', old: AiVerdict | null, nw: NewWayResult | 'failed', started: number): LearningTrace {
+    const ok = nw !== 'failed';
+    return {
+        organizationId: orgId, mode, method: ok ? nw.method : 'failed', search: ok ? nw.search : 'none',
+        oldCode: old?.code ?? null, oldConfidence: old?.confidence ?? null,
+        newCode: ok ? nw.verdict.code : null, modelConfidence: ok ? nw.modelConfidence : null, newConfidence: ok ? nw.verdict.confidence : null,
+        why: ok ? nw.why : null, neighbours: ok ? nw.neighbours : [], model: ok ? nw.model : null, latencyMs: ok ? nw.latencyMs : Date.now() - started,
+    };
 }
 
 /** Writes an AI verdict onto a resolution (shared by single tickets and bulk import). */
@@ -198,8 +306,28 @@ export async function resolveImportRows(texts: readonly string[], options: Resol
     } catch (err) {
         console.warn('[Resolver] category list unavailable for bulk import:', err instanceof Error ? err.message : err);
     }
-    const ai = await classifyManyWithAi(texts, categories, options.deps, corrections);
+    const rules = options.rules !== undefined ? options.rules : await activeRulesText(options.organizationId);
+    // Owner 2026-11-20: rows that tag the IT person go to the IT team (itRule.ts), sorted among the IT
+    // categories only; the AI sorts the other rows without the IT categories.
+    const members = options.itMembers ?? (texts.some(t => t.includes('@')) && options.propertyId ? await getOrgItMembers(options.propertyId) : []);
+    const itRows = await Promise.all(texts.map(t => itRuleFor(t, categories, options.propertyId, members)));
+    const itIdx = texts.map((_, i) => i).filter(i => itRows[i]);
+    const otherIdx = texts.map((_, i) => i).filter(i => !itRows[i]);
+    const ai: Array<{ verdict: AiVerdict; model: string } | null> = texts.map(() => null);
+    const others = await classifyManyWithAi(otherIdx.map(i => texts[i]), withoutIt(categories), options.deps, corrections, rules);
+    otherIdx.forEach((i, k) => { ai[i] = others[k]; });
+    const itChoice = itRows.find(r => r && r.categories.length > 1)?.categories ?? [];
+    if (itIdx.length && itChoice.length > 1) {
+        const its = await classifyManyWithAi(itIdx.map(i => texts[i]), itChoice, options.deps, corrections, rules);
+        itIdx.forEach((i, k) => { ai[i] = its[k]; });
+    }
     return texts.map((text, i) => {
+        const itRow = itRows[i];
+        if (itRow) {
+            const v = ai[i]?.verdict;
+            if (v?.code) return { issue_code: v.code, skill_group: IT_TEAM, confidence: v.vague ? 'low' as const : 'high' as const, priority: v.priority, risk_flag: v.risk, reasoning: `${itRow.reason} ${v.reason}`.trim(), confidenceScore: v.confidence, source: 'llm' as const };
+            return { issue_code: itRow.fallback.code, skill_group: IT_TEAM, confidence: 'high' as const, priority: null, risk_flag: null, reasoning: itRow.reason, confidenceScore: null, source: 'rule' as const };
+        }
         const hit = ai[i];
         if (hit) {
             const v = hit.verdict;
@@ -255,6 +383,9 @@ export async function logClassification(
     if (error) {
         console.error('[Resolver] Failed to log classification:', error);
     }
+
+    // 2026-11-19: the learning trace (watch only / on), shown in Review → Tickets and used for the track record.
+    if (resolution.learningTrace) await writeTrace(ticketId, resolution.learningTrace, supabase as never);
 
     // Emit final categorized webhook
     emitWebhook('ticket.categorized', ticketId, {

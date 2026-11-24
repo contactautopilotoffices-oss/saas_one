@@ -149,7 +149,8 @@ describe('a turn with lessons', () => {
 
     it('a ticket number that appears only in a lesson cannot be stated: a lesson is never a source of facts', async () => {
         const lessons = [lesson({ text: 'what is the status of TKT-555 projector', outcome: 'answer', skill: 'tickets.list' })];
-        const model = new ScriptedModel(['TKT-555 is open and assigned.']);
+        // Asked once to fix it (2026-11-18 repair), the model says it again: still thrown away.
+        const model = new ScriptedModel(['TKT-555 is open and assigned.', 'TKT-555 is open and assigned.']);
         const out = await runTurn(turnDeps(new FakeBrainData(), model, undefined, { learning: learned(lessons) }), turnInput('what is the status of projector ticket', { settings: ON }));
         assert.deepEqual(out.trace.lessons, ['lesson-1']);
         assert.equal(out.trace.grounded, false);
@@ -206,8 +207,8 @@ describe('a turn with guidance', () => {
         const reply = 'Please call the front desk on 4455.';
         const withNote = await runTurn(turnDeps(new FakeBrainData(), new ScriptedModel([reply]), undefined, { learning: learned([], note) }), turnInput('who do I call about the lift'));
         assert.equal(withNote.reply!.text, reply); assert.equal(withNote.trace.grounded, true);
-        const without = await runTurn(turnDeps(new FakeBrainData(), new ScriptedModel([reply])), turnInput('who do I call about the lift'));
-        assert.equal(without.trace.grounded, false); assert.ok(!without.reply!.text.includes('4455'));
+        const without = await runTurn(turnDeps(new FakeBrainData(), new ScriptedModel([reply, reply])), turnInput('who do I call about the lift'));
+        assert.equal(without.trace.grounded, false); assert.ok(!without.reply!.text.includes('4455')); assert.equal(without.trace.repaired, true);
     });
 
     it('a note cannot unlock a tool: a client still has no electricity look-up', async () => {

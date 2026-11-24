@@ -10,6 +10,7 @@ import { brainLevelFor, skillModeFor, type BrainSettings } from '../config';
 import type { Skill, SkillMode, ToolDef } from '../types';
 import { MEMORY_SKILLS } from './memory';
 import { OTHER_SKILLS } from './other';
+import { PROPERTY_SKILLS } from './properties';
 import { ROOM_SKILLS } from './rooms';
 import { IN_BRAIN_DESCRIPTIONS, TASK_ACTION_IDS, TASK_HELPER_IDS, TASK_SKILLS } from './tasks';
 import { TICKET_SKILLS } from './tickets';
@@ -19,7 +20,7 @@ import { schema, str } from './common';
  * Fixed order (never sorted by anything that changes), so the tool list is byte-identical between calls and caches.
  * The task skills (owner 2026-11-15) come last: while they are off the list is exactly what it was before them.
  */
-export const SKILLS: readonly Skill[] = [...TICKET_SKILLS, ...ROOM_SKILLS, ...OTHER_SKILLS, ...MEMORY_SKILLS, ...TASK_SKILLS];
+export const SKILLS: readonly Skill[] = [...TICKET_SKILLS, ...ROOM_SKILLS, ...OTHER_SKILLS, ...MEMORY_SKILLS, ...PROPERTY_SKILLS, ...TASK_SKILLS];
 
 /** Tool names may not contain dots: 'tickets.list' is shown to the model as 'tickets_list'. */
 export const toolName = (skillId: string): string => skillId.replace(/\./g, '_');
@@ -36,8 +37,12 @@ export interface AvailableSkill { skill: Skill; mode: Exclude<SkillMode, 'off'> 
 export function skillsFor(actor: ActorContext, settings: BrainSettings): AvailableSkill[] {
     const out: AvailableSkill[] = [];
     for (const skill of SKILLS) {
+        // 2026-11-20: a login with no property login is here for meeting rooms only (scope.ts roomsOnly).
+        if (actor.roomsOnly && skill.module !== 'rooms') continue;
         if (!skill.allowed(actor)) continue;
-        const level = brainLevelFor(actor, settings, skill.module);
+        // The property list (2026-11-18) is needed for tickets AND rooms: it is on when either of them is.
+        const tickets = brainLevelFor(actor, settings, skill.module);
+        const level = skill.id === 'properties.mine' && tickets === 'off' ? brainLevelFor(actor, settings, 'rooms') : tickets;
         if (level === 'off') continue;
         if (skill.kind === 'write' && level !== 'questions_actions') continue;
         if (skill.module === 'memory' && !settings.memory.enabled) continue;
@@ -45,9 +50,16 @@ export function skillsFor(actor: ActorContext, settings: BrainSettings): Availab
         if (mode === 'off') continue;
         out.push({ skill, mode });
     }
+    // With the task assistant as the brain's task engine (2026-11-18), the brain's own task actions are not offered:
+    // tasks are answered by the task assistant, with its own rules.
+    const own = settings.taskEngine ? out.filter(a => !TASK_ACTION_IDS.has(a.skill.id)) : out;
     // The task look-ups exist only for the task actions: without one of those on, they are not offered at all.
-    return tasksInBrain(out) ? out : out.filter(a => !TASK_HELPER_IDS.has(a.skill.id));
+    return tasksInBrain(own) ? own : own.filter(a => !TASK_HELPER_IDS.has(a.skill.id));
 }
+
+/** Does the task assistant answer this person's tasks with the brain in front? (Switch on, and tasks not off for them.) */
+export const taskEngineFor = (actor: ActorContext, settings: BrainSettings): boolean =>
+    settings.taskEngine && brainLevelFor(actor, settings, 'tasks') !== 'off';
 
 /** Has this person got at least one of the brain's own task actions (add, done, hand over, remind)? */
 export const tasksInBrain = (available: readonly AvailableSkill[]): boolean => available.some(a => TASK_ACTION_IDS.has(a.skill.id));
@@ -56,6 +68,17 @@ export const tasksInBrain = (available: readonly AvailableSkill[]): boolean => a
 
 export const ASK_USER = 'ask_user';
 export const HANDOFF = 'handoff';
+/** 2026-11-18: the person does not want something (a waiting card, an offer, a photo). Code cancels and remembers it. */
+export const CLOSE_TOPIC = 'close_topic';
+/** 2026-11-18: the part of the message that is about tasks, for the task assistant to answer itself. */
+export const TASK_PART = 'task_part';
+
+/** Offered only while the task assistant is the brain's task engine for this person. */
+export const TASK_PART_TOOL: ToolDef = {
+    name: TASK_PART,
+    description: 'Hand the part of the message that is about tasks (my tasks, add, done, hand over, remind, progress, team tasks) to the task assistant, which answers it itself, in its own words. Copy the person\'s words about tasks EXACTLY from the message, nothing added or reworded. Does NOT end your turn: afterwards answer only the rest of the message, or reply with nothing if the whole message was about tasks. Do NOT use for tickets, rooms or anything that is not a task.',
+    input: schema({ words: str('The person\'s own words about tasks, copied exactly from the message. Example: "done 2".') }),
+};
 
 export const CONTROL_TOOLS: readonly ToolDef[] = [
     {
@@ -74,17 +97,29 @@ export const CONTROL_TOOLS: readonly ToolDef[] = [
             reason: str('Why, in a few words. Example: "wants to mark a task done".'),
         }),
     },
+    {
+        name: CLOSE_TOPIC,
+        description: 'The person does not want something any more: the confirmation card that is waiting ("cancel it", "I don\'t want to raise it"), something you offered ("no, leave it"), or a photo they sent ("ignore that photo"). Cancels the waiting card when cancel_card is true, sets the named photos aside, and records the topic so it is never offered again. Does NOT end your turn: afterwards answer only anything ELSE in the message. Do NOT use to cancel a ticket, booking or task that already exists (that is done in the app), or when the person only changes a detail (call the write tool again instead).',
+        input: schema({
+            what: str('What they dropped, in a few words of their own. Example: "LAN wire ticket".'),
+            files: { type: 'array', items: { type: 'string' }, description: 'Handles of open files to set aside (from open_files), or an empty list. Example: ["A2"].' },
+            cancel_card: { type: 'boolean', description: 'true when what they dropped is the confirmation card that is waiting; false when it is only an offer or a photo and the card should stay. Example: true.' },
+        }),
+    },
 ];
 
-export function toolDefs(available: AvailableSkill[]): ToolDef[] {
+export function toolDefs(available: AvailableSkill[], opts: { taskPart?: boolean } = {}): ToolDef[] {
     // With a task action on, the descriptions that send tasks to the task assistant say what the brain now does itself.
     const inBrain = tasksInBrain(available);
     const describe = (id: string, text: string) => (inBrain && IN_BRAIN_DESCRIPTIONS[id]) || text;
     return [
         ...available.map(a => ({ name: toolName(a.skill.id), description: describe(a.skill.id, a.skill.description), input: a.skill.input })),
-        ...CONTROL_TOOLS.map(t => (t.name === HANDOFF ? { ...t, description: describe('handoff', t.description) } : t)),
+        ...CONTROL_TOOLS.map(t => (t.name === HANDOFF ? { ...t, description: opts.taskPart ? HANDOFF_WITH_TASK_ENGINE : describe('handoff', t.description) } : t)),
+        ...(opts.taskPart ? [TASK_PART_TOOL] : []),
     ];
 }
+
+const HANDOFF_WITH_TASK_ENGINE = 'Pass the conversation to a person. Ends your turn. Use when the person asks for a person, is upset, or you cannot help after trying. Do NOT use for tasks (use task_part) or for requests you can answer with your tools.';
 
 /** For the console and the docs: every skill with what it needs. */
 export function describeSkills() {

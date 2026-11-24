@@ -1,12 +1,12 @@
 'use client';
-import { FileText, ReceiptText, MessageSquareText } from 'lucide-react';
+import { FileText, ReceiptText, MessageSquareText, Pencil, RotateCcw, Check, X, Upload, Trash2 } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import { inr } from '@/frontend/lib/pettyCash/roles';
 import { pettyCashDate, type Expense } from './workflowTypes';
-export default function ExpenseTable({ expenses, org, showRequest = true, onOpen, onReview, onCorrect, onWithdraw, busy = false }: {
+export default function ExpenseTable({ expenses, org, showRequest = true, onOpen, onReview, onCorrect, onWithdraw, onEdit, busy = false }: {
     expenses: Expense[]; org: string; showRequest?: boolean; onOpen?: (id: string) => void;
     onReview?: (id: string, status: 'accepted' | 'rejected') => void; onCorrect?: (expense: Expense) => void;
-    onWithdraw?: (expense: Expense) => void; busy?: boolean;
+    onWithdraw?: (expense: Expense) => void; onEdit?: (expense: Expense) => void; busy?: boolean;
 }) {
     if (!expenses.length) return <div className="pc-empty"><ReceiptText size={24} /><h3>No expenses recorded</h3><p>Record any amount up to the remaining cash. Add bills or receipts if available.</p></div>;
     return <div className="pc-table-wrap"><table aria-label="Expense history" className="min-w-[850px]">
@@ -23,8 +23,38 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
                     {expense.spend_mode || 'Operation'}
                 </span>
             </td>
-            <td className="min-w-44 max-w-xs"><p className="font-medium break-words">{expense.vendor}</p><p className="mt-1 text-xs text-text-secondary break-words">{expense.description}</p></td>
-            <td>{expense.category}</td><td className="font-semibold whitespace-nowrap tabular-nums">{inr(expense.amount)}</td>
+            <td className="min-w-44 max-w-xs">
+                <p className="font-medium break-words">{expense.vendor}</p>
+                <p className="mt-0.5 text-xs text-text-secondary break-words">{expense.description}</p>
+                {onEdit && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                    <button
+                        type="button"
+                        onClick={() => onEdit(expense)}
+                        disabled={busy}
+                        className="mt-1 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-primary transition-colors cursor-pointer whitespace-nowrap"
+                        title="Edit description or category"
+                    >
+                        <Pencil size={10} /> Edit
+                    </button>
+                )}
+            </td>
+            <td>
+                <div className="flex items-center gap-1.5">
+                    <span>{expense.category}</span>
+                    {onEdit && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                        <button
+                            type="button"
+                            onClick={() => onEdit(expense)}
+                            disabled={busy}
+                            className="p-1 rounded-md text-slate-400 hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            title="Edit category or description"
+                            aria-label={`Edit category for ${expense.description}`}
+                        >
+                            <Pencil size={11} />
+                        </button>
+                    )}
+                </div>
+            </td><td className="font-semibold whitespace-nowrap tabular-nums">{inr(expense.amount)}</td>
             <td><p>{expense.payment_mode}</p>{expense.payment_ref && <p className="text-xs text-text-secondary mt-1 break-words">{expense.payment_ref}</p>}</td>
             <td className="min-w-36 max-w-56">
                 <div className="space-y-1.5">
@@ -64,19 +94,69 @@ export default function ExpenseTable({ expenses, org, showRequest = true, onOpen
                     )}
                 </div>
             </td>
-            <td className="min-w-32"><span className="pc-status capitalize" data-status={expense.review_status}>{expense.review_status.replaceAll('_', ' ')}</span>{expense.review_remarks && <p className="text-xs text-text-secondary mt-2 max-w-48 break-words">{expense.review_remarks}</p>}
+            <td className="min-w-[190px]">
+                <span className="pc-status capitalize" data-status={expense.review_status}>{expense.review_status.replaceAll('_', ' ')}</span>
+                {expense.review_remarks && <p className="text-xs text-text-secondary mt-1 max-w-48 break-words leading-snug">{expense.review_remarks}</p>}
                 {onReview && expense.review_status !== 'withdrawn' && (
-                    <div className="flex flex-wrap gap-2 mt-3">
-                        <button type="button" className="pc-button pc-button-secondary" disabled={busy} onClick={() => onReview(expense.id, 'accepted')}>
-                            {expense.no_bill_reason ? (expense.documents?.length ? 'Accept proof' : 'Accept declaration') : (expense.documents?.length ? 'Accept bill' : 'Accept expense')}
-                        </button>
-                        <button type="button" className="pc-button pc-button-danger" disabled={busy} onClick={() => onReview(expense.id, 'rejected')}>
-                            {expense.documents?.length ? 'Reject proof' : 'Reject expense'}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        {expense.review_status !== 'accepted' && (
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => onReview(expense.id, 'accepted')}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all border bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 active:scale-95 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/50 dark:text-emerald-300 dark:border-emerald-800 cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={expense.no_bill_reason ? (expense.documents?.length ? 'Accept proof' : 'Accept declaration') : (expense.documents?.length ? 'Accept bill' : 'Accept expense')}
+                            >
+                                <Check size={11} className="stroke-[2.5] shrink-0" />
+                                <span>{expense.no_bill_reason ? (expense.documents?.length ? 'Accept proof' : 'Accept declaration') : (expense.documents?.length ? 'Accept bill' : 'Accept expense')}</span>
+                            </button>
+                        )}
+                        {expense.review_status !== 'rejected' && (
+                            <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => onReview(expense.id, 'rejected')}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all border bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 active:scale-95 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 dark:border-rose-800 cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={expense.documents?.length ? 'Reject proof' : 'Reject expense'}
+                            >
+                                <X size={11} className="stroke-[2.5] shrink-0" />
+                                <span>{expense.documents?.length ? 'Reject proof' : 'Reject expense'}</span>
+                            </button>
+                        )}
+                    </div>
+                )}
+                {onCorrect && expense.review_status === 'rejected' && (
+                    <div className="mt-1">
+                        <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => onCorrect(expense)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all border bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 active:scale-95 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/50 dark:text-indigo-300 dark:border-indigo-800 cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Replace proof document"
+                        >
+                            <Upload size={11} className="shrink-0" />
+                            <span>Replace proof</span>
                         </button>
                     </div>
                 )}
-                {onCorrect && expense.review_status === 'rejected' && <button type="button" className="pc-button pc-button-secondary mt-3" disabled={busy} onClick={() => onCorrect(expense)}>Replace proof</button>}
-                {onWithdraw && expense.review_status === 'rejected' && <button type="button" className="pc-button pc-button-danger mt-3" disabled={busy} onClick={() => onWithdraw(expense)}>Withdraw expense</button>}
+                {onWithdraw && (expense.review_status === 'pending' || expense.review_status === 'rejected') && (
+                    <div className="mt-1">
+                        <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => onWithdraw(expense)}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold transition-all border active:scale-95 cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${
+                                expense.review_status === 'pending'
+                                    ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800'
+                                    : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 dark:bg-rose-950/40 dark:hover:bg-rose-900/50 dark:text-rose-300 dark:border-rose-800'
+                            }`}
+                            title={expense.review_status === 'pending' ? 'Revert this transaction to restore balance' : 'Withdraw this rejected expense'}
+                        >
+                            {expense.review_status === 'pending' ? <RotateCcw size={11} className="shrink-0" /> : <Trash2 size={11} className="shrink-0" />}
+                            <span>{expense.review_status === 'pending' ? 'Revert transaction' : 'Withdraw expense'}</span>
+                        </button>
+                    </div>
+                )}
             </td>
             {onOpen && <td><Button variant="solid" size="sm" disabled={busy} aria-label={`View ${expense.request?.request_no || 'request'} and proofs`} onClick={() => onOpen(expense.request_id)}>View request</Button></td>}
         </tr>)}</tbody>

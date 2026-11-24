@@ -1,10 +1,10 @@
 'use client';
 import { useEffect, useState, useMemo } from 'react';
-import { ChevronLeft, ChevronRight, Loader2, ReceiptText, Building2, Users, Download, FileSpreadsheet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2, ReceiptText, Building2, Users, Download, FileSpreadsheet, Pencil, X } from 'lucide-react';
 import { Button } from '@/frontend/components/ui/button';
 import ExpenseTable from './ExpenseTable';
-import { pcFetch, type Expense } from './workflowTypes';
-import { inr } from '@/frontend/lib/pettyCash/roles';
+import { pcFetch, pcJson, type Expense } from './workflowTypes';
+import { inr, PC_CATEGORIES } from '@/frontend/lib/pettyCash/roles';
 import { exportExpensesToCsv, exportExpensesToExcel } from '@/frontend/lib/pettyCash/exportExpenses';
 
 export default function ExpenseHistory({ org, onOpen }: { org: string; onOpen: (id: string) => void }) {
@@ -15,6 +15,12 @@ export default function ExpenseHistory({ org, onOpen }: { org: string; onOpen: (
     const [pages, setPages] = useState(1);
     const [retry, setRetry] = useState(0);
     const [modeFilter, setModeFilter] = useState<'all' | 'Operation' | 'Client'>('all');
+    const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+    const [editCategory, setEditCategory] = useState('');
+    const [editCustomCategory, setEditCustomCategory] = useState('');
+    const [editDescription, setEditDescription] = useState('');
+    const [editSaving, setEditSaving] = useState(false);
+    const [busy, setBusy] = useState(false);
 
     useEffect(() => {
         let active = true;
@@ -184,7 +190,40 @@ export default function ExpenseHistory({ org, onOpen }: { org: string; onOpen: (
                         </p>
                     </div>
                 ) : (
-                    <ExpenseTable expenses={rows} org={org} onOpen={onOpen} />
+                    <ExpenseTable
+                        expenses={rows}
+                        org={org}
+                        onOpen={onOpen}
+                        busy={busy}
+                        onEdit={entry => {
+                            setEditingExpense(entry);
+                            setEditCategory(entry.category);
+                            setEditCustomCategory(!PC_CATEGORIES.includes(entry.category) ? entry.category : '');
+                            setEditDescription(entry.description);
+                        }}
+                        onWithdraw={async entry => {
+                            const isPending = entry.review_status === 'pending';
+                            const confirmText = isPending
+                                ? `Revert this ₹${entry.amount} expense ("${entry.description}")?\n\nThis will remove the transaction and restore ₹${entry.amount} back to your available petty cash float.\n\nReason for reverting:`
+                                : `Withdraw the ₹${entry.amount} rejected expense ("${entry.description}")?\n\nReason:`;
+                            const remark = window.prompt(confirmText, isPending ? 'Uploaded wrong transaction by mistake' : '');
+                            if (!remark?.trim()) return;
+                            setBusy(true);
+                            setError('');
+                            try {
+                                await pcFetch(`/api/petty-cash/expenses/${entry.id}`, pcJson({
+                                    organization_id: org,
+                                    action: 'withdraw',
+                                    remark: remark.trim()
+                                }, 'PATCH'));
+                                setRetry(v => v + 1);
+                            } catch (reason) {
+                                setError(reason instanceof Error ? reason.message : 'Withdraw failed');
+                            } finally {
+                                setBusy(false);
+                            }
+                        }}
+                    />
                 )}
             </div>
 
@@ -197,6 +236,109 @@ export default function ExpenseHistory({ org, onOpen }: { org: string; onOpen: (
                     Next<ChevronRight size={14} />
                 </Button>
             </div>
+
+            {/* Edit Description & Category Modal */}
+            {editingExpense && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#30363d] rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                            <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold">
+                                <Pencil size={18} className="text-primary" />
+                                <span>Edit Expense Details</span>
+                            </div>
+                            <button
+                                type="button"
+                                disabled={editSaving}
+                                onClick={() => setEditingExpense(null)}
+                                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                                    Expense Category
+                                </label>
+                                <select
+                                    value={editCategory}
+                                    onChange={e => setEditCategory(e.target.value)}
+                                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                >
+                                    {PC_CATEGORIES.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))}
+                                    {!PC_CATEGORIES.includes(editCategory) && editCategory !== 'Other' && (
+                                        <option value={editCategory}>{editCategory}</option>
+                                    )}
+                                    <option value="Other">Other (Custom)</option>
+                                </select>
+                                {editCategory === 'Other' && (
+                                    <input
+                                        type="text"
+                                        placeholder="Enter custom category"
+                                        value={editCustomCategory}
+                                        onChange={e => setEditCustomCategory(e.target.value)}
+                                        className="mt-2 w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    />
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1.5">
+                                    Description / Purpose
+                                </label>
+                                <textarea
+                                    rows={3}
+                                    value={editDescription}
+                                    onChange={e => setEditDescription(e.target.value)}
+                                    placeholder="Explain the expense purpose..."
+                                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={editSaving}
+                                onClick={() => setEditingExpense(null)}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="solid"
+                                size="sm"
+                                disabled={editSaving || !editDescription.trim()}
+                                onClick={async () => {
+                                    const finalCat = editCategory === 'Other' && editCustomCategory.trim() ? editCustomCategory.trim() : editCategory;
+                                    if (!finalCat || !editDescription.trim()) return;
+                                    setEditSaving(true);
+                                    setError('');
+                                    try {
+                                        await pcFetch(`/api/petty-cash/expenses/${editingExpense.id}`, pcJson({
+                                            organization_id: org,
+                                            action: 'update',
+                                            category: finalCat,
+                                            description: editDescription.trim()
+                                        }, 'PATCH'));
+                                        setEditingExpense(null);
+                                        setRetry(v => v + 1);
+                                    } catch (err) {
+                                        setError(err instanceof Error ? err.message : 'Failed to update expense');
+                                    } finally {
+                                        setEditSaving(false);
+                                    }
+                                }}
+                            >
+                                {editSaving ? 'Saving...' : 'Save Changes'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

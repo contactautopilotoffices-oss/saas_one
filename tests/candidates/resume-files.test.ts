@@ -241,7 +241,7 @@ describe("resume files against the real schema", () => {
     const sheet = workbook.getWorksheet("Resume files");
     assert.ok(sheet);
     assert.equal(sheet.rowCount, 6);
-    assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["#", "File name", "Type", "Size (KB)", "Downloaded on", "Laptop", "Folder", "Uploaded by", "Uploaded on", "Candidate", "Matched by", "Text", "Open"]);
+    assert.deepEqual((sheet.getRow(1).values as unknown[]).slice(1), ["#", "File name", "Type", "Size (KB)", "Downloaded on", "User", "Folder", "Uploaded by", "Uploaded on", "Candidate", "Matched by", "Text", "Open", "Source", "Designation / role sourced for"]);
     const first = sheet.getRow(2);
     assert.equal(first.getCell(2).value, "Gauri CV.pdf");
     assert.equal(first.getCell(3).value, "PDF");
@@ -252,7 +252,7 @@ describe("resume files against the real schema", () => {
     assert.match(link.hyperlink, new RegExp(`^https://portal.test/api/candidates/resumes/[0-9a-f-]{36}\\?orgId=${ORG}$`));
     const totals = workbook.getWorksheet("Summary");
     assert.ok(totals);
-    assert.equal(totals.getRow(totals.rowCount).getCell(1).value, "All laptops");
+    assert.equal(totals.getRow(totals.rowCount).getCell(1).value, "All users");
     assert.equal(totals.getRow(totals.rowCount).getCell(2).value, 5);
 
     // Round trip through the file format the route sends.
@@ -324,8 +324,8 @@ describe("resume files against the real schema", () => {
 describe("resume query and names", () => {
   it("reads the list query with safe bounds", () => {
     const p = parseResumeQuery(new URLSearchParams({ from: "2026-01-01", to: "garbage", q: "  cv ", device: " Roohi's laptop ", page: "0", pageSize: "9999" }));
-    assert.deepEqual(p, { from: "2026-01-01T00:00:00.000Z", to: null, q: "cv", device: "Roohi's laptop", candidateId: null, link: "", page: 1, pageSize: 200 });
-    assert.deepEqual(parseResumeQuery(new URLSearchParams()), { from: null, to: null, q: "", device: null, candidateId: null, link: "", page: 1, pageSize: 100 });
+    assert.deepEqual(p, { from: "2026-01-01T00:00:00.000Z", to: null, q: "cv", device: "Roohi's laptop", candidateId: null, link: "", source: "", sourcedRole: "", page: 1, pageSize: 200 });
+    assert.deepEqual(parseResumeQuery(new URLSearchParams()), { from: null, to: null, q: "", device: null, candidateId: null, link: "", source: "", sourcedRole: "", page: 1, pageSize: 100 });
     const l = parseResumeQuery(new URLSearchParams({ candidateId: "00000000-0000-0000-0000-00000000000A", link: "unlinked" }));
     assert.equal(l.candidateId, "00000000-0000-0000-0000-00000000000a");
     assert.equal(l.link, "unlinked");

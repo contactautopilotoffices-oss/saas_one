@@ -1,6 +1,7 @@
 'use client';
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -45,6 +46,7 @@ const SOPDashboard = dynamic(() => import('@/frontend/components/sop/SOPDashboar
 const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsModule'), { loading: TabLoading });
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
+const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -57,13 +59,20 @@ const TAB_PRELOADS = [
     () => import('./SettingsView'),
     () => import('@/frontend/components/ops/TicketFlowMap'),
     () => import('@/frontend/components/sop/SOPDashboard'),
+    () => import('@/frontend/components/ppm/PPMCalendar'),
     () => import('@/frontend/components/assets/AssetsModule'),
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/water/WaterDashboard'),
 ];
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm';
+
+const VALID_MST_TABS: readonly Tab[] = [
+    'dashboard', 'requests', 'guest_experience', 'create_request', 'visitors',
+    'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist',
+    'water', 'grievance', 'assets', 'ppm'
+] as const;
 
 interface Property {
     id: string;
@@ -120,8 +129,14 @@ const MstDashboard = () => {
     const router = useRouter();
     const propertyId = (params?.propertyId as string) || dashboardPropertyId;
 
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+
     // State
-    const [dashboardTab, setActiveTab] = useState<Tab>('dashboard');
+    const [dashboardTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_MST_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'dashboard';
+    });
     const activeTab = dashboardContent !== undefined ? 'petty-cash' as Tab : dashboardTab;
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -139,7 +154,6 @@ const MstDashboard = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [showQRScanner, setShowQRScanner] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const searchParams = useSearchParams();
     const { getCachedData, setCachedData } = useDataCache();
     const cacheKeyPrefix = `mst-${propertyId}`;
 
@@ -192,6 +206,39 @@ const MstDashboard = () => {
         }
     }, [propertyId, user?.id]);
 
+    // Listen for globally raised tickets to instantly display in incomingTickets without loading delay
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
+            if (newTicket && newTicket.id) {
+                if (!newTicket.property_id || !propertyId || newTicket.property_id === propertyId) {
+                    setIncomingTickets(prev => {
+                        if (tempId && prev.some(t => t.id === tempId)) {
+                            return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                        }
+                        if (prev.some(t => t.id === newTicket.id)) {
+                            return prev.map(t => t.id === newTicket.id ? { ...t, ...newTicket } : t);
+                        }
+                        return [newTicket, ...prev];
+                    });
+                    setTicketStats(prev => ({
+                        total: prev.total + 1,
+                        open: prev.open + 1,
+                        closed: prev.closed,
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [propertyId]);
+
     // Global loading timeout to prevent infinite spinners
     useEffect(() => {
         let timeout: NodeJS.Timeout;
@@ -206,7 +253,7 @@ const MstDashboard = () => {
     // Restore state from URL
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['dashboard', 'requests', 'guest_experience', 'create_request', 'visitors', 'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist', 'water', 'assets'].includes(tab)) {
+        if (tab && VALID_MST_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
         
@@ -593,28 +640,32 @@ const MstDashboard = () => {
 
     const handleUpdateTicket = async () => {
         if (!editingTicket || !editTitle.trim()) return;
-        setIsUpdating(true);
+        const targetId = editingTicket.id;
+        const newTitle = editTitle;
+        const newDesc = editDescription;
+
+        // Instant optimistic update
+        setIncomingTickets(prev => prev.map(t => t.id === targetId ? { ...t, title: newTitle, description: newDesc } : t));
+        setEditingTicket(null);
+
         try {
-            const res = await fetch(`/api/tickets/${editingTicket.id}`, {
+            const res = await fetch(`/api/tickets/${targetId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: editTitle,
-                    description: editDescription
+                    title: newTitle,
+                    description: newDesc
                 })
             });
 
-            if (res.ok) {
-                setEditingTicket(null);
-                fetchTickets(); // Refresh list
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
-                alert(data.error || 'Failed to update ticket');
+                console.error(data.error || 'Failed to update ticket');
+                fetchTickets();
             }
         } catch (error) {
             console.error('Update ticket error:', error);
-        } finally {
-            setIsUpdating(false);
+            fetchTickets();
         }
     };
 
@@ -801,6 +852,16 @@ const MstDashboard = () => {
                                 Checklists
                             </button>
                             <button
+                                onClick={() => handleTabChange('ppm')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'ppm'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <Calendar className="w-4 h-4" />
+                                PPM Calendar
+                            </button>
+                            <button
                                 onClick={() => handleTabChange('assets')}
                                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'assets'
                                     ? 'bg-primary text-text-inverse shadow-sm'
@@ -817,6 +878,7 @@ const MstDashboard = () => {
                     <div className="mb-6" data-navigation-section="management-hub">
                         <p className="px-4 mb-3 text-[10px] font-bold uppercase tracking-widest text-text-secondary">Management Hub</p>
                         <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
+                        <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                     </div>
 {/* System & Personal */}
                     <div className="mb-4">
@@ -910,7 +972,7 @@ const MstDashboard = () => {
 
                 {/* Page Content */}
                 {/* Page Content */}
-                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
+                <main id="main-scroll-container" className={`flex-1 w-full min-h-0 max-w-full overflow-y-auto overflow-x-hidden ${activeTab === 'checklist' || activeTab === 'ppm' ? 'p-0' : 'p-2 sm:p-4 md:p-6'} bg-slate-50/50`}>
                 {dashboardContent ?? (<>
 
 
@@ -991,6 +1053,15 @@ const MstDashboard = () => {
                             {activeTab === 'electricity' && property && <ElectricityStaffDashboard propertyId={property.id} isDark={isDarkMode} />}
                             {activeTab === 'water' && propertyId && <WaterDashboard propertyId={propertyId} />}
                             {activeTab === 'checklist' && property && <SOPDashboard propertyId={property.id} />}
+                            {activeTab === 'ppm' && property && (
+                                <PPMCalendar
+                                    organizationId={property.organization_id || ''}
+                                    propertyId={property.id}
+                                    properties={[{ id: property.id, name: property.name }]}
+                                    readOnly={false}
+                                    allowUpload={false}
+                                />
+                            )}
                             {activeTab === 'assets' && property && (
                                 <AssetsModule
                                     organizationId={property.organization_id || ''}

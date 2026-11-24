@@ -406,6 +406,34 @@ export class CollaborationService {
     }
 
     /**
+     * Owner 2026-11-21, WhatsApp "undo": put a request this person answered in the last 10 minutes back to waiting. An
+     * accepted one loses its task again, only while that task is still "to do" (its files go back onto the request).
+     * Nobody is told here (the caller decides what to say).
+     */
+    static async undoRespond(actorUserId: string, input: { requestId?: unknown; since?: string }): Promise<void> {
+        if (!isUuid(input.requestId)) throw new WorkspaceError(400, 'That request is not valid.');
+        const actor = await this.actorFor(actorUserId);
+        const since = new Date(Math.max(Date.now() - 10 * 60_000, new Date(input.since || 0).getTime() - 10_000)).toISOString();
+        const { data: req, error } = await supabaseAdmin.from('task_requests').select('*').eq('id', input.requestId).maybeSingle();
+        if (error || !req || req.to_user_id !== actor.id) throw new WorkspaceError(404, 'Request not found.');
+        if (req.state === 'awaiting') return;
+        if (!req.responded_at || (req.responded_at as string) < since) throw new WorkspaceError(409, 'That answer is too old to undo here.', 'TOO_OLD');
+        const taskId = (req.task_id as string | null) || null;
+        if (taskId) {
+            // Only while it is still "to do" on their list: delete it in one conditional step.
+            const { data: gone, error: delError } = await supabaseAdmin.from('task_assignments').delete()
+                .eq('id', taskId).eq('employee_id', actor.id).eq('status', 'pending').select('id').maybeSingle();
+            if (delError || !gone) throw new WorkspaceError(409, 'You have already started that task.', 'CHANGED');
+            const { error: fileError } = await supabaseAdmin.from('task_attachments').update({ task_id: null }).eq('request_id', req.id).eq('task_id', taskId);
+            if (fileError && !isMissingSchema(fileError)) console.error('[CollaborationService] could not move files back onto the request:', req.id, fileError);
+        }
+        const { error: backError } = await supabaseAdmin.from('task_requests')
+            .update({ state: 'awaiting', responded_at: null, decline_reason: null, task_id: null }).eq('id', req.id).eq('state', req.state as string);
+        if (backError) throw new WorkspaceError(500, 'Could not put the request back just now.');
+        await TaskDatabaseService.logAudit({ eventType: 'task_support_answer_undone', actorId: actor.id, targetEmployeeId: req.from_user_id as string, details: { requestId: req.id, title: req.title, via: 'whatsapp_undo' } });
+    }
+
+    /**
      * Read-only, for the WhatsApp bot (owner 2026-10-26): support requests waiting for this person's answer. Empty when
      * there are none or the table is not there yet.
      */

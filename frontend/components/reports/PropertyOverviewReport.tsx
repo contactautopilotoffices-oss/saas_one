@@ -594,9 +594,14 @@ function Scorecard({ rows }: { rows: ScoreRow[] }) {
     );
 }
 
+/** True while one module is focused: cards with no data are then hidden instead of shown as "not set up". */
+const HideUnavailableContext = React.createContext(false);
+
 function ModuleCard({ icon: Icon, title, section, children, span = 1 }: {
     icon: React.ElementType; title: string; section: Section<object>; children?: React.ReactNode; span?: 1 | 2 | 3;
 }) {
+    const hideUnavailable = useContext(HideUnavailableContext);
+    if (hideUnavailable && !section.available) return null;
     const spanCls = span === 3 ? 'md:col-span-2 xl:col-span-3' : span === 2 ? 'md:col-span-2' : '';
     return (
         <section className={`bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow p-5 flex flex-col ${spanCls}`}>
@@ -1046,6 +1051,279 @@ function UsageAcrossProperties({ properties, comparative, days }: { properties: 
 }
 
 
+// ── records: the actual rows behind a number ("which 48 tickets were closed") ──
+
+type RecordModule = 'tickets' | 'sop' | 'ppm' | 'procurement' | 'requisitions' | 'petty_cash';
+const RECORD_MODULES: Record<RecordModule, { label: string; filters: { id: string; label: string }[] }> = {
+    tickets: { label: 'Tickets', filters: [
+        { id: 'all', label: 'All raised' }, { id: 'closed', label: 'Closed' }, { id: 'open', label: 'Still open' },
+        { id: 'pending_validation', label: 'Pending validation' }, { id: 'sla_breached', label: 'SLA breached' },
+        { id: 'internal', label: 'Internal' }, { id: 'open_now', label: 'Open now (all time)' },
+    ] },
+    sop: { label: 'Checklists', filters: [
+        { id: 'all', label: 'All due' }, { id: 'completed', label: 'Completed' }, { id: 'on_time', label: 'On time' },
+        { id: 'late', label: 'Completed late' }, { id: 'missed', label: 'Missed' }, { id: 'pending', label: 'Pending' },
+    ] },
+    ppm: { label: 'Planned maintenance', filters: [
+        { id: 'all', label: 'All planned' }, { id: 'done', label: 'Done' }, { id: 'pending', label: 'Pending' },
+        { id: 'postponed', label: 'Postponed' }, { id: 'skipped', label: 'Skipped' }, { id: 'overdue_now', label: 'Overdue now' },
+    ] },
+    requisitions: { label: 'Monthly requisitions', filters: [
+        { id: 'all', label: 'All months' }, { id: 'submitted', label: 'Submitted' }, { id: 'acknowledged', label: 'Acknowledged' },
+        { id: 'uploaded', label: 'Uploaded, not acknowledged' }, { id: 'missing', label: 'Not submitted' },
+    ] },
+    procurement: { label: 'Material requests', filters: [
+        { id: 'all', label: 'All' }, { id: 'pending', label: 'Pending' }, { id: 'approved', label: 'Approved / ordered' },
+        { id: 'delivered', label: 'Delivered' }, { id: 'rejected', label: 'Rejected' },
+    ] },
+    petty_cash: { label: 'Petty cash', filters: [
+        { id: 'all', label: 'All' }, { id: 'pending_approval', label: 'Awaiting approval' }, { id: 'paid', label: 'Paid' }, { id: 'rejected', label: 'Rejected' },
+    ] },
+};
+type RecordSpec = { module: RecordModule; filter: string; onlyProperty?: string };
+type RecordScope = { query: string; from: string; to: string; properties: { id: string; name: string }[]; multi: boolean; label: string };
+const RecordsContext = React.createContext<(spec: RecordSpec) => void>(() => undefined);
+type RecordsResponse = { columns: string[]; rows: (string | number | null)[][]; links: (string | null)[]; total: number; shown: number; truncated: boolean };
+
+/** Colour a status-like cell: green for finished, amber for in between, red for failed. */
+function cellTone(col: string, v: string | number | null): string {
+    if (typeof v !== 'string' || !/status|outcome|sla/i.test(col)) return '';
+    const x = v.toLowerCase();
+    if (/(missed|breached|not submitted|rejected|cancelled|overdue)/.test(x)) return 'bg-red-50 text-red-700';
+    if (/(late|pending|uploaded|postponed|progress|open|sent back|submitted|assigned|vendor)/.test(x)) return 'bg-amber-50 text-amber-800';
+    if (/(closed|resolved|done|completed|on time|acknowledged|delivered|paid|within|satisfied|approved)/.test(x)) return 'bg-emerald-50 text-emerald-700';
+    return 'bg-slate-100 text-slate-600';
+}
+
+function RecordsView({ spec, scope, inline }: { spec: RecordSpec; scope: RecordScope; inline?: boolean }) {
+    const [filter, setFilter] = useState(spec.filter);
+    const [prop, setProp] = useState(spec.onlyProperty || '');
+    const [search, setSearch] = useState('');
+    const [limit, setLimit] = useState(inline ? 25 : 200);
+    // Each response is stored with the URL it answers, so "loading" is simply "the stored answer is for another URL".
+    const url = `/api/reports/property-overview/records?${scope.query}&from=${scope.from}&to=${scope.to}&module=${spec.module}&filter=${filter}${prop ? `&onlyProperty=${prop}` : ''}`;
+    const [result, setResult] = useState<{ url: string; data: RecordsResponse | null; err: string | null } | null>(null);
+    useEffect(() => {
+        let alive = true;
+        fetch(url).then(async r => {
+            const j = await r.json();
+            if (!r.ok) throw new Error(j?.error || 'Could not load the records');
+            if (alive) setResult({ url, data: j as RecordsResponse, err: null });
+        }).catch(e => { if (alive) setResult({ url, data: null, err: e instanceof Error ? e.message : 'Could not load the records' }); });
+        return () => { alive = false; };
+    }, [url]);
+    const loading = !result || result.url !== url;
+    const data = loading ? null : result.data;
+    const err = loading ? null : result.err;
+
+    const meta = RECORD_MODULES[spec.module];
+    const rowsWithLinks = useMemo(() => {
+        if (!data) return [];
+        const all = data.rows.map((r, i) => ({ r, link: data.links?.[i] || null }));
+        const s = search.trim().toLowerCase();
+        return s ? all.filter(x => x.r.some(v => String(v ?? '').toLowerCase().includes(s))) : all;
+    }, [data, search]);
+    // Per-property counts, so an organisation list also answers "which property has the most".
+    const propCol = data ? data.columns.indexOf('Property') : -1;
+    const perProperty = useMemo(() => {
+        if (!data || propCol < 0) return [];
+        const m = new Map<string, number>();
+        for (const x of rowsWithLinks) { const k = String(x.r[propCol] ?? ''); m.set(k, (m.get(k) || 0) + 1); }
+        return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+    }, [data, rowsWithLinks, propCol]);
+
+    const download = () => {
+        if (!data) return;
+        const blob = new Blob([csvOf({ columns: data.columns, rows: rowsWithLinks.map(x => x.r) })], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const f = meta.filters.find(x => x.id === filter)?.label || filter;
+        a.href = url; a.download = `${scope.label}_${meta.label}_${f}_${scope.from}_${scope.to}.csv`.replace(/[^a-z0-9_.-]+/gi, '_'); a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    return (
+        <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-1.5" data-html2canvas-ignore>
+                {meta.filters.map(f => (
+                    <button key={f.id} type="button" onClick={() => { setFilter(f.id); setLimit(inline ? 25 : 200); }} aria-pressed={filter === f.id}
+                        className={`rounded-full border px-3 py-1 text-[11px] font-bold transition ${filter === f.id ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-400'}`}>
+                        {f.label}
+                    </button>
+                ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-2" data-html2canvas-ignore>
+                {scope.multi && (
+                    <select value={prop} onChange={e => setProp(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs text-slate-700 bg-white" aria-label="Property">
+                        <option value="">All properties</option>
+                        {scope.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                )}
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search these records" className="flex-1 min-w-[160px] rounded-lg border border-slate-200 px-3 py-1.5 text-xs" aria-label="Search records" />
+                <button type="button" onClick={download} disabled={!data || !rowsWithLinks.length} className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40">
+                    <Download className="w-3.5 h-3.5" /> CSV
+                </button>
+            </div>
+
+            {loading ? (
+                <div className="flex items-center justify-center gap-2 py-10 text-xs text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> loading records</div>
+            ) : err ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{err}</div>
+            ) : data && (<>
+                <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                    <div className="text-2xl font-black text-slate-900 tabular-nums">{n0.format(rowsWithLinks.length)}</div>
+                    <div className="text-xs text-slate-600">{meta.filters.find(x => x.id === filter)?.label.toLowerCase()} {meta.label.toLowerCase()}{search ? ' matching the search' : ''}{data.truncated ? ` (first ${n0.format(data.shown)} of ${n0.format(data.total)})` : ''}</div>
+                </div>
+                {perProperty.length > 1 && (
+                    <div className="flex flex-wrap gap-1.5">
+                        {perProperty.slice(0, 12).map(([name, c]) => (
+                            <span key={name} className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] text-slate-700"><span className="font-bold">{name || 'Unknown'}</span> {n0.format(c)}</span>
+                        ))}
+                    </div>
+                )}
+                {rowsWithLinks.length === 0 ? <Empty text="no records for this filter in the period" /> : (
+                    <div className={`overflow-auto rounded-xl border border-slate-200 ${inline ? '' : 'max-h-[60vh]'}`}>
+                        <table className="min-w-full text-xs">
+                            <thead className="bg-slate-50 sticky top-0 z-[1]">
+                                <tr>
+                                    <th className="px-3 py-2 text-left font-bold text-slate-400 w-8">#</th>
+                                    {data.columns.map(c => <th key={c} className="px-3 py-2 text-left font-bold text-slate-600 whitespace-nowrap">{c}</th>)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rowsWithLinks.slice(0, limit).map(({ r, link }, i) => (
+                                    <tr key={i} onClick={link ? () => window.open(link, '_blank', 'noopener') : undefined}
+                                        className={`odd:bg-white even:bg-slate-50/60 ${link ? 'cursor-pointer hover:bg-indigo-50/60' : ''}`} title={link ? 'Open in a new tab' : undefined}>
+                                        <td className="px-3 py-1.5 text-slate-400 tabular-nums">{i + 1}</td>
+                                        {r.map((v, j) => {
+                                            const tone = cellTone(data.columns[j], v);
+                                            const col = data.columns[j];
+                                            return (
+                                                <td key={j} className={`px-3 py-1.5 align-top ${typeof v === 'number' ? 'text-right tabular-nums' : ''} ${col === 'Title' || col === 'Items' || col === 'Purpose' || col === 'Remark' ? 'min-w-[220px] max-w-[360px]' : 'whitespace-nowrap'} ${j === 0 ? 'font-bold text-slate-900' : 'text-slate-700'}`}>
+                                                    {tone ? <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${tone}`}>{v}</span>
+                                                        : v === null || v === '' ? <span className="text-slate-300">–</span>
+                                                            : typeof v === 'number' ? (/INR/.test(col) ? inr.format(v) : n1.format(v)) : v}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+                {rowsWithLinks.length > limit && (
+                    <button type="button" onClick={() => setLimit(l => l + (inline ? 50 : 300))} className="text-xs font-bold text-slate-700 underline underline-offset-2" data-html2canvas-ignore>
+                        Show more ({n0.format(rowsWithLinks.length - limit)} more)
+                    </button>
+                )}
+            </>)}
+        </div>
+    );
+}
+
+function RecordsDrawer({ spec, scope, onClose }: { spec: RecordSpec; scope: RecordScope; onClose: () => void }) {
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', h);
+        return () => window.removeEventListener('keydown', h);
+    }, [onClose]);
+    return (
+        <div className="fixed inset-0 z-[70]" role="dialog" aria-modal="true" aria-label={RECORD_MODULES[spec.module].label}>
+            <div className="absolute inset-0 bg-slate-900/45 backdrop-blur-[1px]" onClick={onClose} />
+            <aside className="absolute right-0 top-0 h-full w-full max-w-5xl bg-white shadow-2xl overflow-y-auto">
+                <div className="sticky top-0 bg-white/95 backdrop-blur border-b border-slate-200 px-6 py-4 flex items-start justify-between gap-4 z-10">
+                    <div className="min-w-0">
+                        <div className="text-[11px] font-bold uppercase tracking-wide text-slate-400">{scope.label} · {fmtRange(scope.from, scope.to)}</div>
+                        <h3 className="text-lg font-black text-slate-900 leading-tight">{RECORD_MODULES[spec.module].label}: the records</h3>
+                        <p className="text-xs text-slate-600 mt-1">Every record behind the number you clicked, counted with the same rules as the report. Switch the filter to see the other buckets. Rows with a link open in a new tab.</p>
+                    </div>
+                    <button type="button" onClick={onClose} aria-label="Close" className="rounded-xl border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50 shrink-0"><X className="w-4 h-4" /></button>
+                </div>
+                <div className="px-6 py-5"><RecordsView key={`${spec.module}:${spec.filter}:${spec.onlyProperty || ''}`} spec={spec} scope={scope} /></div>
+            </aside>
+        </div>
+    );
+}
+
+/** A number that opens its records when clicked. */
+function RecordStat({ rec, ...props }: React.ComponentProps<typeof Stat> & { rec: RecordSpec }) {
+    const open = useContext(RecordsContext);
+    return (
+        <button type="button" onClick={() => open(rec)} className="text-left rounded-lg -m-1 p-1 hover:bg-indigo-50/70 transition group/rs min-w-0" title="Click to see these records">
+            <Stat {...props} />
+            <span className="text-[9px] font-bold text-indigo-600 opacity-0 group-hover/rs:opacity-100 transition flex items-center gap-0.5" data-html2canvas-ignore>see list <ChevronRight className="w-2.5 h-2.5" /></span>
+        </button>
+    );
+}
+
+// ── module focus: one module at a time, for a review meeting ──
+
+type FocusKey = 'all' | 'tickets' | 'sop' | 'ppm' | 'requisitions' | 'procurement' | 'petty_cash' | 'utilities' | 'visitors' | 'stock' | 'people';
+const FOCUS_TABS: { id: FocusKey; label: string; icon: React.ElementType; score?: string; records?: RecordModule; defaultFilter?: string }[] = [
+    { id: 'all', label: 'All modules', icon: Gauge },
+    { id: 'tickets', label: 'Tickets', icon: Ticket, score: 'tickets_closure', records: 'tickets', defaultFilter: 'closed' },
+    { id: 'sop', label: 'Checklists', icon: ClipboardCheck, score: 'sop_completion', records: 'sop', defaultFilter: 'missed' },
+    { id: 'ppm', label: 'PPM', icon: Wrench, score: 'ppm_compliance', records: 'ppm', defaultFilter: 'all' },
+    { id: 'requisitions', label: 'Requisitions', icon: CalendarCheck, score: 'req_submitted', records: 'requisitions', defaultFilter: 'all' },
+    { id: 'procurement', label: 'Procurement', icon: ShoppingCart, records: 'procurement', defaultFilter: 'all' },
+    { id: 'petty_cash', label: 'Petty cash', icon: Wallet, records: 'petty_cash', defaultFilter: 'all' },
+    { id: 'utilities', label: 'Utilities', icon: Zap, score: 'elec_logging' },
+    { id: 'visitors', label: 'Visitors & rooms', icon: Users },
+    { id: 'stock', label: 'Stock & assets', icon: Package, score: 'stock_activity' },
+    { id: 'people', label: 'Team, tasks & audit', icon: UserCircle2, score: 'tasks_completion' },
+];
+
+/** Every property ranked on one module score, best first. Clicking a property filters the records below to it. */
+function ModulePropertyRanking({ scoreKey, label, properties, comparative, onPick, picked }: {
+    scoreKey: string; label: string; properties: { id: string; name: string }[]; comparative: NonNullable<Report['comparative']>; onPick?: (id: string) => void; picked?: string;
+}) {
+    const rows = properties.map(p => {
+        const v = comparative.values[p.id]?.[scoreKey];
+        const num = comparative.values[p.id]?.[`${scoreKey}_num`];
+        const den = comparative.values[p.id]?.[`${scoreKey}_den`];
+        return { p, v: typeof v === 'number' ? Math.max(0, Math.min(100, v)) : null, num, den };
+    }).sort((a, b) => (b.v ?? -1) - (a.v ?? -1));
+    const withData = rows.filter(r => r.v !== null);
+    const avg = withData.length ? withData.reduce((a, r) => a + (r.v ?? 0), 0) / withData.length : null;
+    const attention = withData.filter(r => statusOf(r.v) === 'attention');
+    return (
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            <header className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center"><Building2 className="w-4 h-4 text-slate-700" /></div>
+                    <h3 className="text-sm font-black text-slate-900">{label}: property ranking</h3>
+                </div>
+                <BandLegend compact />
+            </header>
+            <p className="text-[11px] text-slate-500 mb-4">
+                {withData.length ? <>Average across {withData.length} properties is <span className="font-bold text-slate-800">{n0.format(avg ?? 0)}%</span>. Best is <span className="font-bold text-emerald-700">{withData[0].p.name}</span> at {n0.format(withData[0].v ?? 0)}%{attention.length ? <>; <span className="font-bold text-red-700">{attention.length}</span> {attention.length === 1 ? 'property needs' : 'properties need'} action</> : ''}.</> : 'No property has data for this module in the period.'}
+                {onPick && ' Click a property to list its records below.'}
+            </p>
+            <ul className="space-y-1.5">
+                {rows.map((r, i) => (
+                    <li key={r.p.id}>
+                        <button type="button" disabled={!onPick} onClick={() => onPick?.(picked === r.p.id ? '' : r.p.id)}
+                            className={`w-full grid items-center gap-3 rounded-lg px-2 py-1 text-left transition ${picked === r.p.id ? 'bg-indigo-50 ring-1 ring-indigo-200' : onPick ? 'hover:bg-slate-50' : ''}`}
+                            style={{ gridTemplateColumns: '1.5rem 11rem 1fr 9rem' }}>
+                            <span className="text-[11px] font-bold text-slate-400 tabular-nums">{r.v === null ? '' : i + 1}</span>
+                            <span className="text-xs font-medium text-slate-800 truncate">{r.p.name}</span>
+                            <span className="relative h-3 rounded-full bg-slate-100">
+                                {r.v !== null && <span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${r.v}%`, background: STATUS[statusOf(r.v)].dot }} />}
+                                <span className="absolute -top-0.5 -bottom-0.5 w-px border-l border-dashed border-slate-500" style={{ left: `${GOOD_AT}%` }} aria-hidden />
+                            </span>
+                            <span className="text-right flex items-center justify-end gap-1.5">
+                                {typeof r.num === 'number' && typeof r.den === 'number' && <span className="text-[10px] text-slate-500 tabular-nums">{n0.format(r.num)} of {n0.format(r.den)}</span>}
+                                <StatusPill value={r.v} compact />
+                            </span>
+                        </button>
+                    </li>
+                ))}
+            </ul>
+        </section>
+    );
+}
+
 // ── report ───────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -1073,6 +1351,11 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
     const [showHow, setShowHow] = useState(false);
     const [drill, setDrill] = useState<DrillSpec | null>(null);
     const closeDrill = useCallback(() => setDrill(null), []);
+    const [records, setRecords] = useState<RecordSpec | null>(null);
+    const closeRecords = useCallback(() => setRecords(null), []);
+    const [focus, setFocus] = useState<FocusKey>('all');
+    const [focusProperty, setFocusProperty] = useState('');
+    useEffect(() => { setFocusProperty(''); }, [focus]);
     const reportRef = useRef<HTMLDivElement>(null);
 
     const range = useMemo(() => preset === 'custom' ? custom : presetRange(preset), [preset, custom]);
@@ -1108,6 +1391,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
     }, [load, preset, custom.from, custom.to]);
 
     const scorecard = useMemo(() => (report ? buildScorecard(report) : []), [report]);
+    const recordScope = useMemo<RecordScope | null>(() => report ? {
+        query: propertyId ? `propertyId=${propertyId}` : `orgId=${orgId}`,
+        from: report.range.from, to: report.range.to,
+        properties: report.properties, multi: !propertyId && report.properties.length > 1,
+        label: report.property.name,
+    } : null, [report, propertyId, orgId]);
+    const show = (k: FocusKey) => focus === 'all' || focus === k;
+    const focusTab = FOCUS_TABS.find(t => t.id === focus)!;
 
     const handleDownloadPdf = async () => {
         const element = reportRef.current;
@@ -1144,8 +1435,11 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
 
     return (
         <DrillContext.Provider value={setDrill}>
+        <RecordsContext.Provider value={setRecords}>
+        <HideUnavailableContext.Provider value={focus !== 'all'}>
         <div className="space-y-4">
             {drill && report && <DrillDrawer spec={drill} onClose={closeDrill} period={`${report.property.name} · ${fmtRange(report.range.from, report.range.to)}`} />}
+            {records && recordScope && <RecordsDrawer spec={records} scope={recordScope} onClose={closeRecords} />}
             {/* Controls */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1204,6 +1498,18 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                 )}
             </div>
 
+            {/* Module selector: open one module at a time for a review */}
+            <nav className="rounded-2xl border border-slate-200 bg-white shadow-sm p-1.5 overflow-x-auto" aria-label="Module">
+                <div className="flex items-center gap-1 min-w-max">
+                    {FOCUS_TABS.map(t => (
+                        <button key={t.id} type="button" onClick={() => setFocus(t.id)} aria-pressed={focus === t.id}
+                            className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition whitespace-nowrap ${focus === t.id ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}>
+                            <t.icon className="w-3.5 h-3.5" /> {t.label}
+                        </button>
+                    ))}
+                </div>
+            </nav>
+
             {isLoading && !report ? (
                 <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-12 flex flex-col items-center justify-center text-slate-500">
                     <Loader2 className="w-6 h-6 animate-spin mb-3" />
@@ -1229,13 +1535,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 </div>
                             </div>
                             <div className="text-right">
-                                <div className="text-[11px] uppercase tracking-wide text-slate-300 font-bold">{report.scope === 'organization' ? 'portfolio report' : 'property report'}</div>
+                                <div className="text-[11px] uppercase tracking-wide text-slate-300 font-bold">{report.scope === 'organization' ? 'portfolio report' : 'property report'}{focus !== 'all' ? ` · ${focusTab.label}` : ''}</div>
                                 <div className="text-sm font-bold">{fmtRange(report.range.from, report.range.to)}</div>
                                 <div className="text-[11px] text-slate-300">{report.range.days} days · generated {new Date(report.generated_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</div>
                             </div>
                         </div>
                     </header>
 
+                    {focus === 'all' && (<>
                     {/* Headline tiles */}
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
                         {[
@@ -1271,22 +1578,29 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                         <UsageAcrossProperties properties={report.properties} comparative={report.comparative} days={report.range.days} />
                         <PropertyComparison properties={report.properties} comparative={report.comparative} />
                     </>)}
+                    </>)}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {/* Focused module: property ranking first (organisation scope), then the module, then its records */}
+                    {focus !== 'all' && focusTab.score && report.comparative && report.properties.length > 1 && (
+                        <ModulePropertyRanking scoreKey={focusTab.score} label={focusTab.label} properties={report.properties} comparative={report.comparative}
+                            onPick={focusTab.records ? setFocusProperty : undefined} picked={focusProperty} />
+                    )}
+
+                    <div className={focus === 'all' ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4' : 'flex flex-col gap-4'}>
                         {/* Requests */}
-                        <ModuleCard icon={Ticket} title="Requests & tickets" section={s.tickets} span={3}>
+                        {show('tickets') && <ModuleCard icon={Ticket} title="Requests & tickets" section={s.tickets} span={3}>
                             {s.tickets.available && (
                                 <div className="space-y-5">
                                     <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3">
-                                        <Stat label="raised" value={n0.format(s.tickets.total)} />
-                                        <Stat label="closed" value={n0.format(s.tickets.closed)} tone="good" />
-                                        <Stat label="still open" value={n0.format(s.tickets.open)} tone={s.tickets.open > 0 ? 'warn' : 'default'} />
-                                        <Stat label="pending validation" value={n0.format(s.tickets.pending_validation)} />
-                                        <Stat label="closure rate" value={fmtPct(rateOf(s.tickets.closed, s.tickets.total))} parts={rateParts(s.tickets.closed, s.tickets.total)} tone={band(rateOf(s.tickets.closed, s.tickets.total))} hint="Requests closed ÷ requests raised in the period" />
+                                        <RecordStat label="raised" value={n0.format(s.tickets.total)} rec={{ module: 'tickets', filter: 'all' }} />
+                                        <RecordStat label="closed" value={n0.format(s.tickets.closed)} tone="good" rec={{ module: 'tickets', filter: 'closed' }} />
+                                        <RecordStat rec={{ module: 'tickets', filter: 'open' }} label="still open" value={n0.format(s.tickets.open)} tone={s.tickets.open > 0 ? 'warn' : 'default'} />
+                                        <RecordStat label="pending validation" value={n0.format(s.tickets.pending_validation)} rec={{ module: 'tickets', filter: 'pending_validation' }} />
+                                        <RecordStat rec={{ module: 'tickets', filter: 'closed' }} label="closure rate" value={fmtPct(rateOf(s.tickets.closed, s.tickets.total))} parts={rateParts(s.tickets.closed, s.tickets.total)} tone={band(rateOf(s.tickets.closed, s.tickets.total))} hint="Requests closed ÷ requests raised in the period" />
                                         <Stat label="avg time to close" value={fmtHours(s.tickets.avg_resolution_hours)} />
-                                        <Stat label="sla breached" value={n0.format(s.tickets.sla_breached)} tone={s.tickets.sla_breached > 0 ? 'bad' : 'good'} />
-                                        <Stat label="internal" value={n0.format(s.tickets.internal)} />
-                                        <Stat label="open now (all time)" value={n0.format(s.tickets.open_now)} />
+                                        <RecordStat rec={{ module: 'tickets', filter: 'sla_breached' }} label="sla breached" value={n0.format(s.tickets.sla_breached)} tone={s.tickets.sla_breached > 0 ? 'bad' : 'good'} />
+                                        <RecordStat label="internal" value={n0.format(s.tickets.internal)} rec={{ module: 'tickets', filter: 'internal' }} />
+                                        <RecordStat label="open now (all time)" value={n0.format(s.tickets.open_now)} rec={{ module: 'tickets', filter: 'open_now' }} />
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
                                         <div className="lg:col-span-3">
@@ -1324,10 +1638,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     </div>
                                 </div>
                             )}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Utilities */}
-                        <section className="md:col-span-2 xl:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                        {show('utilities') && <section className="md:col-span-2 xl:col-span-3 bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
                             <header className="flex items-center gap-2 mb-4">
                                 <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center"><Zap className="w-4 h-4 text-slate-700" /></div>
                                 <h3 className="text-sm font-black text-slate-900">Utilities</h3>
@@ -1383,17 +1697,17 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     ]} />
                                 </div>
                             )}
-                        </section>
+                        </section>}
 
                         {/* SOP */}
-                        <ModuleCard icon={ClipboardCheck} title="SOP checklists" section={s.sop} span={2}>
+                        {show('sop') && <ModuleCard icon={ClipboardCheck} title="SOP checklists" section={s.sop} span={2}>
                             {s.sop.available && (<>
                                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-4">
-                                    <Stat label="completion" value={fmtPct(rateOf(s.sop.completed, s.sop.scheduled))} parts={rateParts(s.sop.completed, s.sop.scheduled)} tone={band(rateOf(s.sop.completed, s.sop.scheduled))} hint="Checklists completed ÷ checklists due in the period" />
-                                    <Stat label="scheduled" value={n0.format(s.sop.scheduled)} />
-                                    <Stat label="completed" value={n0.format(s.sop.completed)} tone="good" />
-                                    <Stat label="completed late" value={n0.format(s.sop.late)} tone={s.sop.late > 0 ? 'warn' : 'default'} />
-                                    <Stat label="missed" value={n0.format(s.sop.missed)} tone={s.sop.missed > 0 ? 'bad' : 'default'} />
+                                    <RecordStat rec={{ module: 'sop', filter: 'completed' }} label="completion" value={fmtPct(rateOf(s.sop.completed, s.sop.scheduled))} parts={rateParts(s.sop.completed, s.sop.scheduled)} tone={band(rateOf(s.sop.completed, s.sop.scheduled))} hint="Checklists completed ÷ checklists due in the period" />
+                                    <RecordStat label="scheduled" value={n0.format(s.sop.scheduled)} rec={{ module: 'sop', filter: 'all' }} />
+                                    <RecordStat label="completed" value={n0.format(s.sop.completed)} tone="good" rec={{ module: 'sop', filter: 'completed' }} />
+                                    <RecordStat rec={{ module: 'sop', filter: 'late' }} label="completed late" value={n0.format(s.sop.late)} tone={s.sop.late > 0 ? 'warn' : 'default'} />
+                                    <RecordStat rec={{ module: 'sop', filter: 'missed' }} label="missed" value={n0.format(s.sop.missed)} tone={s.sop.missed > 0 ? 'bad' : 'default'} />
                                     <Stat label="active templates" value={n0.format(s.sop.templates)} />
                                 </div>
                                 <ChartTitle note="Checklists due each day: completed on time, completed late, missed, or still pending">Checklist outcomes per day</ChartTitle>
@@ -1402,14 +1716,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     { key: 'missed', name: 'Missed', color: C.red }, { key: 'pending', name: 'Pending', color: S.neutral },
                                 ]} />
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* PPM */}
-                        <ModuleCard icon={Wrench} title="Planned maintenance (PPM)" section={s.ppm}>
+                        {show('ppm') && <ModuleCard icon={Wrench} title="Planned maintenance (PPM)" section={s.ppm}>
                             {s.ppm.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
-                                    <Stat label="compliance" value={fmtPct(rateOf(s.ppm.done, s.ppm.total))} parts={rateParts(s.ppm.done, s.ppm.total)} tone={band(rateOf(s.ppm.done, s.ppm.total))} hint="Maintenance jobs done ÷ jobs planned in the period" />
-                                    <Stat label="overdue now" value={n0.format(s.ppm.overdue_now)} tone={s.ppm.overdue_now > 0 ? 'bad' : 'good'} />
+                                    <RecordStat rec={{ module: 'ppm', filter: 'done' }} label="compliance" value={fmtPct(rateOf(s.ppm.done, s.ppm.total))} parts={rateParts(s.ppm.done, s.ppm.total)} tone={band(rateOf(s.ppm.done, s.ppm.total))} hint="Maintenance jobs done ÷ jobs planned in the period" />
+                                    <RecordStat rec={{ module: 'ppm', filter: 'overdue_now' }} label="overdue now" value={n0.format(s.ppm.overdue_now)} tone={s.ppm.overdue_now > 0 ? 'bad' : 'good'} />
                                 </div>
                                 <ChartTitle note="Maintenance jobs planned in the period, by status">Planned work by status</ChartTitle>
                                 <Mix title="Planned work by status" note="Maintenance jobs planned in the period, by status" parts={[
@@ -1436,10 +1750,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     ) : <Empty />}
                                 </div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Visitors */}
-                        <ModuleCard icon={Users} title="Visitors" section={s.visitors} span={2}>
+                        {show('visitors') && <ModuleCard icon={Users} title="Visitors" section={s.visitors} span={2}>
                             {s.visitors.available && (
                                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
                                     <div className="lg:col-span-3">
@@ -1458,10 +1772,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     </div>
                                 </div>
                             )}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Meeting rooms */}
-                        <ModuleCard icon={DoorOpen} title="Meeting rooms" section={s.meeting_rooms}>
+                        {show('visitors') && <ModuleCard icon={DoorOpen} title="Meeting rooms" section={s.meeting_rooms}>
                             {s.meeting_rooms.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="bookings" value={n0.format(s.meeting_rooms.bookings)} />
@@ -1473,10 +1787,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 <Trend title="Hours booked per day" note="Confirmed bookings only: end time minus start time, summed per day" data={s.meeting_rooms.daily} series={[{ key: 'hours', name: 'Hours', color: C.magenta }]} height={140} unit="h" yLabel="Hours booked" />
                                 <div className="mt-3"><ChartTitle note="Confirmed hours per room in the period">By room</ChartTitle><Ranking title="By room" note="Confirmed hours per room in the period" rows={s.meeting_rooms.by_room.map(r => ({ name: r.name, count: r.hours }))} color={C.magenta} valueFormatter={v => `${n1.format(v)} h`} xLabel="Hours booked" /></div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Stock */}
-                        <ModuleCard icon={Package} title="Stock & consumables" section={s.stock} span={2}>
+                        {show('stock') && <ModuleCard icon={Package} title="Stock & consumables" section={s.stock} span={2}>
                             {s.stock.available && (
                                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
                                     <div className="lg:col-span-3">
@@ -1506,10 +1820,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     </div>
                                 </div>
                             )}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Assets */}
-                        <ModuleCard icon={Boxes} title="Assets" section={s.assets}>
+                        {show('stock') && <ModuleCard icon={Boxes} title="Assets" section={s.assets}>
                             {s.assets.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="registered" value={n0.format(s.assets.total)} />
@@ -1524,10 +1838,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 ]} total={s.assets.total} />
                                 <div className="mt-4"><ChartTitle note="Registered assets per category">By category</ChartTitle><Ranking title="By category" note="Registered assets per category" rows={s.assets.by_category} xLabel="Assets" /></div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* AMC */}
-                        <ModuleCard icon={FileBadge} title="AMC contracts" section={s.amc}>
+                        {show('stock') && <ModuleCard icon={FileBadge} title="AMC contracts" section={s.amc}>
                             {s.amc.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="contracts" value={n0.format(s.amc.total)} />
@@ -1547,14 +1861,14 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     </div>
                                 )}
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Petty cash */}
-                        <ModuleCard icon={Wallet} title="Petty cash" section={s.petty_cash}>
+                        {show('petty_cash') && <ModuleCard icon={Wallet} title="Petty cash" section={s.petty_cash}>
                             {s.petty_cash.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
-                                    <Stat label="requests" value={n0.format(s.petty_cash.requests)} />
-                                    <Stat label="awaiting approval" value={n0.format(s.petty_cash.pending_approval)} tone={s.petty_cash.pending_approval > 0 ? 'warn' : 'default'} />
+                                    <RecordStat label="requests" value={n0.format(s.petty_cash.requests)} rec={{ module: 'petty_cash', filter: 'all' }} />
+                                    <RecordStat rec={{ module: 'petty_cash', filter: 'pending_approval' }} label="awaiting approval" value={n0.format(s.petty_cash.pending_approval)} tone={s.petty_cash.pending_approval > 0 ? 'warn' : 'default'} />
                                 </div>
                                 <ChartTitle note="Sum of amount requested, approved and paid on requests created in the period">Requested to paid</ChartTitle>
                                 <Ranking title="Requested to paid" note="Sum of amount requested, approved and paid on requests created in the period" rows={[
@@ -1563,14 +1877,20 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 <div className="mt-4"><ChartTitle note="Requests created in the period, by status">By status</ChartTitle>
                                     <Mix title="By status" note="Requests created in the period, by status" parts={s.petty_cash.by_status.slice(0, 6).map((x, i) => ({ name: x.name, value: x.count, color: [C.blue, C.cyan, C.amber, C.violet, C.red, C.magenta][i] }))} total={s.petty_cash.requests} /></div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Procurement */}
-                        <ModuleCard icon={ShoppingCart} title="Procurement (material requests)" section={s.procurement}>
+                        {show('procurement') && <ModuleCard icon={ShoppingCart} title="Procurement (material requests)" section={s.procurement}>
                             {s.procurement.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
-                                    <Stat label="requests" value={n0.format(s.procurement.requests)} />
-                                    <Stat label="value" value={inr.format(s.procurement.total_amount)} />
+                                    <RecordStat label="requests" value={n0.format(s.procurement.requests)} rec={{ module: 'procurement', filter: 'all' }} />
+                                    <RecordStat label="value" value={inr.format(s.procurement.total_amount)} rec={{ module: 'procurement', filter: 'all' }} />
+                                </div>
+                                <div className="grid grid-cols-4 gap-3 mb-4">
+                                    <RecordStat label="pending" value={n0.format(s.procurement.pending)} tone={s.procurement.pending > 0 ? 'warn' : 'default'} rec={{ module: 'procurement', filter: 'pending' }} />
+                                    <RecordStat label="approved" value={n0.format(s.procurement.approved)} rec={{ module: 'procurement', filter: 'approved' }} />
+                                    <RecordStat label="delivered" value={n0.format(s.procurement.delivered)} tone="good" rec={{ module: 'procurement', filter: 'delivered' }} />
+                                    <RecordStat label="rejected" value={n0.format(s.procurement.rejected)} rec={{ module: 'procurement', filter: 'rejected' }} />
                                 </div>
                                 <ChartTitle note="Material requests created in the period, grouped by status">Pending, approved, delivered</ChartTitle>
                                 <Ranking title="Pending, approved, delivered" note="Material requests created in the period, grouped by status" rows={[
@@ -1578,10 +1898,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     { name: 'Delivered', count: s.procurement.delivered }, { name: 'Rejected', count: s.procurement.rejected },
                                 ]} color={C.cyan} height={120} xLabel="Material requests" />
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Guest requests */}
-                        <ModuleCard icon={QrCode} title="Guest requests (QR)" section={s.guest_requests}>
+                        {show('tickets') && <ModuleCard icon={QrCode} title="Guest requests (QR)" section={s.guest_requests}>
                             {s.guest_requests.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="received" value={n0.format(s.guest_requests.total)} />
@@ -1593,10 +1913,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 ]} total={s.guest_requests.total} />
                                 <div className="mt-4"><ChartTitle note="Guest requests received, per category">By category</ChartTitle><Ranking title="By category" note="Guest requests received, per category" rows={s.guest_requests.by_category} xLabel="Guest requests" /></div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Tasks */}
-                        <ModuleCard icon={ListChecks} title="Task manager (property team)" section={s.tasks}>
+                        {show('people') && <ModuleCard icon={ListChecks} title="Task manager (property team)" section={s.tasks}>
                             {s.tasks.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="tasks assigned" value={n0.format(s.tasks.total)} />
@@ -1607,14 +1927,16 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     { name: 'Completed', value: s.tasks.completed, color: C.blue }, { name: 'In progress', value: s.tasks.in_progress, color: C.cyan }, { name: 'Pending', value: s.tasks.pending, color: C.amber },
                                 ]} total={s.tasks.total} />
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Requisitions */}
-                        <ModuleCard icon={CalendarCheck} title="Monthly requisitions" section={s.requisitions}>
+                        {show('requisitions') && <ModuleCard icon={CalendarCheck} title="Monthly requisitions" section={s.requisitions}>
                             {s.requisitions.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
-                                    <Stat label="months in range" value={n0.format(s.requisitions.months_in_range)} />
-                                    <Stat label="submitted" value={n0.format(s.requisitions.submitted)} tone={s.requisitions.submitted >= s.requisitions.months_in_range ? 'good' : 'warn'} />
+                                    <RecordStat label="months in range" value={n0.format(s.requisitions.months_in_range)} rec={{ module: 'requisitions', filter: 'all' }} />
+                                    <RecordStat rec={{ module: 'requisitions', filter: 'submitted' }} label="submitted" value={n0.format(s.requisitions.submitted)} tone={s.requisitions.submitted >= s.requisitions.months_in_range ? 'good' : 'warn'} />
+                                    <RecordStat label="acknowledged" value={n0.format(s.requisitions.acknowledged)} tone="good" rec={{ module: 'requisitions', filter: 'acknowledged' }} />
+                                    <RecordStat label="not submitted" value={n0.format(Math.max(0, (s.requisitions.expected ?? s.requisitions.months_in_range) - s.requisitions.submitted))} tone={(s.requisitions.expected ?? s.requisitions.months_in_range) > s.requisitions.submitted ? 'bad' : 'good'} rec={{ module: 'requisitions', filter: 'missing' }} />
                                 </div>
                                 <ChartTitle note="Months in the period: acknowledged, uploaded, or missing">Submission state</ChartTitle>
                                 <Mix title="Submission state" note="Months in the period: acknowledged, uploaded, or missing" parts={[
@@ -1624,10 +1946,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 ]} total={s.requisitions.months_in_range} />
                                 {s.requisitions.missing_months.length > 0 && <p className="mt-3 text-xs text-slate-600">Not submitted: {s.requisitions.missing_months.join(', ')}</p>}
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Roster */}
-                        <ModuleCard icon={CalendarDays} title="Staff roster" section={s.roster}>
+                        {show('people') && <ModuleCard icon={CalendarDays} title="Staff roster" section={s.roster}>
                             {s.roster.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="shifts rostered" value={n0.format(s.roster.shifts)} />
@@ -1638,10 +1960,10 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                 <ChartTitle note="Roster entries in the period: regular vs reliever">Regular vs reliever shifts</ChartTitle>
                                 <Mix title="Regular vs reliever shifts" note="Roster entries in the period: regular vs reliever" parts={[{ name: 'Regular', value: s.roster.shifts - s.roster.reliever_shifts, color: C.blue }, { name: 'Reliever', value: s.roster.reliever_shifts, color: C.amber }]} total={s.roster.shifts} />
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Audit */}
-                        <ModuleCard icon={ShieldCheck} title="Statutory audit (current)" section={s.audit}>
+                        {show('people') && <ModuleCard icon={ShieldCheck} title="Statutory audit (current)" section={s.audit}>
                             {s.audit.available && (<>
                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                     <Stat label="compliance" value={fmtPct(rateOf(s.audit.compliant, s.audit.items - s.audit.not_applicable))} parts={rateParts(s.audit.compliant, s.audit.items - s.audit.not_applicable)} tone={band(rateOf(s.audit.compliant, s.audit.items - s.audit.not_applicable))} hint="Compliant items ÷ (all items − not applicable)" />
@@ -1653,16 +1975,31 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                                     { name: 'Missing', value: s.audit.missing, color: C.red }, { name: 'Not applicable', value: s.audit.not_applicable, color: S.neutral },
                                 ]} total={s.audit.items} />
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
 
                         {/* Team */}
-                        <ModuleCard icon={UserCircle2} title="Property team" section={s.team}>
+                        {show('people') && <ModuleCard icon={UserCircle2} title="Property team" section={s.team}>
                             {s.team.available && (<>
                                 <Stat label="active members" value={n0.format(s.team.members)} />
                                 <div className="mt-4"><ChartTitle note="Active members, by role">By role</ChartTitle><Ranking title="By role" note="Active members, by role" rows={s.team.by_role} color={C.violet} xLabel="People" /></div>
                             </>)}
-                        </ModuleCard>
+                        </ModuleCard>}
                     </div>
+
+                    {focus !== 'all' && focusTab.records && recordScope && (
+                        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+                            <header className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center"><ListChecks className="w-4 h-4 text-indigo-700" /></div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-slate-900">{RECORD_MODULES[focusTab.records].label}: every record in the period</h3>
+                                        <p className="text-[11px] text-slate-500">{focusProperty ? `Showing ${report.properties.find(p => p.id === focusProperty)?.name || 'one property'} only.` : recordScope.multi ? 'All properties. Pick one in the ranking above or the dropdown below.' : 'Pick a filter to see which records sit behind each number.'}</p>
+                                    </div>
+                                </div>
+                            </header>
+                            <RecordsView key={`${focusTab.records}:${focusProperty}`} inline scope={recordScope} spec={{ module: focusTab.records, filter: focusTab.defaultFilter || 'all', onlyProperty: focusProperty || undefined }} />
+                        </section>
+                    )}
 
                     <p className="text-[11px] text-slate-400 px-2 pb-1 flex items-start gap-1.5">
                         <IndianRupee className="w-3 h-3 mt-0.5 shrink-0" />
@@ -1671,6 +2008,8 @@ export default function PropertyOverviewReport({ propertyId, orgId, propertyName
                 </div>
             ) : null}
         </div>
+        </HideUnavailableContext.Provider>
+        </RecordsContext.Provider>
         </DrillContext.Provider>
     );
 }

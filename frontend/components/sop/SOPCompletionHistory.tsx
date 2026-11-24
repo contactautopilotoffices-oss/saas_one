@@ -392,10 +392,13 @@ const SOPCompletionHistory: React.FC<SOPCompletionHistoryProps> = ({ propertyId,
                     .order('completion_date', { ascending: false })
                     .order('completed_at', { ascending: false });
 
-                if (isMultiProperty) {
-                    completionQuery = (completionQuery as any).in('property_id', propertyIds);
-                } else if (propertyId) {
-                    completionQuery = (completionQuery as any).eq('property_id', propertyId);
+                const validPropId = (propertyId && propertyId !== 'all' && propertyId !== 'undefined' && propertyId !== 'null') ? propertyId : null;
+                const validPropertyIds = (propertyIds || []).filter(id => id && id !== 'all' && id !== 'undefined');
+
+                if (validPropertyIds.length > 0) {
+                    completionQuery = (completionQuery as any).in('property_id', validPropertyIds);
+                } else if (validPropId) {
+                    completionQuery = (completionQuery as any).eq('property_id', validPropId);
                 }
 
                 const { data: completionData, error: completionError } = await completionQuery;
@@ -410,10 +413,10 @@ const SOPCompletionHistory: React.FC<SOPCompletionHistoryProps> = ({ propertyId,
                     .eq('is_active', true)
                     .neq('frequency', 'on_demand');
 
-                if (isMultiProperty) {
-                    templateQuery = (templateQuery as any).in('property_id', propertyIds);
-                } else if (propertyId) {
-                    templateQuery = (templateQuery as any).eq('property_id', propertyId);
+                if (validPropertyIds.length > 0) {
+                    templateQuery = (templateQuery as any).in('property_id', validPropertyIds);
+                } else if (validPropId) {
+                    templateQuery = (templateQuery as any).eq('property_id', validPropId);
                 }
 
                 const { data: templates, error: templateError } = await templateQuery;

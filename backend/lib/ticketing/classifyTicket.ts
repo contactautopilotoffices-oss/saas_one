@@ -14,7 +14,8 @@
 
 import dictionary from './issueDictionary.json';
 
-export type SkillGroup = 'technical' | 'plumbing' | 'vendor' | 'soft_services';
+// 'it' (owner 2026-11-20): the IT team. Only itRule.ts sends tickets there; the keyword rules and the AI never choose it.
+export type SkillGroup = 'technical' | 'plumbing' | 'vendor' | 'soft_services' | 'it';
 export type Confidence = 'high' | 'low';
 
 export interface ClassificationResult {
@@ -89,6 +90,7 @@ export function classifyTicketEnhanced(text: string): EnhancedClassificationResu
         plumbing: 0,
         vendor: 0,
         soft_services: 0,
+        it: 0, // never matched by keywords (itRule.ts decides IT)
     };
 
     // Count unique issue_code matches per skill group
@@ -97,6 +99,7 @@ export function classifyTicketEnhanced(text: string): EnhancedClassificationResu
         plumbing: new Set(),
         vendor: new Set(),
         soft_services: new Set(),
+        it: new Set(),
     };
 
     for (const match of matches) {
@@ -236,6 +239,7 @@ export function getSkillGroupDisplayName(skillGroup: SkillGroup): string {
         plumbing: 'Plumbing',
         vendor: 'Vendor',
         soft_services: 'Soft Services',
+        it: 'IT',
     };
     return names[skillGroup];
 }
@@ -249,6 +253,7 @@ export function getSkillGroupIcon(skillGroup: SkillGroup): string {
         plumbing: 'Droplet',
         vendor: 'Building2',
         soft_services: 'Sparkles',
+        it: 'Monitor',
     };
     return icons[skillGroup];
 }
@@ -281,6 +286,11 @@ export function getSkillGroupColor(skillGroup: SkillGroup): {
             bg: 'bg-purple-500/10',
             text: 'text-purple-500',
             border: 'border-purple-500/20',
+        },
+        it: {
+            bg: 'bg-indigo-500/10',
+            text: 'text-indigo-500',
+            border: 'border-indigo-500/20',
         },
     };
     return colors[skillGroup];

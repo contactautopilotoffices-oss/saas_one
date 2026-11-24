@@ -11,12 +11,16 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import type { PGlite } from "@electric-sql/pglite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { getPosition } from "../../backend/lib/candidates/positions";
+import { getPosition, updatePosition } from "../../backend/lib/candidates/positions";
 import { requisitionNotifier, runRequisitionReminders, type NotifyDeps } from "../../backend/lib/candidates/requisition-notify";
+const runJob = runRequisitionReminders;
 import {
   aboveCtcLevel, canDecide, createRequisition, decideRequisition, firstLevelFor, getRequisition, listRequisitions, loadRecruitmentConfig,
-  requisitionAccess, saveRecruitmentConfig, submitRequisition, updateRequisition, withdrawRequisition, workingDaysBetween, type RequisitionEvent,
+  approverPools, canRaiseRequisitions, mayConfigureApprovals, mayConfigureRaisers, requisitionAccess, roleChoices, saveRaisers, saveRecruitmentConfig, submitRequisition, updateRequisition, withdrawRequisition, workingDaysBetween, type RequisitionEvent,
+  canEndorse, confirmStillNeeded, endorseRequisition, hasEndorsed, saveDepartmentHeads, saveRejectionReasons, unassignedRoles,
 } from "../../backend/lib/candidates/requisitions";
+
+import { DEFAULT_REJECTION_REASONS } from "../../backend/lib/candidates/stage-list";
 
 import { freshDb, REQUISITIONS_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -76,12 +80,78 @@ describe("manpower requisitions", () => {
 
     await assert.rejects(saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_HEAD } }), /different person/);
     const saved = await saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR }, directorCtcLevel: 1_000_000, targetDays: 30 });
-    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30 });
+    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "" });
     const access = await requisitionAccess(client, HR_HEAD, ORG);
     assert.deepEqual([access.seesAll, access.approverLevels, access.configured], [true, ["hr_head"], true]);
     assert.deepEqual((await requisitionAccess(client, MANAGER, ORG)).approverLevels, []);
     assert.equal((await requisitionAccess(client, MANAGER, ORG)).seesAll, false);
     await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id, "test draft");
+  });
+
+  // Owner 2026-11-20: the approvers are set in the Tech dashboard's HR Configs tab, by the Tech team and admins.
+  it("lets only the Tech team and admins change the approvers, and records each change", async () => {
+    const ADMIN = "00000000-0000-0000-0000-000000000015";
+    const TECH = "00000000-0000-0000-0000-000000000016";
+    for (const [id, name, role] of [[ADMIN, "Org Admin", "org_super_admin"], [TECH, "Tech Person", "tech"]] as const) {
+      await db.query("insert into auth.users (id) values ($1)", [id]);
+      await db.query("insert into public.users (id, full_name, email) values ($1, $2, null)", [id, name]);
+      await db.query("insert into public.organization_memberships (user_id, organization_id, role) values ($1, $2, $3)", [id, ORG, role]);
+    }
+    assert.equal(await mayConfigureApprovals(client, TECH, ORG), true, "the Tech team sets them (HR Configs)");
+    assert.equal(await mayConfigureApprovals(client, ADMIN, ORG), true);
+    assert.equal(await mayConfigureApprovals(client, HR_HEAD, ORG), false, "HR sees them, read-only");
+    assert.equal(await mayConfigureApprovals(client, MANAGER, ORG), false);
+
+    // The dropdowns: the HR team (by department or HR role) for the HR Head, the org super admins for the Director.
+    const pools = approverPools(
+      [{ id: HR_BACKUP, name: "Deepa Rao", department: "Human Resources" }, { id: MANAGER, name: "Ravi Kumar", department: "Operations" }, { id: "x-1", name: "Lohitaksha R", department: "Tech" }],
+      [{ userId: HR_HEAD, role: "hr_head" }, { userId: ADMIN, role: "org_super_admin" }, { userId: MANAGER, role: "manager" }],
+      new Map([[HR_HEAD, "Anita Verma"], [ADMIN, "Org Admin"]]),
+    );
+    assert.deepEqual(pools.hr.map((p) => p.name), ["Anita Verma", "Deepa Rao"]);
+    assert.deepEqual(pools.directors.map((p) => p.name), ["Org Admin"]);
+    const strict = { hr: pools.hr, directors: pools.directors };
+    await assert.rejects(saveRecruitmentConfig(client, ORG, { director: { userId: MANAGER } }, by(ADMIN, "Org Admin"), strict), /Director must be an org super admin/);
+    await assert.rejects(saveRecruitmentConfig(client, ORG, { hrHead: { userId: MANAGER } }, by(ADMIN, "Org Admin"), strict), /HR Head must be someone in the HR team/);
+
+    await saveRecruitmentConfig(client, ORG, { directorCtcLevel: 1_500_000, targetDays: 21 }, by(ADMIN, "Org Admin"));
+    const [change] = await q<{ summary: string; changed_by_name: string }>("select summary, changed_by_name from public.recruitment_stage_changes where organization_id = $1 order by created_at desc limit 1", [ORG]);
+    assert.deepEqual(change, { summary: "Hiring approvals: Director above: 15 LPA (was 10 LPA) · target days: 21 (was 30)", changed_by_name: "Org Admin" });
+    // Back as the tests below expect.
+    await saveRecruitmentConfig(client, ORG, { directorCtcLevel: 1_000_000, targetDays: 30 });
+  });
+
+  // Owner 2026-11-20: who may raise a request (their sidebar item) is set by the Tech team and admins.
+  it("lets only the roles and people the Tech team picked raise requests", async () => {
+    assert.equal(await canRaiseRequisitions(client, MANAGER, ORG), false, "nobody until set");
+    assert.equal((await requisitionAccess(client, MANAGER, ORG)).canRaise, false);
+    const TECH = "00000000-0000-0000-0000-000000000016";
+    assert.equal(await mayConfigureRaisers(client, TECH, ORG), true);
+    assert.equal(await mayConfigureRaisers(client, HR_HEAD, ORG), false, "HR does not decide who raises");
+    assert.ok((await roleChoices(client, ORG)).includes("manager"));
+
+    await assert.rejects(saveRaisers(client, ORG, { roles: ["Manager!"], userIds: [] }), /Unknown role/);
+    const saved = await saveRaisers(client, ORG, { roles: ["manager", "manager"], userIds: [DIRECTOR] }, by(TECH, "Tech Person"));
+    assert.deepEqual(saved, { roles: ["manager"], userIds: [DIRECTOR] });
+    assert.equal(await canRaiseRequisitions(client, MANAGER, ORG), true, "by role");
+    assert.equal(await canRaiseRequisitions(client, DIRECTOR, ORG), true, "by name");
+    assert.equal(await canRaiseRequisitions(client, HR_BACKUP, ORG), false, "HR no longer raises");
+    assert.equal((await requisitionAccess(client, MANAGER, ORG)).canRaise, true);
+    const [change] = await q<{ summary: string }>("select summary from public.recruitment_stage_changes where organization_id = $1 order by created_at desc limit 1", [ORG]);
+    assert.equal(change.summary, "Who can raise hiring requests: roles manager; people Sunil Mehta");
+
+    // An approvals save keeps who may raise.
+    await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
+    assert.deepEqual((await loadRecruitmentConfig(client, ORG)).raisers, { roles: ["manager"], userIds: [DIRECTOR] });
+  });
+
+  it("keeps HR's rejection reasons, each once, and other settings saves keep them (owner 2026-11-21)", async () => {
+    await assert.rejects(saveRejectionReasons(client, ORG, { reasons: [] }), /at least one/);
+    await assert.rejects(saveRejectionReasons(client, ORG, { reasons: ["x".repeat(61)] }), /1 to 60/);
+    assert.deepEqual(await saveRejectionReasons(client, ORG, { reasons: [" Salary  mismatch ", "salary mismatch", "Other"] }, by(HR_HEAD, "Anita Verma")), ["Salary mismatch", "Other"]);
+    await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
+    assert.deepEqual((await loadRecruitmentConfig(client, ORG)).rejectionReasons, ["Salary mismatch", "Other"]);
+    await saveRejectionReasons(client, ORG, { reasons: [...DEFAULT_REJECTION_REASONS] });
   });
 
   it("Stage 1: the form is checked, the request gets its ID on submission, and the last request for the same role is shown", async () => {
@@ -125,7 +195,8 @@ describe("manpower requisitions", () => {
     assert.deepEqual([position.title, position.department, position.location, position.openings, position.education, position.hiringManager, position.targetDays], ["Senior Technical Executive", "Facilities", "Bengaluru", 2, "B.E. Electrical", "Ravi Kumar", 30]);
     assert.deepEqual(position.filters.keywords?.map((k) => k.text), ["MEP", "BMS"]);
     assert.match(position.summary ?? "", /REQ-\d{4}-0001 raised by Ravi Kumar.*₹4 LPA to ₹6 LPA/);
-    assert.deepEqual(events.map((e) => e.kind), ["decided", "director_informed"]);
+    // Spec A03: the role is open, so HR is told to assign a recruiter (owner 2026-11-21).
+    assert.deepEqual(events.map((e) => e.kind), ["decided", "role_opened", "director_informed"]);
     assert.ok(sent.some((s) => s.to === "ravi@example.com" && /approved/.test(s.subject)), "the manager is told");
     assert.ok(sent.some((s) => s.to === "sunil@example.com" && /For your information/.test(s.subject)), "the Director is notified");
     const { approvals } = await getRequisition(client, ORG, r.id);
@@ -198,6 +269,8 @@ describe("manpower requisitions", () => {
     const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Pantry Executive", submit: true }, { notify });
     const t0 = new Date(r.levelEnteredAt!).getTime();
     const at = (hours: number) => new Date(t0 + hours * 3_600_000);
+    // Only this test's counters (the job also chases holds and unassigned roles, tested below).
+    const runRequisitionReminders = async (...a: Parameters<typeof runJob>) => { const x = await runJob(...a); return { reminders: x.reminders, escalations: x.escalations }; };
     assert.deepEqual(await runRequisitionReminders(client, ORG, deps, at(10)), { reminders: 0, escalations: 0 });
     assert.deepEqual(await runRequisitionReminders(client, ORG, deps, at(25)), { reminders: 1, escalations: 0 });
     assert.ok(sent.some((s) => s.to === "anita@example.com" && /^Reminder:/.test(s.subject)));
@@ -214,6 +287,97 @@ describe("manpower requisitions", () => {
     await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: false }, { now: () => at(100) });
     assert.deepEqual(await runRequisitionReminders(client, ORG, deps, at(110)), { reminders: 0, escalations: 0 });
     assert.deepEqual(await runRequisitionReminders(client, ORG, deps, at(125)), { reminders: 1, escalations: 0 });
+    await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, null);
+  });
+
+  // Owner 2026-11-21 ("go ahead with all"): the spec's department head, A03 (assign a recruiter) and A24 (on hold).
+  it("department heads see and endorse their departments' requests; endorsing approves nothing", async () => {
+    const HEAD = "00000000-0000-0000-0000-000000000017";
+    const TECH = "00000000-0000-0000-0000-000000000016";
+    await db.query("insert into auth.users (id) values ($1) on conflict do nothing", [HEAD]);
+    await db.query("insert into public.users (id, full_name, email) values ($1, 'Meena Iyer', 'meena@example.com') on conflict do nothing", [HEAD]);
+    await db.query("insert into public.organization_memberships (user_id, organization_id, role) values ($1, $2, 'supervisor')", [HEAD, ORG]);
+
+    await assert.rejects(saveDepartmentHeads(client, ORG, { heads: [{ department: "Facilities", userId: HEAD }, { department: " facilities", userId: MANAGER }] }), /listed twice/);
+    await assert.rejects(saveDepartmentHeads(client, ORG, { heads: [{ department: "Facilities", userId: HEAD }] }, undefined, new Set([MANAGER])), /Task Manager/);
+    assert.deepEqual(await saveDepartmentHeads(client, ORG, { heads: [{ department: " Facilities ", userId: HEAD }] }, by(TECH, "Tech Person")), [{ department: "Facilities", userId: HEAD }]);
+    const [change] = await q<{ summary: string }>("select summary from public.recruitment_stage_changes where organization_id = $1 order by created_at desc limit 1", [ORG]);
+    assert.equal(change.summary, "Department heads: Facilities — Meena Iyer");
+    await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
+    assert.deepEqual((await loadRecruitmentConfig(client, ORG)).departmentHeads, [{ department: "Facilities", userId: HEAD }], "an approvals save keeps them");
+    const access = await requisitionAccess(client, HEAD, ORG);
+    assert.deepEqual([access.headOf, access.member, access.canRaise], [["facilities"], true, false]);
+
+    const draft = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Electrician" });
+    const other = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Accountant", department: "Finance", submit: true });
+    events.length = 0; sent.length = 0;
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Plumber", department: "FACILITIES", submit: true }, { notify });
+    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "department_head"]);
+    assert.ok(sent.some((s) => s.to === "meena@example.com" && /for your department/.test(s.subject)), "the head is told");
+
+    const seen = await listRequisitions(client, ORG, { userId: HEAD, seesAll: false, headOf: access.headOf });
+    assert.deepEqual([seen.some((x) => x.id === r.id), seen.some((x) => x.id === draft.id), seen.some((x) => x.id === other.id)], [true, false, false], "their department's submitted requests only");
+    assert.equal(canEndorse(r, HEAD, access, false), true);
+    assert.equal(canEndorse(r, HEAD, access, true), false);
+    await assert.rejects(endorseRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, null), /Only the head/);
+    const endorsed = await endorseRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, "Needed for the new tower.");
+    assert.deepEqual([endorsed.status, endorsed.currentLevel, endorsed.endorsedBy], ["submitted", "hr_head", ["Meena Iyer"]], "endorsing approves nothing");
+    assert.equal(await hasEndorsed(client, ORG, r.id, HEAD), true);
+    await assert.rejects(endorseRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, null), /already endorsed/);
+    const { approvals } = await getRequisition(client, ORG, r.id);
+    assert.deepEqual([approvals[0].action, approvals[0].byName, approvals[0].reason], ["endorsed", "Meena Iyer", "Needed for the new tower."]);
+    for (const x of [draft, other, r]) await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), x.id, null);
+  });
+
+  it("an approved request opens a role with no recruiter: HR is told, and the HR Head after 48 h without one", async () => {
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Fire Safety Officer", department: "Safety", submit: true });
+    events.length = 0; sent.length = 0;
+    const approved = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: true }, { notify });
+    const position = await getPosition(client, ORG, approved.positionId!);
+    assert.deepEqual([position.recruiterId, position.recruiterName], [null, null], "the approver is not the recruiter");
+    assert.ok(events.some((e) => e.kind === "role_opened"));
+    assert.ok(sent.some((s) => s.to === "deepa@example.com" && /assign a recruiter/.test(s.subject)), "the HR team is told");
+
+    const t0 = new Date(approved.decidedAt!).getTime();
+    const notices = async () => (await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_notices where requisition_id = $1 and kind = 'unassigned_48'", [r.id]))[0].n;
+    await runRequisitionReminders(client, ORG, deps, new Date(t0 + 24 * 3_600_000));
+    assert.equal(await notices(), 0);
+    sent.length = 0;
+    await runRequisitionReminders(client, ORG, deps, new Date(t0 + 49 * 3_600_000));
+    assert.ok((await notices()) > 0);
+    assert.ok(sent.some((s) => s.to === "anita@example.com" && /No recruiter yet: Fire Safety Officer/.test(s.subject)), "the HR Head");
+    const once = await notices();
+    await runRequisitionReminders(client, ORG, deps, new Date(t0 + 60 * 3_600_000));
+    assert.equal(await notices(), once, "once");
+
+    assert.equal((await listRequisitions(client, ORG, { userId: HR_HEAD, seesAll: true })).find((x) => x.id === r.id)?.pipelineCount, 0, "the tracker's candidates in pipeline");
+    assert.equal((await updatePosition(client, ORG, position.id, { recruiterId: HR_BACKUP })).recruiterId, HR_BACKUP);
+    assert.equal((await unassignedRoles(client, ORG, new Date(t0 + 60 * 3_600_000))).some((x) => x.id === r.id), false, "assigned: no more alerts");
+  });
+
+  it("on hold over 15 days: the raiser is asked on day 15 and 20, the HR Head on day 25; 'still needed' tells the approver", async () => {
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Housekeeping Supervisor", department: "Housekeeping", submit: true });
+    await assert.rejects(confirmStillNeeded(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, null), /not on hold/);
+    const held = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "hold", reason: "Budget review." });
+    const t0 = new Date(held.holdSince!).getTime();
+    const holds = async (days: number) => (await runRequisitionReminders(client, ORG, deps, new Date(t0 + days * 86_400_000 + 3_600_000))).holdChasers;
+    sent.length = 0;
+    assert.equal(await holds(10), 0);
+    assert.equal(await holds(16), 1);
+    assert.ok(sent.some((s) => s.to === "ravi@example.com" && /still needed\?/.test(s.subject)), "the raiser is asked");
+    assert.equal(await holds(17), 0, "once");
+
+    await assert.rejects(confirmStillNeeded(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, null), /Only the person who raised/);
+    events.length = 0; sent.length = 0;
+    await confirmStillNeeded(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, "Still needed for January.", { notify });
+    assert.deepEqual(events.map((e) => e.kind), ["still_needed"]);
+    assert.ok(sent.some((s) => s.to === "anita@example.com" && /^Still needed/.test(s.subject)), "the approver is told");
+    assert.equal(await holds(21), 0, "confirmed: not asked again");
+    sent.length = 0;
+    assert.equal(await holds(26), 1);
+    assert.ok(sent.some((s) => s.to === "anita@example.com" && /On hold 25 days/.test(s.subject)), "the HR Head at day 25");
+    assert.equal(await holds(27), 0);
+    assert.equal((await getRequisition(client, ORG, r.id)).approvals[0].action, "still_needed");
     await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, null);
   });
 

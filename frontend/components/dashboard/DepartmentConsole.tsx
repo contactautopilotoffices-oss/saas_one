@@ -1,5 +1,6 @@
 'use client';
 
+import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
@@ -264,6 +265,8 @@ export default function DepartmentConsole({ department }: { department: ConsoleD
                             </div>
                         </div>
                     ))}
+                    {/* Owner 2026-11-21: shown only to the people HR Configs picks */}
+                    <div className="mb-6"><HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} /></div>
                 </nav>
                 <div className="shrink-0 border-t border-border p-4">
                     <div className="mb-3 flex items-center gap-3 px-2">

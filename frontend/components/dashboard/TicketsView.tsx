@@ -35,7 +35,7 @@ function FilterDropdown({
                 onClick={() => setOpen(p => !p)}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary' : 'border-slate-300 text-slate-700'}`}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-full hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary' : 'border-slate-300 text-slate-700'}`}
             >
                 {icon && <span className={isActive ? 'text-primary' : 'text-slate-400'}>{icon}</span>}
                 <span>{selected?.label ?? placeholder}</span>
@@ -49,7 +49,7 @@ function FilterDropdown({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 4, scale: 0.97 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[180px] max-w-[240px] bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden"
+                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[180px] max-w-[240px] bg-white border border-slate-200 rounded-[20px] shadow-xl overflow-hidden"
                     >
                         <div className="max-h-60 overflow-y-auto py-1.5">
                             {options.map(opt => (
@@ -200,7 +200,7 @@ function MultiSelectStatusDropdown({
                 onClick={() => setOpen(p => !p)}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-[12px] hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary bg-primary/5' : 'border-slate-300 text-slate-700'}`}
+                className={`flex items-center gap-[8px] h-10 px-3 bg-white border rounded-full hover:border-slate-400 transition-colors text-sm font-semibold whitespace-nowrap ${isActive ? 'border-primary/50 text-primary bg-primary/5' : 'border-slate-300 text-slate-700'}`}
             >
                 <span>{buttonLabel}</span>
                 {isActive && (
@@ -218,7 +218,7 @@ function MultiSelectStatusDropdown({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 4, scale: 0.97 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[220px] max-w-[280px] bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-2"
+                        className="absolute left-0 top-[calc(100%+6px)] z-50 min-w-[220px] max-w-[280px] bg-white border border-slate-200 rounded-[20px] shadow-xl overflow-hidden p-2"
                     >
                         <div className="flex items-center justify-between px-2 py-1.5 border-b border-slate-100 text-xs font-semibold text-slate-500">
                             <span>Filter Status</span>
@@ -822,9 +822,17 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     useEffect(() => {
         const handleCreated = (e: any) => {
             const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
             if (newTicket && newTicket.id) {
-                setTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
-                setTotalCount(prev => (prev !== null ? prev + 1 : null));
+                setTickets(prev => {
+                    if (tempId && prev.some(t => t.id === tempId)) {
+                        return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                    }
+                    return [newTicket, ...prev.filter(t => t.id !== newTicket.id)];
+                });
+                if (!tempId) {
+                    setTotalCount(prev => (prev !== null ? prev + 1 : null));
+                }
             }
             invalidateCache('tickets-');
             fetchTickets(0);
@@ -1011,7 +1019,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const flowMapButton = showFlowMap && (
         <button
             onClick={() => router.push(`/property/${propertyId}/flow-map?from=requests`)}
-            className="flex h-10 shrink-0 items-center justify-center gap-[8px] rounded-[12px] border border-secondary/20 bg-secondary/10 px-3.5 text-sm font-bold text-secondary transition-colors hover:bg-secondary/20"
+            className="flex h-10 shrink-0 items-center justify-center gap-[8px] rounded-full border border-secondary/20 bg-secondary/10 px-3.5 text-sm font-bold text-secondary transition-colors hover:bg-secondary/20"
             title="View Operational Flow Map"
         >
             <Activity className="h-4 w-4" /> <span className="whitespace-nowrap">Live Flow Map</span>
@@ -1021,7 +1029,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     const newRequestButton = onNewRequest && (
         <button
             onClick={onNewRequest}
-            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[12px] bg-[#56737a] px-4 text-sm font-bold text-white transition-colors hover:bg-[#4a646a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56737a] focus-visible:ring-offset-2"
+            className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-[#56737a] px-4 text-sm font-bold text-white transition-colors hover:bg-[#4a646a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56737a] focus-visible:ring-offset-2"
         >
             <Plus className="h-4 w-4" strokeWidth={2.5} /> <span className="whitespace-nowrap">New request</span>
         </button>
@@ -1053,10 +1061,10 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Search by ticket ID"
                             aria-label="Search by ticket ID"
-                            className="h-11 w-full rounded-[12px] border border-gray-300 bg-white pl-10 pr-10 text-base text-gray-900 placeholder:text-gray-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
+                            className="h-11 w-full rounded-full border border-gray-300 bg-white pl-10 pr-10 text-base text-gray-900 placeholder:text-gray-500 focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30"
                         />
                         {searchQuery && (
-                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-[8px] text-gray-500 hover:text-gray-900">
+                            <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full text-gray-500 hover:text-gray-900">
                                 <X className="h-4 w-4" />
                             </button>
                         )}
@@ -1067,7 +1075,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         onClick={() => setFiltersOpen(true)}
                         aria-haspopup="dialog"
                         aria-expanded={filtersOpen}
-                        className="flex h-11 shrink-0 items-center gap-[8px] rounded-[12px] border border-gray-300 bg-white px-3.5 text-[15px] font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                        className="flex h-11 shrink-0 items-center gap-[8px] rounded-full border border-gray-300 bg-white px-3.5 text-[15px] font-semibold text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                     >
                         <SlidersHorizontal className="h-[18px] w-[18px]" aria-hidden="true" />
                         Filters
@@ -1099,7 +1107,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                             onChange={e => setSearchQuery(e.target.value)}
                             placeholder="Search by ticket ID"
                             aria-label="Search by ticket ID"
-                            className="h-10 w-56 rounded-[12px] border border-slate-300 bg-white pl-9 pr-8 text-sm text-slate-900 placeholder:text-slate-500 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="h-10 w-56 rounded-full border border-slate-300 bg-white pl-9 pr-8 text-sm text-slate-900 placeholder:text-slate-500 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                         {searchQuery && (
                             <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-900">
@@ -1126,7 +1134,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
                         aria-label="Team"
-                        className="h-10 rounded-[12px] border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="h-10 rounded-full border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition-colors hover:border-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary"
                     >
                         {TEAM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
@@ -1139,7 +1147,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     />
 
                     {/* Date From */}
-                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateFrom ? 'border-primary/50' : 'border-slate-300'}`}>
+                    <div className={`flex h-10 items-center gap-[8px] rounded-full border bg-white px-3 transition-colors hover:border-slate-400 ${dateFrom ? 'border-primary/50' : 'border-slate-300'}`}>
                         <Calendar className={`h-4 w-4 shrink-0 ${dateFrom ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
                         <input
                             type="date"
@@ -1151,7 +1159,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     </div>
 
                     {/* Date To */}
-                    <div className={`flex h-10 items-center gap-[8px] rounded-[12px] border bg-white px-3 transition-colors hover:border-slate-400 ${dateTo ? 'border-primary/50' : 'border-slate-300'}`}>
+                    <div className={`flex h-10 items-center gap-[8px] rounded-full border bg-white px-3 transition-colors hover:border-slate-400 ${dateTo ? 'border-primary/50' : 'border-slate-300'}`}>
                         <Calendar className={`h-4 w-4 shrink-0 ${dateTo ? 'text-primary' : 'text-slate-500'}`} aria-hidden="true" />
                         <input
                             type="date"
@@ -1164,7 +1172,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
                     {/* Raised By User Filter */}
                     {!propertyId ? (
-                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-full border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
                             <User className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span>Raised by: pick a property</span>
                         </div>
@@ -1182,7 +1190,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
 
                     {/* Assigned To Filter (hidden in the IT console's assignee-only view) */}
                     {lockedAssigneeId ? null : !propertyId ? (
-                        <div className="flex h-10 select-none items-center gap-[8px] rounded-[12px] border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
+                        <div className="flex h-10 select-none items-center gap-[8px] rounded-full border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-500" title="Select a property to filter by user">
                             <User className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span>Assigned to: pick a property</span>
                         </div>
@@ -1212,7 +1220,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                     {hasActiveFilters && (
                         <button
                             onClick={clearFilters}
-                            className="h-10 rounded-[12px] border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50"
+                            className="h-10 rounded-full border border-rose-200 bg-white px-4 text-sm font-bold text-rose-700 transition-colors hover:bg-rose-50"
                         >
                             Clear filters
                         </button>
@@ -1277,7 +1285,7 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                         <p id="tickets-filter-dates" className="mb-2 text-[13px] font-bold uppercase tracking-[0.04em] text-gray-600">Dates</p>
                         <div className="flex gap-[8px]">
                             {([['From', dateFrom, setDateFrom], ['To', dateTo, setDateTo]] as const).map(([label, val, set]) => (
-                                <div key={label} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 rounded-[12px] border border-gray-300 px-2.5 focus-within:ring-2 focus-within:ring-blue-600">
+                                <div key={label} className="flex h-11 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-gray-300 px-2.5 focus-within:ring-2 focus-within:ring-blue-600">
                                     <span className="shrink-0 text-sm text-gray-600">{label}</span>
                                     <input
                                         type="date"
@@ -1376,7 +1384,9 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
                                     assignedTo={ticket.assignee?.full_name}
                                     assigneePhotoUrl={ticket.assignee?.user_photo_url}
                                     photoUrl={ticket.photo_before_url}
-                                    propertyName={ticket.property?.name}
+                                    // Owner 2026-11-20: one property chosen, so its name on every card adds nothing.
+                                    propertyName={propertyId ? undefined : ticket.property?.name}
+                                    workPaused={['paused', 'blocked'].includes(ticket.status)}
                                     slaDeadline={ticket.sla_deadline}
                                     slaBreached={ticket.sla_breached}
                                     slaPaused={ticket.sla_paused}

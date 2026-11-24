@@ -84,19 +84,42 @@ export async function detectDuplicateExpense(
             .limit(100);
 
         if (actMatches && actMatches.length > 0) {
-            const hashMatch = actMatches.find(a => {
+            const hashMatches = actMatches.filter(a => {
                 const meta = (a.metadata || {}) as any;
                 const hashes: string[] = Array.isArray(meta.file_hashes) ? meta.file_hashes : [];
                 if (meta.file_hash) hashes.push(meta.file_hash);
                 return hashes.includes(fileHash);
             });
-            if (hashMatch) {
-                const reqNo = (hashMatch.request as any)?.request_no || 'another request';
-                return {
-                    isDuplicate: true,
-                    reason: `This exact receipt image was already claimed and saved in request ${reqNo}. Re-uploading duplicate receipts is prevented.`,
-                    matchedRequestNo: reqNo,
-                };
+
+            if (hashMatches.length > 0) {
+                // Verify whether the matching expense is still active (not withdrawn or rejected)
+                const expenseIds = hashMatches.map(a => (a.metadata as any)?.expense_id).filter(Boolean);
+                let isStillActive = true;
+                let activeReqNo = '';
+
+                if (expenseIds.length > 0) {
+                    const { data: activeExpenses } = await supabaseAdmin
+                        .from('petty_cash_expenses')
+                        .select('id, request_id, review_status, request:petty_cash_requests(request_no)')
+                        .in('id', expenseIds)
+                        .not('review_status', 'in', '(rejected,withdrawn)');
+
+                    if (!activeExpenses || activeExpenses.length === 0) {
+                        // All prior claims using this receipt were withdrawn or rejected
+                        isStillActive = false;
+                    } else {
+                        activeReqNo = (activeExpenses[0].request as any)?.request_no || 'another request';
+                    }
+                }
+
+                if (isStillActive) {
+                    const reqNo = activeReqNo || (hashMatches[0].request as any)?.request_no || 'another request';
+                    return {
+                        isDuplicate: true,
+                        reason: `This exact receipt image was already claimed and saved in request ${reqNo}. Re-uploading duplicate receipts is prevented.`,
+                        matchedRequestNo: reqNo,
+                    };
+                }
             }
         }
     }

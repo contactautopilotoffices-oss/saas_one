@@ -78,7 +78,17 @@ export default function ProcurementModule({
     const orgId = propOrgId || (params?.orgId as string) || membership?.org_id || '';
     const propertyId = (params?.propertyId as string) || '';
     
-    const [activeTab, setActiveTab] = useState<TabType>('orders');
+    const [activeTab, setActiveTab] = useState<TabType>(() => {
+        if (typeof window !== 'undefined') {
+            const urlParams = new URLSearchParams(window.location.search);
+            let tabParam = urlParams.get('procurement_tab') || urlParams.get('subtab') || urlParams.get('tab');
+            if (tabParam === 'monthly-requisitions') tabParam = 'requisitions';
+            if (tabParam === 'urgency-tracker') tabParam = 'payment-tracker';
+            const linkableTabs = ['orders', 'tasks', 'payment-tracker', 'invoices', 'requisitions', 'monthly-feedback', 'catalog', 'stock-settings', 'po-generator', 'settings', 'site-budgets', 'site-pricing'];
+            if (tabParam && linkableTabs.includes(tabParam)) return tabParam as TabType;
+        }
+        return 'orders';
+    });
     const [properties, setProperties] = useState<any[]>(propProperties || []);
     const [isInitialLoading, setIsInitialLoading] = useState(!propProperties || propProperties.length === 0);
     const [counts, setCounts] = useState({ orders: 0, pending_quotation: 0 });

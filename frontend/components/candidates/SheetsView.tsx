@@ -13,6 +13,7 @@ import { api, apiUpload, qs } from './api';
 import { DeleteSheetDialog, TypedConfirmDialog } from './DangerDialogs';
 import { formatCount, formatDate } from './format';
 import IssuesModal, { IssueJobChip } from './IssuesModal';
+import TrackerConnections from './TrackerConnections';
 import UploadConflictModal from './UploadConflictModal';
 import {
     BTN_DANGER_GHOST, BTN_GHOST, BTN_SECONDARY, CARD, EASE_PATIENT, EmptyState, FIELD, LABEL, NUM_LG, NUM_SM, Spinner, Toggle, useUi, WELL,
@@ -408,6 +409,9 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                     </motion.section>
                 )}
             </AnimatePresence>
+
+            {/* Owner 2026-11-21: Google Sheet / Excel trackers synced on a schedule; their rows land in the sheets below */}
+            {!deleted && <TrackerConnections orgId={orgId} onDataChanged={() => { setNonce(n => n + 1); onDataChanged(); }} />}
 
             {/* Sheets list */}
             <section className="space-y-3" aria-labelledby="sheets-heading">

@@ -8,7 +8,7 @@
 import { createClient } from '@/frontend/utils/supabase/client';
 import dictionary from './issueDictionary.json';
 
-export type SkillGroup = 'technical' | 'plumbing' | 'vendor' | 'soft_services';
+export type SkillGroup = 'technical' | 'plumbing' | 'vendor' | 'soft_services' | 'it'; // 'it': see itRule.ts
 export type Confidence = 'high' | 'low';
 
 export interface ClassificationResult {

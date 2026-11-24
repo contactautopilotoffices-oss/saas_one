@@ -4,8 +4,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from '
 import {
     LayoutDashboard, Ticket as TicketIcon, Settings, LogOut, Plus,
     CheckCircle2, Clock, MessageSquare, UsersRound, Coffee, UserCircle,
-    Calendar, Building2, Shield, ChevronRight, Sun, Moon, Menu, X, Camera, Pencil, Loader2, Filter, ArrowLeft,
-  MessageSquarePlus
+    Calendar, Building2, Shield, ChevronRight, Sun, Moon, Menu, X, Camera, Pencil, Loader2, Filter, ArrowLeft
+    ,
+    MessageSquarePlus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -21,6 +22,8 @@ import PendingActionsBell from './PendingActionsBell';
 import DieselStaffDashboard from '@/frontend/components/diesel/DieselStaffDashboard';
 import VMSAdminDashboard from '@/frontend/components/vms/VMSAdminDashboard';
 import TenantTicketingDashboard from '@/frontend/components/tickets/TenantTicketingDashboard';
+import dynamic from 'next/dynamic';
+const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 import SettingsView from './SettingsView';
 import Loader from '@/frontend/components/ui/Loader';
 import TicketCard, { TICKET_GRID_CLASS } from '@/frontend/components/shared/TicketCard';
@@ -32,6 +35,11 @@ import { CalendarDays, ChevronDown } from 'lucide-react';
 
 // Types
 type Tab = 'overview' | 'requests' | 'create_request' | 'visitors' | 'room_booking' | 'ppm' | 'settings' | 'profile';
+
+const VALID_TENANT_TABS: readonly Tab[] = [
+    'overview', 'requests', 'create_request', 'visitors',
+    'room_booking', 'ppm', 'settings', 'profile'
+] as const;
 
 interface Property {
     id: string;
@@ -86,15 +94,22 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
 
     const propertyId = selectedPropertyId || paramPropId || initialPropertyId || '';
 
+    const searchParams = useSearchParams();
+    const tabFromUrl = searchParams?.get('tab') as Tab;
+
     // State
-    const [activeTab, setActiveTab] = useState<Tab>('overview');
+    const [activeTab, setActiveTab] = useState<Tab>(() => {
+        if (tabFromUrl && VALID_TENANT_TABS.includes(tabFromUrl)) return tabFromUrl;
+        return 'overview';
+    });
     const [property, setProperty] = useState<Property | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState('');
+    const [showCreateTicketModal, setShowCreateTicketModal] = useState(false);
     const [showSignOutModal, setShowSignOutModal] = useState(false);
     const [showFeedbackModal, setShowFeedbackModal] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const { getCachedData, setCachedData } = useDataCache();
+    const { getCachedData, setCachedData, invalidateCache } = useDataCache();
     const cacheKeyPrefix = `tenant-${propertyId}`;
     const [activeTickets, setActiveTickets] = useState<Ticket[]>([]);
     const [completedTickets, setCompletedTickets] = useState<Ticket[]>([]);
@@ -118,22 +133,31 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
         profile: { title: 'Profile', subtitle: 'Your account' },
     };
 
-    const searchParams = useSearchParams();
-
     // Restore tab from URL and handle back navigation
     useEffect(() => {
         const tab = searchParams.get('tab');
-        if (tab && ['overview', 'requests', 'create_request', 'visitors', 'room_booking', 'ppm', 'settings', 'profile'].includes(tab)) {
+        if (tab && VALID_TENANT_TABS.includes(tab as Tab)) {
             setActiveTab(tab as Tab);
         }
     }, [searchParams]);
 
     const handleTabChange = (tab: Tab) => {
+        if (tab === 'create_request') {
+            setShowCreateTicketModal(true);
+            return;
+        }
         setActiveTab(tab);
         const params = new URLSearchParams(searchParams.toString());
         params.set('tab', tab);
         router.replace(`?${params.toString()}`, { scroll: false });
     };
+
+    useEffect(() => {
+        if (activeTab === 'create_request') {
+            setShowCreateTicketModal(true);
+            setActiveTab('requests');
+        }
+    }, [activeTab]);
 
     // Robust Scroll Restoration (User Implementation)
     useEffect(() => {
@@ -149,7 +173,7 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
 
                 const attemptRestoration = () => {
                     const container = scrollContainer || window;
-                    
+
                     if (container instanceof HTMLElement) {
                         container.style.setProperty('scroll-behavior', 'auto', 'important');
                     }
@@ -162,11 +186,11 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                                 behavior: "auto",
                                 block: "center"
                             });
-                            
+
                             // Successful restoration
                             sessionStorage.removeItem("lastTicketId");
                             sessionStorage.removeItem("scrollY");
-                            
+
                             if (container instanceof HTMLElement) {
                                 setTimeout(() => { container.style.scrollBehavior = ''; }, 100);
                             }
@@ -178,14 +202,14 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                     if (savedScrollY) {
                         const targetY = parseInt(savedScrollY, 10);
                         const currentHeight = container instanceof HTMLElement ? container.scrollHeight : document.body.scrollHeight;
-                        
+
                         if (currentHeight < targetY && retryCount < maxRetries) {
                             // Still growing...
                         } else {
                             container.scrollTo({ top: targetY, behavior: 'auto' });
                             sessionStorage.removeItem("scrollY");
                             sessionStorage.removeItem("lastTicketId");
-                            
+
                             if (container instanceof HTMLElement) {
                                 setTimeout(() => { container.style.scrollBehavior = ''; }, 100);
                             }
@@ -507,7 +531,7 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                             {/* Quick Action: New Request - Compact */}
                             <div className="mb-4">
                                 <button
-                                    onClick={() => { handleTabChange('create_request'); setSidebarOpen(false); }}
+                                    onClick={() => { setShowCreateTicketModal(true); setSidebarOpen(false); }}
                                     className="w-full flex items-center gap-2.5 px-3 py-2.5 bg-white text-text-primary rounded-xl hover:bg-muted transition-all border border-primary/20 group shadow-sm"
                                 >
                                     <div className="w-7 h-7 bg-primary/20 rounded-lg flex items-center justify-center text-primary group-hover:scale-105 transition-transform">
@@ -742,14 +766,20 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
                                     onValidateClick={handleValidate}
                                 />
                             )}
-                            {activeTab === 'create_request' && property && user && (
-                                <TenantTicketingDashboard
-                                    propertyId={property.id}
-                                    organizationId={property.organization_id}
-                                    user={{ id: user.id, full_name: user.user_metadata?.full_name || 'Client' }}
-                                    propertyName={property.name}
-                                    onSuccess={fetchTickets}
-                                />
+                            {activeTab === 'create_request' && (
+                                <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center bg-card border border-border rounded-2xl max-w-lg mx-auto my-8 space-y-4 shadow-sm">
+                                    <div className="w-14 h-14 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mx-auto">
+                                        <Plus className="w-7 h-7" />
+                                    </div>
+                                    <h3 className="text-lg font-bold text-text-primary">Create New Request</h3>
+                                    <p className="text-xs text-text-secondary">Open the ticket creation popup to quickly raise requests with instant photo and video uploads.</p>
+                                    <button
+                                        onClick={() => setShowCreateTicketModal(true)}
+                                        className="px-6 py-3 bg-primary text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md hover:opacity-95 transition-all flex items-center gap-2"
+                                    >
+                                        <Plus className="w-4 h-4" /> Open Request Form
+                                    </button>
+                                </div>
                             )}
                             {activeTab === 'visitors' && property && user && (
                                 <TenantVisitorManagement
@@ -911,6 +941,26 @@ const TenantDashboard: React.FC<TenantDashboardProps> = ({ initialPropertyId, as
             />
 
             {/* Edit Request Modal */}
+            {property && (
+                <TicketCreateModal
+                    isOpen={showCreateTicketModal}
+                    onClose={() => setShowCreateTicketModal(false)}
+                    propertyId={property.id}
+                    organizationId={property.organization_id}
+                    showInternalToggle={false}
+                    showCriticalToggle={true}
+                    userRole="Tenant"
+                    onSuccess={(ticket) => {
+                        fetchTickets();
+                        invalidateCache('tickets-');
+                        if (typeof window !== 'undefined') {
+                            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket } }));
+                            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket } }));
+                        }
+                    }}
+                />
+            )}
+
             <AnimatePresence>
                 {editingTicket && (
                     <motion.div

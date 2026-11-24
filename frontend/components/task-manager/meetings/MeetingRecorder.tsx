@@ -25,8 +25,8 @@ import AttendeesEditor, { type Attendees } from './AttendeesEditor';
  */
 
 export const PIECE_MS = 15_000;
-/** Low bit rate for speech: an hour is ~11 MB. */
-const BITS_PER_SECOND = 24_000;
+/** Low bit rate for speech: an hour is ~11 MB. (Also used by an online call's recording browser, CallRecorder.tsx.) */
+export const BITS_PER_SECOND = 24_000;
 /** Sarvam takes up to 2 hours per recording; stop a little before. */
 const MAX_RECORD_MS = 115 * 60 * 1000;
 // Owner 2026-10-29: 100 MB (Supabase Pro; the bucket limit is set to match)
@@ -60,7 +60,7 @@ type Phase = 'starting' | 'recording' | 'paused' | 'mic_lost' | 'stopping' | 'fi
 type Retry = { kind: 'finish'; force: boolean } | { kind: 'mic' } | { kind: 'file' } | null;
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-function pickMime(): string {
+export function pickMime(): string {
     if (typeof MediaRecorder === 'undefined') return '';
     for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']) {
         if (MediaRecorder.isTypeSupported(m)) return m;
@@ -135,6 +135,8 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
     const discarding = useRef(false);
     /** Set while WE stop the recorder, so a stop is not mistaken for the microphone being taken away */
     const stoppingOnPurpose = useRef(false);
+    /** Set while WE pause or resume the recorder, so a pause made by the phone (a call) can be told apart */
+    const pausingOnPurpose = useRef(false);
     /** "Finish later" was pressed: leave the page, the pieces stay on the phone */
     const leaving = useRef(false);
     /** The phase as seen from timers and microphone callbacks (kept in step by the effect below) */
@@ -311,11 +313,24 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         if (!['recording', 'paused', 'starting'].includes(phaseRef.current)) return;
         bankTime();
         const rec = recorder.current;
+        if (rec) {
+            // This recorder is finished with: its own stop must not count as a second loss (a fresh one may be starting)
+            rec.onstop = null; rec.onerror = null; rec.onpause = null;
+        }
         if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* already stopped */ } }
         recorder.current = null;
         releaseAll();
         setPhase('mic_lost');
     }, [releaseAll]);
+
+    /**
+     * Owner 2026-11-24: a phone call often does not end the microphone. It mutes it, or pauses the recorder, and after
+     * the call it stays silent. True when the microphone can no longer give us sound.
+     */
+    const micDead = useCallback(() => {
+        const track = stream.current?.getAudioTracks()[0];
+        return !recorder.current || !track || track.readyState !== 'live' || track.muted;
+    }, []);
 
     /** A new continuous recording: asks the server for its number, opens the microphone, starts recording in pieces. */
     const openMic = useCallback(async () => {
@@ -349,14 +364,29 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         const wanted = pickMime();
         const rec = new MediaRecorder(stream.current, wanted ? { mimeType: wanted, audioBitsPerSecond: BITS_PER_SECOND } : { audioBitsPerSecond: BITS_PER_SECOND });
         mime.current = rec.mimeType || wanted || 'audio/webm';
+        // This recording's number, kept with it: its last piece can arrive after a fresh microphone has started a new one
+        const mySegment = segment.current;
         rec.ondataavailable = e => {
             if (!e.data || e.data.size === 0 || discarding.current) return;
-            keepPiece(e.data, segment.current, nextSeq.current++);
+            const seq = segment.current === mySegment ? nextSeq.current++ : (recordedBySeg.current.get(mySegment) ?? 0);
+            keepPiece(e.data, mySegment, seq);
         };
         // A stop we did not ask for = the microphone was taken away
         rec.onstop = () => micLost();
         rec.onerror = () => micLost();
-        for (const track of stream.current.getAudioTracks()) track.onended = () => micLost();
+        // A pause we did not make = the phone paused us (a call); handled like the microphone being taken away
+        rec.onpause = () => {
+            if (pausingOnPurpose.current) { pausingOnPurpose.current = false; return; }
+            micLost();
+        };
+        rec.onresume = () => { pausingOnPurpose.current = false; };
+        for (const track of stream.current.getAudioTracks()) {
+            track.onended = () => micLost();
+            // Muted by the phone (a call): give it a moment in case it is a short blip, then treat it as lost
+            track.onmute = () => {
+                setTimeout(() => { if (track.muted && phaseRef.current === 'recording') micLost(); }, 1_500);
+            };
+        }
         recorder.current = rec;
         rec.start(PIECE_MS);
         runStart.current = Date.now();
@@ -476,13 +506,17 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
                 if (recorder.current?.state === 'recording') { try { recorder.current.requestData(); } catch { /* not recording */ } }
                 return;
             }
+            // The bars' sound reader is suspended by a call; wake it up again
+            if (meter.current && meter.current.ctx.state !== 'running') void meter.current.ctx.resume().catch(() => undefined);
+            // Back from a call that paused or muted the microphone without ending it: start a fresh one
+            if (phaseRef.current === 'recording' && (micDead() || recorder.current?.state !== 'recording')) { micLost(); void openMic(); return; }
             if (recorder.current?.state === 'recording') void keepAwake();
             // The microphone was taken away while we were in the background: pick up again
             else if (phaseRef.current === 'mic_lost') void openMic();
         };
         document.addEventListener('visibilitychange', onVisible);
         return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVisible); };
-    }, [keepAwake, openMic, stop]);
+    }, [keepAwake, micDead, micLost, openMic, stop]);
 
     // ── warn before leaving while recording or uploading; release the mic on unmount (the uploader carries on) ──
     useEffect(() => {
@@ -498,10 +532,15 @@ export default function MeetingRecorder({ space, meetingId, title, file, people,
         if (!rec) return;
         if (rec.state === 'recording') {
             try { rec.requestData(); } catch { /* fine */ }
+            pausingOnPurpose.current = true;
             rec.pause();
             bankTime();
             setPhase('paused');
         } else if (rec.state === 'paused') {
+            // Owner 2026-11-24: a call while paused leaves a silent microphone behind; resuming it records nothing.
+            // Keep what we have and start a fresh microphone instead.
+            if (micDead()) { micLost(); void openMic(); return; }
+            pausingOnPurpose.current = true;
             rec.resume();
             runStart.current = Date.now();
             setPhase('recording');

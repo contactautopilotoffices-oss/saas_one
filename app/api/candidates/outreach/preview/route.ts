@@ -15,12 +15,12 @@ export async function GET(request: Request) {
   const limited = rateLimited("filter", auth.user.id, FILTER_RATE_LIMIT);
   if (limited) return limited;
   try {
-    const { phone: _phone, fullName: _fullName, ...preview } = await previewOutreach(auth.admin, auth.orgId, {
+    const { phone: _phone, fullName: _fullName, text: _text, ...preview } = await previewOutreach(auth.admin, auth.orgId, {
       applicationId: params.get("applicationId"),
       positionId: params.get("positionId") || null,
       kind: params.get("kind"),
     });
-    void _phone; void _fullName;
+    void _phone; void _fullName; void _text;
     return NextResponse.json({ preview });
   } catch (error) {
     return errorResponse(error, "Couldn't prepare the message");

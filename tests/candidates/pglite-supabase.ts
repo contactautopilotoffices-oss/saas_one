@@ -162,7 +162,7 @@ class Query implements PromiseLike<Result> {
     const value = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(["\\])/g, "$1") : raw;
     if (op === "plfts") return `${column} @@ plainto_tsquery('english', ${this.p(value)})`;
     if (op === "phfts") return `${column} @@ phraseto_tsquery('english', ${this.p(value)})`;
-    const sql = { ilike: "ilike", gte: ">=", lte: "<=", neq: "<>", eq: "=" }[op];
+    const sql = { ilike: "ilike", gte: ">=", lte: "<=", gt: ">", lt: "<", neq: "<>", eq: "=" }[op];
     if (!sql) throw new Error(`or(): unsupported operator ${op}`);
     if (op === "ilike") return `${column} ilike ${this.p(value)}`;
     return `${column} ${sql} ${this.p(/^\d+$/.test(value) ? Number(value) : value)}`;
@@ -172,7 +172,7 @@ class Query implements PromiseLike<Result> {
     return this;
   }
   order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) {
-    const nulls = options?.nullsFirst === false ? " nulls last" : "";
+    const nulls = options?.nullsFirst === false ? " nulls last" : options?.nullsFirst === true ? " nulls first" : "";
     this.orderBy.push(`${column} ${options?.ascending === false ? "desc" : "asc"}${nulls}`);
     return this;
   }
