@@ -351,6 +351,17 @@ Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only
   ```
 * `{{1}}` manager's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` approved / rejected / sent back for changes / put on hold / taken off hold / approved in plan by the HR Head · `{{5}}` the reason, or "-"
 
+#### Template: Hiring request update (for your information) — owner 2026-11-24
+Sent to the department head, the HR Head and the Director when a request is raised and when it is decided (not to the person who decided, and not to the approver it now waits on: they get the "awaiting" message). Campaign: `AISENSY_REQUISITION_UPDATE_CAMPAIGN`; unset, these go by email and in-app only.
+* **Template Name**: `requisition_update_v1`
+* **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hiring request *{{1}}* for *{{2}}* ({{3}}): {{4}}.
+  No action is needed from you. Open the app under Hiring requests for the details.
+  ```
+* `{{1}}` request number · `{{2}}` role title · `{{3}}` department, or "-" · `{{4}}` what happened, e.g. "raised by Ravi Kumar, now with Dipti Shah" or "approved by Anita Verma"
+
 ---
 
 ### Candidate assessment invite (22 Nov 2026)

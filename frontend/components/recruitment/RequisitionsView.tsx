@@ -53,19 +53,25 @@ function writeDraft(key: string, f: FormState | null) {
 interface FormState {
     roleTitle: string; department: string; location: string; positions: string; requestType: 'new' | 'replacement'; replacingName: string;
     budgetMin: string; budgetMax: string; requiredSkills: string; minExperience: string; qualification: string; targetJoiningDate: string; justification: string; reportingManager: string;
+    /** Owner 2026-11-24: the role was typed under "Others"; internal mobility yes / no; where the role sits in the structure. */
+    roleIsNew: boolean; internalMobility: '' | 'yes' | 'no'; structureNote: string;
 }
-const EMPTY_FORM: FormState = { roleTitle: '', department: '', location: '', positions: '1', requestType: 'new', replacingName: '', budgetMin: '', budgetMax: '', requiredSkills: '', minExperience: '', qualification: '', targetJoiningDate: '', justification: '', reportingManager: '' };
+const EMPTY_FORM: FormState = { roleTitle: '', department: '', location: '', positions: '1', requestType: 'new', replacingName: '', budgetMin: '', budgetMax: '', requiredSkills: '', minExperience: '', qualification: '', targetJoiningDate: '', justification: '', reportingManager: '', roleIsNew: false, internalMobility: '', structureNote: '' };
 const toForm = (r: Requisition): FormState => ({
     roleTitle: r.roleTitle, department: r.department ?? '', location: r.location ?? '', positions: String(r.positions), requestType: r.requestType, replacingName: r.replacingName ?? '',
     budgetMin: toLakhs(r.budgetMinCtc), budgetMax: toLakhs(r.budgetMaxCtc), requiredSkills: r.requiredSkills.join(', '), minExperience: r.minExperienceYears === null ? '' : String(r.minExperienceYears),
     qualification: r.qualification ?? '', targetJoiningDate: r.targetJoiningDate ?? '', justification: r.justification ?? '', reportingManager: r.reportingManager ?? '',
+    roleIsNew: r.roleIsNew, internalMobility: r.internalMobility === true ? 'yes' : r.internalMobility === false ? 'no' : '', structureNote: r.structureNote ?? '',
 });
 const toBody = (f: FormState) => ({
     roleTitle: f.roleTitle.trim(), department: f.department.trim() || null, location: f.location.trim() || null, positions: num(f.positions) ?? 1, requestType: f.requestType,
     replacingName: f.replacingName.trim() || null, budgetMinCtc: fromLakhs(f.budgetMin), budgetMaxCtc: fromLakhs(f.budgetMax),
     requiredSkills: f.requiredSkills.split(/[,\n]/).map(s => s.trim()).filter(Boolean), minExperienceYears: num(f.minExperience), qualification: f.qualification.trim() || null,
     targetJoiningDate: f.targetJoiningDate || null, justification: f.justification.trim() || null, reportingManager: f.reportingManager.trim() || null,
+    roleIsNew: f.roleIsNew, internalMobility: f.internalMobility === 'yes' ? true : f.internalMobility === 'no' ? false : null, structureNote: f.structureNote.trim() || null,
 });
+/** The select's value for a role typed under "Others". */
+const OTHER_ROLE = '__other__';
 
 export default function RequisitionsView({ orgId, mode }: { orgId: string; mode: 'hr' | 'manager' }) {
     const { notify, reportError } = useUi();
@@ -89,7 +95,9 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const refresh = () => setNonce(n => n + 1);
     const access = state?.access;
     const all = state?.requisitions ?? [];
-    const waitingOnMe = (r: Requisition) => (r.status === 'submitted' || r.status === 'on_hold') && !!access && r.currentLevel !== null && access.approverLevels.includes(r.currentLevel);
+    // Owner 2026-11-24: a department head's requests are the ones waiting on them by name.
+    const waitingOnMe = (r: Requisition) => (r.status === 'submitted' || r.status === 'on_hold') && !!access && r.currentLevel !== null
+        && (r.currentLevel === 'hod' ? r.currentApproverId === access.userId : access.approverLevels.includes(r.currentLevel));
     const norm = (v: string | null) => (v ?? '').trim().toLowerCase();
     const shown = all
         .filter(r => filter === 'all' ? true : filter === 'mine' ? waitingOnMe(r) : ['draft', 'submitted', 'on_hold', 'sent_back'].includes(r.status))
@@ -109,7 +117,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
 
     return (
         <div className="space-y-4">
-            <RequisitionForm orgId={orgId} open={form.open} requisition={form.requisition} departments={formDepartments} onClose={() => setForm(f => ({ ...f, open: false }))}
+            <RequisitionForm orgId={orgId} open={form.open} requisition={form.requisition} departments={formDepartments} hierarchy={state?.hierarchy?.departments ?? []} onClose={() => setForm(f => ({ ...f, open: false }))}
                 onSaved={r => { setForm({ open: false, requisition: null }); refresh(); if (r.status === 'draft') setOpenId(r.id); }} />
             <RequisitionDrawer orgId={orgId} id={openId} onClose={() => setOpenId(null)} onChanged={refresh}
                 onEdit={r => { setOpenId(null); setForm({ open: true, requisition: r }); }} />
@@ -118,7 +126,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                 <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-elevated text-primary-dark sm:inline-flex" aria-hidden><Briefcase className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1 basis-72">
                     <p className="font-display text-base font-semibold text-text-primary">{mode === 'hr' ? 'Manpower requisitions' : 'Hiring requests'}</p>
-                    <p className="text-sm text-text-secondary">{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
+                    <p className="text-sm text-text-secondary">{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to its department head, then the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
                     {access && !access.configured && <p className="mt-1 flex items-center gap-x-1.5 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5" aria-hidden />The approvers are not set yet: ask the Tech team to set them in the Tech dashboard → HR Configs. Requests can be drafted but not submitted.</p>}
                 </div>
                 {mode === 'manager' && access?.canRaise && <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={BTN_PRIMARY}><Plus className="h-4 w-4" />Raise a request</button>}
@@ -203,7 +211,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
 }
 
 /** Stage 1: the requisition form. Save as draft, or submit for approval. */
-function RequisitionForm({ orgId, open, requisition, departments, onClose, onSaved }: { orgId: string; open: boolean; requisition: Requisition | null; departments: string[]; onClose: () => void; onSaved: (r: Requisition) => void }) {
+function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onClose, onSaved }: { orgId: string; open: boolean; requisition: Requisition | null; departments: string[]; hierarchy: { department: string; designations: string[] }[]; onClose: () => void; onSaved: (r: Requisition) => void }) {
     const { notify, reportError } = useUi();
     const [f, setF] = useState<FormState>(EMPTY_FORM);
     const [busy, setBusy] = useState<'draft' | 'submit' | null>(null);
@@ -231,11 +239,26 @@ function RequisitionForm({ orgId, open, requisition, departments, onClose, onSav
     const cancel = () => { if (busy) return; writeDraft(key, null); setRestored(false); onClose(); };
     const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF(s => ({ ...s, [k]: v }));
     const editing = !!requisition;
-    const canSubmit = !!f.roleTitle.trim() && fromLakhs(f.budgetMax) !== null && !!f.justification.trim() && (f.requestType !== 'replacement' || !!f.replacingName.trim());
+    // Owner 2026-11-24: department and role come from the company hierarchy; a new role goes under "Others".
+    const listed = hierarchy.length > 0;
+    const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    const deptEntry = hierarchy.find(d => sameText(d.department, f.department)) ?? null;
+    const designations = deptEntry?.designations ?? [];
+    // A role saved before the list existed (or not in it) shows as "Others", with its title kept.
+    const roleIsOther = f.roleIsNew || (!!f.roleTitle.trim() && designations.length > 0 && !designations.some(d => sameText(d, f.roleTitle)));
+    const pickDepartment = (department: string) => setF(s => {
+        const entry = hierarchy.find(d => sameText(d.department, department));
+        const keepRole = s.roleIsNew || !!entry?.designations.some(d => sameText(d, s.roleTitle));
+        return { ...s, department, roleTitle: keepRole ? s.roleTitle : '', roleIsNew: keepRole ? s.roleIsNew : false };
+    });
+    const pickRole = (value: string) => setF(s => (value === OTHER_ROLE ? { ...s, roleIsNew: true, roleTitle: s.roleIsNew ? s.roleTitle : '' } : { ...s, roleIsNew: false, roleTitle: value }));
+    const fromList = !listed || (!!deptEntry && (designations.length === 0 || roleIsOther || designations.some(d => sameText(d, f.roleTitle))));
+    const canSubmit = !!f.roleTitle.trim() && fromLakhs(f.budgetMax) !== null && !!f.justification.trim() && !!f.structureNote.trim() && f.internalMobility !== ''
+        && (f.requestType !== 'replacement' || !!f.replacingName.trim()) && fromList;
 
     const save = async (submit: boolean) => {
         if (!f.roleTitle.trim() || busy) return;
-        const body = toBody(f);
+        const body = { ...toBody(f), roleIsNew: roleIsOther };
         if (body.budgetMinCtc !== null && body.budgetMaxCtc !== null && body.budgetMinCtc > body.budgetMaxCtc) { notify("The budget band's minimum is above its maximum.", 'error'); return; }
         setBusy(submit ? 'submit' : 'draft');
         const res = editing
@@ -258,11 +281,11 @@ function RequisitionForm({ orgId, open, requisition, departments, onClose, onSav
     return (
         <Dialog open={open} onClose={() => { if (!busy) onClose(); }} labelId="req-form-title" size="xl"
             title={editing ? `Edit request${requisition.requisitionNo ? ` · ${requisition.requisitionNo}` : ''}` : 'Raise a hiring request'}
-            description="Stage 1 of the hiring flow. The HR Head reviews it; an out-of-plan role, or one above the CTC level, also goes to the Director."
+            description="Stage 1 of the hiring flow. The department head reviews it first, then the HR Head; an out-of-plan role, or one above the CTC level, also goes to the Director."
             footer={<>
                 <button type="button" onClick={cancel} disabled={!!busy} className={BTN_GHOST}>Cancel</button>
                 <button type="button" onClick={() => void save(false)} disabled={!!busy || !f.roleTitle.trim()} className={BTN_SECONDARY}>{busy === 'draft' && <Spinner />}Save as draft</button>
-                <button type="button" onClick={() => void save(true)} disabled={!!busy || !canSubmit} className={BTN_PRIMARY} title={canSubmit ? undefined : 'Needs the role, the budget band maximum and the justification'}>{busy === 'submit' ? <Spinner /> : <Send className="h-4 w-4" />}Submit for approval</button>
+                <button type="button" onClick={() => void save(true)} disabled={!!busy || !canSubmit} className={BTN_PRIMARY} title={canSubmit ? undefined : 'Needs the department and role from the list, the budget band maximum, the justification, the place in the structure and the internal mobility answer'}>{busy === 'submit' ? <Spinner /> : <Send className="h-4 w-4" />}Submit for approval</button>
             </>}
         >
             <div className="space-y-5">
@@ -273,8 +296,33 @@ function RequisitionForm({ orgId, open, requisition, departments, onClose, onSav
                     </p>
                 )}
                 <section className="grid gap-4 sm:grid-cols-2">
-                    {field('Role title', 'req-role', <input id="req-role" value={f.roleTitle} onChange={e => set('roleTitle', e.target.value)} maxLength={120} placeholder="e.g. Senior Technical Executive" className={INPUT} autoFocus />)}
-                    {field('Department', 'req-dept', <><input id="req-dept" list="req-dept-list" value={f.department} onChange={e => set('department', e.target.value)} maxLength={80} className={INPUT} /><datalist id="req-dept-list">{departments.map(d => <option key={d} value={d} />)}</datalist></>, departments.length ? 'pick from the list so the department head sees it' : undefined)}
+                    {listed ? (
+                        <>
+                            {field('Department', 'req-dept', (
+                                <select id="req-dept" value={deptEntry?.department ?? ''} onChange={e => pickDepartment(e.target.value)} className={INPUT} autoFocus>
+                                    <option value="">Pick the department…</option>
+                                    {/* A request saved with a department no longer in the list keeps it visible until changed */}
+                                    {f.department && !deptEntry && <option value={f.department} disabled>{f.department} (not in the list)</option>}
+                                    {hierarchy.map(d => <option key={d.department} value={d.department}>{d.department}</option>)}
+                                </select>
+                            ))}
+                            {field('Role title', 'req-role', designations.length ? (
+                                <select id="req-role" value={roleIsOther ? OTHER_ROLE : (designations.find(d => sameText(d, f.roleTitle)) ?? '')} onChange={e => pickRole(e.target.value)} disabled={!deptEntry} className={INPUT}>
+                                    <option value="">{deptEntry ? 'Pick the role…' : 'Pick the department first'}</option>
+                                    {designations.map(d => <option key={d} value={d}>{d}</option>)}
+                                    <option value={OTHER_ROLE}>Others (a new designation)…</option>
+                                </select>
+                            ) : (
+                                <input id="req-role" value={f.roleTitle} onChange={e => setF(s => ({ ...s, roleTitle: e.target.value, roleIsNew: true }))} maxLength={120} disabled={!deptEntry} placeholder={deptEntry ? 'No designations listed: type the role' : 'Pick the department first'} className={INPUT} />
+                            ), designations.length ? 'from the department’s designations' : undefined)}
+                            {designations.length > 0 && roleIsOther && field('New designation', 'req-role-new', <input id="req-role-new" value={f.roleTitle} onChange={e => setF(s => ({ ...s, roleTitle: e.target.value, roleIsNew: true }))} maxLength={120} placeholder="e.g. Community Lead" className={INPUT} />, 'not in the list: HR reviews it')}
+                        </>
+                    ) : (
+                        <>
+                            {field('Role title', 'req-role', <input id="req-role" value={f.roleTitle} onChange={e => set('roleTitle', e.target.value)} maxLength={120} placeholder="e.g. Senior Technical Executive" className={INPUT} autoFocus />)}
+                            {field('Department', 'req-dept', <><input id="req-dept" list="req-dept-list" value={f.department} onChange={e => set('department', e.target.value)} maxLength={80} className={INPUT} /><datalist id="req-dept-list">{departments.map(d => <option key={d} value={d} />)}</datalist></>, departments.length ? 'pick from the list so the department head sees it' : undefined)}
+                        </>
+                    )}
                     {field('Location', 'req-loc', <input id="req-loc" value={f.location} onChange={e => set('location', e.target.value)} maxLength={80} placeholder="City or site" className={INPUT} />)}
                     {field('Number of positions', 'req-n', <input id="req-n" type="number" min={1} max={500} value={f.positions} onChange={e => set('positions', e.target.value)} className={INPUT} />)}
                     {field('Replacement or new', 'req-type', (
@@ -295,6 +343,14 @@ function RequisitionForm({ orgId, open, requisition, departments, onClose, onSav
                     {field('Target joining date', 'req-date', <input id="req-date" type="date" value={f.targetJoiningDate} onChange={e => set('targetJoiningDate', e.target.value)} className={INPUT} />)}
                 </section>
                 {field('Justification', 'req-why', <textarea id="req-why" rows={4} value={f.justification} onChange={e => set('justification', e.target.value)} maxLength={4000} placeholder="Why the role is needed now: the work, the site, what happens without it" className={`${INPUT} h-auto min-h-[100px] resize-y py-2.5 leading-relaxed`} />, 'required to submit')}
+                {field('Where it sits in the current structure', 'req-structure', <textarea id="req-structure" rows={2} value={f.structureNote} onChange={e => set('structureNote', e.target.value)} maxLength={2000} placeholder="e.g. Reports to the Cluster Head, Thane; a new seat next to the two Community Managers" className={`${INPUT} h-auto min-h-[64px] resize-y py-2.5 leading-relaxed`} />, 'required to submit')}
+                {field('Internal mobility', 'req-mobility', (
+                    <select id="req-mobility" value={f.internalMobility} onChange={e => set('internalMobility', e.target.value as FormState['internalMobility'])} className={`${INPUT} sm:max-w-md`}>
+                        <option value="">Could someone already in the company fill it?</option>
+                        <option value="yes">Yes: someone internal may be eligible</option>
+                        <option value="no">No: hire from outside</option>
+                    </select>
+                ), 'required to submit')}
             </div>
         </Dialog>
     );
@@ -339,13 +395,15 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
     };
     // Takes the decision directly when given (Resume sends at once; reading it back from state in the same click would
     // still see the previous render's null and do nothing).
+    // Owner 2026-11-24: the HR Head deciding at the department head's level (after 48 h) decides as the HR Head.
+    const actingLevel = r?.currentLevel === 'hod' && s && r.currentApproverId !== s.access.userId ? 'hr_head' : r?.currentLevel ?? null;
     const decide = (chosen: RequisitionDecision | null = decision) => {
         if (!r || !chosen) return;
-        const needsReason = chosen === 'reject' || chosen === 'send_back';
-        if (needsReason && !reason.trim()) { notify(chosen === 'reject' ? 'Give the reason for rejecting.' : 'Say what needs to change.', 'error'); return; }
-        if (chosen === 'approve' && r.currentLevel === 'hr_head' && inPlan === null) { notify('Tick whether the role is in the approved plan.', 'error'); return; }
+        const needsReason = chosen === 'reject' || chosen === 'send_back' || chosen === 'hold';
+        if (needsReason && !reason.trim()) { notify(chosen === 'reject' ? 'Give the reason for rejecting.' : chosen === 'hold' ? 'Give the reason for putting it on hold.' : 'Say what needs to change.', 'error'); return; }
+        if (chosen === 'approve' && actingLevel === 'hr_head' && inPlan === null) { notify('Tick whether the role is in the approved plan.', 'error'); return; }
         const label = { approve: 'Approved', reject: 'Rejected', send_back: 'Sent back for changes', hold: 'Put on hold', resume: 'Resumed' }[chosen];
-        void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}/decide`, { decision: chosen, reason: reason.trim() || undefined, ...(chosen === 'approve' && r.currentLevel === 'hr_head' ? { inPlan } : {}) }, label);
+        void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}/decide`, { decision: chosen, reason: reason.trim() || undefined, ...(chosen === 'approve' && actingLevel === 'hr_head' ? { inPlan } : {}) }, label);
     };
 
     const rows: [string, React.ReactNode][] = r ? [
@@ -354,6 +412,8 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         ['Required skills', r.requiredSkills.join(', ')], ['Minimum experience', r.minExperienceYears !== null ? `${r.minExperienceYears} years` : null],
         ['Qualification', r.qualification], ['Target joining', r.targetJoiningDate ? formatDate(r.targetJoiningDate) : null], ['Reporting manager', r.reportingManager],
         ['Raised by', `${r.raisedByName ?? '—'}${r.submittedAt ? `, ${formatDate(r.submittedAt)}` : ''}`],
+        ['Internal mobility', r.internalMobility === true ? 'Yes: someone internal may be eligible' : r.internalMobility === false ? 'No: hire from outside' : null],
+        ...(r.roleIsNew ? [['New designation', <Tag key="new" tone="warn">Raised under “Others”</Tag>] as [string, React.ReactNode]] : []),
         ['In the approved plan', r.inPlan === null ? <span className="text-text-tertiary">not reviewed yet</span> : r.inPlan ? 'Yes' : 'No: out of plan'],
         ...((r.endorsedBy?.length ?? 0) > 0 ? [['Endorsed by', r.endorsedBy!.join(', ')] as [string, React.ReactNode]] : []),
         ...(r.positionId ? [['Candidates in pipeline', String(r.pipelineCount ?? 0)] as [string, React.ReactNode]] : []),
@@ -380,8 +440,11 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                 <div className="space-y-4">
                     {s.canDecide && (
                         <section className={`${CARD} px-4 py-4 ring-1 ring-inset ring-primary/40`} aria-label="Your decision">
-                            <p className="text-sm font-semibold text-text-primary">Your decision as {APPROVAL_LEVEL_LABELS[r.currentLevel!]}</p>
-                            <p className="mt-0.5 text-xs text-text-secondary">{r.status === 'on_hold' ? 'This request is on hold. Resume it to decide.' : r.currentLevel === 'hr_head' ? 'In plan and within the CTC level, your approval opens the role and the Director is informed. Out of plan, or above the level, it goes to the Director.' : 'Your approval opens the role.'}</p>
+                            <p className="text-sm font-semibold text-text-primary">Your decision as {APPROVAL_LEVEL_LABELS[actingLevel!]}</p>
+                            <p className="mt-0.5 text-xs text-text-secondary">
+                                {r.currentLevel === 'hod' && actingLevel === 'hr_head' ? 'The department head has not decided in 48 hours, so you can decide in their place. ' : ''}
+                                {r.status === 'on_hold' ? 'This request is on hold. Resume it to decide.' : actingLevel === 'hod' ? 'Your approval passes it to the HR Head.' : actingLevel === 'hr_head' ? 'In plan and within the CTC level, your approval opens the role and the Director is informed. Out of plan, or above the level, it goes to the Director.' : 'Your approval opens the role.'}
+                            </p>
                             {r.status === 'on_hold' ? (
                                 <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setDecision('resume'); decide('resume'); }} disabled={busy} className={BTN_PRIMARY}>Resume</button></div>
                             ) : (
@@ -392,7 +455,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                                                 className={`h-10 rounded-lg px-3 text-sm font-semibold ring-1 ring-inset ${decision === d ? (d === 'reject' ? 'bg-error/10 text-red-800 ring-error' : 'bg-primary/10 text-primary-dark ring-primary') : 'text-text-primary ring-border hover:bg-surface-elevated'}`}>{label}</button>
                                         ))}
                                     </div>
-                                    {decision === 'approve' && r.currentLevel === 'hr_head' && (
+                                    {decision === 'approve' && actingLevel === 'hr_head' && (
                                         <div className={`${WELL} mt-3 px-3 py-3`}>
                                             <p className="text-sm font-semibold text-text-primary">Is this role in the approved headcount plan?</p>
                                             <div className="mt-2 flex gap-x-2">
@@ -404,7 +467,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                                     )}
                                     {decision && (
                                         <>
-                                            <label htmlFor="req-reason" className="mt-3 block text-xs font-medium text-text-secondary">{decision === 'reject' ? 'Reason' : decision === 'send_back' ? 'What needs to change' : 'Note'} {decision === 'reject' || decision === 'send_back' ? <span className="text-error">*</span> : '(optional)'}</label>
+                                            <label htmlFor="req-reason" className="mt-3 block text-xs font-medium text-text-secondary">{decision === 'reject' || decision === 'hold' ? 'Reason' : decision === 'send_back' ? 'What needs to change' : 'Note'} {decision === 'reject' || decision === 'send_back' || decision === 'hold' ? <span className="text-error">*</span> : '(optional)'}</label>
                                             <textarea id="req-reason" rows={2} value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} className={`${INPUT} mt-1 h-auto min-h-[64px] resize-y py-2 leading-relaxed`} />
                                             <div className="mt-3 flex justify-end gap-x-2">
                                                 <button type="button" onClick={() => { setDecision(null); setReason(''); }} disabled={busy} className={BTN_GHOST}>Cancel</button>
@@ -440,6 +503,10 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                         <p className={LABEL}>Justification</p>
                         <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.justification || <span className="text-text-tertiary">—</span>}</p>
                     </div>
+                    <div>
+                        <p className={LABEL}>Where it sits in the current structure</p>
+                        <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.structureNote || <span className="text-text-tertiary">—</span>}</p>
+                    </div>
                     <section aria-label="History">
                         <p className={LABEL}>History <span className="font-normal text-text-tertiary">· nothing here is ever edited</span></p>
                         {s.approvals.length === 0 ? <p className="mt-1 text-sm text-text-tertiary">Not submitted yet.</p> : (
@@ -455,7 +522,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
 }
 
 function ApprovalLine({ a }: { a: RequisitionApproval }) {
-    const what = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', sent_back: 'Sent back for changes', on_hold: 'Put on hold', resumed: 'Resumed', withdrawn: 'Withdrawn', position_opened: 'Position opened', endorsed: 'Endorsed by the department head', still_needed: 'Confirmed still needed' }[a.action];
+    const what = { submitted: 'Submitted', approved: 'Approved', rejected: 'Rejected', sent_back: 'Sent back for changes', on_hold: 'Put on hold', resumed: 'Resumed', withdrawn: 'Withdrawn', position_opened: 'Position opened', endorsed: 'Endorsed by the department head', still_needed: 'Confirmed still needed', escalated: 'Passed on (no decision in 48 hours)' }[a.action];
     return (
         <>
             <p className="flex flex-wrap items-baseline gap-x-2">

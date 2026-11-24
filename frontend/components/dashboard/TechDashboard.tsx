@@ -56,6 +56,8 @@ const RecruitmentRaiserSettings = dynamic(() => import('@/frontend/components/ad
 // Owner 2026-11-20: "move this Hiring request approvals section to the tech login in HR configs tab"
 const ApprovalSettings = dynamic(() => import('@/frontend/components/candidates/ApprovalSettings'), { loading: TabLoading });
 const DepartmentHeadSettings = dynamic(() => import('@/frontend/components/admin/DepartmentHeadSettings'), { loading: TabLoading });
+// Owner 2026-11-24: the hiring request form's department → designations list
+const HierarchySettings = dynamic(() => import('@/frontend/components/admin/HierarchySettings'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
@@ -386,7 +388,7 @@ export default function TechDashboard() {
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
-                            {activeTab === 'hr_configs' && org && <div className="mx-auto max-w-5xl space-y-6"><RecruitmentRaiserSettings organizationId={org.id} /><DepartmentHeadSettings organizationId={org.id} /><ApprovalSettings orgId={org.id} /></div>}
+                            {activeTab === 'hr_configs' && org && <div className="mx-auto max-w-5xl space-y-6"><RecruitmentRaiserSettings organizationId={org.id} /><DepartmentHeadSettings organizationId={org.id} /><HierarchySettings organizationId={org.id} /><ApprovalSettings orgId={org.id} /></div>}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'meeting_room' && <BookMeetingRoom />}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}

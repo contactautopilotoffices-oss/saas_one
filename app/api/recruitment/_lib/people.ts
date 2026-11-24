@@ -1,6 +1,26 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { activeRoles, approverPools, type PickablePerson } from "@/backend/lib/candidates/requisitions";
+import { activeRoles, approverPools, hierarchyFromEmployees, resolveHierarchy, type PickablePerson } from "@/backend/lib/candidates/requisitions";
+import type { RecruitmentConfig, RequisitionHierarchy } from "@/backend/lib/candidates/types";
+
+/** Owner 2026-11-24: the employee master's departments and designations (the active employee profiles of the organisation). */
+export async function employeeMasterHierarchy(client: SupabaseClient, orgId: string): Promise<RecruitmentConfig["hierarchy"]> {
+  const { data, error } = await client.from("employee_profiles").select("department, designation")
+    .eq("is_active", true).or(`organization_id.eq.${orgId},organization_id.is.null`).limit(10_000);
+  if (error) throw error;
+  return hierarchyFromEmployees((data ?? []) as { department: string | null; designation: string | null }[]);
+}
+
+/** The request form's dropdowns: HR's list from HR Configs when set, else the employee master (never fails: empty on error). */
+export async function formHierarchy(client: SupabaseClient, orgId: string, config: RecruitmentConfig): Promise<RequisitionHierarchy> {
+  if (config.hierarchy.length) return resolveHierarchy(config, []);
+  try {
+    return resolveHierarchy(config, await employeeMasterHierarchy(client, orgId));
+  } catch (error) {
+    console.error("[recruitment] employee master hierarchy failed", error);
+    return { departments: [], source: "employee_master" };
+  }
+}
 
 /**
  * Owner 2026-11-20: "You need to have the same data like the one in the task manager" — the people to pick from are the

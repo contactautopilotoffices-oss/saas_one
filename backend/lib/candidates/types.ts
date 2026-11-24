@@ -1076,9 +1076,18 @@ export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
   rejected: "Rejected",
   withdrawn: "Withdrawn",
 };
+/** The configured approver slots (HR Head, Director), used by requisitions and offers alike. */
 export const APPROVAL_LEVELS = ["hr_head", "director"] as const;
 export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
-export const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = { hr_head: "HR Head", director: "Director" };
+/**
+ * Owner 2026-11-24: a hiring request goes to its department head first ("hod"), then the HR Head, then (out of plan or
+ * above the CTC level) the Director. Offers keep HR Head → Director only.
+ */
+export const REQUISITION_LEVELS = ["hod", ...APPROVAL_LEVELS] as const;
+export type RequisitionLevel = (typeof REQUISITION_LEVELS)[number];
+export const APPROVAL_LEVEL_LABELS: Record<RequisitionLevel, string> = { hod: "Department head", hr_head: "HR Head", director: "Director" };
+/** Owner 2026-11-24: hours the department head has before the request passes to the HR Head on its own. */
+export const HOD_DECISION_HOURS = 48;
 export const REQUEST_TYPES = ["new", "replacement"] as const;
 export type RequestType = (typeof REQUEST_TYPES)[number];
 /** Stage 2: Approve, Reject with reason, Send back for change, Put on hold (and Resume from hold). */
@@ -1109,13 +1118,25 @@ export interface RecruitmentConfig {
   rejectionReasons: string[];
   /** Owner 2026-11-21: the offer letter template ({{candidate_name}}, {{role}}, {{ctc}}, {{joining_date}}, …). Empty: the default. */
   offerLetter: string;
+  /**
+   * Owner 2026-11-24: the company hierarchy for the request form's dropdowns: each department and its designations, kept
+   * in the Tech dashboard → HR Configs. Empty: the form uses the employee master (departments and designations of the
+   * active employees). A role not in the list is raised under "Others".
+   */
+  hierarchy: { department: string; designations: string[] }[];
+}
+
+/** The request form's dropdowns, and where they came from. */
+export interface RequisitionHierarchy {
+  departments: { department: string; designations: string[] }[];
+  source: "configured" | "employee_master";
 }
 
 export interface Requisition {
   id: string;
   requisitionNo: string | null;
   status: RequisitionStatus;
-  currentLevel: ApprovalLevel | null;
+  currentLevel: RequisitionLevel | null;
   currentApproverId: string | null;
   currentApproverName: string | null;
   levelEnteredAt: string | null;
@@ -1134,6 +1155,12 @@ export interface Requisition {
   targetJoiningDate: string | null;
   justification: string | null;
   reportingManager: string | null;
+  /** Owner 2026-11-24: can someone already in the company fill it (null: not answered yet). */
+  internalMobility: boolean | null;
+  /** Owner 2026-11-24: where the role sits in the current structure. */
+  structureNote: string | null;
+  /** Owner 2026-11-24: the role title was typed under "Others", not picked from the department's designations. */
+  roleIsNew: boolean;
   inPlan: boolean | null;
   needsDirector: boolean;
   holdSince: string | null;
@@ -1158,9 +1185,12 @@ export interface Requisition {
 
 export interface RequisitionApproval {
   id: string;
-  level: ApprovalLevel | null;
-  /** "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001. */
-  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed";
+  level: RequisitionLevel | null;
+  /**
+   * "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001;
+   * "escalated" (the department head did not decide in 48 h, so it passed to the HR Head) needs 20261124000001.
+   */
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed" | "escalated";
   inPlan: boolean | null;
   reason: string | null;
   byName: string | null;
@@ -1172,14 +1202,16 @@ export interface RequisitionApproval {
 export interface RequisitionAccess {
   /** HR roles and admins: see every request. */
   seesAll: boolean;
-  /** The levels this person approves at (primary or backup). */
-  approverLevels: ApprovalLevel[];
+  /** The levels this person approves at (primary or backup; "hod" when they head a department). */
+  approverLevels: RequisitionLevel[];
   /** The approvers are set in Recruitment -> Configurations (a request cannot be submitted until they are). */
   configured: boolean;
   /** Owner 2026-11-20: this person may raise a hiring request (set in the Tech dashboard). */
   canRaise?: boolean;
   /** Owner 2026-11-21: the departments this person heads (lower case): they see those requests and may endorse them. */
   headOf?: string[];
+  /** The signed-in person (a department head's "Your decision" is the requests waiting on them by name). */
+  userId?: string;
 }
 
 export interface RequisitionListResponse {
@@ -1187,6 +1219,8 @@ export interface RequisitionListResponse {
   access: RequisitionAccess;
   /** Owner 2026-11-21: the departments that have a head (the form suggests them, so the head sees the request). */
   departments?: string[];
+  /** Owner 2026-11-24: the form's department and role dropdowns. */
+  hierarchy?: RequisitionHierarchy;
 }
 export interface RequisitionResponse {
   requisition: Requisition;

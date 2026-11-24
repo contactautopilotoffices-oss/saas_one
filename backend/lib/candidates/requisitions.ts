@@ -36,8 +36,8 @@ import { EMPTY_FILTERS } from "./filters";
 import { createPosition } from "./positions";
 import { CandidateActionError } from "./records";
 import {
-  APPROVAL_LEVELS, REQUEST_TYPES, REQUISITION_DECISIONS,
-  type ApprovalLevel, type RecruitmentConfig, type Requisition, type RequisitionAccess, type RequisitionApproval, type RequisitionStatus,
+  APPROVAL_LEVEL_LABELS, APPROVAL_LEVELS, HOD_DECISION_HOURS, REQUEST_TYPES, REQUISITION_DECISIONS,
+  type ApprovalLevel, type RecruitmentConfig, type Requisition, type RequisitionAccess, type RequisitionApproval, type RequisitionHierarchy, type RequisitionLevel, type RequisitionStatus,
 } from "./types";
 
 const TABLE = "recruitment_requisitions";
@@ -45,7 +45,7 @@ const APPROVALS = "recruitment_requisition_approvals";
 const SETTINGS = "organization_settings";
 const COLUMNS =
   "id, requisition_no, status, current_level, current_approver_id, level_entered_at, role_title, department, location, positions, request_type, replacing_name, " +
-  "budget_min_ctc, budget_max_ctc, required_skills, min_experience_years, qualification, target_joining_date, justification, reporting_manager, in_plan, needs_director, " +
+  "budget_min_ctc, budget_max_ctc, required_skills, min_experience_years, qualification, target_joining_date, justification, reporting_manager, internal_mobility, structure_note, role_is_new, in_plan, needs_director, " +
   "hold_since, hold_reason, decided_at, decision_reason, position_id, raised_by, raised_by_name, submitted_at, created_at, updated_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Stage 2: 3 working days end to end (Monday to Saturday count, as the module's sending hours do). */
@@ -55,11 +55,17 @@ export const DEFAULT_TARGET_DAYS = 21;
 export const REQUISITIONS_MIGRATION_MESSAGE = "Hiring requests need a database update first: run 20261117000003_recruitment_requisitions.sql in Supabase.";
 /** Endorsing and "still needed" are new kinds of history entry (owner 2026-11-21). */
 export const REQUISITION_FOLLOWUPS_MIGRATION_MESSAGE = "This needs a database update first: run 20261121000001_recruitment_requisition_followups.sql in Supabase.";
+/** The department head's level and the three new form fields (owner 2026-11-24). */
+export const REQUISITION_HOD_MIGRATION_MESSAGE = "Hiring requests need a database update first: run 20261124000001_recruitment_requisition_hod_and_fields.sql in Supabase.";
 
 const missingRelation = (error: { code?: string; message?: string } | null | undefined) =>
   Boolean(error) && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error?.code ?? "") || /recruitment_requisition|recruitment_config|does not exist|schema cache/i.test(error?.message ?? ""));
 
 function fail(what: string, error: { code?: string; message?: string }): never {
+  // Before 20261124000001: the new columns are missing, or the checks refuse the department head's level.
+  if (/internal_mobility|structure_note|role_is_new/.test(error.message ?? "") || (error.code === "23514" && /current_level_check|approvals_level_check/.test(error.message ?? ""))) {
+    throw new CandidateActionError(503, REQUISITION_HOD_MIGRATION_MESSAGE);
+  }
   if (missingRelation(error)) throw new CandidateActionError(503, REQUISITIONS_MIGRATION_MESSAGE);
   // Before 20261121000001 the history refuses "endorsed" and "still_needed".
   if (error.code === "23514" && /approvals_action_check/.test(error.message ?? "")) throw new CandidateActionError(503, REQUISITION_FOLLOWUPS_MIGRATION_MESSAGE);
@@ -88,7 +94,7 @@ export function workingDaysBetween(from: Date, to: Date): number {
 
 // Settings ------------------------------------------------------------------------------------------------------------
 
-const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "" };
+const EMPTY_CONFIG: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: DEFAULT_TARGET_DAYS, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [] };
 
 const uuidOrNull = z.string().regex(UUID).nullable().optional();
 const ConfigInput = z.object({
@@ -114,7 +120,103 @@ function toConfig(raw: unknown): RecruitmentConfig {
     departmentHeads: toDepartmentHeads(r.departmentHeads),
     rejectionReasons: toReasons(r.rejectionReasons),
     offerLetter: typeof r.offerLetter === "string" ? r.offerLetter.slice(0, 20_000) : "",
+    hierarchy: toHierarchy(r.hierarchy),
   };
+}
+
+// The company hierarchy for the request form (owner 2026-11-24) ----------------------------------------------------------
+
+const clean = (s: unknown, max: number) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, max) : "");
+const byName = (a: string, b: string) => a.localeCompare(b, "en", { sensitivity: "base" });
+
+/** Each department once (ignoring case), each designation once within it, both sorted. */
+function toHierarchy(raw: unknown): RecruitmentConfig["hierarchy"] {
+  const out = new Map<string, { department: string; designations: Map<string, string> }>();
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const r = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
+    const department = clean(r.department, 80);
+    if (!department) continue;
+    const entry = out.get(department.toLowerCase()) ?? { department, designations: new Map<string, string>() };
+    for (const d of Array.isArray(r.designations) ? r.designations : []) {
+      const designation = clean(d, 120);
+      if (designation && !entry.designations.has(designation.toLowerCase())) entry.designations.set(designation.toLowerCase(), designation);
+    }
+    out.set(department.toLowerCase(), entry);
+  }
+  return [...out.values()].map((e) => ({ department: e.department, designations: [...e.designations.values()].sort(byName) })).sort((a, b) => byName(a.department, b.department));
+}
+
+/** The employee master's hierarchy: the departments of the active employees, and the designations seen in each. */
+export function hierarchyFromEmployees(employees: { department: string | null; designation: string | null }[]): RecruitmentConfig["hierarchy"] {
+  const grouped = new Map<string, { department: string; designations: string[] }>();
+  for (const e of employees) {
+    const department = clean(e.department, 80);
+    if (!department) continue;
+    const entry = grouped.get(department.toLowerCase()) ?? { department, designations: [] };
+    const designation = clean(e.designation, 120);
+    if (designation) entry.designations.push(designation);
+    grouped.set(department.toLowerCase(), entry);
+  }
+  return toHierarchy([...grouped.values()]);
+}
+
+/** What the form offers: HR's list when set, else the employee master. */
+export function resolveHierarchy(config: RecruitmentConfig, employeeMaster: RecruitmentConfig["hierarchy"]): RequisitionHierarchy {
+  return config.hierarchy.length ? { departments: config.hierarchy, source: "configured" } : { departments: employeeMaster, source: "employee_master" };
+}
+
+/**
+ * The form's rule (owner 2026-11-24, from the 23 Nov meeting: "he cannot invent anything; if he wants to, it goes to
+ * Others"): the department is one of the list's, and the role title one of that department's designations, unless the
+ * role was raised under "Others". Nothing is checked when the list is empty.
+ */
+export function checkAgainstHierarchy(hierarchy: RequisitionHierarchy | undefined, row: Record<string, unknown>): string | null {
+  if (!hierarchy?.departments.length) return null;
+  const dept = hierarchy.departments.find((d) => d.department.toLowerCase() === clean(row.department, 80).toLowerCase());
+  if (!dept) return "Pick the department from the list.";
+  if (row.role_is_new === true || !dept.designations.length) return null;
+  const role = clean(row.role_title, 120).toLowerCase();
+  if (!dept.designations.some((d) => d.toLowerCase() === role)) return `Pick the role from ${dept.department}'s designations, or choose "Others" to raise a new one.`;
+  return null;
+}
+
+const HierarchyInput = z.object({
+  departments: z.array(z.object({
+    department: z.string().trim().min(1, "Name the department.").max(80, "A department name is at most 80 characters."),
+    designations: z.array(z.string().trim().min(1).max(120, "A designation is at most 120 characters.")).max(200),
+  })).max(100),
+});
+
+/**
+ * Saves the department → designations list (the Tech dashboard's HR Configs tab), recorded in the history of changes.
+ * An empty list puts the form back on the employee master.
+ */
+export async function saveHierarchy(client: SupabaseClient, orgId: string, body: unknown, by?: Actor): Promise<RecruitmentConfig["hierarchy"]> {
+  const parsed = HierarchyInput.safeParse(body ?? {});
+  if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Give each department a name.");
+  const keys = parsed.data.departments.map((d) => d.department.toLowerCase());
+  const twice = keys.find((k, i) => keys.indexOf(k) !== i);
+  if (twice) throw new CandidateActionError(400, `"${parsed.data.departments[keys.indexOf(twice)].department}" is listed twice.`);
+  const hierarchy = toHierarchy(parsed.data.departments);
+  const current = await loadRecruitmentConfig(client, orgId);
+  const next: RecruitmentConfig = { ...current, hierarchy };
+  const now = new Date().toISOString();
+  const { data: existing, error: readErr } = await client.from(SETTINGS).select("organization_id").eq("organization_id", orgId).maybeSingle();
+  if (readErr) fail("save the settings", readErr);
+  const { error } = existing
+    ? await client.from(SETTINGS).update({ recruitment_config: next, updated_at: now }).eq("organization_id", orgId)
+    : await client.from(SETTINGS).insert({ organization_id: orgId, recruitment_config: next, created_at: now, updated_at: now });
+  if (error) fail("save the settings", error);
+  if (by && JSON.stringify(current.hierarchy) !== JSON.stringify(hierarchy)) {
+    const summary = hierarchy.length
+      ? `Departments and designations: ${hierarchy.map((d) => `${d.department} (${d.designations.length})`).join(", ")}`
+      : "Departments and designations: cleared (the form uses the employee master)";
+    const { error: logError } = await client.from("recruitment_stage_changes").insert({
+      organization_id: orgId, changed_by: by.id, changed_by_name: by.name, summary: summary.slice(0, 2000), before: { hierarchy: current.hierarchy }, after: { hierarchy }, created_at: now,
+    });
+    if (logError && !missingRelation(logError)) console.error("[candidates] hierarchy: the change was not recorded", logError);
+  }
+  return hierarchy;
 }
 
 /** Owner 2026-11-21: saves HR's offer letter template (Recruitment -> Configurations). Empty restores the default. */
@@ -428,6 +530,7 @@ export async function saveRecruitmentConfig(client: SupabaseClient, orgId: strin
     departmentHeads: current.departmentHeads,
     rejectionReasons: current.rejectionReasons,
     offerLetter: current.offerLetter,
+    hierarchy: current.hierarchy,
   };
   for (const level of APPROVAL_LEVELS) {
     const s = next[level === "hr_head" ? "hrHead" : "director"];
@@ -457,6 +560,33 @@ const slotOf = (c: RecruitmentConfig, level: ApprovalLevel) => (level === "hr_he
 /** Everyone who may act at this level. */
 const approversAt = (c: RecruitmentConfig, level: ApprovalLevel): string[] => [slotOf(c, level).userId, slotOf(c, level).backupUserId].filter((id): id is string => Boolean(id));
 
+/** Hours a request has waited at its current level (0 when unknown). */
+const hoursAtLevel = (levelEnteredAt: unknown, now: Date) => {
+  const at = isoOrNull(levelEnteredAt);
+  return at ? Math.max(0, (now.getTime() - new Date(at).getTime()) / 3_600_000) : 0;
+};
+
+/**
+ * Who may decide a request at its level now. At the department head's level (owner 2026-11-24): the head it waits on;
+ * once it has waited HOD_DECISION_HOURS, the HR Head (or backup) may decide in their place ("HR approves if the HOD does
+ * not"). Every other level: that level's approver and backup.
+ */
+function approversFor(c: RecruitmentConfig, row: Record<string, unknown>, level: RequisitionLevel, now: Date): string[] {
+  if (level !== "hod") return approversAt(c, level);
+  const head = (row.current_approver_id as string | null) ?? null;
+  const late = hoursAtLevel(row.level_entered_at, now) >= HOD_DECISION_HOURS;
+  return [...new Set([head, ...(late ? approversAt(c, "hr_head") : [])].filter((id): id is string => Boolean(id)))];
+}
+
+/** After the department head: the HR Head (or backup), never the person who raised it or the head who just approved; else the Director. */
+function levelAfterHod(c: RecruitmentConfig, raisedBy: unknown, headId: string | null): { level: ApprovalLevel; approverId: string } {
+  const hr = approversAt(c, "hr_head").find((id) => id !== raisedBy && id !== headId);
+  if (hr) return { level: "hr_head", approverId: hr };
+  const director = approversAt(c, "director").find((id) => id !== raisedBy && id !== headId);
+  if (director) return { level: "director", approverId: director };
+  throw new CandidateActionError(409, "No HR Head or Director is free to take this request next. Ask the Tech team to add a backup approver in HR Configs.");
+}
+
 // Access ---------------------------------------------------------------------------------------------------------------
 
 /**
@@ -472,11 +602,12 @@ export async function requisitionAccess(client: SupabaseClient, userId: string, 
   const isMaster = Boolean((userRow.data as { is_master_admin?: boolean } | null)?.is_master_admin);
   const roles = ((orgRows.data ?? []) as { role: string | null; is_active: boolean | null }[]).filter((r) => r.is_active !== false).map((r) => (r.role ?? "").toLowerCase());
   const seesAll = isMaster || roles.some((r) => (CANDIDATE_ACCESS_ROLES as readonly string[]).includes(r) || ["director", "org_admin", "owner", "master_admin", "super_admin"].includes(r));
-  const approverLevels = APPROVAL_LEVELS.filter((level) => approversAt(config, level).includes(userId));
-  const canRaise = await canRaiseRequisitions(client, userId, orgId, config);
   const headOf = departmentsHeadedBy(config, userId);
+  // Owner 2026-11-24: a department head decides first on their departments' requests.
+  const approverLevels: RequisitionLevel[] = [...(headOf.length ? ["hod" as const] : []), ...APPROVAL_LEVELS.filter((level) => approversAt(config, level).includes(userId))];
+  const canRaise = await canRaiseRequisitions(client, userId, orgId, config);
   // Someone picked to raise requests, or a department head, counts as a member even with only property roles.
-  return { seesAll, approverLevels, configured: configured(config), canRaise, headOf, config, member: isMaster || roles.length > 0 || canRaise || headOf.length > 0 };
+  return { seesAll, approverLevels, configured: configured(config), canRaise, headOf, userId, config, member: isMaster || roles.length > 0 || canRaise || headOf.length > 0 };
 }
 
 // Rows -----------------------------------------------------------------------------------------------------------------
@@ -487,7 +618,7 @@ function toRequisition(row: Record<string, unknown>, names: Map<string, string |
     id: row.id as string,
     requisitionNo: (row.requisition_no as string | null) ?? null,
     status: row.status as RequisitionStatus,
-    currentLevel: (row.current_level as ApprovalLevel | null) ?? null,
+    currentLevel: (row.current_level as RequisitionLevel | null) ?? null,
     currentApproverId: (row.current_approver_id as string | null) ?? null,
     currentApproverName: row.current_approver_id ? names.get(row.current_approver_id as string) ?? null : null,
     levelEnteredAt: isoOrNull(row.level_entered_at),
@@ -505,6 +636,9 @@ function toRequisition(row: Record<string, unknown>, names: Map<string, string |
     targetJoiningDate: day(row.target_joining_date),
     justification: (row.justification as string | null) ?? null,
     reportingManager: (row.reporting_manager as string | null) ?? null,
+    internalMobility: (row.internal_mobility as boolean | null | undefined) ?? null,
+    structureNote: (row.structure_note as string | null | undefined) ?? null,
+    roleIsNew: row.role_is_new === true,
     inPlan: (row.in_plan as boolean | null) ?? null,
     needsDirector: Boolean(row.needs_director),
     holdSince: isoOrNull(row.hold_since),
@@ -587,7 +721,7 @@ export async function getRequisition(client: SupabaseClient, orgId: string, id: 
   requisition.previous = await previousFor(client, orgId, requisition.roleTitle, requisition.id);
   const approvals = ((data ?? []) as Record<string, unknown>[]).map((a) => ({
     id: a.id as string,
-    level: (a.level as ApprovalLevel | null) ?? null,
+    level: (a.level as RequisitionLevel | null) ?? null,
     action: a.action as RequisitionApproval["action"],
     inPlan: (a.in_plan as boolean | null) ?? null,
     reason: (a.reason as string | null) ?? null,
@@ -617,6 +751,12 @@ const FormInput = z.object({
   targetJoiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the target joining date.").nullable().optional(),
   justification: text(4000).nullable().optional(),
   reportingManager: text(120).nullable().optional(),
+  /** Owner 2026-11-24: can someone already in the company fill it. */
+  internalMobility: z.boolean().nullable().optional(),
+  /** Owner 2026-11-24: where the role sits in the current structure. */
+  structureNote: text(2000).nullable().optional(),
+  /** Owner 2026-11-24: the role was typed under "Others" (a new designation). */
+  roleIsNew: z.boolean().optional(),
 });
 export type RequisitionFormInput = z.infer<typeof FormInput>;
 
@@ -643,14 +783,23 @@ function formColumns(input: RequisitionFormInput, partial: boolean): Record<stri
   set("target_joining_date", blankToNull(input.targetJoiningDate));
   set("justification", blankToNull(input.justification));
   set("reporting_manager", blankToNull(input.reportingManager));
+  set("internal_mobility", input.internalMobility);
+  set("structure_note", blankToNull(input.structureNote));
+  if (input.roleIsNew !== undefined || !partial) out.role_is_new = input.roleIsNew ?? false;
   return out;
 }
 
-/** What the form must have before it can be submitted (Stage 1's fields; the budget band is required because Stage 2 routes on it). */
+/**
+ * What the form must have before it can be submitted (Stage 1's fields; the budget band is required because Stage 2
+ * routes on it). Owner 2026-11-24 (23 Nov meeting): the justification and where the role sits in the structure are both
+ * required, and so is the internal mobility answer.
+ */
 function readyToSubmit(row: Record<string, unknown>): string | null {
   if (!String(row.role_title ?? "").trim()) return "Give the role a title.";
   if (row.budget_max_ctc === null || row.budget_max_ctc === undefined) return "Give the budget band (maximum CTC per year).";
   if (!String(row.justification ?? "").trim()) return "Say why the role is needed (the justification).";
+  if (!String(row.structure_note ?? "").trim()) return "Say where the role sits in the current structure.";
+  if (row.internal_mobility !== true && row.internal_mobility !== false) return "Answer whether someone already in the company could fill it (internal mobility).";
   if (row.request_type === "replacement" && !String(row.replacing_name ?? "").trim()) return "Say who is being replaced.";
   return null;
 }
@@ -658,8 +807,10 @@ function readyToSubmit(row: Record<string, unknown>): string | null {
 // Events (what the routes send) ---------------------------------------------------------------------------------------
 
 export type RequisitionEvent =
-  | { kind: "awaiting"; requisition: Requisition; approverId: string; level: ApprovalLevel }
-  | { kind: "decided"; requisition: Requisition; decision: "approved" | "rejected" | "sent_back" | "on_hold" | "resumed"; reason: string | null; byName: string | null }
+  | { kind: "awaiting"; requisition: Requisition; approverId: string; level: RequisitionLevel }
+  /** Owner 2026-11-24: a request was submitted; the department head, HR and the Director hear of it (not the approver it waits on). */
+  | { kind: "raised"; requisition: Requisition; approverId: string }
+  | { kind: "decided"; requisition: Requisition; decision: "approved" | "rejected" | "sent_back" | "on_hold" | "resumed"; reason: string | null; byName: string | null; byId?: string | null }
   | { kind: "director_informed"; requisition: Requisition; directorId: string }
   /** Owner 2026-11-21: a request for a department went in; its head may endorse it. */
   | { kind: "department_head"; requisition: Requisition; headId: string }
@@ -668,7 +819,13 @@ export type RequisitionEvent =
   /** Spec A24: the raiser confirmed a request on hold is still needed; the approver it waits on is told. */
   | { kind: "still_needed"; requisition: Requisition; approverId: string | null; note: string | null };
 export type RequisitionNotifier = (event: RequisitionEvent) => Promise<void>;
-export interface RequisitionDeps { notify?: RequisitionNotifier; now?: () => Date; sourceMailId?: string }
+export interface RequisitionDeps {
+  notify?: RequisitionNotifier;
+  now?: () => Date;
+  sourceMailId?: string;
+  /** Owner 2026-11-24: the form's department → designations list; given, a submitted role must come from it (or "Others"). */
+  hierarchy?: RequisitionHierarchy;
+}
 
 async function emit(deps: RequisitionDeps, event: RequisitionEvent): Promise<void> {
   if (!deps.notify) return;
@@ -679,7 +836,7 @@ async function emit(deps: RequisitionDeps, event: RequisitionEvent): Promise<voi
   }
 }
 
-async function record(client: SupabaseClient, orgId: string, requisitionId: string, by: Actor | null, entry: { level?: ApprovalLevel | null; action: RequisitionApproval["action"]; inPlan?: boolean | null; reason?: string | null; via?: "app" | "link" }): Promise<void> {
+async function record(client: SupabaseClient, orgId: string, requisitionId: string, by: Actor | null, entry: { level?: RequisitionLevel | null; action: RequisitionApproval["action"]; inPlan?: boolean | null; reason?: string | null; via?: "app" | "link" }): Promise<void> {
   const { error } = await client.from(APPROVALS).insert({
     organization_id: orgId, requisition_id: requisitionId, level: entry.level ?? null, action: entry.action, in_plan: entry.inPlan ?? null,
     reason: entry.reason ?? null, by_user: by?.id ?? null, by_name: by?.name ?? null, via: entry.via ?? "app", created_at: new Date().toISOString(),
@@ -692,7 +849,7 @@ async function record(client: SupabaseClient, orgId: string, requisitionId: stri
  * another click changed it in between, nothing is written and the caller is told to refresh, so the same step can
  * never be taken twice.
  */
-async function guardedUpdate(client: SupabaseClient, orgId: string, row: Record<string, unknown>, level: ApprovalLevel | null | undefined, values: Record<string, unknown>, what: string): Promise<void> {
+async function guardedUpdate(client: SupabaseClient, orgId: string, row: Record<string, unknown>, level: RequisitionLevel | null | undefined, values: Record<string, unknown>, what: string): Promise<void> {
   let q = client.from(TABLE).update(values).eq("organization_id", orgId).eq("id", row.id as string).eq("status", row.status as string);
   if (level !== undefined) q = level === null ? q.is("current_level", null) : q.eq("current_level", level);
   const { data, error } = await q.select("id");
@@ -738,7 +895,11 @@ export async function updateRequisition(client: SupabaseClient, orgId: string, b
  * The first level a request goes to, honouring "no user can approve a step they themselves raised": the HR Head, or
  * their backup when the HR Head raised it; the Director when neither can; a clear message when nobody is set.
  */
-export function firstLevelFor(config: RecruitmentConfig, raisedBy: string): { level: ApprovalLevel; approverId: string } {
+export function firstLevelFor(config: RecruitmentConfig, raisedBy: string, department?: string | null): { level: RequisitionLevel; approverId: string } {
+  // Owner 2026-11-24: the department head first, when the department has one who did not raise it and is not also the
+  // HR Head (who then decides once, as the HR Head). The HR Head and Director still need to be set.
+  const head = headOfDepartment(config, department);
+  if (head && head !== raisedBy && configured(config) && !approversAt(config, "hr_head").includes(head)) return { level: "hod", approverId: head };
   const pick = (level: ApprovalLevel) => approversAt(config, level).find((id) => id !== raisedBy) ?? null;
   const hrHead = pick("hr_head");
   if (hrHead) return { level: "hr_head", approverId: hrHead };
@@ -753,10 +914,10 @@ export async function submitRequisition(client: SupabaseClient, orgId: string, b
   const row = await loadRow(client, orgId, id);
   if (row.raised_by !== by.id) throw new CandidateActionError(403, "Only the person who raised the request can submit it.");
   if (row.status !== "draft" && row.status !== "sent_back") throw new CandidateActionError(409, "This request has already been submitted.");
-  const problem = readyToSubmit(row);
+  const problem = readyToSubmit(row) ?? checkAgainstHierarchy(deps.hierarchy, row);
   if (problem) throw new CandidateActionError(400, problem);
   const config = await loadRecruitmentConfig(client, orgId);
-  const first = firstLevelFor(config, by.id);
+  const first = firstLevelFor(config, by.id, row.department as string | null);
   const now = (deps.now ?? (() => new Date()))().toISOString();
 
   // Guarded on the status it was read in, so a double click submits once (and uses up one request number).
@@ -777,6 +938,8 @@ export async function submitRequisition(client: SupabaseClient, orgId: string, b
   // Owner 2026-11-21: the department's head hears of it and may endorse it (not when they raised it, or approve it).
   const head = headOfDepartment(config, requisition.department);
   if (head && head !== by.id && head !== first.approverId) await emit(deps, { kind: "department_head", requisition, headId: head });
+  // Owner 2026-11-24 (23 Nov meeting): the HR Head and the Director hear of every new request too.
+  await emit(deps, { kind: "raised", requisition, approverId: first.approverId });
   return requisition;
 }
 
@@ -807,12 +970,15 @@ export const aboveCtcLevel = (config: RecruitmentConfig, budgetMaxCtc: number | 
 
 /**
  * One decision at the level the request waits at, by one of that level's approvers (never the person who raised it):
- *   approve   : at the HR Head, with the in-plan tick. In plan and within the CTC level -> approved, the Director is
- *               notified. Out of plan or above the level -> on to the Director. At the Director -> approved.
+ *   approve   : at the department head (owner 2026-11-24) -> on to the HR Head. At the HR Head, with the in-plan tick:
+ *               in plan and within the CTC level -> approved, the Director is notified; out of plan or above the level
+ *               -> on to the Director. At the Director -> approved.
  *   reject    : with a reason. Final.
  *   send_back : with a reason; the manager changes and resubmits.
- *   hold      : waits; `resume` (by an approver at that level) puts it back in the queue, the clock restarted.
- * Approved means the role becomes active: a position is opened in the Positions tab.
+ *   hold      : with a reason (owner 2026-11-24); waits; `resume` (by an approver at that level) puts it back in the
+ *               queue, the clock restarted.
+ * After 48 hours at the department head, the HR Head (or backup) may decide in the head's place; their decision is the
+ * HR Head's (the in-plan tick included). Approved means the role becomes active: a position is opened in Positions.
  */
 export async function decideRequisition(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps: RequisitionDeps & { via?: "app" | "link" } = {}): Promise<Requisition> {
   const parsed = DecisionInput.safeParse(body ?? {});
@@ -821,16 +987,28 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
   const reason = parsed.data.reason?.trim() || null;
   const row = await loadRow(client, orgId, id);
   const config = await loadRecruitmentConfig(client, orgId);
-  const level = (row.current_level as ApprovalLevel | null) ?? null;
+  const level = (row.current_level as RequisitionLevel | null) ?? null;
+  const nowDate = (deps.now ?? (() => new Date()))();
   if (row.status !== "submitted" && row.status !== "on_hold") throw new CandidateActionError(409, `This request is ${String(row.status).replace("_", " ")}; there is nothing to decide.`);
   if (!level) throw new CandidateActionError(409, "This request is not waiting at any level.");
   if (row.raised_by === by.id) throw new CandidateActionError(403, "A request cannot be approved by the person who raised it.");
-  if (!approversAt(config, level).includes(by.id)) throw new CandidateActionError(403, `Only the ${level === "hr_head" ? "HR Head" : "Director"} (or their backup) can decide on this request now.`);
-  if ((decision === "reject" || decision === "send_back") && !reason) throw new CandidateActionError(400, decision === "reject" ? "Give the reason for rejecting." : "Say what needs to change.");
+  if (!approversFor(config, row, level, nowDate).includes(by.id)) {
+    throw new CandidateActionError(403, level === "hod"
+      ? `Only the department head can decide on this request now. The HR Head can decide in their place after ${HOD_DECISION_HOURS} hours.`
+      : `Only the ${APPROVAL_LEVEL_LABELS[level]} (or their backup) can decide on this request now.`);
+  }
+  if ((decision === "reject" || decision === "send_back" || decision === "hold") && !reason) {
+    throw new CandidateActionError(400, decision === "reject" ? "Give the reason for rejecting." : decision === "hold" ? "Give the reason for putting it on hold." : "Say what needs to change.");
+  }
   if (row.status === "on_hold" && decision !== "resume") throw new CandidateActionError(409, "This request is on hold. Resume it first.");
   if (row.status === "submitted" && decision === "resume") throw new CandidateActionError(409, "This request is not on hold.");
 
-  const now = (deps.now ?? (() => new Date()))().toISOString();
+  // The HR Head deciding at the department head's level (after 48 h) decides as the HR Head.
+  const steppingIn = level === "hod" && by.id !== row.current_approver_id;
+  const acting: RequisitionLevel = steppingIn ? "hr_head" : level;
+  const noted = (text: string | null) => (steppingIn ? [text, `Decided in place of the department head (no decision in ${HOD_DECISION_HOURS} hours).`].filter(Boolean).join(" ") : text);
+
+  const now = nowDate.toISOString();
   const via = deps.via ?? "app";
   // Only moves the request if it still stands where it was read (same status, same level): two approvers deciding at
   // the same moment cannot both win, so a request is never approved twice or opens two positions.
@@ -839,29 +1017,38 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
 
   if (decision === "hold") {
     await update({ status: "on_hold", hold_since: now, hold_reason: reason }, "put the request on hold");
-    await record(client, orgId, row.id as string, by, { level, action: "on_hold", reason, via });
+    await record(client, orgId, row.id as string, by, { level: acting, action: "on_hold", reason: noted(reason), via });
     const requisition = await done();
-    await emit(deps, { kind: "decided", requisition, decision: "on_hold", reason, byName: by.name });
+    await emit(deps, { kind: "decided", requisition, decision: "on_hold", reason, byName: by.name, byId: by.id });
     return requisition;
   }
   if (decision === "resume") {
     await update({ status: "submitted", hold_since: null, hold_reason: null, level_entered_at: now }, "resume the request");
-    await record(client, orgId, row.id as string, by, { level, action: "resumed", reason, via });
+    await record(client, orgId, row.id as string, by, { level: acting, action: "resumed", reason: noted(reason), via });
     const requisition = await done();
-    await emit(deps, { kind: "decided", requisition, decision: "resumed", reason, byName: by.name });
+    await emit(deps, { kind: "decided", requisition, decision: "resumed", reason, byName: by.name, byId: by.id });
     return requisition;
   }
   if (decision === "reject" || decision === "send_back") {
     const status = decision === "reject" ? "rejected" : "sent_back";
     await update({ status, current_level: null, current_approver_id: null, decided_at: decision === "reject" ? now : null, decision_reason: reason }, "record the decision");
-    await record(client, orgId, row.id as string, by, { level, action: status, reason, via });
+    await record(client, orgId, row.id as string, by, { level: acting, action: status, reason: noted(reason), via });
     const requisition = await done();
-    await emit(deps, { kind: "decided", requisition, decision: status, reason, byName: by.name });
+    await emit(deps, { kind: "decided", requisition, decision: status, reason, byName: by.name, byId: by.id });
     return requisition;
   }
 
   // approve
-  if (level === "hr_head") {
+  if (acting === "hod") {
+    // Owner 2026-11-24: the department head's approval passes it to the HR Head (then the Director, as before).
+    const next = levelAfterHod(config, row.raised_by, by.id);
+    await update({ current_level: next.level, current_approver_id: next.approverId, level_entered_at: now }, `pass the request to the ${APPROVAL_LEVEL_LABELS[next.level]}`);
+    await record(client, orgId, row.id as string, by, { level: "hod", action: "approved", reason, via });
+    const requisition = await done();
+    await emit(deps, { kind: "awaiting", requisition, approverId: next.approverId, level: next.level });
+    return requisition;
+  }
+  if (acting === "hr_head") {
     if (parsed.data.inPlan === undefined) throw new CandidateActionError(400, "Tick whether the role is in the approved plan before approving.");
     const inPlan = parsed.data.inPlan;
     const needsDirector = !inPlan || aboveCtcLevel(config, num(row.budget_max_ctc));
@@ -869,25 +1056,47 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
       const director = approversAt(config, "director").find((uid) => uid !== row.raised_by) ?? null;
       if (!director) throw new CandidateActionError(409, "This request needs the Director's approval, and no Director is set in the Tech dashboard → HR Configs.");
       await update({ in_plan: inPlan, needs_director: true, current_level: "director", current_approver_id: director, level_entered_at: now }, "pass the request to the Director");
-      await record(client, orgId, row.id as string, by, { level, action: "approved", inPlan, reason: reason ?? (inPlan ? "Above the CTC level: the Director approves" : "Out of plan: the Director approves"), via });
+      await record(client, orgId, row.id as string, by, { level: acting, action: "approved", inPlan, reason: noted(reason ?? (inPlan ? "Above the CTC level: the Director approves" : "Out of plan: the Director approves")), via });
       const requisition = await done();
       await emit(deps, { kind: "awaiting", requisition, approverId: director, level: "director" });
       return requisition;
     }
-    return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { inPlan, via });
+    return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { inPlan, via, recordAs: "hr_head", note: noted(reason) });
   }
-  return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { via });
+  return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { via, recordAs: acting, note: reason });
+}
+
+/**
+ * Owner 2026-11-24: a request has waited HOD_DECISION_HOURS at its department head; it passes to the HR Head on its own
+ * (the reminders job). Recorded in the history as "escalated". Nothing happens if it moved on in the meantime.
+ */
+export async function passFromDepartmentHead(client: SupabaseClient, orgId: string, id: string, deps: RequisitionDeps = {}): Promise<Requisition | null> {
+  const row = await loadRow(client, orgId, id);
+  if (row.status !== "submitted" || row.current_level !== "hod") return null;
+  const config = await loadRecruitmentConfig(client, orgId);
+  const next = levelAfterHod(config, row.raised_by, (row.current_approver_id as string | null) ?? null);
+  const now = (deps.now ?? (() => new Date()))().toISOString();
+  try {
+    await guardedUpdate(client, orgId, row, "hod", { current_level: next.level, current_approver_id: next.approverId, level_entered_at: now, updated_at: now }, "pass the request on");
+  } catch (error) {
+    if (error instanceof CandidateActionError && error.status === 409) return null;
+    throw error;
+  }
+  await record(client, orgId, row.id as string, null, { level: "hod", action: "escalated", reason: `The department head did not decide within ${HOD_DECISION_HOURS} hours, so it passed to the ${APPROVAL_LEVEL_LABELS[next.level]}.` });
+  const { requisition } = await getRequisition(client, orgId, row.id as string);
+  await emit(deps, { kind: "awaiting", requisition, approverId: next.approverId, level: next.level });
+  return requisition;
 }
 
 /** Stage 2's exit, approved: the role becomes active. A position is opened from the request. */
-async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, row: Record<string, unknown>, config: RecruitmentConfig, reason: string | null, now: string, deps: RequisitionDeps, level: ApprovalLevel, step: { inPlan?: boolean; via: "app" | "link" }): Promise<Requisition> {
+async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, row: Record<string, unknown>, config: RecruitmentConfig, reason: string | null, now: string, deps: RequisitionDeps, level: RequisitionLevel, step: { inPlan?: boolean; via: "app" | "link"; recordAs: RequisitionLevel; note: string | null }): Promise<Requisition> {
   const id = row.id as string;
-  // Guarded: only the first of two approvers clicking at once gets here; the other is told it was already decided.
+  // Guarded on the level it waits at: only the first of two approvers clicking at once gets here; the other is told it was already decided.
   await guardedUpdate(client, orgId, row, level, {
     status: "approved", current_level: null, current_approver_id: null, decided_at: now, decision_reason: reason, updated_at: now,
     ...(step.inPlan !== undefined ? { in_plan: step.inPlan, needs_director: false } : {}),
   }, "approve the request");
-  await record(client, orgId, id, by, { level, action: "approved", ...(step.inPlan !== undefined ? { inPlan: step.inPlan } : {}), reason, via: step.via });
+  await record(client, orgId, id, by, { level: step.recordAs, action: "approved", ...(step.inPlan !== undefined ? { inPlan: step.inPlan } : {}), reason: step.note, via: step.via });
 
   let positionId: string | null = null;
   try {
@@ -917,11 +1126,11 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
 
   const requisition = (await getRequisition(client, orgId, id)).requisition;
   requisition.positionId = positionId ?? requisition.positionId;
-  await emit(deps, { kind: "decided", requisition, decision: "approved", reason, byName: by.name });
+  await emit(deps, { kind: "decided", requisition, decision: "approved", reason, byName: by.name, byId: by.id });
   // Spec A03: "notify the recruiter … open the role": HR is told to assign a recruiter.
   if (positionId) await emit(deps, { kind: "role_opened", requisition });
   // Stage 2: in plan, the HR Head approves and the Director is notified.
-  if (level === "hr_head") {
+  if (step.recordAs === "hr_head") {
     const director = approversAt(config, "director")[0] ?? null;
     if (director && director !== by.id) await emit(deps, { kind: "director_informed", requisition, directorId: director });
   }
@@ -932,8 +1141,9 @@ async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, ro
 
 /** Can this person endorse it now: they head its department, it waits on the approvers, they did not raise it or endorse it already. */
 export function canEndorse(requisition: Requisition, userId: string, access: RequisitionAccess, alreadyEndorsed: boolean): boolean {
+  // Owner 2026-11-24: while it waits on the head at their own level, the head approves rather than endorses.
   return (requisition.status === "submitted" || requisition.status === "on_hold") && requisition.raisedBy !== userId && !alreadyEndorsed
-    && Boolean(access.headOf?.includes(deptKey(requisition.department)));
+    && requisition.currentLevel !== "hod" && Boolean(access.headOf?.includes(deptKey(requisition.department)));
 }
 
 /**
@@ -954,8 +1164,9 @@ export async function endorseRequisition(client: SupabaseClient, orgId: string, 
 
 /** Has this person endorsed the request (for the drawer's button). */
 export async function hasEndorsed(client: SupabaseClient, orgId: string, requisitionId: string, userId: string): Promise<boolean> {
-  const { data } = await client.from(APPROVALS).select("id").eq("organization_id", orgId).eq("requisition_id", requisitionId).eq("action", "endorsed").eq("by_user", userId).limit(1);
-  return (data ?? []).length > 0;
+  // Owner 2026-11-24: a head who already approved it at their level has nothing left to endorse.
+  const { data } = await client.from(APPROVALS).select("id, action, level").eq("organization_id", orgId).eq("requisition_id", requisitionId).eq("by_user", userId).in("action", ["endorsed", "approved"]);
+  return ((data ?? []) as { action: string; level: string | null }[]).some((a) => a.action === "endorsed" || a.level === "hod");
 }
 
 /** Spec A24: the person who raised a request on hold confirms the role is still needed; the approver it waits on is told. */
@@ -1007,8 +1218,13 @@ export async function unassignedRoles(client: SupabaseClient, orgId: string, now
 }
 
 /** Who may decide now: it waits at a level this person approves at, and they did not raise it. */
-export function canDecide(requisition: Requisition, userId: string, access: RequisitionAccess): boolean {
-  return (requisition.status === "submitted" || requisition.status === "on_hold") && requisition.currentLevel !== null && access.approverLevels.includes(requisition.currentLevel) && requisition.raisedBy !== userId;
+export function canDecide(requisition: Requisition, userId: string, access: RequisitionAccess, now = new Date()): boolean {
+  if (!(requisition.status === "submitted" || requisition.status === "on_hold") || requisition.currentLevel === null || requisition.raisedBy === userId) return false;
+  // Owner 2026-11-24: at the department head's level, the head it waits on; after 48 h, the HR Head too.
+  if (requisition.currentLevel === "hod") {
+    return requisition.currentApproverId === userId || (access.approverLevels.includes("hr_head") && hoursAtLevel(requisition.levelEnteredAt, now) >= HOD_DECISION_HOURS);
+  }
+  return access.approverLevels.includes(requisition.currentLevel);
 }
 
 /** For the reminders job: the requests waiting at a level, with how long they have waited there. */

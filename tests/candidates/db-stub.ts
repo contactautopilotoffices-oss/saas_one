@@ -87,6 +87,8 @@ export const STAGES_MIGRATION = readFileSync(path.join("supabase", "migrations",
 export const INTERVIEWS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261119000002_recruitment_interviews.sql"), "utf8");
 /** Hiring-request follow-ups (owner 2026-11-21): the "endorsed" and "still_needed" history entries. */
 export const REQUISITION_FOLLOWUPS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000001_recruitment_requisition_followups.sql"), "utf8");
+/** Owner 2026-11-24: the department head approves first; internal mobility, place in the structure, a new role title. */
+export const REQUISITION_HOD_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261124000001_recruitment_requisition_hod_and_fields.sql"), "utf8");
 /** Connected trackers (owner 2026-11-21): Google Sheet / Excel links synced into the candidate database. */
 export const TRACKERS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000002_candidate_tracker_connections.sql"), "utf8");
 export const TRACKER_PREVIEW_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261122000004_tracker_preview.sql"), "utf8");
@@ -119,6 +121,7 @@ export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?
   if (options.resumeFields !== false) await db.exec(JD_LIBRARY_MIGRATION);
   if (options.resumeFields !== false) { await db.exec(REQUISITIONS_STUBS); await db.exec(REQUISITIONS_MIGRATION); }
   if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_FOLLOWUPS_MIGRATION);
+  if (options.resumeFields !== false && options.requisitionFollowups !== false) await db.exec(REQUISITION_HOD_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKERS_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKER_PREVIEW_MIGRATION);
   if (options.resumeFields !== false && options.hiringFlow !== false) await db.exec(HIRING_FLOW_MIGRATION);

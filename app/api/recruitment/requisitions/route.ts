@@ -6,6 +6,7 @@ import { createRequisition, listRequisitions } from "@/backend/lib/candidates/re
 import type { RequisitionListResponse } from "@/backend/lib/candidates/types";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireOrgMember } from "../_lib/auth";
+import { formHierarchy } from "../_lib/people";
 
 export const runtime = "nodejs";
 
@@ -19,9 +20,15 @@ export async function GET(request: Request) {
   try {
     const { config: _config, member: _member, ...access } = auth.access;
     void _config; void _member;
+    const [requisitions, hierarchy] = await Promise.all([
+      listRequisitions(auth.admin, auth.orgId, { userId: auth.user.id, seesAll: access.seesAll, headOf: access.headOf }),
+      // Owner 2026-11-24: the form's department and role dropdowns (only those who may raise a request need them).
+      access.canRaise ? formHierarchy(auth.admin, auth.orgId, auth.access.config) : Promise.resolve(undefined),
+    ]);
     const body: RequisitionListResponse = {
-      requisitions: await listRequisitions(auth.admin, auth.orgId, { userId: auth.user.id, seesAll: access.seesAll, headOf: access.headOf }), access,
+      requisitions, access,
       departments: auth.access.config.departmentHeads.map((h) => h.department),
+      ...(hierarchy ? { hierarchy } : {}),
     };
     return NextResponse.json(body);
   } catch (error) {
@@ -43,7 +50,8 @@ export async function POST(request: Request) {
   delete fields.orgId;
   try {
     const by = await actorFor(auth.admin, auth.user);
-    return NextResponse.json({ requisition: await createRequisition(auth.admin, auth.orgId, by, fields, { notify: requisitionNotifier(auth.admin, auth.orgId) }) });
+    const hierarchy = fields.submit === true ? await formHierarchy(auth.admin, auth.orgId, auth.access.config) : undefined;
+    return NextResponse.json({ requisition: await createRequisition(auth.admin, auth.orgId, by, fields, { notify: requisitionNotifier(auth.admin, auth.orgId), hierarchy }) });
   } catch (error) {
     return errorResponse(error, "Couldn't save the hiring request");
   }
