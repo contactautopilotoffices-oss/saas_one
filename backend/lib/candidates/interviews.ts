@@ -251,23 +251,39 @@ async function inviteOnWhatsApp(client: SupabaseClient, orgId: string, by: Actor
 
   const campaign = campaignFor("interview_invite");
   const destination = `91${phone}`;
-  const result = await deps.sendWhatsApp({
-    phone: destination, campaignName: campaign, userName: a.record.fullName,
-    templateParams: [firstName(a.record.fullName), param(a.round), param(a.role), param(a.label), param(a.where)],
-  });
-  const { data: saved, error } = await client.from("candidate_outreach").insert({
+  // Claim before sending (as outreach.ts does): the row goes in first, so the unique index stops a second invite for
+  // the same interview before it leaves, and no invite is ever sent without its record.
+  const { data: saved, error: claimError } = await client.from("candidate_outreach").insert({
     organization_id: orgId, candidate_id: a.record.candidateId, application_id: a.record.id, position_id: a.positionId,
     kind: "interview_invite", channel: "whatsapp", phone: destination, campaign, role_title: a.role, interview_id: a.interviewId,
-    message: param(a.where), status: result.success ? "sent" : "failed",
-    error: result.success ? null : (result.error ?? "WhatsApp did not accept the message").slice(0, 500),
-    provider_message_id: result.providerReference ?? null, created_by: by.id, created_by_name: by.name,
+    message: param(a.where), status: "sent", error: null, provider_message_id: null, created_by: by.id, created_by_name: by.name,
   }).select("id").single();
-  if (error) console.error("[candidates] interview invite: the send was not recorded", error);
+  if (claimError) {
+    if ((claimError as { code?: string }).code === "23505") return out(false, "The WhatsApp invite for this interview was already sent.");
+    console.error("[candidates] interview invite: could not record it, so it was not sent", claimError);
+    return out(false, "The invite could not be recorded, so it was not sent. Try again.");
+  }
+  const outreachId = (saved as { id: string }).id;
+
+  let result: { success: boolean; error?: string; providerReference?: string };
+  try {
+    result = await deps.sendWhatsApp({
+      phone: destination, campaignName: campaign, userName: a.record.fullName,
+      templateParams: [firstName(a.record.fullName), param(a.round), param(a.role), param(a.label), param(a.where)],
+    });
+  } catch (sendError) {
+    result = { success: false, error: sendError instanceof Error ? sendError.message : "WhatsApp send failed" };
+  }
+  const { error } = await client.from("candidate_outreach").update(result.success
+    ? { provider_message_id: result.providerReference ?? null }
+    : { status: "failed", error: (result.error ?? "WhatsApp did not accept the message").slice(0, 500) },
+  ).eq("organization_id", orgId).eq("id", outreachId);
+  if (error) console.error("[candidates] interview invite: the send result was not recorded", error);
   if (!result.success) return out(false, `WhatsApp did not accept the message: ${(result.error ?? "unknown error").slice(0, 200)}`);
   await recordAction(client, orgId, by, {
     candidateId: a.record.candidateId, applicationId: a.record.id, positionId: a.positionId, action: "outreach_sent",
     toValue: `Interview invite: ${a.round}`,
-    meta: { kind: "interview_invite", channel: "whatsapp", campaign, position: a.role, phone: maskPhone(phone), outreachId: (saved as { id: string } | null)?.id ?? null, interviewId: a.interviewId },
+    meta: { kind: "interview_invite", channel: "whatsapp", campaign, position: a.role, phone: maskPhone(phone), outreachId, interviewId: a.interviewId },
   });
   return out(true, withinSendingHours(a.now) ? null : "Sent outside 9 am – 7 pm IST.");
 }

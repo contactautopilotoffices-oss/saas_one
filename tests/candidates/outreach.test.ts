@@ -125,6 +125,22 @@ describe("outreach on WhatsApp", () => {
     assert.equal(retry.canSend, true);
   });
 
+  // Bug fix 2026-11-24: two clicks at once both passed the preview and both messages went; only the record was refused.
+  it("sends one message when two people press Send at the same moment", async () => {
+    const fresh = await createRecord(client, ORG, USER, { fullName: "Kiran P", phone: "9876500093", role: "Facility Engineer" });
+    const before = sent.length;
+    const results = await Promise.allSettled([
+      sendOutreach(client, ORG, ME, { applicationId: fresh.record.id, positionId, kind: "shortlisted" }, { send: okSender, now: WORKING_HOURS }),
+      sendOutreach(client, ORG, ME, { applicationId: fresh.record.id, positionId, kind: "shortlisted" }, { send: okSender, now: WORKING_HOURS }),
+    ]);
+    assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
+    assert.match(String((results.find((x) => x.status === "rejected") as PromiseRejectedResult).reason), /Already told/);
+    assert.equal(sent.length - before, 1, "WhatsApp is called once");
+    const rows = await listOutreach(client, ORG, fresh.record.candidateId);
+    assert.deepEqual(rows.map((o) => o.status), ["sent"]);
+    assert.ok(rows[0].id);
+  });
+
   it("never messages a blacklisted person", async () => {
     await setBlacklist(client, ORG, ME, suresh.candidateId, { reason: "asked_not_to_contact" });
     const p = await previewOutreach(client, ORG, { applicationId: suresh.id, kind: "not_shortlisted" }, WORKING_HOURS());

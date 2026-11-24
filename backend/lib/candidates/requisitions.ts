@@ -687,6 +687,19 @@ async function record(client: SupabaseClient, orgId: string, requisitionId: stri
   if (error) fail("record the step", error);
 }
 
+/**
+ * Updates the request only if it is still in the status (and at the level) it was read in. When another person or
+ * another click changed it in between, nothing is written and the caller is told to refresh, so the same step can
+ * never be taken twice.
+ */
+async function guardedUpdate(client: SupabaseClient, orgId: string, row: Record<string, unknown>, level: ApprovalLevel | null | undefined, values: Record<string, unknown>, what: string): Promise<void> {
+  let q = client.from(TABLE).update(values).eq("organization_id", orgId).eq("id", row.id as string).eq("status", row.status as string);
+  if (level !== undefined) q = level === null ? q.is("current_level", null) : q.eq("current_level", level);
+  const { data, error } = await q.select("id");
+  if (error) fail(what, error);
+  if (!((data as unknown[] | null) ?? []).length) throw new CandidateActionError(409, "This request changed a moment ago, perhaps by someone else. Refresh to see where it stands now.");
+}
+
 // Raising (Stage 1) -----------------------------------------------------------------------------------------------------
 
 /** A new request as a draft; with `submit`, submitted straight away. */
@@ -746,18 +759,18 @@ export async function submitRequisition(client: SupabaseClient, orgId: string, b
   const first = firstLevelFor(config, by.id);
   const now = (deps.now ?? (() => new Date()))().toISOString();
 
-  let requisitionNo = (row.requisition_no as string | null) ?? null;
-  if (!requisitionNo) {
-    const { data, error } = await client.rpc("recruitment_next_requisition_no", { p_organization_id: orgId });
-    if (error) fail("number the request", error);
-    requisitionNo = String(data);
-  }
-  const { error } = await client.from(TABLE).update({
-    requisition_no: requisitionNo, status: "submitted", current_level: first.level, current_approver_id: first.approverId, level_entered_at: now,
+  // Guarded on the status it was read in, so a double click submits once (and uses up one request number).
+  await guardedUpdate(client, orgId, row, undefined, {
+    status: "submitted", current_level: first.level, current_approver_id: first.approverId, level_entered_at: now,
     in_plan: null, needs_director: false, hold_since: null, hold_reason: null, decided_at: null, decision_reason: null,
     submitted_at: now, updated_at: now,
-  }).eq("organization_id", orgId).eq("id", row.id as string);
-  if (error) fail("submit the request", error);
+  }, "submit the request");
+  if (!row.requisition_no) {
+    const { data, error } = await client.rpc("recruitment_next_requisition_no", { p_organization_id: orgId });
+    if (error) fail("number the request", error);
+    const { error: numberError } = await client.from(TABLE).update({ requisition_no: String(data) }).eq("organization_id", orgId).eq("id", row.id as string).is("requisition_no", null);
+    if (numberError) fail("number the request", numberError);
+  }
   await record(client, orgId, row.id as string, by, { action: "submitted", level: first.level, reason: row.status === "sent_back" ? "Resubmitted after changes" : null });
   const { requisition } = await getRequisition(client, orgId, row.id as string);
   await emit(deps, { kind: "awaiting", requisition, approverId: first.approverId, level: first.level });
@@ -774,8 +787,7 @@ export async function withdrawRequisition(client: SupabaseClient, orgId: string,
   if (!["draft", "submitted", "sent_back", "on_hold"].includes(row.status as string)) throw new CandidateActionError(409, "This request has already been decided.");
   const reason = typeof reasonInput === "string" ? reasonInput.trim().slice(0, 1000) || null : null;
   const now = new Date().toISOString();
-  const { error } = await client.from(TABLE).update({ status: "withdrawn", current_level: null, current_approver_id: null, decided_at: now, decision_reason: reason, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
-  if (error) fail("withdraw the request", error);
+  await guardedUpdate(client, orgId, row, undefined, { status: "withdrawn", current_level: null, current_approver_id: null, decided_at: now, decision_reason: reason, updated_at: now }, "withdraw the request");
   await record(client, orgId, row.id as string, by, { action: "withdrawn", reason });
   const { requisition } = await getRequisition(client, orgId, row.id as string);
   return requisition;
@@ -820,20 +832,20 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
 
   const now = (deps.now ?? (() => new Date()))().toISOString();
   const via = deps.via ?? "app";
-  const update = (values: Record<string, unknown>) => client.from(TABLE).update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
+  // Only moves the request if it still stands where it was read (same status, same level): two approvers deciding at
+  // the same moment cannot both win, so a request is never approved twice or opens two positions.
+  const update = (values: Record<string, unknown>, what: string) => guardedUpdate(client, orgId, row, level, { ...values, updated_at: now }, what);
   const done = async (): Promise<Requisition> => (await getRequisition(client, orgId, row.id as string)).requisition;
 
   if (decision === "hold") {
-    const { error } = await update({ status: "on_hold", hold_since: now, hold_reason: reason });
-    if (error) fail("put the request on hold", error);
+    await update({ status: "on_hold", hold_since: now, hold_reason: reason }, "put the request on hold");
     await record(client, orgId, row.id as string, by, { level, action: "on_hold", reason, via });
     const requisition = await done();
     await emit(deps, { kind: "decided", requisition, decision: "on_hold", reason, byName: by.name });
     return requisition;
   }
   if (decision === "resume") {
-    const { error } = await update({ status: "submitted", hold_since: null, hold_reason: null, level_entered_at: now });
-    if (error) fail("resume the request", error);
+    await update({ status: "submitted", hold_since: null, hold_reason: null, level_entered_at: now }, "resume the request");
     await record(client, orgId, row.id as string, by, { level, action: "resumed", reason, via });
     const requisition = await done();
     await emit(deps, { kind: "decided", requisition, decision: "resumed", reason, byName: by.name });
@@ -841,8 +853,7 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
   }
   if (decision === "reject" || decision === "send_back") {
     const status = decision === "reject" ? "rejected" : "sent_back";
-    const { error } = await update({ status, current_level: null, current_approver_id: null, decided_at: decision === "reject" ? now : null, decision_reason: reason });
-    if (error) fail("record the decision", error);
+    await update({ status, current_level: null, current_approver_id: null, decided_at: decision === "reject" ? now : null, decision_reason: reason }, "record the decision");
     await record(client, orgId, row.id as string, by, { level, action: status, reason, via });
     const requisition = await done();
     await emit(deps, { kind: "decided", requisition, decision: status, reason, byName: by.name });
@@ -857,27 +868,26 @@ export async function decideRequisition(client: SupabaseClient, orgId: string, b
     if (needsDirector) {
       const director = approversAt(config, "director").find((uid) => uid !== row.raised_by) ?? null;
       if (!director) throw new CandidateActionError(409, "This request needs the Director's approval, and no Director is set in the Tech dashboard → HR Configs.");
-      const { error } = await update({ in_plan: inPlan, needs_director: true, current_level: "director", current_approver_id: director, level_entered_at: now });
-      if (error) fail("pass the request to the Director", error);
+      await update({ in_plan: inPlan, needs_director: true, current_level: "director", current_approver_id: director, level_entered_at: now }, "pass the request to the Director");
       await record(client, orgId, row.id as string, by, { level, action: "approved", inPlan, reason: reason ?? (inPlan ? "Above the CTC level: the Director approves" : "Out of plan: the Director approves"), via });
       const requisition = await done();
       await emit(deps, { kind: "awaiting", requisition, approverId: director, level: "director" });
       return requisition;
     }
-    await record(client, orgId, row.id as string, by, { level, action: "approved", inPlan, reason, via });
-    const { error } = await update({ in_plan: inPlan, needs_director: false });
-    if (error) fail("record the decision", error);
-  } else {
-    await record(client, orgId, row.id as string, by, { level, action: "approved", reason, via });
+    return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { inPlan, via });
   }
-  return approveFinal(client, orgId, by, row, config, reason, now, deps, level);
+  return approveFinal(client, orgId, by, row, config, reason, now, deps, level, { via });
 }
 
 /** Stage 2's exit, approved: the role becomes active. A position is opened from the request. */
-async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, row: Record<string, unknown>, config: RecruitmentConfig, reason: string | null, now: string, deps: RequisitionDeps, level: ApprovalLevel): Promise<Requisition> {
+async function approveFinal(client: SupabaseClient, orgId: string, by: Actor, row: Record<string, unknown>, config: RecruitmentConfig, reason: string | null, now: string, deps: RequisitionDeps, level: ApprovalLevel, step: { inPlan?: boolean; via: "app" | "link" }): Promise<Requisition> {
   const id = row.id as string;
-  const { error } = await client.from(TABLE).update({ status: "approved", current_level: null, current_approver_id: null, decided_at: now, decision_reason: reason, updated_at: now }).eq("organization_id", orgId).eq("id", id);
-  if (error) fail("approve the request", error);
+  // Guarded: only the first of two approvers clicking at once gets here; the other is told it was already decided.
+  await guardedUpdate(client, orgId, row, level, {
+    status: "approved", current_level: null, current_approver_id: null, decided_at: now, decision_reason: reason, updated_at: now,
+    ...(step.inPlan !== undefined ? { in_plan: step.inPlan, needs_director: false } : {}),
+  }, "approve the request");
+  await record(client, orgId, id, by, { level, action: "approved", ...(step.inPlan !== undefined ? { inPlan: step.inPlan } : {}), reason, via: step.via });
 
   let positionId: string | null = null;
   try {

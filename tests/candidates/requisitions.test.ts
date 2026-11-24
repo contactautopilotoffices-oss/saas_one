@@ -381,6 +381,58 @@ describe("manpower requisitions", () => {
     await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, null);
   });
 
+  // Bug fix 2026-11-24: two approvers clicking at once could both approve (two approval rows, two positions).
+  it("lets only one of two approvers deciding at the same moment win, and opens one position", async () => {
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Race Test Role", submit: true });
+    const results = await Promise.allSettled([
+      decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: true }),
+      decideRequisition(client, ORG, by(HR_BACKUP, "Deepa Rao"), r.id, { decision: "approve", inPlan: true }),
+    ]);
+    assert.equal(results.filter((x) => x.status === "fulfilled").length, 1, "exactly one approval goes through");
+    const lost = results.find((x) => x.status === "rejected") as PromiseRejectedResult;
+    assert.equal(lost.reason.status, 409);
+    const [{ n }] = await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'approved'", [r.id]);
+    assert.equal(n, 1, "one approval in the history");
+    const [{ p }] = await q<{ p: number }>("select count(*)::int as p from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'position_opened'", [r.id]);
+    assert.equal(p, 1, "one position opened");
+    assert.equal((await getRequisition(client, ORG, r.id)).requisition.status, "approved");
+  });
+
+  it("submits a double-clicked request once", async () => {
+    const draft = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Double Submit Role" });
+    const results = await Promise.allSettled([
+      submitRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id),
+      submitRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id),
+    ]);
+    assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
+    const after = (await getRequisition(client, ORG, draft.id)).requisition;
+    assert.equal(after.status, "submitted");
+    assert.match(after.requisitionNo ?? "", /^REQ-\d{4}-\d{4}$/);
+    const [{ n }] = await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'submitted'", [draft.id]);
+    assert.equal(n, 1);
+    await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id, null);
+  });
+
+  // Bug fix 2026-11-24: old one-time links stay usable after the request moves on, and the HR Head's link decision
+  // revoked the Director's fresh link. Links are now revoked before new ones are issued, and kept on a resume.
+  it("revokes earlier decision links whenever the request moves on, but not on a resume", async () => {
+    const revoked: string[] = [];
+    const linkDeps: NotifyDeps = { ...deps, async revokeLinks(id) { revoked.push(id); } };
+    const linkNotify = (event: RequisitionEvent) => requisitionNotifier(client, ORG, linkDeps)(event);
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Link Test Role", submit: true }, { notify: linkNotify });
+    assert.deepEqual(revoked, [r.id], "submitted: links from before are revoked, then the HR Head's goes out");
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "hold", reason: "Budget review." }, { notify: linkNotify });
+    assert.equal(revoked.length, 2, "on hold");
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "resume" }, { notify: linkNotify });
+    assert.equal(revoked.length, 2, "a resume keeps the links");
+    sent.length = 0;
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: false }, { notify: linkNotify });
+    assert.equal(revoked.length, 3, "on to the Director: the HR Head's links go before the Director's is issued");
+    assert.ok(sent.some((s) => s.to === "sunil@example.com"), "the Director is asked, with the link issued after the revoke");
+    await decideRequisition(client, ORG, by(DIRECTOR, "Sunil Mehta"), r.id, { decision: "send_back", reason: "Lower the band." }, { notify: linkNotify });
+    assert.equal(revoked.length, 4, "sent back: no old link can decide the edited request");
+  });
+
   it("counts the SLA in working days, Monday to Saturday", () => {
     // Thursday 2026-11-19 09:00 to Tuesday 2026-11-24 09:00: Fri, Sat, (Sun skipped), Mon, Tue = 4 working days.
     assert.equal(workingDaysBetween(new Date("2026-11-19T09:00:00Z"), new Date("2026-11-24T09:00:00Z")), 4);

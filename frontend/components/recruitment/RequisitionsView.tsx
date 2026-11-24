@@ -337,13 +337,15 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         setNonce(n => n + 1);
         onChanged();
     };
-    const decide = () => {
-        if (!r || !decision) return;
-        const needsReason = decision === 'reject' || decision === 'send_back';
-        if (needsReason && !reason.trim()) { notify(decision === 'reject' ? 'Give the reason for rejecting.' : 'Say what needs to change.', 'error'); return; }
-        if (decision === 'approve' && r.currentLevel === 'hr_head' && inPlan === null) { notify('Tick whether the role is in the approved plan.', 'error'); return; }
-        const label = { approve: 'Approved', reject: 'Rejected', send_back: 'Sent back for changes', hold: 'Put on hold', resume: 'Resumed' }[decision];
-        void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}/decide`, { decision, reason: reason.trim() || undefined, ...(decision === 'approve' && r.currentLevel === 'hr_head' ? { inPlan } : {}) }, label);
+    // Takes the decision directly when given (Resume sends at once; reading it back from state in the same click would
+    // still see the previous render's null and do nothing).
+    const decide = (chosen: RequisitionDecision | null = decision) => {
+        if (!r || !chosen) return;
+        const needsReason = chosen === 'reject' || chosen === 'send_back';
+        if (needsReason && !reason.trim()) { notify(chosen === 'reject' ? 'Give the reason for rejecting.' : 'Say what needs to change.', 'error'); return; }
+        if (chosen === 'approve' && r.currentLevel === 'hr_head' && inPlan === null) { notify('Tick whether the role is in the approved plan.', 'error'); return; }
+        const label = { approve: 'Approved', reject: 'Rejected', send_back: 'Sent back for changes', hold: 'Put on hold', resume: 'Resumed' }[chosen];
+        void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}/decide`, { decision: chosen, reason: reason.trim() || undefined, ...(chosen === 'approve' && r.currentLevel === 'hr_head' ? { inPlan } : {}) }, label);
     };
 
     const rows: [string, React.ReactNode][] = r ? [
@@ -381,7 +383,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                             <p className="text-sm font-semibold text-text-primary">Your decision as {APPROVAL_LEVEL_LABELS[r.currentLevel!]}</p>
                             <p className="mt-0.5 text-xs text-text-secondary">{r.status === 'on_hold' ? 'This request is on hold. Resume it to decide.' : r.currentLevel === 'hr_head' ? 'In plan and within the CTC level, your approval opens the role and the Director is informed. Out of plan, or above the level, it goes to the Director.' : 'Your approval opens the role.'}</p>
                             {r.status === 'on_hold' ? (
-                                <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setDecision('resume'); setTimeout(decide, 0); }} disabled={busy} className={BTN_PRIMARY}>Resume</button></div>
+                                <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setDecision('resume'); decide('resume'); }} disabled={busy} className={BTN_PRIMARY}>Resume</button></div>
                             ) : (
                                 <>
                                     <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -406,7 +408,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                                             <textarea id="req-reason" rows={2} value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} className={`${INPUT} mt-1 h-auto min-h-[64px] resize-y py-2 leading-relaxed`} />
                                             <div className="mt-3 flex justify-end gap-x-2">
                                                 <button type="button" onClick={() => { setDecision(null); setReason(''); }} disabled={busy} className={BTN_GHOST}>Cancel</button>
-                                                <button type="button" onClick={decide} disabled={busy} className={decision === 'reject' ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}{{ approve: 'Approve', reject: 'Reject', send_back: 'Send back', hold: 'Put on hold', resume: 'Resume' }[decision]}</button>
+                                                <button type="button" onClick={() => decide()} disabled={busy} className={decision === 'reject' ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}{{ approve: 'Approve', reject: 'Reject', send_back: 'Send back', hold: 'Put on hold', resume: 'Resume' }[decision]}</button>
                                             </div>
                                         </>
                                     )}

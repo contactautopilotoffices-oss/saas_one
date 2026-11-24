@@ -309,14 +309,12 @@ export async function sendOutreach(client: SupabaseClient, orgId: string, by: Ac
 
   const send = deps.send ?? defaultSender;
   const destination = `91${preview.phone}`;
-  const result = await send({
-    phone: destination,
-    campaignName: preview.campaign,
-    templateParams: update ? [firstName(preview.fullName), preview.roleTitle ?? "", preview.text] : [firstName(preview.fullName), preview.roleTitle ?? ""],
-    userName: preview.fullName,
-  });
+  const select = update ? COLUMNS + UPDATE_COLUMNS : COLUMNS;
 
-  const row = {
+  // Claim before sending: the row goes in as "sent" first, so the unique index (one send per person, kind, position
+  // and stage) refuses a second click or a second HR user BEFORE a second message leaves. If WhatsApp then refuses
+  // the message, the row is turned to "failed" and the slot frees up for a retry.
+  const { data: claimed, error: claimError } = await client.from(TABLE).insert({
     organization_id: orgId,
     candidate_id: preview.candidateId,
     application_id: preview.applicationId,
@@ -326,19 +324,37 @@ export async function sendOutreach(client: SupabaseClient, orgId: string, by: Ac
     phone: destination,
     campaign: preview.campaign,
     role_title: preview.roleTitle,
-    status: result.success ? "sent" : "failed",
-    error: result.success ? null : (result.error ?? "WhatsApp did not accept the message").slice(0, 500),
-    provider_message_id: result.providerReference ?? null,
+    status: "sent",
+    error: null,
+    provider_message_id: null,
     created_by: by.id,
     created_by_name: by.name,
     ...(update ? { stage_key: update.stageKey, message: preview.text } : {}),
-  };
-  const { data, error } = await client.from(TABLE).insert(row).select(update ? COLUMNS + UPDATE_COLUMNS : COLUMNS).single();
-  if (error) {
-    if ((error as { code?: string }).code === "23505") throw new CandidateActionError(409, "Already told: someone sent this message a moment ago.");
-    // The message went (or failed) but the row did not: say so plainly rather than hide a send.
-    fail(result.success ? "record the message that was sent" : "record the failed message", error);
+  }).select("id").single();
+  if (claimError) {
+    if ((claimError as { code?: string }).code === "23505") throw new CandidateActionError(409, "Already told: someone sent this message a moment ago.");
+    fail("record the message before sending it", claimError);
   }
+  const claimId = (claimed as { id: string }).id;
+
+  let result: Awaited<ReturnType<OutreachSender>>;
+  try {
+    result = await send({
+      phone: destination,
+      campaignName: preview.campaign,
+      templateParams: update ? [firstName(preview.fullName), preview.roleTitle ?? "", preview.text] : [firstName(preview.fullName), preview.roleTitle ?? ""],
+      userName: preview.fullName,
+    });
+  } catch (sendError) {
+    result = { success: false, error: sendError instanceof Error ? sendError.message : "WhatsApp send failed" };
+  }
+
+  const { data, error } = await client.from(TABLE).update(result.success
+    ? { provider_message_id: result.providerReference ?? null }
+    : { status: "failed", error: (result.error ?? "WhatsApp did not accept the message").slice(0, 500) },
+  ).eq("organization_id", orgId).eq("id", claimId).select(select).single();
+  // The message went (or failed) but the row could not be finished: say so plainly rather than hide a send.
+  if (error) fail(result.success ? "record the message that was sent" : "record the failed message", error);
   const saved = toRecord(data as unknown as OutreachRow, new Map(preview.positionId && preview.positionTitle ? [[preview.positionId, preview.positionTitle]] : []));
   if (!result.success) throw new CandidateActionError(502, `WhatsApp did not accept the message: ${(result.error ?? "unknown error").slice(0, 200)}`);
 

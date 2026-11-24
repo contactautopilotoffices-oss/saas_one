@@ -57,6 +57,8 @@ export interface NotifyDeps {
   sendWhatsApp: (phone: string, campaign: string, params: string[], userName?: string) => Promise<void>;
   /** The one-time decision link for this approver, or null when links are not available. */
   decisionLink: (orgId: string, requisition: Requisition, approverId: string, level: ApprovalLevel) => Promise<string | null>;
+  /** Stops every unused decision link for this request (before new ones are issued). Optional: tests leave it out. */
+  revokeLinks?: (requisitionId: string) => Promise<void>;
   /** Extra recipients from the Omnichannel matrix for an event key. */
   matrixRecipients: (orgId: string, eventKey: string, contextual: { approverId?: string | null; requesterId?: string | null }) => Promise<{ emails: string[]; users: Person[] }>;
   appUrl: string;
@@ -94,6 +96,10 @@ export function defaultNotifyDeps(): NotifyDeps {
         payload: { level, summary: linkSummary(requisition) },
       });
       return raw ? `${APP_URL}/api/recruitment/requisitions/act/${raw}` : null;
+    },
+    async revokeLinks(requisitionId) {
+      const { revokeTokensForEntity } = await import("@/backend/lib/emailActions/tokens");
+      await revokeTokensForEntity(TOKEN_ENTITY, requisitionId);
     },
     async matrixRecipients(orgId, eventKey, contextual) {
       const [{ EmailRecipientResolver }, { WhatsAppRecipientResolver }] = await Promise.all([
@@ -302,9 +308,21 @@ export async function notifyRecruiterAssigned(client: SupabaseClient, position: 
   }
 }
 
+async function revokeLinks(deps: NotifyDeps, requisitionId: string): Promise<void> {
+  try {
+    await deps.revokeLinks?.(requisitionId);
+  } catch (error) {
+    console.error("[candidates] revoking old decision links failed", error);
+  }
+}
+
 /** The routes' notifier: one event from requisitions.ts -> the messages for it. */
 export function requisitionNotifier(client: SupabaseClient, orgId: string, deps: NotifyDeps = defaultNotifyDeps()): (event: RequisitionEvent) => Promise<void> {
   return async (event) => {
+    // The request moved on (a new level, or a decision): earlier one-time links must stop working before new ones go out,
+    // so an old link cannot decide a resubmitted request with its old details, and the link just issued is not revoked.
+    // A resume keeps the links (the request returns to the same level and approver).
+    if (event.kind === "awaiting" || (event.kind === "decided" && event.decision !== "resumed")) await revokeLinks(deps, event.requisition.id);
     if (event.kind === "awaiting") await notifyAwaiting(client, orgId, deps, event.requisition, event.approverId, event.level, "awaiting");
     else if (event.kind === "decided") await notifyDecided(client, orgId, deps, event.requisition, event.decision, event.reason, event.byName);
     else if (event.kind === "director_informed") await notifyDirectorInformed(client, orgId, deps, event.requisition, event.directorId);

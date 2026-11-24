@@ -179,12 +179,17 @@ async function loadInterview(client: SupabaseClient, orgId: string, id: unknown)
 
 async function interviewContext(client: SupabaseClient, orgId: string, row: InterviewRow) {
   const [{ data: person }, { data: pos }] = await Promise.all([
-    client.from("candidates").select("full_name, email").eq("id", row.candidate_id).maybeSingle(),
+    client.from("candidates").select("full_name, email, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id).maybeSingle(),
     row.position_id ? client.from("candidate_positions").select("title").eq("organization_id", orgId).eq("id", row.position_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const people = await emailsOf(client, [...row.interviewer_ids, row.created_by]);
   return {
-    candidate: { name: (person as { full_name?: string } | null)?.full_name ?? "the candidate", email: (person as { email?: string | null } | null)?.email ?? null },
+    // A blacklisted person gets nothing (spec: "do not contact" receives no messages): no email address, so reminders,
+    // reschedules and cancellations go to the panel only.
+    candidate: {
+      name: (person as { full_name?: string } | null)?.full_name ?? "the candidate",
+      email: (person as { blacklisted_at?: string | null } | null)?.blacklisted_at ? null : ((person as { email?: string | null } | null)?.email ?? null),
+    },
     role: (pos as { title?: string } | null)?.title ?? null,
     panel: row.interviewer_ids.map((id) => people.get(id)).filter(Boolean) as { name: string | null; email: string | null }[],
     booker: row.created_by ? people.get(row.created_by) ?? null : null,
@@ -607,7 +612,8 @@ export async function releaseOffer(client: SupabaseClient, orgId: string, by: Ac
   if (row.status !== "approved") throw new CandidateActionError(409, "Only an approved offer can be released.");
   const gaps = letterGaps(row.letter as string | null);
   if (gaps.length) throw new CandidateActionError(400, `Fill the blanks in the letter first: ${gaps.join(", ")}.`);
-  const { data: person } = await client.from("candidates").select("full_name, email").eq("id", row.candidate_id as string).maybeSingle();
+  const { data: person } = await client.from("candidates").select("full_name, email, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id as string).maybeSingle();
+  if ((person as { blacklisted_at?: string | null } | null)?.blacklisted_at) throw new CandidateActionError(409, "This person is blacklisted. No message goes to them, so the letter cannot be released.");
   const email = (person as { email?: string | null } | null)?.email;
   if (!email) throw new CandidateActionError(400, "The candidate has no email address. Add it to their record, then release.");
   const offer = (await toOffers(client, orgId, [row]))[0];
@@ -735,10 +741,12 @@ export async function runOfferJobs(client: SupabaseClient, orgId: string, deps: 
       }
     } else if (row.status === "released" && row.released_at) {
       const h = ageH(row.released_at);
-      const { data: person } = await client.from("candidates").select("email").eq("id", row.candidate_id as string).maybeSingle();
+      const { data: person } = await client.from("candidates").select("email, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id as string).maybeSingle();
+      // Blacklisted: no chaser to the candidate (the HR escalation on day 4 still goes).
+      const candidateEmail = (person as { blacklisted_at?: string | null } | null)?.blacklisted_at ? null : (person as { email?: string | null } | null)?.email;
       for (const step of [72, 48, 24]) {
         if (h >= step && !notices[`chase_${step}`]) {
-          await send(deps, [(person as { email?: string | null } | null)?.email], `Reminder: your offer for ${offer.positionTitle ?? "the role"} at Autopilot Offices`, mail(`Hello ${firstName(offer.candidateName)}, we are waiting to hear from you about the offer we sent on ${String(row.released_at).slice(0, 10)}.`, [], null, "Please reply to the offer email to accept, or to tell us if you have questions."));
+          await send(deps, [candidateEmail],`Reminder: your offer for ${offer.positionTitle ?? "the role"} at Autopilot Offices`, mail(`Hello ${firstName(offer.candidateName)}, we are waiting to hear from you about the offer we sent on ${String(row.released_at).slice(0, 10)}.`, [], null, "Please reply to the offer email to accept, or to tell us if you have questions."));
           for (const s of [24, 48, 72]) if (s <= step) notices[`chase_${s}`] = notices[`chase_${s}`] ?? now.toISOString();
           await mark(`chase_${step}`);
           break;

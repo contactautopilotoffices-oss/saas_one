@@ -6,7 +6,7 @@ import { defaultNotifyDeps, requisitionNotifier, type LinkSummary } from "@/back
 import { decideRequisition } from "@/backend/lib/candidates/requisitions";
 import { APPROVAL_LEVEL_LABELS, type ApprovalLevel } from "@/backend/lib/candidates/types";
 import { actionPage } from "@/backend/lib/emailActions/page";
-import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult, revokeTokensForEntity } from "@/backend/lib/emailActions/tokens";
+import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult } from "@/backend/lib/emailActions/tokens";
 
 /**
  * The approver's one-time link (owner 2026-11-17; Stage 2: "Managers and Directors approve from a phone, without a
@@ -111,7 +111,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { data: user } = await admin.from("users").select("full_name").eq("id", t.user_id).maybeSingle();
     const by = { id: t.user_id, name: ((user as { full_name?: string | null } | null)?.full_name ?? "").trim() || null };
     const requisition = await decideRequisition(admin, t.organization_id, by, t.entity_id, { decision, reason: reason || undefined, ...(level === "hr_head" ? { inPlan } : {}) }, { notify: requisitionNotifier(admin, t.organization_id, defaultNotifyDeps()), via: "link" });
-    await revokeTokensForEntity(ENTITY, t.entity_id, t.id);
+    // The other links for this request were revoked by the notifier before it issued the next level's link (revoking
+    // here, after the decision, would also kill the Director's fresh link).
     await recordTokenResult(t.id, "ok", ip);
     const what = { approved: requisition.currentLevel === "director" ? "passed to the Director" : "approved", rejected: "rejected", sent_back: "sent back for changes", on_hold: "put on hold", submitted: "passed to the Director" }[requisition.status as string] ?? requisition.status;
     return html(actionPage({ kind: "success", title: `Request ${summary.requisitionNo ?? ""} ${what}`, message: requisition.status === "approved" ? "The role is now open in Recruitment → Positions." : "The manager has been told. Thank you." }));
