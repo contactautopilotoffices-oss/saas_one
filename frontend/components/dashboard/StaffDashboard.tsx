@@ -9,8 +9,8 @@ import {
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, RefreshCw, Cog, X,
     AlertOctagon, BarChart3, FileText, Camera, Menu, Pencil, Loader2, Zap, Activity, Filter, Calendar, Package, Scan, Droplets
-,
-  MessageSquarePlus, ShieldCheck, Wrench
+    ,
+    MessageSquarePlus, ShieldCheck, Wrench
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
@@ -111,12 +111,12 @@ interface Ticket {
     internal?: boolean;
     property_id?: string;
     creator?: { property_memberships?: TicketCreatorMembership[] };
-    ticket_escalation_logs?: { 
-        from_level: number; 
-        to_level: number | null; 
-        escalated_at: string; 
-        from_employee?: { full_name: string; user_photo_url?: string | null } | null; 
-        to_employee?: { full_name: string; user_photo_url?: string | null } | null 
+    ticket_escalation_logs?: {
+        from_level: number;
+        to_level: number | null;
+        escalated_at: string;
+        from_employee?: { full_name: string; user_photo_url?: string | null } | null;
+        to_employee?: { full_name: string; user_photo_url?: string | null } | null
     }[];
     material_requests?: { id: string }[];
 }
@@ -200,12 +200,45 @@ const StaffDashboard = () => {
             let savedShift: string | null = null;
             try {
                 savedShift = localStorage.getItem(`shift-status-${user?.id || 'unknown'}-${propertyId}`);
-            } catch {}
+            } catch { }
             if (savedShift !== null && !isShiftInitialized) {
                 setIsCheckedIn(savedShift === 'true');
             }
             fetchTickets();
         }
+    }, [propertyId]);
+
+    // Listen for globally raised tickets to instantly display in incomingTickets without loading delay
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
+            if (newTicket && newTicket.id) {
+                if (!newTicket.property_id || !propertyId || newTicket.property_id === propertyId) {
+                    setIncomingTickets(prev => {
+                        if (tempId && prev.some(t => t.id === tempId)) {
+                            return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                        }
+                        if (prev.some(t => t.id === newTicket.id)) {
+                            return prev.map(t => t.id === newTicket.id ? { ...t, ...newTicket } : t);
+                        }
+                        return [newTicket, ...prev];
+                    });
+                    setTicketStats(prev => ({
+                        total: prev.total + 1,
+                        open: prev.open + 1,
+                        closed: prev.closed,
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
     }, [propertyId]);
 
     // Restore tab from URL
@@ -255,7 +288,7 @@ const StaffDashboard = () => {
                 setIsShiftInitialized(true);
                 try {
                     localStorage.setItem(`shift-status-${user.id}-${propertyId}`, String(data.isCheckedIn));
-                } catch {}
+                } catch { }
             }
         } catch (error) {
             console.error('Error fetching check-in status:', error);
@@ -277,7 +310,7 @@ const StaffDashboard = () => {
                 setIsCheckedIn(data.isCheckedIn);
                 try {
                     localStorage.setItem(`shift-status-${user?.id}-${propertyId}`, String(data.isCheckedIn));
-                } catch {}
+                } catch { }
                 showToast(data.message, 'success');
             } else {
                 const err = await res.json();
@@ -351,8 +384,8 @@ const StaffDashboard = () => {
             .eq('property_id', propertyId)
             .order('created_at', { ascending: false })
             .limit(10000),
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId),
-            supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['resolved', 'closed', 'pending_validation'])
+        supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId),
+        supabase.from('tickets').select('*', { count: 'exact', head: true }).eq('property_id', propertyId).in('status', ['resolved', 'closed', 'pending_validation'])
         ]);
         const { data, error } = ticketsResult;
 
@@ -373,7 +406,7 @@ const StaffDashboard = () => {
             const completed = (data || []).filter((t: Ticket) => ['resolved', 'closed', 'pending_validation'].includes(t.status));
             setIncomingTickets(active);
             setCompletedTickets(completed);
-            
+
             const totalExact = totalCount || data?.length || 0;
             const closedExact = closedCountResult || completed.length;
             setTicketStats({ total: totalExact, open: totalExact - closedExact, closed: closedExact });
@@ -412,26 +445,32 @@ const StaffDashboard = () => {
 
     const handleUpdateTicket = async () => {
         if (!editingTicket || !editTitle.trim()) return;
-        setIsUpdating(true);
+        const targetId = editingTicket.id;
+        const newTitle = editTitle;
+        const newDesc = editDescription;
+
+        // Instant optimistic update
+        setIncomingTickets(prev => prev.map(t => t.id === targetId ? { ...t, title: newTitle, description: newDesc } : t));
+        setEditingTicket(null);
+
         try {
-            const res = await fetch(`/api/tickets/${editingTicket.id}`, {
+            const res = await fetch(`/api/tickets/${targetId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: editTitle,
-                    description: editDescription
+                    title: newTitle,
+                    description: newDesc
                 })
             });
 
-            if (res.ok) {
-                setEditingTicket(null);
-                fetchTickets(); // Refresh list
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
-                alert(data.error || 'Failed to update ticket');
+                console.error(data.error || 'Failed to update ticket');
+                fetchTickets();
             }
-        } finally {
-            setIsUpdating(false);
+        } catch (error) {
+            console.error('Update ticket error:', error);
+            fetchTickets();
         }
     };
 
@@ -439,20 +478,28 @@ const StaffDashboard = () => {
         e.stopPropagation();
         if (!window.confirm('Are you sure you want to deactivate this request?')) return;
 
+        // Instant optimistic delete
+        setIncomingTickets(prev => prev.filter(t => t.id !== ticketId));
+        setTicketStats(prev => ({
+            ...prev,
+            total: Math.max(0, prev.total - 1),
+            open: Math.max(0, prev.open - 1)
+        }));
+
         try {
             const res = await fetch(`/api/tickets/${ticketId}`, {
                 method: 'DELETE'
             });
 
-            if (res.ok) {
-                fetchTickets();
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
                 alert(data.error || 'Failed to delete ticket');
+                fetchTickets();
             }
         } catch (error) {
             console.error('Delete ticket error:', error);
             alert('An error occurred while deleting the ticket');
+            fetchTickets();
         }
     };
 
@@ -706,7 +753,7 @@ const StaffDashboard = () => {
                         <PettyCashNavLink onNavigate={() => setSidebarOpen(false)} />
                         <HiringRequestsNavLink onNavigate={() => setSidebarOpen(false)} />
                     </div>
-{/* System & Personal */}
+                    {/* System & Personal */}
                     <div className="mb-4">
                         <div className="space-y-0.5">
                             <button
@@ -937,83 +984,84 @@ const StaffDashboard = () => {
                                                 />
                                             </div>
 
-                                            {/* User Avatar */}
-                                            <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden">
-                                                {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
-                                                    <Image
-                                                        src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
-                                                        alt="Profile"
-                                                        width={96}
-                                                        height={96}
-                                                        className="w-full h-full object-cover"
-                                                    />
-                                                ) : (
-                                                    <span className="text-4xl font-black text-white">
-                                                        {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
-                                                    </span>
-                                                )}
+
+                                                {/* User Avatar */}
+                                                <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4 overflow-hidden">
+                                                    {user?.user_metadata?.user_photo_url || user?.user_metadata?.avatar_url ? (
+                                                        <Image
+                                                            src={user.user_metadata.user_photo_url || user.user_metadata.avatar_url}
+                                                            alt="Profile"
+                                                            width={96}
+                                                            height={96}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <span className="text-4xl font-black text-white">
+                                                            {user?.user_metadata?.full_name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || 'U'}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {/* Role Badge */}
+                                                <span className="px-4 py-1.5 bg-primary text-text-inverse rounded-full text-xs font-black uppercase tracking-wider">
+                                                    {userRole}
+                                                </span>
                                             </div>
 
-                                            {/* Role Badge */}
-                                            <span className="px-4 py-1.5 bg-primary text-text-inverse rounded-full text-xs font-black uppercase tracking-wider">
-                                                {userRole}
-                                            </span>
-                                        </div>
+                                            {/* Card Body with User Info */}
+                                            <div className="p-8 space-y-6">
+                                                <div className="space-y-4">
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {user?.user_metadata?.full_name || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                        {/* Card Body with User Info */}
-                                        <div className="p-8 space-y-6">
-                                            <div className="space-y-4">
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Full Name</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {user?.user_metadata?.full_name || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {user?.user_metadata?.phone || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Phone</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {user?.user_metadata?.phone || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
+                                                        <span className="text-sm font-medium text-slate-700">
+                                                            {user?.email || 'Not Set'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Email</span>
-                                                    <span className="text-sm font-medium text-slate-700">
-                                                        {user?.email || 'Not Set'}
-                                                    </span>
-                                                </div>
+                                                    <div className="flex justify-between items-center py-3 border-b border-slate-100">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
+                                                        <span className="text-sm font-bold text-slate-900">
+                                                            {property?.name || 'Not Assigned'}
+                                                        </span>
+                                                    </div>
 
-                                                <div className="flex justify-between items-center py-3 border-b border-slate-100">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Property</span>
-                                                    <span className="text-sm font-bold text-slate-900">
-                                                        {property?.name || 'Not Assigned'}
-                                                    </span>
+                                                    <div className="flex justify-between items-center py-3">
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Work Email</span>
+                                                        <span className="text-xs font-medium text-primary">
+                                                            {user?.email}
+                                                        </span>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => setShowUniversalScanner(true)}
+                                                        className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:opacity-95 shadow-lg shadow-primary/20 transition-all mt-6"
+                                                    >
+                                                        <Scan className="w-4 h-4" />
+                                                        Scan Stock Item
+                                                    </button>
                                                 </div>
-
-                                                <div className="flex justify-between items-center py-3">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Work Email</span>
-                                                    <span className="text-xs font-medium text-primary">
-                                                        {user?.email}
-                                                    </span>
-                                                </div>
-                                                <button
-                                                    onClick={() => setShowUniversalScanner(true)}
-                                                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-primary text-white font-black text-[10px] uppercase tracking-widest rounded-xl hover:opacity-95 shadow-lg shadow-primary/20 transition-all mt-6"
-                                                >
-                                                    <Scan className="w-4 h-4" />
-                                                    Scan Stock Item
-                                                </button>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-                        </motion.div>
-                    </AnimatePresence>
+                                )}
+                            </motion.div>
+                        </AnimatePresence>
 
-                </>)}
-</main>
+                    </>)}
+                </main>
 
                 <StockMovementModal
                     isOpen={showScannerModal}
@@ -1376,14 +1424,14 @@ const RequestsTab = ({ activeTickets = [], completedTickets = [], onTicketClick,
                         {filter === 'completed' || filter === 'completed_by_me' ? <CheckCircle2 className="w-4 h-4 text-success" /> :
                             filter === 'assigned_to_me' ? <ClipboardList className="w-4 h-4 text-primary" /> :
                                 filter === 'raised_by_me' ? <UserCircle className="w-4 h-4 text-primary" /> :
-                                filter === 'active' ? <Clock className="w-4 h-4 text-info" /> :
-                                    <FolderKanban className="w-4 h-4 text-info" />
+                                    filter === 'active' ? <Clock className="w-4 h-4 text-info" /> :
+                                        <FolderKanban className="w-4 h-4 text-info" />
                         }
                         {filter === 'all' ? 'All Property Activity' :
                             filter === 'active' ? 'All Active Requests' :
                                 filter === 'assigned_to_me' ? 'Assigned To Me' :
                                     filter === 'raised_by_me' ? 'Raised By Me' :
-                                    filter === 'completed_by_me' ? 'Completed By Me' : 'All Completed Requests'}
+                                        filter === 'completed_by_me' ? 'Completed By Me' : 'All Completed Requests'}
                         <span className="ml-2 text-[10px] bg-muted px-2 py-0.5 rounded-full text-text-tertiary">{filtered.length}</span>
                     </h2>
                 </div>

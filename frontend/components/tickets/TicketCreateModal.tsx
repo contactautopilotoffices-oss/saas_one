@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Activity, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
 import {
@@ -59,6 +60,9 @@ export default function TicketCreateModal({
     const [attachments, setAttachments] = useState<File[]>([]);
     const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
     const attachInputRef = useRef<HTMLInputElement>(null);
+    // Owner 2026-11-24: an image picked through Attach while there is no Before photo yet waits here until the
+    // user says whether it is a photo of the issue (becomes the Before photo) or a document (stays an attachment).
+    const [pendingPhoto, setPendingPhoto] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [classification, setClassification] = useState<Classification | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -69,6 +73,7 @@ export default function TicketCreateModal({
     const [selectedPropId, setSelectedPropId] = useState(propertyId || '');
     const [availableProperties, setAvailableProperties] = useState<any[]>(properties || []);
     const supabase = createClient();
+    const { user } = useAuth();
 
     // @mention state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -152,6 +157,11 @@ export default function TicketCreateModal({
     const handleMediaCapture = (media: MediaFile) => {
         setMediaFile(media);
         setShowMediaModal(false);
+        // The Camera photo is the Before photo now, so an unanswered Attach image is a plain attachment
+        if (pendingPhoto) {
+            setAttachments(prev => [...prev, pendingPhoto]);
+            setPendingPhoto(null);
+        }
     };
 
     const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -210,75 +220,123 @@ export default function TicketCreateModal({
             return;
         }
 
-        setIsSubmitting(true);
-        setError(null);
+        const tempId = `temp-${Date.now()}`;
+        const currentDesc = description.trim();
+        const currentMedia = mediaFile;
+        const currentAttachments = [...attachments];
+        const currentTagged = taggedUser;
+        const currentCritical = isCritical;
+        const currentInternal = isInternal;
 
-        try {
-            // 1. Create the ticket
-            const response = await fetch('/api/tickets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    description,
-                    propertyId: finalPropId,
-                    organizationId: finalOrgId,
-                    isInternal: showInternalToggle ? isInternal : false,
-                    assignedTo: showInternalToggle ? taggedUser?.id : undefined,
-                    ...(showCriticalToggle && isCritical ? { priority: 'critical' } : {}),
-                }),
-            });
+        const effectiveInternal = showInternalToggle ? currentInternal : false;
+        const effectiveTagged = showInternalToggle ? currentTagged : null;
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to create ticket');
+        // Build optimistic ticket for instant display
+        const optimisticTicket: any = {
+            id: tempId,
+            ticket_number: 'AP-CREATING...',
+            title: currentDesc.split('\n')[0].slice(0, 100),
+            description: currentDesc,
+            property_id: finalPropId,
+            organization_id: finalOrgId,
+            status: effectiveTagged ? 'assigned' : 'open',
+            priority: showCriticalToggle && currentCritical ? 'critical' : 'medium',
+            internal: effectiveInternal,
+            is_internal: effectiveInternal,
+            created_at: new Date().toISOString(),
+            photo_before_url: currentMedia ? currentMedia.preview : undefined,
+            video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : undefined,
+            raised_by: user?.id,
+            creator: {
+                id: user?.id,
+                full_name: user?.user_metadata?.full_name || user?.email || 'You',
+                user_photo_url: user?.user_metadata?.user_photo_url || null,
+            },
+            assignee: effectiveTagged ? { id: effectiveTagged.id, full_name: effectiveTagged.full_name } : null,
+        };
 
-            // 2. Upload media if present
-            if (mediaFile && data.ticket?.id) {
-                const formData = new FormData();
-                formData.append('file', mediaFile.file);
-                formData.append('type', 'before');
-                formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
+        // Instant optimistic feedback: play sound, notify parent, close modal immediately
+        playTickleSound();
+        onSuccess?.(optimisticTicket);
 
-                const endpoint = mediaFile.type === 'video'
-                    ? `/api/tickets/${data.ticket.id}/videos`
-                    : `/api/tickets/${data.ticket.id}/photos`;
-
-                const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
-                if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
-            }
-
-            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-            const failures: string[] = [];
-            if (attachments.length > 0 && data.ticket?.id) {
-                for (const file of attachments) {
-                    const err = await uploadTicketFile(data.ticket.id, file);
-                    if (err) failures.push(err);
-                }
-                if (failures.length) {
-                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
-                }
-            }
-
-            playTickleSound();
-            setClassification(data.classification);
-            setSuccess(true);
-            onSuccess?.(data.ticket);
-
-            // Dispatch global event so dashboards, lists, and boards update immediately
-            if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
-                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
-            }
-
-            // Keep the screen up longer when some files failed, so the warning can be read
-            setTimeout(() => {
-                handleReset();
-                onClose();
-            }, failures.length ? 7000 : 2000);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Something went wrong');
-        } finally {
-            setIsSubmitting(false);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: optimisticTicket } }));
+            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: optimisticTicket } }));
         }
+
+        handleReset();
+        onClose();
+
+        // Background sync to backend: create ticket + upload media and attachments
+        (async () => {
+            try {
+                const response = await fetch('/api/tickets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: currentDesc,
+                        propertyId: finalPropId,
+                        organizationId: finalOrgId,
+                        isInternal: effectiveInternal,
+                        assignedTo: effectiveTagged?.id,
+                        ...(showCriticalToggle && currentCritical ? { priority: 'critical' } : {}),
+                    }),
+                });
+
+                const data = await response.json();
+                if (!response.ok || !data.ticket) throw new Error(data.error || 'Failed to create ticket');
+
+                const serverTicket = data.ticket;
+                const ticketWithPreview = {
+                    ...serverTicket,
+                    photo_before_url: currentMedia ? currentMedia.preview : serverTicket.photo_before_url,
+                    video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : serverTicket.video_before_url,
+                };
+
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                    window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                }
+
+                // Background upload of media
+                if (currentMedia && serverTicket.id) {
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', currentMedia.file);
+                        formData.append('type', 'before');
+                        formData.append('takenAt', currentMedia.takenAt || new Date().toISOString());
+
+                        const endpoint = currentMedia.type === 'video'
+                            ? `/api/tickets/${serverTicket.id}/videos`
+                            : `/api/tickets/${serverTicket.id}/photos`;
+
+                        const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
+                        if (mediaResponse.ok) {
+                            const mediaJson = await mediaResponse.json();
+                            if (mediaJson.url && typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', {
+                                    detail: { ticket: { ...serverTicket, photo_before_url: mediaJson.url }, tempId: serverTicket.id }
+                                }));
+                            }
+                        }
+                    } catch (mediaErr) {
+                        console.error('[TicketCreateModal] Media upload failed in background:', mediaErr);
+                    }
+                }
+
+                // Background upload of attachments
+                if (currentAttachments.length > 0 && serverTicket.id) {
+                    for (const file of currentAttachments) {
+                        await uploadTicketFile(serverTicket.id, file);
+                    }
+                }
+            } catch (err) {
+                console.error('[TicketCreateModal] Background ticket creation failed:', err);
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-create-failed', { detail: { tempId } }));
+                }
+            }
+        })();
     };
 
     const handleAttachPick = (list: FileList | null) => {
@@ -287,7 +345,7 @@ export default function TicketCreateModal({
         if (!picked.length) return;
         const problem = picked.map(checkTicketFile).find(Boolean);
         if (problem) {
-            setError(problem);
+            setError(String(problem));
             return;
         }
         const room = MAX_TICKET_FILES - attachments.length;
@@ -296,7 +354,29 @@ export default function TicketCreateModal({
             return;
         }
         setError(null);
-        setAttachments(prev => [...prev, ...picked]);
+        // No Before photo yet: hold back the first image and ask what it is
+        const photo = mediaFile || pendingPhoto ? undefined : picked.find(canBeBeforePhoto);
+        if (photo) setPendingPhoto(photo);
+        setAttachments(prev => [...prev, ...picked.filter(f => f !== photo)]);
+    };
+
+    // Same limits the Before-photo upload route enforces (image, 10 MB at most)
+    const canBeBeforePhoto = (file: File) => file.type.startsWith('image/') && file.size <= 10 * 1024 * 1024;
+
+    const setBeforePhotoFrom = (file: File) => {
+        setMediaFile({
+            file,
+            type: 'image',
+            preview: URL.createObjectURL(file),
+            takenAt: new Date(file.lastModified || Date.now()).toISOString(),
+        });
+    };
+
+    const answerPendingPhoto = (isIssuePhoto: boolean) => {
+        if (!pendingPhoto) return;
+        if (isIssuePhoto) setBeforePhotoFrom(pendingPhoto);
+        else setAttachments(prev => [...prev, pendingPhoto]);
+        setPendingPhoto(null);
     };
 
     const handleReset = () => {
@@ -305,6 +385,7 @@ export default function TicketCreateModal({
         setIsCritical(false);
         setMediaFile(null);
         setAttachments([]);
+        setPendingPhoto(null);
         setAttachmentWarning(null);
         setClassification(null);
         setError(null);
@@ -604,7 +685,10 @@ export default function TicketCreateModal({
                                 {mediaFile && (
                                     <div className="relative rounded-xl overflow-hidden bg-black">
                                         {mediaFile.type === 'image' ? (
-                                            <img src={mediaFile.preview} alt="Preview" className="w-full h-40 object-cover" />
+                                            <>
+                                                <img src={mediaFile.preview} alt="Before photo" className="w-full h-40 object-cover" />
+                                                <span className="absolute top-2 left-2 text-[10px] font-black uppercase tracking-wider text-white bg-emerald-600 px-2 py-0.5 rounded-full">Before photo</span>
+                                            </>
                                         ) : (
                                             <div className="relative w-full h-40">
                                                 <video
@@ -658,6 +742,19 @@ export default function TicketCreateModal({
                                                 <TicketFileIcon name={file.name} className="w-4 h-4 text-primary flex-shrink-0" />
                                                 <span className="flex-1 min-w-0 truncate text-xs font-bold text-slate-700" title={file.name}>{file.name}</span>
                                                 <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
+                                                {!mediaFile && !pendingPhoto && canBeBeforePhoto(file) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setBeforePhotoFrom(file);
+                                                            setAttachments(prev => prev.filter((_, idx) => idx !== i));
+                                                        }}
+                                                        disabled={isSubmitting}
+                                                        className="text-[11px] font-bold text-primary underline flex-shrink-0 disabled:opacity-50"
+                                                    >
+                                                        Use as Before photo
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
@@ -680,6 +777,35 @@ export default function TicketCreateModal({
                                     onChange={(e) => handleAttachPick(e.target.files)}
                                 />
 
+                                {/* Image picked through Attach with no Before photo yet: ask what it is */}
+                                {pendingPhoto && (
+                                    <div role="group" aria-labelledby="pending-photo-question" className="p-3 bg-slate-50 border border-slate-300 rounded-xl space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <ImageIcon className="w-4 h-4 text-primary flex-shrink-0" />
+                                            <p id="pending-photo-question" className="text-sm font-bold text-slate-800">What is this photo?</p>
+                                            <span className="flex-1 min-w-0 truncate text-[11px] text-slate-400 text-right" title={pendingPhoto.name}>{pendingPhoto.name}</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => answerPendingPhoto(true)}
+                                                className="text-left px-3 py-2 bg-emerald-50 border border-emerald-400 rounded-xl hover:bg-emerald-100 transition-colors"
+                                            >
+                                                <span className="block text-sm font-bold text-slate-800">Photo of the issue</span>
+                                                <span className="block text-[11px] text-slate-500">Saved as the Before photo</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => answerPendingPhoto(false)}
+                                                className="text-left px-3 py-2 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition-colors"
+                                            >
+                                                <span className="block text-sm font-bold text-slate-800">Document</span>
+                                                <span className="block text-[11px] text-slate-500">Bill, quote or form. Saved in attachments</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Actions Row */}
                                 <div className="flex items-center gap-3 pt-4">
                                     {/* Camera / Media button */}
@@ -695,7 +821,7 @@ export default function TicketCreateModal({
                                     <button
                                         type="button"
                                         onClick={() => attachInputRef.current?.click()}
-                                        disabled={isSubmitting || attachments.length >= MAX_TICKET_FILES}
+                                        disabled={isSubmitting || !!pendingPhoto || attachments.length >= MAX_TICKET_FILES}
                                         title={attachments.length >= MAX_TICKET_FILES ? `At most ${MAX_TICKET_FILES} files` : 'Attach PDF, Word, Excel or images'}
                                         className="flex-1 flex flex-col items-center justify-center gap-1 px-2 py-3 bg-slate-100 border border-slate-300 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors active:scale-95 text-center h-20 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
@@ -708,7 +834,7 @@ export default function TicketCreateModal({
                                     {/* Submit */}
                                     <button
                                         onClick={handleSubmit}
-                                        disabled={isSubmitting || !description.trim()}
+                                        disabled={isSubmitting || !!pendingPhoto || !description.trim()}
                                         className="flex-[2] flex flex-col items-center justify-center gap-1 px-2 py-3 bg-primary hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-primary/30 active:scale-95 h-20"
                                     >
                                         {isSubmitting ? (
