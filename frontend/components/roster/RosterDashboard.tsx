@@ -51,8 +51,8 @@ export function RosterDashboard({ propertyId }: Props) {
     // Track unsaved changes
     const [unsavedAssignments, setUnsavedAssignments] = useState<Record<string, any>>({});
 
-    const fetchData = async (isInitial = false) => {
-        if (!isInitial || !initialCached) {
+    const fetchData = async (isInitial = false, background = false) => {
+        if (!background && (!isInitial || !initialCached)) {
             setLoading(true);
         }
         try {
@@ -81,7 +81,9 @@ export function RosterDashboard({ propertyId }: Props) {
             console.error(error);
             setNotification({ message: 'Failed to load roster data', type: 'error' });
         } finally {
-            setLoading(false);
+            if (!background) {
+                setLoading(false);
+            }
         }
     };
 
@@ -305,7 +307,7 @@ export function RosterDashboard({ propertyId }: Props) {
             throw new Error(data.error || 'Failed to add offline staff');
         }
         setNotification({ message: 'Offline staff added successfully', type: 'success' });
-        fetchData(); // Reload roster to fetch the new staff
+        fetchData(false, true); // Reload roster in background without unmounting
     };
 
     const handleSave = async () => {
@@ -322,7 +324,24 @@ export function RosterDashboard({ propertyId }: Props) {
             if (!res.ok) throw new Error('Failed to save');
             
             setNotification({ message: 'Roster saved successfully', type: 'success' });
-            fetchData(); // Reload
+
+            // Optimistically merge saved changes into rosters state
+            setRosters(prev => {
+                const updated = [...prev];
+                changes.forEach(c => {
+                    const idx = updated.findIndex(r => r.user_id === c.user_id && r.roster_date === c.roster_date);
+                    if (idx >= 0) {
+                        updated[idx] = { ...updated[idx], ...c };
+                    } else {
+                        updated.push(c);
+                    }
+                });
+                return updated;
+            });
+            setUnsavedAssignments({});
+
+            // Background refetch to sync server state (e.g. updater metadata) without unmounting the table
+            await fetchData(false, true);
         } catch (error) {
             console.error(error);
             setNotification({ message: 'Failed to save roster', type: 'error' });
