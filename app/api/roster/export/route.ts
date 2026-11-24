@@ -90,13 +90,24 @@ export async function GET(request: NextRequest) {
 
         const combinedStaff = [...(staffMembers || []), ...offlineStaffMapped];
 
-        // 3. Fetch Rosters
-        const { data: rosters } = await supabase
-            .from('staff_rosters')
-            .select('*')
-            .eq('property_id', propertyId)
-            .gte('roster_date', startDate.toISOString().split('T')[0])
-            .lte('roster_date', endDate.toISOString().split('T')[0]);
+        // 3. Fetch Rosters with range pagination to avoid PostgREST 1000-row cap
+        const rosters: any[] = [];
+        const pageSize = 1000;
+        let from = 0;
+        while (true) {
+            const { data: page, error: rosterError } = await supabase
+                .from('staff_rosters')
+                .select('*')
+                .eq('property_id', propertyId)
+                .gte('roster_date', startDate.toISOString().split('T')[0])
+                .lte('roster_date', endDate.toISOString().split('T')[0])
+                .range(from, from + pageSize - 1);
+
+            if (rosterError || !page || page.length === 0) break;
+            rosters.push(...page);
+            if (page.length < pageSize) break;
+            from += pageSize;
+        }
 
         // Group staff by Role/Designation
         const staffByDesignation: Record<string, any[]> = {};

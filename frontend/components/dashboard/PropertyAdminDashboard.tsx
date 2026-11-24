@@ -1244,7 +1244,7 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                         {openTab === 'checklist' && property && (
                             <SOPDashboard
                                 propertyId={property.id === 'all' ? undefined : property.id}
-                                propertyIds={property.id === 'all' ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined}
+                                propertyIds={property.id === 'all' ? (assignedProperties.filter(p => p.id !== 'all').map(p => p.id).length > 0 ? assignedProperties.filter(p => p.id !== 'all').map(p => p.id) : undefined) : undefined}
                             />
                         )}
                         {openTab === 'ppm' && property && (

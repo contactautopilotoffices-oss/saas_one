@@ -118,8 +118,7 @@ const formatRoleLabel = (roleId: string) => {
     if (r === 'staff') return 'Staff';
     if (r === 'mst') return 'MST';
     if (r === 'soft_service_staff') return 'Soft Service Staff';
-    if (r === 'soft_service_manager') return 'Soft Service Manager';
-    if (r === 'soft_service_supervisor') return 'Soft Service Supervisor';
+    if (r === 'soft_service_manager' || r === 'soft_service_supervisor') return 'Soft Service Supervisor';
     if (r === 'soft_services') return 'Soft Services';
     if (r === 'sales') return 'Sales Executive';
     if (r === 'hr') return 'HR Admin';

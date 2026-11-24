@@ -622,8 +622,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
         if (lower === 'ops_super_admin' || lower === 'master_admin') return 'Ops Super Admin';
         if (lower === 'property_admin') return 'Property Admin';
         if (lower === 'mst') return 'MST (Technician)';
-        if (lower === 'soft_service_manager') return 'Soft Service Manager';
-        if (lower === 'soft_service_supervisor') return 'Soft Service Supervisor';
+        if (lower === 'soft_service_manager' || lower === 'soft_service_supervisor') return 'Soft Service Supervisor';
         if (lower === 'soft_service_staff' || lower === 'soft_services' || lower === 'soft_service') return 'Soft Service Staff';
         if (lower === 'staff') return 'Staff';
         if (lower === 'procurement' || lower === 'procurement_user') return 'Procurement';
@@ -1262,7 +1261,7 @@ const UserDirectory = ({ orgId, orgName, propertyId, properties = [], onUserUpda
                                             <option value="staff">Staff</option>
                                             <option value="mst">MST</option>
                                             <option value="security">Security</option>
-                                            <option value="soft_service_manager">Soft Service Manager</option>
+                                            <option value="soft_service_manager">Soft Service Supervisor</option>
                                         </select>
                                     </div>
                                 </div>

@@ -74,7 +74,7 @@ export const ROLE_LABELS: Record<string, string> = {
     procurement: 'Procurement',
     purchase_manager: 'Purchase manager',
     purchase_executive: 'Purchase executive',
-    soft_service_manager: 'Soft services manager',
+    soft_service_manager: 'Soft services supervisor',
     soft_service_supervisor: 'Soft services supervisor',
 };
 

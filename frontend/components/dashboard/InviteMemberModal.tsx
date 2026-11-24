@@ -252,7 +252,6 @@ const AddMemberModal = ({ isOpen, onClose, orgId, orgName, properties, fixedProp
                                             <option value="staff">General Staff</option>
                                             <option value="soft_service_staff">Soft Service Staff</option>
                                             <option value="soft_service_supervisor">Soft Service Supervisor</option>
-                                            <option value="soft_service_manager">Soft Service Manager</option>
                                             <option value="mst">MST (Maintenance)</option>
                                             <option value="procurement">Procurement</option>
                                         </optgroup>

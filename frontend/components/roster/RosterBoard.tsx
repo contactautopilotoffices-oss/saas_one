@@ -93,7 +93,7 @@ export function RosterBoard({ staff, rosters, configs, year, month, viewDate, on
                 todayRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
             }, 100);
         }
-    }, [month, year, staff.length, viewDate]);
+    }, [month, year, viewDate]);
 
     const getAssignment = (userId: string, dateStr: string) => {
         return rosters.find(r => r.user_id === userId && r.roster_date === dateStr);
