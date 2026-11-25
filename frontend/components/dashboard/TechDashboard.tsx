@@ -41,8 +41,6 @@ const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/e
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Tech shares with the Design team (the Design console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
-// Owner 2026-11-02: Candidate Search (HR candidate sheets, CRUD, AI search with a chosen top N); here for now
-const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), { loading: TabLoading });
 // Owner 2026-11-02: the Super Admin console's "New" ticket quick action
 const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 // Owner 2026-11-03: Requests = the Super Admin console's Requests tab (one shared component: List / Board / Flow Map,
@@ -403,7 +401,6 @@ export default function TechDashboard() {
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'meeting_room' && <BookMeetingRoom />}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
-                            {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}
                             {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}
