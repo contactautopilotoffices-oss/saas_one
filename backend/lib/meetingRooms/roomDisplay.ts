@@ -255,9 +255,17 @@ function buildAgenda(bookings: DisplayBooking[], nowMin: number): AgendaRow[] {
 export async function getRoomDisplayState(roomId: string): Promise<RoomDisplayState | null> {
     if (!isUuid(roomId)) return null;
 
+    /*
+     * Two plain queries rather than a `properties(name)` embed.
+     *
+     * The embed made this whole endpoint 404 on rooms that plainly exist: PostgREST has to infer
+     * the meeting_rooms -> properties relationship, and when it cannot the select errors and the
+     * room reads as missing. Caught by calling the deployed endpoint with a room id the property
+     * endpoint had just listed. Not worth re-introducing to save one round trip.
+     */
     const { data: room, error: roomError } = await supabaseAdmin
         .from('meeting_rooms')
-        .select('id, name, location, capacity, amenities, property_id, properties(name)')
+        .select('id, name, location, capacity, amenities, property_id')
         .eq('id', roomId)
         .maybeSingle();
 
@@ -266,6 +274,12 @@ export async function getRoomDisplayState(roomId: string): Promise<RoomDisplaySt
         return null;
     }
     if (!room) return null;
+
+    const { data: propertyRow } = await supabaseAdmin
+        .from('properties')
+        .select('name')
+        .eq('id', room.property_id)
+        .maybeSingle();
 
     const { date, nowMin, dateLabel } = istNow();
 
@@ -366,7 +380,6 @@ export async function getRoomDisplayState(roomId: string): Promise<RoomDisplaySt
         freeForMin = until > nowMin ? until - nowMin : null;
     }
 
-    const property = Array.isArray(room.properties) ? room.properties[0] : room.properties;
     const amenities: string[] = Array.isArray(room.amenities)
         ? room.amenities.filter((a): a is string => typeof a === 'string')
         : [];
@@ -382,7 +395,7 @@ export async function getRoomDisplayState(roomId: string): Promise<RoomDisplaySt
             location: room.location ?? null,
             capacity: room.capacity ?? null,
             amenities,
-            property_name: (property as { name?: string } | null)?.name ?? null,
+            property_name: propertyRow?.name ?? null,
             meta_line: buildMetaLine(room.location ?? null, room.capacity ?? null, amenities),
         },
         property_rooms: propertyRooms,
