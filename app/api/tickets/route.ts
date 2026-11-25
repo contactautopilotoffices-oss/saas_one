@@ -156,7 +156,7 @@ export async function GET(request: NextRequest) {
         // Use admin client when user has verified admin permissions (or Tech, scoped to its organisations); else user client
         const queryClient = (isOrgSuperAdmin || isPropertyAdmin || isTechScope) ? adminSupabase : supabase;
 
-        let selectStr = `
+        const selectStr = `
                 id, ticket_number, title, status, priority, created_at, internal, raised_by, assigned_to,
                 resolved_at, sla_deadline, sla_breached, sla_hours, sla_paused, sla_paused_at, total_paused_minutes, sla_pause_reason,
                 needs_vendor_procurement, vendor_procurement_status, vendor_tagged_at,
@@ -249,10 +249,6 @@ export async function GET(request: NextRequest) {
         // Handle predefined periods (e.g., today)
         if (period === 'today') {
             const now = new Date();
-            // Offset for IST (UTC+5:30)
-            const offset = 5.5 * 60 * 60 * 1000;
-            const istNow = new Date(now.getTime() + offset);
-            
             const startOfDay = new Date(now.getTime());
             startOfDay.setUTCHours(0 - 5, 0 - 30, 0, 0); // 00:00 IST = 18:30 UTC yesterday
             
@@ -304,7 +300,7 @@ export async function GET(request: NextRequest) {
                 console.error('Error fetching members by role:', memberError);
             } else if (members && members.length > 0) {
                 // Deduplicate user IDs
-                const userIds = [...new Set(members.map((m: any) => m.user_id))];
+                const userIds = [...new Set(members.map((m: { user_id: string }) => m.user_id))];
                 query = query.in('raised_by', userIds);
             } else {
                 // No users with this role found – return empty result
@@ -356,6 +352,10 @@ export async function POST(request: NextRequest) {
             priority: explicitPriority,
             department: explicitDepartment, // Allow explicit department override
             assignedTo,
+            photo_before_url,
+            photoBeforeUrl,
+            video_before_url,
+            videoBeforeUrl
         } = body;
 
         const propId = property_id || propertyId;
@@ -402,9 +402,19 @@ export async function POST(request: NextRequest) {
         let slaHours = 24;
 
         const ticketText = [title, description].map(s => String(s ?? '').trim()).filter(Boolean).filter((s, i, all) => all.indexOf(s) === i).join('\n');
-        const resolution = await resolveClassification(ticketText, { propertyId: propId, organizationId: orgId });
+        const [resolution, hierarchyRes] = await Promise.all([
+            resolveClassification(ticketText, { propertyId: propId, organizationId: orgId }),
+            adminClient
+                .from('escalation_hierarchies')
+                .select('id, property_id')
+                .eq('organization_id', orgId)
+                .eq('is_default', true)
+                .eq('is_active', true)
+                .or(`property_id.eq.${propId},property_id.is.null`)
+        ]);
         const { issue_code, skill_group, confidence, enhancedClassification, zone, decisionSource } = resolution;
         const isVague = confidence === 'low';
+        const defaultHierarchy = (hierarchyRes.data || []).find((h: { property_id?: string | null }) => h.property_id === propId) || (hierarchyRes.data || []).find((h: { property_id?: string | null }) => !h.property_id);
 
         // 2. The chosen category's row (this property's own first, then the shared one): its team, usual priority, SLA.
         if (issue_code) {
@@ -493,7 +503,13 @@ export async function POST(request: NextRequest) {
                 llm_reasoning: resolution.llm_reasoning,
                 classification_source: decisionSource,
                 // The AI's own 0–100 rating (shown as "72% (Medium)"); the keyword rules keep the old fixed 100
-                confidence_score: resolution.confidenceScore ?? 100
+                confidence_score: resolution.confidenceScore ?? 100,
+                // Escalation hierarchy attached directly on insert (saves separate update & re-fetch)
+                hierarchy_id: defaultHierarchy?.id,
+                current_escalation_level: defaultHierarchy ? 0 : undefined,
+                escalation_last_action_at: defaultHierarchy ? new Date().toISOString() : undefined,
+                photo_before_url: photo_before_url || photoBeforeUrl || undefined,
+                video_before_url: video_before_url || videoBeforeUrl || undefined
             })
             .select('*')
             .single();
@@ -505,48 +521,7 @@ export async function POST(request: NextRequest) {
             }, { status: 500 });
         }
 
-        // Auto-attach the default escalation hierarchy (property-specific first, then org-wide fallback)
-        let { data: defaultHierarchy } = await adminClient
-            .from('escalation_hierarchies')
-            .select('id')
-            .eq('organization_id', orgId)
-            .eq('property_id', propId)
-            .eq('is_default', true)
-            .eq('is_active', true)
-            .maybeSingle();
-
-        // Fallback: try org-wide hierarchy (property_id IS NULL)
-        if (!defaultHierarchy) {
-            const { data: orgWideHierarchy } = await adminClient
-                .from('escalation_hierarchies')
-                .select('id')
-                .eq('organization_id', orgId)
-                .is('property_id', null)
-                .eq('is_default', true)
-                .eq('is_active', true)
-                .maybeSingle();
-            defaultHierarchy = orgWideHierarchy;
-        }
-
-        if (defaultHierarchy) {
-            await adminClient
-                .from('tickets')
-                .update({
-                    hierarchy_id: defaultHierarchy.id,
-                    current_escalation_level: 0,
-                    escalation_last_action_at: new Date().toISOString(),
-                })
-                .eq('id', ticket.id);
-        }
-
-        // Re-fetch the ticket for trigger updates
-        const { data: updatedTicket } = await supabase
-            .from('tickets')
-            .select('*')
-            .eq('id', ticket.id)
-            .single();
-
-        const finalTicket = updatedTicket || ticket;
+        const finalTicket = ticket;
 
         // Auto-assign ticket to a resolver if not already assigned
         if (!assignedTo && finalTicket.status === 'open') {
@@ -563,16 +538,11 @@ export async function POST(request: NextRequest) {
                     propId
                 );
 
-                // Re-fetch the ticket after assignment
-                const { data: assignedTicket } = await supabase
-                    .from('tickets')
-                    .select('*')
-                    .eq('id', ticket.id)
-                    .single();
-
-                if (assignedTicket) {
-                    finalTicket.status = assignedTicket.status;
-                    finalTicket.assigned_to = assignedTicket.assigned_to;
+                const assignment = assignmentResult?.results?.[0];
+                if (assignment && assignment.assignedTo) {
+                    finalTicket.status = assignment.status;
+                    finalTicket.assigned_to = assignment.assignedTo;
+                    finalTicket.assigned_at = new Date().toISOString();
                 }
             } catch (assignErr) {
                 console.error('[Ticket API] Auto-assignment error:', assignErr);

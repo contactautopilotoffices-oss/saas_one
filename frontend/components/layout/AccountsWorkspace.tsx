@@ -4,7 +4,7 @@ import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringReque
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useParams } from 'next/navigation';
-import { Wallet, IndianRupee, ArrowLeft, LogOut, Menu, X, Lock, Target, Siren, Crosshair } from 'lucide-react';
+import { Wallet, IndianRupee, ArrowLeft, LogOut, Menu, X, Lock, Target, Siren, Crosshair, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { accountsCaps } from '@/frontend/lib/accounts/roles';
 import { canSeeAop } from '@/frontend/lib/aop/access';
@@ -50,6 +50,7 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
         caps.canSee && { href: `/${orgId}/accounts/bounty`, label: 'AOP Bounty', icon: Crosshair },
         canSeeAopTracker && { href: `/${orgId}/aop`, label: 'AOP Budget vs Actual', icon: Target },
         canEditEscalation && { href: `/${orgId}/settings/escalation`, label: 'Escalation SPOCs', icon: Siren },
+        { href: `/${orgId}/accounts/grievance`, label: 'My Grievances', icon: ShieldCheck },
     ].filter(Boolean) as { href: string; label: string; icon: React.ComponentType<{ className?: string }> }[];
 
     const sidebar = (
@@ -63,7 +64,7 @@ export default function AccountsWorkspace({ children }: { children: React.ReactN
                 {links.map((l) => {
                     // Payment Tracker owns /accounts and the PO pages under it, not its sibling pages.
                     const active = l.href.endsWith('/accounts')
-                        ? pathname === l.href || !!pathname?.startsWith(`${l.href}/po`)
+                        ? (pathname === l.href || !!pathname?.startsWith(`${l.href}/po`)) && !pathname?.startsWith(`${l.href}/bounty`) && !pathname?.startsWith(`${l.href}/grievance`)
                         : !!pathname?.startsWith(l.href);
                     const Icon = l.icon;
                     return (

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { X, Send, Loader2, CheckCircle, AlertCircle, Camera, Image as ImageIcon, Video, Play, Pause, AtSign, Search, Activity, Paperclip } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createClient } from '@/frontend/utils/supabase/client';
+import { useAuth } from '@/frontend/context/AuthContext';
 import { playTickleSound } from '@/frontend/utils/sounds';
 import MediaCaptureModal, { MediaFile } from '@/frontend/components/shared/MediaCaptureModal';
 import {
@@ -26,6 +27,7 @@ interface TicketCreateModalProps {
     properties?: any[];
     showInternalToggle?: boolean; // shown for all roles except tenant
     showCriticalToggle?: boolean; // shown for ops_super_admin and org_super_admin
+    userRole?: string;
 }
 
 interface Classification {
@@ -58,6 +60,9 @@ export default function TicketCreateModal({
     const [attachments, setAttachments] = useState<File[]>([]);
     const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
     const attachInputRef = useRef<HTMLInputElement>(null);
+    // Owner 2026-11-24: an image picked through Attach while there is no Before photo yet waits here until the
+    // user says whether it is a photo of the issue (becomes the Before photo) or a document (stays an attachment).
+    const [pendingPhoto, setPendingPhoto] = useState<File | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [classification, setClassification] = useState<Classification | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -68,6 +73,7 @@ export default function TicketCreateModal({
     const [selectedPropId, setSelectedPropId] = useState(propertyId || '');
     const [availableProperties, setAvailableProperties] = useState<any[]>(properties || []);
     const supabase = createClient();
+    const { user } = useAuth();
 
     // @mention state
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -151,6 +157,11 @@ export default function TicketCreateModal({
     const handleMediaCapture = (media: MediaFile) => {
         setMediaFile(media);
         setShowMediaModal(false);
+        // The Camera photo is the Before photo now, so an unanswered Attach image is a plain attachment
+        if (pendingPhoto) {
+            setAttachments(prev => [...prev, pendingPhoto]);
+            setPendingPhoto(null);
+        }
     };
 
     const handleDescriptionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -209,75 +220,123 @@ export default function TicketCreateModal({
             return;
         }
 
-        setIsSubmitting(true);
-        setError(null);
+        const tempId = `temp-${Date.now()}`;
+        const currentDesc = description.trim();
+        const currentMedia = mediaFile;
+        const currentAttachments = [...attachments];
+        const currentTagged = taggedUser;
+        const currentCritical = isCritical;
+        const currentInternal = isInternal;
 
-        try {
-            // 1. Create the ticket
-            const response = await fetch('/api/tickets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    description,
-                    propertyId: finalPropId,
-                    organizationId: finalOrgId,
-                    isInternal,
-                    assignedTo: taggedUser?.id,
-                    ...(showCriticalToggle && isCritical ? { priority: 'critical' } : {}),
-                }),
-            });
+        const effectiveInternal = showInternalToggle ? currentInternal : false;
+        const effectiveTagged = showInternalToggle ? currentTagged : null;
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to create ticket');
+        // Build optimistic ticket for instant display
+        const optimisticTicket: any = {
+            id: tempId,
+            ticket_number: 'AP-CREATING...',
+            title: currentDesc.split('\n')[0].slice(0, 100),
+            description: currentDesc,
+            property_id: finalPropId,
+            organization_id: finalOrgId,
+            status: effectiveTagged ? 'assigned' : 'open',
+            priority: showCriticalToggle && currentCritical ? 'critical' : 'medium',
+            internal: effectiveInternal,
+            is_internal: effectiveInternal,
+            created_at: new Date().toISOString(),
+            photo_before_url: currentMedia ? currentMedia.preview : undefined,
+            video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : undefined,
+            raised_by: user?.id,
+            creator: {
+                id: user?.id,
+                full_name: user?.user_metadata?.full_name || user?.email || 'You',
+                user_photo_url: user?.user_metadata?.user_photo_url || null,
+            },
+            assignee: effectiveTagged ? { id: effectiveTagged.id, full_name: effectiveTagged.full_name } : null,
+        };
 
-            // 2. Upload media if present
-            if (mediaFile && data.ticket?.id) {
-                const formData = new FormData();
-                formData.append('file', mediaFile.file);
-                formData.append('type', 'before');
-                formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
+        // Instant optimistic feedback: play sound, notify parent, close modal immediately
+        playTickleSound();
+        onSuccess?.(optimisticTicket);
 
-                const endpoint = mediaFile.type === 'video'
-                    ? `/api/tickets/${data.ticket.id}/videos`
-                    : `/api/tickets/${data.ticket.id}/photos`;
-
-                const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
-                if (!mediaResponse.ok) console.error('Media upload failed, but ticket was created');
-            }
-
-            // 3. Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-            const failures: string[] = [];
-            if (attachments.length > 0 && data.ticket?.id) {
-                for (const file of attachments) {
-                    const err = await uploadTicketFile(data.ticket.id, file);
-                    if (err) failures.push(err);
-                }
-                if (failures.length) {
-                    setAttachmentWarning(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`);
-                }
-            }
-
-            playTickleSound();
-            setClassification(data.classification);
-            setSuccess(true);
-            onSuccess?.(data.ticket);
-
-            // Dispatch global event so dashboards, lists, and boards update immediately
-            if (typeof window !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: data.ticket } }));
-                window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: data.ticket } }));
-            }
-
-            // Keep the screen up longer when some files failed, so the warning can be read
-            setTimeout(() => {
-                handleReset();
-                onClose();
-            }, failures.length ? 7000 : 2000);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Something went wrong');
-        } finally {
-            setIsSubmitting(false);
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: optimisticTicket } }));
+            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: optimisticTicket } }));
         }
+
+        handleReset();
+        onClose();
+
+        // Background sync to backend: create ticket + upload media and attachments
+        (async () => {
+            try {
+                const response = await fetch('/api/tickets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: currentDesc,
+                        propertyId: finalPropId,
+                        organizationId: finalOrgId,
+                        isInternal: effectiveInternal,
+                        assignedTo: effectiveTagged?.id,
+                        ...(showCriticalToggle && currentCritical ? { priority: 'critical' } : {}),
+                    }),
+                });
+
+                const data = await response.json();
+                if (!response.ok || !data.ticket) throw new Error(data.error || 'Failed to create ticket');
+
+                const serverTicket = data.ticket;
+                const ticketWithPreview = {
+                    ...serverTicket,
+                    photo_before_url: currentMedia ? currentMedia.preview : serverTicket.photo_before_url,
+                    video_before_url: currentMedia?.type === 'video' ? currentMedia.preview : serverTicket.video_before_url,
+                };
+
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                    window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                }
+
+                // Background upload of media
+                if (currentMedia && serverTicket.id) {
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', currentMedia.file);
+                        formData.append('type', 'before');
+                        formData.append('takenAt', currentMedia.takenAt || new Date().toISOString());
+
+                        const endpoint = currentMedia.type === 'video'
+                            ? `/api/tickets/${serverTicket.id}/videos`
+                            : `/api/tickets/${serverTicket.id}/photos`;
+
+                        const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
+                        if (mediaResponse.ok) {
+                            const mediaJson = await mediaResponse.json();
+                            if (mediaJson.url && typeof window !== 'undefined') {
+                                window.dispatchEvent(new CustomEvent('ticket-created', {
+                                    detail: { ticket: { ...serverTicket, photo_before_url: mediaJson.url }, tempId: serverTicket.id }
+                                }));
+                            }
+                        }
+                    } catch (mediaErr) {
+                        console.error('[TicketCreateModal] Media upload failed in background:', mediaErr);
+                    }
+                }
+
+                // Background upload of attachments
+                if (currentAttachments.length > 0 && serverTicket.id) {
+                    for (const file of currentAttachments) {
+                        await uploadTicketFile(serverTicket.id, file);
+                    }
+                }
+            } catch (err) {
+                console.error('[TicketCreateModal] Background ticket creation failed:', err);
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-create-failed', { detail: { tempId } }));
+                }
+            }
+        })();
     };
 
     const handleAttachPick = (list: FileList | null) => {
@@ -286,7 +345,7 @@ export default function TicketCreateModal({
         if (!picked.length) return;
         const problem = picked.map(checkTicketFile).find(Boolean);
         if (problem) {
-            setError(problem);
+            setError(String(problem));
             return;
         }
         const room = MAX_TICKET_FILES - attachments.length;
@@ -295,7 +354,29 @@ export default function TicketCreateModal({
             return;
         }
         setError(null);
-        setAttachments(prev => [...prev, ...picked]);
+        // No Before photo yet: hold back the first image and ask what it is
+        const photo = mediaFile || pendingPhoto ? undefined : picked.find(canBeBeforePhoto);
+        if (photo) setPendingPhoto(photo);
+        setAttachments(prev => [...prev, ...picked.filter(f => f !== photo)]);
+    };
+
+    // Same limits the Before-photo upload route enforces (image, 10 MB at most)
+    const canBeBeforePhoto = (file: File) => file.type.startsWith('image/') && file.size <= 10 * 1024 * 1024;
+
+    const setBeforePhotoFrom = (file: File) => {
+        setMediaFile({
+            file,
+            type: 'image',
+            preview: URL.createObjectURL(file),
+            takenAt: new Date(file.lastModified || Date.now()).toISOString(),
+        });
+    };
+
+    const answerPendingPhoto = (isIssuePhoto: boolean) => {
+        if (!pendingPhoto) return;
+        if (isIssuePhoto) setBeforePhotoFrom(pendingPhoto);
+        else setAttachments(prev => [...prev, pendingPhoto]);
+        setPendingPhoto(null);
     };
 
     const handleReset = () => {
@@ -304,6 +385,7 @@ export default function TicketCreateModal({
         setIsCritical(false);
         setMediaFile(null);
         setAttachments([]);
+        setPendingPhoto(null);
         setAttachmentWarning(null);
         setClassification(null);
         setError(null);
@@ -392,30 +474,32 @@ export default function TicketCreateModal({
                                     <label className="text-sm font-bold text-slate-700 mb-2 flex items-center justify-between flex-wrap gap-2">
                                         <span className="flex items-center gap-2">
                                             <span>Description</span>
-                                            <span className="text-xs font-normal text-slate-400 hidden xs:inline">type @ to assign someone</span>
+                                            {showInternalToggle && <span className="text-xs font-normal text-slate-400 hidden xs:inline">type @ to assign someone</span>}
                                         </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                if (!showMentionDropdown) {
-                                                    const cursor = textareaRef.current?.selectionStart ?? description.length;
-                                                    const newDesc = description.slice(0, cursor) + '@' + description.slice(cursor);
-                                                    setDescription(newDesc);
-                                                    setMentionStartIndex(cursor);
-                                                    setMentionQuery('');
-                                                    setMentionSearch('');
-                                                    setShowMentionDropdown(true);
-                                                    setTimeout(() => textareaRef.current?.focus(), 0);
-                                                } else {
-                                                    setShowMentionDropdown(false);
-                                                    setMentionSearch('');
-                                                }
-                                            }}
-                                            className="inline-flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 active:scale-95 transition-all px-3 py-1.5 rounded-xl touch-manipulation"
-                                        >
-                                            <AtSign className="w-3.5 h-3.5" />
-                                            <span>Mention / Assign</span>
-                                        </button>
+                                        {showInternalToggle && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    if (!showMentionDropdown) {
+                                                        const cursor = textareaRef.current?.selectionStart ?? description.length;
+                                                        const newDesc = description.slice(0, cursor) + '@' + description.slice(cursor);
+                                                        setDescription(newDesc);
+                                                        setMentionStartIndex(cursor);
+                                                        setMentionQuery('');
+                                                        setMentionSearch('');
+                                                        setShowMentionDropdown(true);
+                                                        setTimeout(() => textareaRef.current?.focus(), 0);
+                                                    } else {
+                                                        setShowMentionDropdown(false);
+                                                        setMentionSearch('');
+                                                    }
+                                                }}
+                                                className="inline-flex items-center gap-1.5 text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 active:scale-95 transition-all px-3 py-1.5 rounded-xl touch-manipulation"
+                                            >
+                                                <AtSign className="w-3.5 h-3.5" />
+                                                <span>Mention / Assign</span>
+                                            </button>
+                                        )}
                                     </label>
                                     <div className="relative">
                                         <textarea
@@ -433,120 +517,105 @@ export default function TicketCreateModal({
                                             className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all text-sm font-medium"
                                         />
 
-                                        {/* @mention mobile backdrop & dropdown */}
+                                        {/* @mention dropdown: positioned relative to textarea on all devices so it never gets trapped or clipped */}
                                         {showMentionDropdown && (
-                                            <>
-                                                {/* Mobile Backdrop */}
-                                                <div
-                                                    className="fixed inset-0 bg-black/50 backdrop-blur-xs z-[110] sm:hidden transition-opacity"
-                                                    onClick={() => {
-                                                        setShowMentionDropdown(false);
-                                                        setMentionSearch('');
-                                                    }}
-                                                />
-
-                                                {/* Dropdown Container (Mobile bottom sheet / Desktop floating card) */}
-                                                <div
-                                                    ref={mentionDropdownRef}
-                                                    className="fixed inset-x-0 bottom-0 z-[120] max-h-[80vh] rounded-t-[28px] border-t border-slate-200 bg-white shadow-2xl flex flex-col overflow-hidden sm:absolute sm:inset-x-0 sm:top-full sm:bottom-auto sm:mt-1.5 sm:max-h-64 sm:rounded-2xl sm:border sm:shadow-xl sm:z-50 animate-in slide-in-from-bottom-4 sm:slide-in-from-top-1 duration-200"
-                                                >
-                                                    {/* Mobile Drag Indicator Handle */}
-                                                    <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5 sm:hidden shrink-0" />
-
-                                                    {/* Dropdown Header */}
-                                                    <div className="px-4 py-3 sm:px-3 sm:py-2 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
-                                                        <div className="flex items-center gap-2">
-                                                            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
-                                                                <AtSign className="w-3.5 h-3.5 text-primary" />
-                                                            </div>
-                                                            <span className="text-xs sm:text-[11px] font-black text-slate-800 uppercase tracking-wider">Assign to user</span>
-                                                            <span className="text-xs sm:text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
-                                                                {filteredMentionUsers.length}
-                                                            </span>
+                                            <div
+                                                ref={mentionDropdownRef}
+                                                className="absolute inset-x-0 top-full mt-1.5 z-50 max-h-64 rounded-2xl border border-slate-200 bg-white shadow-2xl flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                                            >
+                                                {/* Dropdown Header */}
+                                                <div className="px-4 py-3 sm:px-3 sm:py-2 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                                            <AtSign className="w-3.5 h-3.5 text-primary" />
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setShowMentionDropdown(false);
-                                                                setMentionSearch('');
-                                                            }}
-                                                            className="text-slate-400 hover:text-slate-700 active:bg-slate-200 p-2 sm:p-1 rounded-xl transition-all"
-                                                            aria-label="Close user selection"
-                                                        >
-                                                            <X className="w-5 h-5 sm:w-4 sm:h-4" />
-                                                        </button>
+                                                        <span className="text-xs sm:text-[11px] font-black text-slate-800 uppercase tracking-wider">Assign to user</span>
+                                                        <span className="text-xs sm:text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded-full">
+                                                            {filteredMentionUsers.length}
+                                                        </span>
                                                     </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setShowMentionDropdown(false);
+                                                            setMentionSearch('');
+                                                        }}
+                                                        className="text-slate-400 hover:text-slate-700 active:bg-slate-200 p-1.5 rounded-xl transition-all"
+                                                        aria-label="Close user selection"
+                                                    >
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                </div>
 
-                                                    {/* Search Input */}
-                                                    <div className="p-3 sm:p-2 border-b border-slate-100 bg-white shrink-0">
-                                                        <div className="relative">
-                                                            <Search className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                                                            <input
-                                                                type="text"
-                                                                value={mentionSearch}
-                                                                onChange={(e) => setMentionSearch(e.target.value)}
-                                                                placeholder="Search name, role, or email..."
-                                                                className="w-full pl-9 pr-9 py-2.5 sm:py-1.5 text-sm sm:text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white transition-all font-medium"
-                                                                autoFocus
-                                                            />
-                                                            {mentionSearch && (
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setMentionSearch('')}
-                                                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
-                                                                >
-                                                                    <X className="w-3.5 h-3.5" />
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </div>
-
-                                                    {/* User List */}
-                                                    <div className="overflow-y-auto max-h-[50vh] sm:max-h-48 divide-y divide-slate-100 custom-scrollbar overscroll-contain">
-                                                        {isLoadingUsers ? (
-                                                            <div className="p-6 flex items-center justify-center gap-2 text-xs text-slate-500">
-                                                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                                                                <span>Loading team members...</span>
-                                                            </div>
-                                                        ) : filteredMentionUsers.length === 0 ? (
-                                                            <div className="p-6 text-center text-xs text-slate-400">
-                                                                {activeFilter ? (
-                                                                    <>No team members matching &ldquo;{activeFilter}&rdquo;</>
-                                                                ) : (
-                                                                    <>No users available for assignment</>
-                                                                )}
-                                                            </div>
-                                                        ) : (
-                                                            filteredMentionUsers.map(user => (
-                                                                <button
-                                                                    key={user.id}
-                                                                    type="button"
-                                                                    onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
-                                                                    onTouchEnd={(e) => { e.preventDefault(); handleMentionSelect(user); }}
-                                                                    className="w-full flex items-center justify-between px-4 py-3 sm:px-3 sm:py-2.5 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left min-h-[50px] sm:min-h-0"
-                                                                >
-                                                                    <div className="flex items-center gap-3 min-w-0">
-                                                                        <div className="w-9 h-9 sm:w-7 sm:h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                                                                            <span className="text-xs sm:text-[10px] font-black text-primary">
-                                                                                {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
-                                                                            </span>
-                                                                        </div>
-                                                                        <div className="min-w-0">
-                                                                            <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}{user.role === 'it' && ' (IT)'}</p>
-                                                                            {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
-                                                                        </div>
-                                                                    </div>
-                                                                    {user.role && (
-                                                                        <span className="text-[10px] sm:text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2">
-                                                                            {user.role.replace(/_/g, ' ')}
-                                                                        </span>
-                                                                    )}
-                                                                </button>
-                                                            ))
+                                                {/* Search Input */}
+                                                <div className="p-3 sm:p-2 border-b border-slate-100 bg-white shrink-0">
+                                                    <div className="relative">
+                                                        <Search className="w-4 h-4 sm:w-3.5 sm:h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                                                        <input
+                                                            type="text"
+                                                            value={mentionSearch}
+                                                            onChange={(e) => setMentionSearch(e.target.value)}
+                                                            placeholder="Search name, role, or email..."
+                                                            className="w-full pl-9 pr-9 py-2.5 sm:py-1.5 text-sm sm:text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary focus:bg-white transition-all font-medium"
+                                                            autoFocus
+                                                        />
+                                                        {mentionSearch && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setMentionSearch('')}
+                                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                                                            >
+                                                                <X className="w-3.5 h-3.5" />
+                                                            </button>
                                                         )}
                                                     </div>
                                                 </div>
-                                            </>
+
+                                                {/* User List */}
+                                                <div className="overflow-y-auto max-h-[50vh] sm:max-h-48 divide-y divide-slate-100 custom-scrollbar overscroll-contain">
+                                                    {isLoadingUsers ? (
+                                                        <div className="p-6 flex items-center justify-center gap-2 text-xs text-slate-500">
+                                                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                                            <span>Loading team members...</span>
+                                                        </div>
+                                                    ) : filteredMentionUsers.length === 0 ? (
+                                                        <div className="p-6 text-center text-xs text-slate-400">
+                                                            {activeFilter ? (
+                                                                <>No team members matching &ldquo;{activeFilter}&rdquo;</>
+                                                            ) : (
+                                                                <>No users available for assignment</>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        filteredMentionUsers.map(user => (
+                                                            <button
+                                                                key={user.id}
+                                                                type="button"
+                                                                onMouseDown={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                onTouchEnd={(e) => { e.preventDefault(); handleMentionSelect(user); }}
+                                                                className="w-full flex items-center justify-between px-4 py-3 sm:px-3 sm:py-2.5 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left min-h-[50px] sm:min-h-0"
+                                                            >
+                                                                <div className="flex items-center gap-3 min-w-0">
+                                                                    <div className="w-9 h-9 sm:w-7 sm:h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                                                                        <span className="text-xs sm:text-[10px] font-black text-primary">
+                                                                            {user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="min-w-0">
+                                                                        <p className="text-sm sm:text-xs font-bold text-slate-900 truncate">{user.full_name}{user.role === 'it' && ' (IT)'}</p>
+                                                                        {user.email && <p className="text-xs sm:text-[10px] text-slate-400 truncate font-medium">{user.email}</p>}
+                                                                    </div>
+                                                                </div>
+                                                                {user.role && (
+                                                                    <span className="text-[10px] sm:text-[9px] font-bold text-slate-600 bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0 ml-2">
+                                                                        {user.role.replace(/_/g, ' ')}
+                                                                    </span>
+                                                                )}
+                                                            </button>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
                                         )}
                                     </div>
 
@@ -616,7 +685,10 @@ export default function TicketCreateModal({
                                 {mediaFile && (
                                     <div className="relative rounded-xl overflow-hidden bg-black">
                                         {mediaFile.type === 'image' ? (
-                                            <img src={mediaFile.preview} alt="Preview" className="w-full h-40 object-cover" />
+                                            <>
+                                                <img src={mediaFile.preview} alt="Before photo" className="w-full h-40 object-cover" />
+                                                <span className="absolute top-2 left-2 text-[10px] font-black uppercase tracking-wider text-white bg-emerald-600 px-2 py-0.5 rounded-full">Before photo</span>
+                                            </>
                                         ) : (
                                             <div className="relative w-full h-40">
                                                 <video
@@ -670,6 +742,19 @@ export default function TicketCreateModal({
                                                 <TicketFileIcon name={file.name} className="w-4 h-4 text-primary flex-shrink-0" />
                                                 <span className="flex-1 min-w-0 truncate text-xs font-bold text-slate-700" title={file.name}>{file.name}</span>
                                                 <span className="text-[10px] text-slate-400 flex-shrink-0">{formatFileSize(file.size)}</span>
+                                                {!mediaFile && !pendingPhoto && canBeBeforePhoto(file) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setBeforePhotoFrom(file);
+                                                            setAttachments(prev => prev.filter((_, idx) => idx !== i));
+                                                        }}
+                                                        disabled={isSubmitting}
+                                                        className="text-[11px] font-bold text-primary underline flex-shrink-0 disabled:opacity-50"
+                                                    >
+                                                        Use as Before photo
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => setAttachments(prev => prev.filter((_, idx) => idx !== i))}
@@ -692,6 +777,35 @@ export default function TicketCreateModal({
                                     onChange={(e) => handleAttachPick(e.target.files)}
                                 />
 
+                                {/* Image picked through Attach with no Before photo yet: ask what it is */}
+                                {pendingPhoto && (
+                                    <div role="group" aria-labelledby="pending-photo-question" className="p-3 bg-slate-50 border border-slate-300 rounded-xl space-y-3">
+                                        <div className="flex items-center gap-2">
+                                            <ImageIcon className="w-4 h-4 text-primary flex-shrink-0" />
+                                            <p id="pending-photo-question" className="text-sm font-bold text-slate-800">What is this photo?</p>
+                                            <span className="flex-1 min-w-0 truncate text-[11px] text-slate-400 text-right" title={pendingPhoto.name}>{pendingPhoto.name}</span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => answerPendingPhoto(true)}
+                                                className="text-left px-3 py-2 bg-emerald-50 border border-emerald-400 rounded-xl hover:bg-emerald-100 transition-colors"
+                                            >
+                                                <span className="block text-sm font-bold text-slate-800">Photo of the issue</span>
+                                                <span className="block text-[11px] text-slate-500">Saved as the Before photo</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => answerPendingPhoto(false)}
+                                                className="text-left px-3 py-2 bg-white border border-slate-300 rounded-xl hover:bg-slate-100 transition-colors"
+                                            >
+                                                <span className="block text-sm font-bold text-slate-800">Document</span>
+                                                <span className="block text-[11px] text-slate-500">Bill, quote or form. Saved in attachments</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Actions Row */}
                                 <div className="flex items-center gap-3 pt-4">
                                     {/* Camera / Media button */}
@@ -707,7 +821,7 @@ export default function TicketCreateModal({
                                     <button
                                         type="button"
                                         onClick={() => attachInputRef.current?.click()}
-                                        disabled={isSubmitting || attachments.length >= MAX_TICKET_FILES}
+                                        disabled={isSubmitting || !!pendingPhoto || attachments.length >= MAX_TICKET_FILES}
                                         title={attachments.length >= MAX_TICKET_FILES ? `At most ${MAX_TICKET_FILES} files` : 'Attach PDF, Word, Excel or images'}
                                         className="flex-1 flex flex-col items-center justify-center gap-1 px-2 py-3 bg-slate-100 border border-slate-300 rounded-xl cursor-pointer hover:bg-slate-200 transition-colors active:scale-95 text-center h-20 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
@@ -720,7 +834,7 @@ export default function TicketCreateModal({
                                     {/* Submit */}
                                     <button
                                         onClick={handleSubmit}
-                                        disabled={isSubmitting || !description.trim()}
+                                        disabled={isSubmitting || !!pendingPhoto || !description.trim()}
                                         className="flex-[2] flex flex-col items-center justify-center gap-1 px-2 py-3 bg-primary hover:bg-primary-dark disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-primary/30 active:scale-95 h-20"
                                     >
                                         {isSubmitting ? (

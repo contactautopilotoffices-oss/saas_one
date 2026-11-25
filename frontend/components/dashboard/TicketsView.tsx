@@ -822,9 +822,17 @@ const TicketsView: React.FC<TicketsViewProps> = ({ propertyId, organizationId, c
     useEffect(() => {
         const handleCreated = (e: any) => {
             const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
             if (newTicket && newTicket.id) {
-                setTickets(prev => [newTicket, ...prev.filter(t => t.id !== newTicket.id)]);
-                setTotalCount(prev => (prev !== null ? prev + 1 : null));
+                setTickets(prev => {
+                    if (tempId && prev.some(t => t.id === tempId)) {
+                        return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                    }
+                    return [newTicket, ...prev.filter(t => t.id !== newTicket.id)];
+                });
+                if (!tempId) {
+                    setTotalCount(prev => (prev !== null ? prev + 1 : null));
+                }
             }
             invalidateCache('tickets-');
             fetchTickets(0);

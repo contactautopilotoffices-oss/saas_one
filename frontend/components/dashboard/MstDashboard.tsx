@@ -8,7 +8,7 @@ import {
     LayoutDashboard, Ticket, Clock, CheckCircle2, AlertCircle, Plus,
     LogOut, Settings, Search, UserCircle, Coffee, Fuel, UsersRound,
     ClipboardList, FolderKanban, Moon, Sun, ChevronRight, ChevronLeft, Cog, X,
-    AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets
+    AlertOctagon, BarChart3, FileText, Wrench, Camera, Menu, Pencil, Loader2, Filter, Activity, Zap, Calendar, ClipboardCheck, ScanLine, Tag, Droplets, CalendarDays
 ,
   MessageSquarePlus, ShieldCheck
 } from 'lucide-react';
@@ -47,6 +47,7 @@ const AssetsModule = dynamic(() => import('@/frontend/components/assets/AssetsMo
 const GuestExperienceDashboard = dynamic(() => import('@/frontend/components/guest-experience/GuestExperienceDashboard'), { loading: TabLoading });
 const WaterDashboard = dynamic(() => import('@/frontend/components/water/WaterDashboard').then(m => m.WaterDashboard), { loading: TabLoading });
 const PPMCalendar = dynamic(() => import('@/frontend/components/ppm/PPMCalendar'), { loading: TabLoading });
+const RosterDashboard = dynamic(() => import('@/frontend/components/roster/RosterDashboard').then(m => m.RosterDashboard), { loading: TabLoading });
 
 // Tabs live in their own files so the dashboard opens faster; once it is on screen they are downloaded quietly in
 // the background (usePreloadTabs), so opening a tab shows no extra spinner (performance plan Phase 1).
@@ -63,15 +64,16 @@ const TAB_PRELOADS = [
     () => import('@/frontend/components/assets/AssetsModule'),
     () => import('@/frontend/components/guest-experience/GuestExperienceDashboard'),
     () => import('@/frontend/components/water/WaterDashboard'),
+    () => import('@/frontend/components/roster/RosterDashboard'),
 ];
 
 // Types
-type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm';
+type Tab = 'dashboard' | 'requests' | 'guest_experience' | 'create_request' | 'visitors' | 'diesel' | 'electricity' | 'settings' | 'profile' | 'flow-map' | 'checklist' | 'water' | 'grievance' | 'assets' | 'ppm' | 'roster';
 
 const VALID_MST_TABS: readonly Tab[] = [
     'dashboard', 'requests', 'guest_experience', 'create_request', 'visitors',
     'diesel', 'electricity', 'settings', 'profile', 'flow-map', 'checklist',
-    'water', 'grievance', 'assets', 'ppm'
+    'water', 'grievance', 'assets', 'ppm', 'roster'
 ] as const;
 
 interface Property {
@@ -205,6 +207,39 @@ const MstDashboard = () => {
             }
         }
     }, [propertyId, user?.id]);
+
+    // Listen for globally raised tickets to instantly display in incomingTickets without loading delay
+    useEffect(() => {
+        const handleCreated = (e: any) => {
+            const newTicket = e?.detail?.ticket;
+            const tempId = e?.detail?.tempId;
+            if (newTicket && newTicket.id) {
+                if (!newTicket.property_id || !propertyId || newTicket.property_id === propertyId) {
+                    setIncomingTickets(prev => {
+                        if (tempId && prev.some(t => t.id === tempId)) {
+                            return prev.map(t => t.id === tempId ? { ...t, ...newTicket } : t);
+                        }
+                        if (prev.some(t => t.id === newTicket.id)) {
+                            return prev.map(t => t.id === newTicket.id ? { ...t, ...newTicket } : t);
+                        }
+                        return [newTicket, ...prev];
+                    });
+                    setTicketStats(prev => ({
+                        total: prev.total + 1,
+                        open: prev.open + 1,
+                        closed: prev.closed,
+                    }));
+                }
+            }
+        };
+
+        window.addEventListener('ticket-created', handleCreated);
+        window.addEventListener('request-created', handleCreated);
+        return () => {
+            window.removeEventListener('ticket-created', handleCreated);
+            window.removeEventListener('request-created', handleCreated);
+        };
+    }, [propertyId]);
 
     // Global loading timeout to prevent infinite spinners
     useEffect(() => {
@@ -607,28 +642,32 @@ const MstDashboard = () => {
 
     const handleUpdateTicket = async () => {
         if (!editingTicket || !editTitle.trim()) return;
-        setIsUpdating(true);
+        const targetId = editingTicket.id;
+        const newTitle = editTitle;
+        const newDesc = editDescription;
+
+        // Instant optimistic update
+        setIncomingTickets(prev => prev.map(t => t.id === targetId ? { ...t, title: newTitle, description: newDesc } : t));
+        setEditingTicket(null);
+
         try {
-            const res = await fetch(`/api/tickets/${editingTicket.id}`, {
+            const res = await fetch(`/api/tickets/${targetId}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    title: editTitle,
-                    description: editDescription
+                    title: newTitle,
+                    description: newDesc
                 })
             });
 
-            if (res.ok) {
-                setEditingTicket(null);
-                fetchTickets(); // Refresh list
-            } else {
+            if (!res.ok) {
                 const data = await res.json();
-                alert(data.error || 'Failed to update ticket');
+                console.error(data.error || 'Failed to update ticket');
+                fetchTickets();
             }
         } catch (error) {
             console.error('Update ticket error:', error);
-        } finally {
-            setIsUpdating(false);
+            fetchTickets();
         }
     };
 
@@ -834,6 +873,16 @@ const MstDashboard = () => {
                                 <Wrench className="w-4 h-4" />
                                 Assets
                             </button>
+                            <button
+                                onClick={() => handleTabChange('roster')}
+                                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all text-sm font-bold ${activeTab === 'roster'
+                                    ? 'bg-primary text-text-inverse shadow-sm'
+                                    : 'text-text-secondary hover:bg-muted hover:text-text-primary'
+                                    }`}
+                            >
+                                <CalendarDays className="w-4 h-4" />
+                                Roster Management
+                            </button>
                         </div>
                     </div>
 
@@ -1032,6 +1081,9 @@ const MstDashboard = () => {
                                     propertyName={property.name}
                                     canManage={false}
                                 />
+                            )}
+                            {activeTab === 'roster' && property && (
+                                <RosterDashboard propertyId={property.id} />
                             )}
                             {activeTab === 'grievance' && (
                                 <HRTicketsContent orgId={property?.organization_id || membership?.org_id || membership?.organization_id || (user as any)?.organization_id || '211e1330-ad83-446d-941f-dcea48396798'} />

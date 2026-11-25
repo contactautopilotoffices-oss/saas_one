@@ -358,10 +358,10 @@ export async function processIntelligentAssignment(
                     assignedTo = fallbackResolver;
                 } else if (allMembersInfo && allMembersInfo.length > 0) {
                     // Pick any active resolver from property_memberships
-                    const pref = (poolName === 'soft_services')
-                        ? allMembersInfo.find(m => SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0]
-                        : allMembersInfo.find(m => !SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0];
-                    assignedTo = pref.user_id;
+                    const pref: any = (poolName === 'soft_services')
+                        ? (allMembersInfo as any[]).find((m: any) => SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0]
+                        : (allMembersInfo as any[]).find((m: any) => !SKILL_ONLY_ROLES.includes(m.role)) || allMembersInfo[0];
+                    assignedTo = pref?.user_id;
                 }
             }
 

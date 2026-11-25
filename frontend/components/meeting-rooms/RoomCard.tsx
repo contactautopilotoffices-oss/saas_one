@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Monitor, Trash2, Edit2, X, Clock, AlertTriangle } from 'lucide-react';
+import { Monitor, Trash2, Edit2, X, Clock, AlertTriangle, MonitorSmartphone } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import RoomDisplaySetupModal from './RoomDisplaySetupModal';
 
 interface RoomCardProps {
     room: any;
@@ -21,6 +22,7 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate, onB
     const [customEnd, setCustomEnd] = useState('10:00');
     const [customError, setCustomError] = useState('');
     const [partialConfirm, setPartialConfirm] = useState<any>(null);
+    const [showDisplaySetup, setShowDisplaySetup] = useState(false);
 
     const timeToMins = (timeStr: string) => {
         const [h, m] = timeStr.split(':').map(Number);
@@ -233,20 +235,30 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate, onB
 
                     <div className="mt-auto min-w-0 w-full">
                         {isAdmin ? (
-                            <div className="flex items-center gap-3 pt-4 border-t border-border">
+                            <div className="pt-4 border-t border-border">
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={() => onEdit?.(room)}
+                                        className="flex-1 flex items-center justify-center gap-2 py-3 bg-muted hover:bg-muted/80 text-muted-foreground rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                                    >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                        Edit Room
+                                    </button>
+                                    <button
+                                        onClick={() => onDelete?.(room.id)}
+                                        className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Delete
+                                    </button>
+                                </div>
+                                {/* The id and URL the door panel outside this room is configured with. */}
                                 <button
-                                    onClick={() => onEdit?.(room)}
-                                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-muted hover:bg-muted/80 text-muted-foreground rounded-xl text-xs font-black uppercase tracking-widest transition-all"
+                                    onClick={() => setShowDisplaySetup(true)}
+                                    className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 bg-primary/10 hover:bg-primary/15 text-primary rounded-xl text-[11px] font-black uppercase tracking-widest transition-all"
                                 >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                    Edit Room
-                                </button>
-                                <button
-                                    onClick={() => onDelete?.(room.id)}
-                                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded-xl text-xs font-black uppercase tracking-widest transition-all"
-                                >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    Delete
+                                    <MonitorSmartphone className="w-3.5 h-3.5" />
+                                    Door Panel Setup
                                 </button>
                             </div>
                         ) : (
@@ -414,6 +426,12 @@ const RoomCard: React.FC<RoomCardProps> = ({ room, slots = [], selectedDate, onB
                     />
                 </div>
             )}
+
+            <AnimatePresence>
+                {showDisplaySetup && (
+                    <RoomDisplaySetupModal room={room} onClose={() => setShowDisplaySetup(false)} />
+                )}
+            </AnimatePresence>
 
             <AnimatePresence>
                 {partialConfirm && (

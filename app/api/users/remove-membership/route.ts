@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/frontend/utils/supabase/server'
 import { createAdminClient } from '@/frontend/utils/supabase/admin'
+import { isOrganizationUserManager } from '@/backend/lib/users/managementRoles'
 
 export async function POST(request: NextRequest) {
     try {
@@ -22,12 +23,51 @@ export async function POST(request: NextRequest) {
 
         const adminClient = createAdminClient()
 
+        // Verify caller permissions
+        const { data: callerUser } = await adminClient
+            .from('users')
+            .select('is_master_admin')
+            .eq('id', currentUser.id)
+            .single()
+
+        const isMasterAdmin = !!callerUser?.is_master_admin
+
         if (propertyId) {
-            // Check if caller has permission (using regular client)
-            // Wait, we can just use the admin client but verify caller has org_admin or prop_admin
-            // Actually, an easier way is to just use the regular client to perform the update.
-            // If RLS allows it, it succeeds.
-            const { error: updateError } = await supabase
+            // Verify permission: master admin, org manager, or property admin
+            if (!isMasterAdmin) {
+                const { data: propData } = await adminClient
+                    .from('properties')
+                    .select('organization_id')
+                    .eq('id', propertyId)
+                    .maybeSingle()
+
+                const { data: callerPropMembership } = await adminClient
+                    .from('property_memberships')
+                    .select('role')
+                    .eq('user_id', currentUser.id)
+                    .eq('property_id', propertyId)
+                    .eq('is_active', true)
+                    .maybeSingle()
+
+                const { data: callerOrgMembership } = propData?.organization_id
+                    ? await adminClient
+                        .from('organization_memberships')
+                        .select('role')
+                        .eq('user_id', currentUser.id)
+                        .eq('organization_id', propData.organization_id)
+                        .eq('is_active', true)
+                        .maybeSingle()
+                    : { data: null }
+
+                const isPropAdmin = callerPropMembership?.role === 'property_admin'
+                const isOrgAdmin = isOrganizationUserManager(callerOrgMembership?.role)
+
+                if (!isPropAdmin && !isOrgAdmin) {
+                    return NextResponse.json({ error: 'Forbidden. You do not have permission to manage this property.' }, { status: 403 })
+                }
+            }
+
+            const { error: updateError } = await adminClient
                 .from('property_memberships')
                 .update({ is_active: false })
                 .eq('user_id', userId)
@@ -35,7 +75,7 @@ export async function POST(request: NextRequest) {
 
             if (updateError) {
                 console.error('Failed to remove property membership:', updateError)
-                return NextResponse.json({ error: 'Permission denied or update failed' }, { status: 403 })
+                return NextResponse.json({ error: 'Update failed' }, { status: 500 })
             }
 
             // Log action
@@ -47,8 +87,23 @@ export async function POST(request: NextRequest) {
             })
 
         } else if (orgId) {
-            // Remove from org memberships
-            const { error: orgUpdateError } = await supabase
+            // Verify permission: master admin or org manager
+            if (!isMasterAdmin) {
+                const { data: callerOrgMembership } = await adminClient
+                    .from('organization_memberships')
+                    .select('role')
+                    .eq('user_id', currentUser.id)
+                    .eq('organization_id', orgId)
+                    .eq('is_active', true)
+                    .maybeSingle()
+
+                if (!isOrganizationUserManager(callerOrgMembership?.role)) {
+                    return NextResponse.json({ error: 'Forbidden. You do not have permission to manage this organization.' }, { status: 403 })
+                }
+            }
+
+            // Remove from org memberships using adminClient
+            const { error: orgUpdateError } = await adminClient
                 .from('organization_memberships')
                 .update({ is_active: false })
                 .eq('user_id', userId)
@@ -56,13 +111,10 @@ export async function POST(request: NextRequest) {
 
             if (orgUpdateError) {
                 console.error('Failed to remove org membership:', orgUpdateError)
-                return NextResponse.json({ error: 'Permission denied or update failed' }, { status: 403 })
+                return NextResponse.json({ error: 'Update failed' }, { status: 500 })
             }
 
             // Also deactivate from all properties in this org using admin client
-            // because a user might be in properties the caller doesn't have direct access to?
-            // Actually, an org admin can manage all properties. Let's just use adminClient for simplicity and safety, 
-            // since we already passed the org level RLS check above.
             const { data: props } = await adminClient
                 .from('properties')
                 .select('id')

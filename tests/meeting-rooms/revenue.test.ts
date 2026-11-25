@@ -272,7 +272,7 @@ test('staff booking on behalf of client with client note is attributed to client
 });
 
 test('notification booker parameter formatting with company name and remaining credits', () => {
-    const formatBookerDisplay = (bookerName, companyName, remainingHours) => {
+    const formatBookerDisplay = (bookerName: any, companyName: any, remainingHours: any) => {
         const creditsInfo = (remainingHours !== null && remainingHours !== undefined) ? `${remainingHours} hrs left` : '';
         const clientCompanyInfo = companyName
             ? (creditsInfo ? `${companyName} • ${creditsInfo}` : companyName)
@@ -312,7 +312,7 @@ test('notification booker parameter formatting with company name and remaining c
 });
 
 test('effective company resolution enforces client lock and allows admin company attachment', () => {
-    const resolveEffectiveCompanyId = (isAdmin, payloadCompanyId, userCompanyId) => {
+    const resolveEffectiveCompanyId = (isAdmin: any, payloadCompanyId: any, userCompanyId: any) => {
         return (isAdmin && payloadCompanyId) ? payloadCompanyId : (userCompanyId || null);
     };
 

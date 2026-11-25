@@ -303,83 +303,157 @@ export default function TenantTicketingDashboard({
     };
 
     const handleSubmit = async () => {
-        if (!description.trim()) return;
+        const desc = description.trim();
+        if (!desc) return;
 
-        setIsSubmitting(true);
-        try {
-            // Create ticket (classification happens server-side)
-            const response = await fetch('/api/tickets', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    description,
-                    propertyId,
-                    organizationId,
-                    isInternal,
-                    assignedTo: taggedUser?.id,
-                    priority: isCritical ? 'critical' : 'low',
-                }),
-            });
+        const curMedia = mediaFile;
+        const curAttachments = [...attachments];
+        const curTagged = taggedUser;
+        const curCritical = isCritical;
+        const curInternal = isInternal;
+        const curPropId = propertyId;
+        const curOrgId = organizationId;
+        const tempId = `temp-${Date.now()}`;
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const data = await response.json();
+        // Build optimistic ticket for instant UI display
+        const optimisticTicket: any = {
+            id: tempId,
+            ticket_number: 'AP-CREATING...',
+            title: desc.split('\n')[0].slice(0, 100),
+            description: desc,
+            status: curTagged ? 'assigned' : 'open',
+            priority: curCritical ? 'critical' : 'low',
+            internal: curInternal,
+            is_internal: curInternal,
+            created_at: new Date().toISOString(),
+            property_id: curPropId,
+            organization_id: curOrgId,
+            photo_before_url: curMedia ? curMedia.preview : undefined,
+            video_before_url: curMedia?.type === 'video' ? curMedia.preview : undefined,
+            raised_by: user?.id,
+            creator: {
+                id: user?.id,
+                full_name: (user as any)?.user_metadata?.full_name || (user as any)?.email || user?.full_name || 'You',
+                user_photo_url: (user as any)?.user_metadata?.user_photo_url || null,
+            },
+            assignee: curTagged ? {
+                id: curTagged.id,
+                full_name: curTagged.full_name,
+                email: '',
+                user_photo_url: null,
+            } : null,
+        };
 
-            if (response.ok) {
-                // Play tickle sound on success
-                playTickleSound();
+        // 1. Instant optimistic UI feedback: no loading spinner, instant list update
+        playTickleSound();
+        setActiveTickets(prev => [optimisticTicket, ...prev.filter(t => t.id !== tempId)]);
+        setShowSuccess(true);
 
-                // Show server classification result (not fake)
-                setClassification(data.classification);
-                setShowSuccess(true);
+        // Reset form inputs immediately
+        setDescription('');
+        setIsCritical(false);
+        setIsInternal(false);
+        setTaggedUser(null);
+        setShowMentionDropdown(false);
+        setMentionQuery('');
+        setMediaFile(null);
+        setIsVideoPlaying(false);
+        setAttachments([]);
+        setAttachError(null);
 
-                // Upload media (photo or video) if present
-                if (mediaFile && data.ticket?.id) {
-                    const formData = new FormData();
-                    formData.append('file', mediaFile.file);
-                    formData.append('type', 'before');
-                    formData.append('takenAt', mediaFile.takenAt || new Date().toISOString());
-                    const endpoint = mediaFile.type === 'video'
-                        ? `/api/tickets/${data.ticket.id}/videos`
-                        : `/api/tickets/${data.ticket.id}/photos`;
-                    await fetch(endpoint, { method: 'POST', body: formData });
-                }
-
-                // Upload attachments if any (the ticket is already created, so a failed file only shows a warning)
-                if (attachments.length > 0 && data.ticket?.id) {
-                    const failures: string[] = [];
-                    for (const file of attachments) {
-                        const err = await uploadTicketFile(data.ticket.id, file);
-                        if (err) failures.push(err);
-                    }
-                    setAttachError(failures.length
-                        ? `Request created, but ${failures.length} file${failures.length === 1 ? '' : 's'} could not be attached. You can add ${failures.length === 1 ? 'it' : 'them'} from the request page. ${failures.join(' ')}`
-                        : null);
-                }
-                setAttachments([]);
-
-                setDescription('');
-                setIsCritical(false);
-                setIsInternal(false);
-                setTaggedUser(null);
-                setShowMentionDropdown(false);
-                setMentionQuery('');
-                if (mediaFile?.preview.startsWith('blob:')) URL.revokeObjectURL(mediaFile.preview);
-                setMediaFile(null);
-                setIsVideoPlaying(false);
-                fetchTickets();
-                if (onSuccess) onSuccess();
-                setTimeout(() => {
-                    setShowSuccess(false);
-                    setClassification(null);
-                }, 3000);
-            }
-        } catch (error) {
-            console.error('Error submitting ticket:', error);
-        } finally {
-            setIsSubmitting(false);
+        // Dispatch instant event and trigger onSuccess immediately (e.g. switch tab in MST dashboard)
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: optimisticTicket } }));
+            window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: optimisticTicket } }));
         }
+        if (onSuccess) onSuccess();
+
+        setTimeout(() => {
+            setShowSuccess(false);
+            setClassification(null);
+        }, 2000);
+
+        // 2. Background sync to server
+        (async () => {
+            try {
+                const response = await fetch('/api/tickets', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        description: desc,
+                        propertyId: curPropId,
+                        organizationId: curOrgId,
+                        isInternal: curInternal,
+                        assignedTo: curTagged?.id,
+                        priority: curCritical ? 'critical' : 'low',
+                    }),
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                const serverTicket = data.ticket;
+                if (!serverTicket) throw new Error('No ticket returned');
+
+                // Retain local preview URL until photo upload finishes
+                const ticketWithPreview = {
+                    ...serverTicket,
+                    photo_before_url: curMedia ? curMedia.preview : serverTicket.photo_before_url,
+                    video_before_url: curMedia?.type === 'video' ? curMedia.preview : serverTicket.video_before_url,
+                };
+
+                // Reconcile optimistic ticket
+                setActiveTickets(prev => prev.map(t => t.id === tempId ? ticketWithPreview : t));
+                setClassification(data.classification);
+
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('ticket-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                    window.dispatchEvent(new CustomEvent('request-created', { detail: { ticket: ticketWithPreview, tempId } }));
+                }
+
+                // Background upload of media
+                if (curMedia && serverTicket.id) {
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', curMedia.file);
+                        formData.append('type', 'before');
+                        formData.append('takenAt', curMedia.takenAt || new Date().toISOString());
+
+                        const endpoint = curMedia.type === 'video'
+                            ? `/api/tickets/${serverTicket.id}/videos`
+                            : `/api/tickets/${serverTicket.id}/photos`;
+
+                        const mediaResponse = await fetch(endpoint, { method: 'POST', body: formData });
+                        if (mediaResponse.ok) {
+                            const mediaJson = await mediaResponse.json();
+                            if (mediaJson.url) {
+                                setActiveTickets(prev => prev.map(t =>
+                                    (t.id === serverTicket.id || t.id === tempId)
+                                        ? { ...t, photo_before_url: mediaJson.url }
+                                        : t
+                                ));
+                                if (typeof window !== 'undefined') {
+                                    window.dispatchEvent(new CustomEvent('ticket-created', {
+                                        detail: { ticket: { ...serverTicket, photo_before_url: mediaJson.url }, tempId: serverTicket.id }
+                                    }));
+                                }
+                            }
+                        }
+                    } catch (mediaErr) {
+                        console.error('[TenantTicketingDashboard] Media upload error in background:', mediaErr);
+                    }
+                }
+
+                // Background upload of attachments
+                if (curAttachments.length > 0 && serverTicket.id) {
+                    for (const file of curAttachments) {
+                        await uploadTicketFile(serverTicket.id, file);
+                    }
+                }
+            } catch (err) {
+                console.error('[TenantTicketingDashboard] Background ticket creation error:', err);
+                setActiveTickets(prev => prev.filter(t => t.id !== tempId));
+            }
+        })();
     };
 
     const handleAttachPick = (list: FileList | null) => {
@@ -388,7 +462,7 @@ export default function TenantTicketingDashboard({
         if (!picked.length) return;
         const problem = picked.map(checkTicketFile).find(Boolean);
         if (problem) {
-            setAttachError(problem);
+            setAttachError(String(problem));
             return;
         }
         if (attachments.length + picked.length > MAX_TICKET_FILES) {

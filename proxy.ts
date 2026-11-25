@@ -166,6 +166,10 @@ export async function proxy(request: NextRequest) {
         '/api',        // API routes handle their own auth
         '/.well-known/oauth-protected-resource', // MCP sign-in discovery (RFC 9728); public metadata, no data
         '/kiosk',
+        '/display/',   // Meeting-room door panels (/display/room/<roomId>) — the screen is screwed
+                       // to a wall and has no session. Read-only, and the payload is minimised in
+                       // backend/lib/meetingRooms/roomDisplay.ts. Keep the trailing slash: the
+                       // check is startsWith, as the '/a/' note above explains.
         '/onboard',    // Public client onboarding QR route
         '/onboarding', // Has its own client-side auth check
         '/_next',
