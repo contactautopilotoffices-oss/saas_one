@@ -171,6 +171,18 @@ export interface PositionMember {
   addedAt: string;
   /** The person's record, when the record they were added from still exists. */
   record: CandidateRecord | null;
+  /**
+   * Owner 2026-11-25: the panel's ratings for this person in this position, from the submitted scorecards (overall,
+   * 1 to 5) of their interviews for it. Null when no scorecard is in yet; absent where the list does not load them.
+   */
+  score?: MemberScore | null;
+}
+
+/** The average overall rating (1 to 5, one decimal), across all rounds and per round, and how many scorecards it is from. */
+export interface MemberScore {
+  overall: number;
+  scorecards: number;
+  rounds: { round: string; overall: number; scorecards: number }[];
 }
 
 export const RECORD_STATUSES = [
@@ -1454,6 +1466,22 @@ export interface RecruitmentDashboard {
   sources: { source: string; count: number }[];
   /** Owner 2026-11-24: the last 90 days, for the HR Head and the Director. */
   metrics?: RecruitmentMetrics;
+}
+
+/** Owner 2026-11-25 (Hub → Interviews): one interview on the calendar, across all candidates. */
+export interface CalendarInterview {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  positionTitle: string | null;
+  round: string | null;
+  /** The instant (ISO). */
+  at: string;
+  mode: string | null;
+  venue: string | null;
+  status: InterviewStatus;
+  /** The panel, from its scorecards (one per interviewer). */
+  panel: string[];
 }
 
 export interface RecruitmentMetrics {

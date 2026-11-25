@@ -14,7 +14,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { listPositions } from "./positions";
 import { boardColumns, findStage } from "./stage-list";
 import { loadStages } from "./stages";
-import type { InterviewStatus, OfferStatus, RecruitmentDashboard, RecruitmentMetrics } from "./types";
+import { CandidateActionError } from "./records";
+import type { CalendarInterview, InterviewStatus, OfferStatus, RecruitmentDashboard, RecruitmentMetrics } from "./types";
 
 const DAY = 86_400_000;
 
@@ -100,6 +101,43 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
     funnel,
     sources,
   };
+}
+
+/** The longest span the calendar may ask for at once (a month view), in days. */
+export const CALENDAR_MAX_DAYS = 42;
+
+/**
+ * Owner 2026-11-25 (Hub → Interviews): every interview from `from` up to `to` (ISO instants), across all candidates,
+ * with the person's name, the position, and the panel from its scorecards. Cancelled ones are left out. Read-only.
+ */
+export async function interviewsBetween(client: SupabaseClient, orgId: string, from: Date, to: Date): Promise<CalendarInterview[]> {
+  if (!(to > from) || to.getTime() - from.getTime() > CALENDAR_MAX_DAYS * DAY) throw new CandidateActionError(400, `Ask for up to ${CALENDAR_MAX_DAYS} days at a time.`);
+  const { data, error } = await client.from("recruitment_interviews").select("id, candidate_id, position_id, round, at, mode, venue, status")
+    .eq("organization_id", orgId).gte("at", from.toISOString()).lt("at", to.toISOString()).neq("status", "cancelled").order("at").limit(1000);
+  if (error) throw error;
+  const rows = (data ?? []) as { id: string; candidate_id: string; position_id: string | null; round: string | null; at: string; mode: string | null; venue: string | null; status: InterviewStatus }[];
+  if (!rows.length) return [];
+  const candidateIds = [...new Set(rows.map((r) => r.candidate_id))];
+  const positionIds = [...new Set(rows.map((r) => r.position_id).filter((id): id is string => !!id))];
+  const names = new Map<string, string>();
+  for (let i = 0; i < candidateIds.length; i += 200) {
+    const { data: people } = await client.from("candidates").select("id, full_name").in("id", candidateIds.slice(i, i + 200));
+    for (const p of (people ?? []) as { id: string; full_name: string }[]) names.set(p.id, p.full_name);
+  }
+  const [positions, cards] = await Promise.all([
+    positionIds.length ? client.from("candidate_positions").select("id, title").eq("organization_id", orgId).in("id", positionIds) : Promise.resolve({ data: [], error: null }),
+    client.from("recruitment_scorecards").select("interview_id, panel_name").eq("organization_id", orgId).in("interview_id", rows.map((r) => r.id)),
+  ]);
+  const titles = new Map(((positions.data ?? []) as { id: string; title: string }[]).map((p) => [p.id, p.title]));
+  const panel = new Map<string, string[]>();
+  for (const c of (cards.error ? [] : cards.data ?? []) as { interview_id: string; panel_name: string | null }[]) {
+    if (c.panel_name) panel.set(c.interview_id, [...(panel.get(c.interview_id) ?? []), c.panel_name]);
+  }
+  return rows.map((r) => ({
+    id: r.id, candidateId: r.candidate_id, candidateName: names.get(r.candidate_id) ?? "Candidate",
+    positionTitle: r.position_id ? titles.get(r.position_id) ?? null : null, round: r.round, at: new Date(r.at).toISOString(),
+    mode: r.mode, venue: r.venue, status: r.status, panel: panel.get(r.id) ?? [],
+  }));
 }
 
 /**

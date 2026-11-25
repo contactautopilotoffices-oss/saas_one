@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, CircleHelp, Star, X } from 'lucide-react';
 import { positionFit, type FitVerdict } from '@/backend/lib/candidates/position-fit';
-import { findStage, nextRoundStage, reasonNeeded, rejectStageFor, stageGroups, unlistedStage, withReason, type StageDef } from '@/backend/lib/candidates/stage-list';
+import { boardColumns, findStage, nextRoundStage, reasonNeeded, rejectStageFor, stageGroups, unlistedStage, withReason, type StageDef } from '@/backend/lib/candidates/stage-list';
 import type { CandidateRecord, Position, PositionMember, Stage } from '@/backend/lib/candidates/types';
 import { api } from './api';
 import { formatDate } from './format';
@@ -11,7 +11,7 @@ import { ScheduleInterviewForm } from './InterviewScheduler';
 import { OutreachBody } from './OutreachPanel';
 import { BTN_DANGER_FILLED, REMARK_MAX } from './Remarks';
 import { StageChip, StageOptions, useRejectionReasons, useStages } from './stage-ui';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, ScoreTag, Spinner, useUi, WELL } from './ui';
 
 /*
  * The candidate's panel opened from the Pipeline tab (owner 2026-11-17). The panel knows the position it was opened
@@ -125,6 +125,31 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
                 </span>
             </div>
             {member.remark && <p className="mt-1 text-xs italic text-text-secondary">“{member.remark}”</p>}
+
+            {/* Owner 2026-11-25: where the person is in the hiring process (the board's columns), and the panel's ratings. */}
+            {(() => {
+                const cols = boardColumns(stages, x => x.key === member.stage);
+                const at = cols.findIndex(c => c.stages.some(x => x.key === member.stage));
+                const rejected = here.kind === 'rejected';
+                return cols.length > 1 && at >= 0 ? (
+                    <ol aria-label="Hiring process" className="mt-2.5 flex gap-x-1">
+                        {cols.map((c, i) => (
+                            <li key={c.name} aria-current={i === at ? 'step' : undefined} className="min-w-0 flex-1">
+                                <span aria-hidden className={`block h-1.5 rounded-full ${i < at ? 'bg-primary' : i === at ? (rejected ? 'bg-error' : 'bg-primary') : 'bg-muted'}`} />
+                                <span className={`mt-1 block truncate text-[11px] ${i === at ? 'font-semibold text-text-primary' : i < at ? 'text-text-secondary' : 'text-text-tertiary'}`} title={c.name}>{c.name}{i === at && rejected ? ' (rejected)' : ''}</span>
+                            </li>
+                        ))}
+                    </ol>
+                ) : null;
+            })()}
+            {member.score && (
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <ScoreTag score={member.score} />
+                    {member.score.rounds.length > 1 && member.score.rounds.map(rd => (
+                        <span key={rd.round} className="text-xs text-text-secondary">{rd.round} <span className="font-semibold tabular-nums text-text-primary">{rd.overall.toFixed(1)}</span></span>
+                    ))}
+                </div>
+            )}
 
             <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                 <label htmlFor="pipe-move" className="sr-only">Move to stage</label>

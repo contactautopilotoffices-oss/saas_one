@@ -248,6 +248,21 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Title, location, department, hiring manager" className={`${INPUT} h-9 pl-9 text-sm`} />
                     </label>
                     {busy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                    {/* Owner 2026-11-25: the list at a glance: what is open, what is late, what has nobody on it. */}
+                    {positions && positions.length > 0 && (() => {
+                        const open = positions.filter(p => p.status === 'open');
+                        const late = open.filter(p => p.daysOpen > p.targetDays).length;
+                        const unassigned = open.filter(p => !p.recruiterId).length;
+                        const closed = positions.length - open.length;
+                        return (
+                            <p className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary" aria-label="Positions at a glance">
+                                {open.length > 0 && <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-success align-middle" aria-hidden />{formatCount(open.length)} open</span>}
+                                {late > 0 && <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-warning align-middle" aria-hidden />{formatCount(late)} past target</span>}
+                                {unassigned > 0 && <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-error align-middle" aria-hidden />{formatCount(unassigned)} without a recruiter</span>}
+                                {closed > 0 && <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-text-tertiary align-middle" aria-hidden />{formatCount(closed)} closed</span>}
+                            </p>
+                        );
+                    })()}
                 </div>
 
                 {positions === null ? (
@@ -287,9 +302,18 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                                             </select>
                                         ) : <p className="truncate text-sm font-medium text-text-primary">{p.recruiterName ?? <span className="font-normal text-text-tertiary">—</span>}</p>}
                                     </div>
-                                    <div className="w-24 shrink-0">
+                                    <div className="w-28 shrink-0">
                                         <p className={LABEL}>{p.status === 'open' ? 'Days open' : 'Days to fill'}</p>
                                         <p className={`${NUM_SM} ${ageing ? 'text-red-700' : 'text-text-primary'}`}>{p.daysOpen} <span className="text-xs font-normal text-text-tertiary">of {p.targetDays}</span></p>
+                                        {/* Owner 2026-11-25: time used against the target, and what is left. */}
+                                        {p.status === 'open' && (
+                                            <>
+                                                <span className="mt-1 block h-1.5 rounded-full bg-muted" aria-hidden>
+                                                    <span className={`block h-1.5 rounded-full ${ageing ? 'bg-error' : p.daysOpen >= p.targetDays * 0.8 ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, (p.daysOpen / Math.max(1, p.targetDays)) * 100)}%` }} />
+                                                </span>
+                                                <span className={`mt-0.5 block text-[11px] ${ageing ? 'font-semibold text-red-700' : 'text-text-tertiary'}`}>{ageing ? `${p.daysOpen - p.targetDays} days late` : `${p.targetDays - p.daysOpen} days to go`}</span>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="w-20 shrink-0">
                                         <p className={LABEL}>In pipeline</p>

@@ -24,7 +24,7 @@ import { findStage, firstStage, reasonNeeded, stageName, type StageDef } from ".
 import { loadStages } from "./stages";
 import {
   EMPLOYMENT_TYPES, POSITION_PRIORITIES,
-  type CandidateRecord, type EmploymentType, type Position, type PositionMember, type PositionPriority, type Stage,
+  type CandidateRecord, type EmploymentType, type MemberScore, type Position, type PositionMember, type PositionPriority, type Stage,
 } from "./types";
 
 // The Position / PositionMember shapes are in types.ts (pure, shared with the client).
@@ -288,10 +288,58 @@ export async function listMembers(client: SupabaseClient, orgId: string, positio
   if (error) fail("load the pipeline", error);
   const rows = (data ?? []) as Record<string, unknown>[];
   const ids = rows.map((r) => r.application_id as string | null).filter((id): id is string => !!id);
-  const [recordRows, names] = await Promise.all([getRecordRows(client, orgId, ids), namesOf(client, rows.map((r) => r.stage_changed_by as string).filter(Boolean))]);
+  const [recordRows, names, scores] = await Promise.all([
+    getRecordRows(client, orgId, ids),
+    namesOf(client, rows.map((r) => r.stage_changed_by as string).filter(Boolean)),
+    memberScores(client, orgId, positionId, [...new Set(rows.map((r) => r.candidate_id as string))]),
+  ]);
   const records = new Map(recordRows.map((row) => [row.id, toRecord(row)]));
   await markResumes(client, orgId, [...records.values()]);
-  return rows.map((row) => toMember(row, row.application_id ? (records.get(row.application_id as string) ?? null) : null, names));
+  return rows.map((row) => ({
+    ...toMember(row, row.application_id ? (records.get(row.application_id as string) ?? null) : null, names),
+    score: scores.get(row.candidate_id as string) ?? null,
+  }));
+}
+
+/**
+ * Owner 2026-11-25: each person's ratings in this position, from the submitted scorecards of their interviews for it
+ * (cancelled interviews left out). Before the hiring-flow migration there are none, so a missing table gives none.
+ */
+async function memberScores(client: SupabaseClient, orgId: string, positionId: string, candidateIds: string[]): Promise<Map<string, MemberScore>> {
+  const out = new Map<string, MemberScore>();
+  if (!candidateIds.length) return out;
+  const interviews: { id: string; candidate_id: string; round: string | null }[] = [];
+  for (let i = 0; i < candidateIds.length; i += 200) {
+    const { data, error } = await client.from("recruitment_interviews").select("id, candidate_id, round")
+      .eq("organization_id", orgId).eq("position_id", positionId).in("candidate_id", candidateIds.slice(i, i + 200)).neq("status", "cancelled");
+    if (error) { if (missingRelation(error)) return out; fail("load the scorecards", error); }
+    interviews.push(...((data ?? []) as typeof interviews));
+  }
+  if (!interviews.length) return out;
+  const byInterview = new Map(interviews.map((iv) => [iv.id, iv]));
+  const cards: { interview_id: string; overall: number | null }[] = [];
+  const ivIds = [...byInterview.keys()];
+  for (let i = 0; i < ivIds.length; i += 200) {
+    const { data, error } = await client.from("recruitment_scorecards").select("interview_id, overall")
+      .eq("organization_id", orgId).in("interview_id", ivIds.slice(i, i + 200)).not("submitted_at", "is", null);
+    if (error) { if (missingRelation(error)) return out; fail("load the scorecards", error); }
+    cards.push(...((data ?? []) as typeof cards));
+  }
+  const avg = (xs: number[]) => Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10;
+  const per = new Map<string, Map<string, number[]>>();
+  for (const c of cards) {
+    const iv = byInterview.get(c.interview_id);
+    if (!iv || typeof c.overall !== "number") continue;
+    const rounds = per.get(iv.candidate_id) ?? new Map<string, number[]>();
+    const round = iv.round?.trim() || "Interview";
+    rounds.set(round, [...(rounds.get(round) ?? []), c.overall]);
+    per.set(iv.candidate_id, rounds);
+  }
+  for (const [candidateId, rounds] of per) {
+    const all = [...rounds.values()].flat();
+    out.set(candidateId, { overall: avg(all), scorecards: all.length, rounds: [...rounds].map(([round, xs]) => ({ round, overall: avg(xs), scorecards: xs.length })) });
+  }
+  return out;
 }
 
 const idList = z.array(z.string().uuid()).min(1).max(200);

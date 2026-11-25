@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, FileText, ListChecks, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FileText, ListChecks, Plus, UserPlus, X } from 'lucide-react';
 import { boardColumns, findStage, reasonNeeded, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
@@ -15,7 +15,7 @@ import RecordForm from './RecordForm';
 import ScreeningQuestionsDialog from './ScreeningQuestionsDialog';
 import { RemarkDialog } from './Remarks';
 import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useRejectionReasons, useStages } from './stage-ui';
-import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, ScoreTag, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The pipeline per position (owner 2026-11-15, to the mockup). One position at a time: the numbers a recruiter acts
@@ -84,6 +84,9 @@ export function AddToPositionSelect({ orgId, applicationIds, disabled, onAdded, 
     );
 }
 
+/** A person whose recorded source is a referral ("Referral", "Employee referral", "Referred by Neha"). */
+const isReferral = (r: CandidateRecord | null) => !!r?.candidateSource && /refer/i.test(r.candidateSource);
+
 function MemberCard({ member, stage, early, busy, onRemove, onOpen, onDragStart }: {
     member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
 }) {
@@ -104,6 +107,9 @@ function MemberCard({ member, stage, early, busy, onRemove, onOpen, onDragStart 
             {member.remark && <p className="mt-1.5 text-[13px] italic leading-snug text-text-secondary">“{member.remark}”</p>}
             <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                 <StageChip stage={stage} />
+                {/* Owner 2026-11-25: the panel's rating, and a referral, at a glance on the card. */}
+                <ScoreTag score={member.score} />
+                {isReferral(r) && <Tag tone="info" icon={UserPlus} title={`Source: ${r?.candidateSource}`}>Referral</Tag>}
                 {r?.hasResume === true && <Tag tone="success">Resume</Tag>}
                 {r?.hasResume === false && <Tag tone="warn">No resume</Tag>}
                 {member.stageChangedByName && <span className="min-w-0 truncate text-[13px] text-text-secondary">{member.stageChangedByName}</span>}
@@ -460,10 +466,10 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                         </>
                     ) : (
                         <section className={`${CARD} overflow-x-auto`} aria-label="Pipeline table">
-                            <table className="w-full min-w-[760px] text-sm">
+                            <table className="w-full min-w-[840px] text-sm">
                                 <thead className="bg-surface-elevated text-left text-xs font-medium text-text-secondary">
                                     <tr>
-                                        <th className="px-4 py-2.5 font-medium">Candidate</th><th className="px-3 py-2.5 font-medium">Where</th><th className="px-3 py-2.5 font-medium">Stage</th><th className="px-3 py-2.5 text-right font-medium">Days</th><th className="px-3 py-2.5 font-medium">Moved by</th><th className="px-3 py-2.5 font-medium">Latest remark</th><th className="px-3 py-2.5" />
+                                        <th className="px-4 py-2.5 font-medium">Candidate</th><th className="px-3 py-2.5 font-medium">Where</th><th className="px-3 py-2.5 font-medium">Stage</th><th className="px-3 py-2.5 font-medium">Score</th><th className="px-3 py-2.5 text-right font-medium">Days</th><th className="px-3 py-2.5 font-medium">Moved by</th><th className="px-3 py-2.5 font-medium">Latest remark</th><th className="px-3 py-2.5" />
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border-subtle">
@@ -478,6 +484,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                                         <StageOptions groups={groups} current={stageOf(m)} />
                                                     </select>
                                                 </td>
+                                                <td className="px-3 py-2">{m.score ? <ScoreTag score={m.score} /> : <span className="text-text-tertiary">—</span>}</td>
                                                 <td className={`${NUM_SM} px-3 py-2 text-right text-text-primary`}>{daysSince(m.stageChangedAt)}</td>
                                                 <td className="px-3 py-2 text-text-secondary">{m.stageChangedByName ?? ''}</td>
                                                 <td className="max-w-[320px] truncate px-3 py-2 italic text-text-secondary" title={m.remark ?? ''}>{m.remark ?? ''}</td>
@@ -485,7 +492,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                             </tr>
                                         );
                                     })}
-                                    {list !== null && list.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-text-tertiary">Nobody in this position yet.</td></tr>}
+                                    {list !== null && list.length === 0 && <tr><td colSpan={8} className="px-4 py-6 text-center text-text-tertiary">Nobody in this position yet.</td></tr>}
                                 </tbody>
                             </table>
                         </section>

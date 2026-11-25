@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, LoaderCircle, Star, X } from 'lucide-react';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import { STATUS_LABELS, RECORD_STATUSES, type RecordStatus } from '@/backend/lib/candidates/types';
 import { STATUS_DOT } from './format';
@@ -190,6 +190,19 @@ export function Tag({ tone = 'neutral', icon: Icon, title, children }: {
             {Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden />}
             <span className="truncate">{children}</span>
         </span>
+    );
+}
+
+/**
+ * Owner 2026-11-25: the panel's average rating for a person (1 to 5, from the submitted scorecards). Nothing when no
+ * scorecard is in yet, so an unrated person never reads as a zero.
+ */
+export function ScoreTag({ score }: { score: { overall: number; scorecards: number } | null | undefined }) {
+    if (!score) return null;
+    return (
+        <Tag tone="warn" icon={Star} title={`Average of ${score.scorecards} ${score.scorecards === 1 ? 'scorecard' : 'scorecards'}, out of 5`}>
+            <span className="tabular-nums">{score.overall.toFixed(1)}</span> overall
+        </Tag>
     );
 }
 

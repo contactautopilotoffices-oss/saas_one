@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import type { RecruitmentEmail } from '@/backend/lib/candidates/email';
 import type { CandidateRecord } from '@/backend/lib/candidates/types';
 import CandidatePicker from './CandidatePicker';
+import EmailCandidateContext from './EmailCandidateContext';
 import { api, qs } from './api';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, FIELD, LABEL, Spinner } from './ui';
 import { formatDate } from './format';
@@ -134,7 +135,7 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
     <ul className="space-y-2">{messages.map(m => <li key={m.id} className="rounded-lg border border-border p-3">
       <button type="button" disabled={busy} onClick={() => void openMessage(m.id)} className="w-full text-left text-sm">
         <span className="block break-words font-medium">{m.subject || '(No subject)'}</span>
-        <span className="block break-words text-text-secondary">{m.direction === 'incoming' ? `From ${m.sender}` : `To ${m.recipient}`} · {formatDate(m.received_at)} · {m.status}</span>
+        <span className="block break-words text-text-secondary">{m.direction === 'incoming' ? `From ${m.sender}` : `To ${m.recipient}`} · {formatDate(m.received_at)} · {m.status}{m.candidate_id ? ' · linked to a candidate' : ''}</span>
         {m.last_error && <span className="mt-1 block text-red-700">{m.last_error}</span>}
       </button>
     </li>)}</ul>
@@ -159,6 +160,8 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
     <Dialog open={Boolean(detail)} onClose={() => { if (!busy) setDetail(null); }} title="Email details" labelId="email-detail-title" size="lg">
       {errorMessage}{detail && <div className="space-y-3">
         <p className="text-sm break-words">From: {detail.message.sender}<br />To: {detail.message.recipient}</p><h3 className="font-medium break-words">{detail.message.subject}</h3>
+        {/* Owner 2026-11-25: where this person stands, beside their email. */}
+        {detail.message.candidate_id && <EmailCandidateContext orgId={orgId} candidateId={detail.message.candidate_id} />}
         <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-sans text-sm">{detail.message.body}</pre>
         {detail.message.last_error && <p className="text-sm text-red-700">{detail.message.last_error}</p>}
         {detail.thread.length > 1 && <div><p className={LABEL}>Conversation</p>{detail.thread.map(m => <button type="button" key={m.id} className={`${BTN_GHOST} mb-1 block max-w-full truncate`} disabled={busy} onClick={() => void openMessage(m.id)}>{formatDate(m.received_at)} · {m.direction} · {m.subject}</button>)}</div>}

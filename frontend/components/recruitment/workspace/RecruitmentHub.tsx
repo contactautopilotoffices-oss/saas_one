@@ -10,6 +10,7 @@ import type { RecruitmentView } from '@/frontend/components/candidates/Candidate
 import { BTN, BTN_PRI, GLASS, H2, INK2, INK3, plural, ROTATE, TONE, type Tone } from './hub-ui';
 import HubPipeline from './HubPipeline';
 import HubInsights from './HubInsights';
+import HubInterviews from './HubInterviews';
 
 /*
  * The Recruitment workspace's Home (owner 2026-11-25, design "21 · Hub", Overview tab). Every number and name comes
@@ -22,8 +23,8 @@ import HubInsights from './HubInsights';
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]!.toUpperCase()).join('') || '?';
 
-/** The Hub's tabs (owner 2026-11-25). Candidates and Interviews follow in later stages. */
-const TABS = [{ id: 'overview', label: 'Overview' }, { id: 'pipeline', label: 'Pipeline' }, { id: 'insights', label: 'Insights' }] as const;
+/** The Hub's tabs (owner 2026-11-25). */
+const TABS = [{ id: 'overview', label: 'Overview' }, { id: 'pipeline', label: 'Pipeline' }, { id: 'interviews', label: 'Interviews' }, { id: 'insights', label: 'Insights' }] as const;
 type HubTab = (typeof TABS)[number]['id'];
 function ago(iso: string | null): string {
     if (!iso) return '';
@@ -192,6 +193,7 @@ export default function RecruitmentHub({ orgId, firstName, onOpen }: {
             )}
 
             {tab === 'pipeline' && <div role="tabpanel" id="hub-panel-pipeline" aria-labelledby="hub-tab-pipeline"><HubPipeline data={data} onOpen={onOpen} /></div>}
+            {tab === 'interviews' && <div role="tabpanel" id="hub-panel-interviews" aria-labelledby="hub-tab-interviews"><HubInterviews orgId={orgId} data={data} onOpen={onOpen} /></div>}
             {tab === 'insights' && <div role="tabpanel" id="hub-panel-insights" aria-labelledby="hub-tab-insights"><HubInsights data={data} /></div>}
 
             {tab === 'overview' && <div role="tabpanel" id="hub-panel-overview" aria-labelledby="hub-tab-overview" className="flex flex-col gap-4">
@@ -281,7 +283,7 @@ export default function RecruitmentHub({ orgId, firstName, onOpen }: {
                         </div>
                     ))}
                     <div className="grow" />
-                    <button type="button" onClick={() => onOpen('pipeline')} className={`${BTN} mt-2`}>Open the pipeline<ArrowRight className="h-[15px] w-[15px]" aria-hidden /></button>
+                    <button type="button" onClick={() => setTab('interviews')} className={`${BTN} mt-2`}>See the whole week<ArrowRight className="h-[15px] w-[15px]" aria-hidden /></button>
                 </section>
 
                 <section aria-label="Offers out" className={`${GLASS} flex min-w-0 flex-[1_1_300px] flex-col gap-1 p-5`}>
