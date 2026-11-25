@@ -43,25 +43,40 @@ Top of `room_display.ino`:
 static const char *WIFI_SSID   = "Your_Office_WiFi";    // 2.4GHz — the ESP32-S3 has no 5GHz radio
 static const char *WIFI_PASS   = "Your_WiFi_Password";
 static const char *SERVER_BASE = "https://app.autopilotoffices.com";  // no trailing slash
-static const char *ROOM_ID     = "0000...";             // meeting_rooms.id — one per panel
+static const char *PROPERTY_ID = "0000...";             // properties.id — one per BUILDING
 ```
 
-**Getting the room UUID.** Open the room in the app and take the id from the URL, or run this
-read-only query against your Supabase project:
+**`PROPERTY_ID` is the building, not the room.** Every panel in a property takes the same value,
+so you flash one identical image for the whole site. Each panel asks which door it is on the
+first time it boots, and remembers the answer.
+
+**Getting the property UUID.** Meeting Rooms → any room → **Door Panel Setup** → *Property ID*.
+Or run this read-only query:
 
 ```sql
-select r.id, r.name, p.name as property
-from meeting_rooms r
-join properties p on p.id = r.property_id
-where r.status = 'active'
-order by p.name, r.name;
+select p.id as property_id, p.name as property, count(r.id) as rooms
+from properties p
+left join meeting_rooms r on r.property_id = p.id and r.status = 'active'
+group by p.id, p.name
+order by p.name;
 ```
 
-Each panel gets its own `ROOM_ID`. Everything else is identical, so flashing ten rooms means
-changing one line ten times.
+Before flashing, open `/display/property/<propertyId>` in a browser. You'll get the same room
+picker the panel shows — same endpoint, same data.
 
-Before flashing, paste that id into `/display/room/<roomId>` in a browser. If the browser shows
-the right room, the panel will too — same endpoint, same data.
+## 2b. First boot: pick the door
+
+1. The panel lists the property's active rooms
+2. Tap the room it is mounted outside
+3. It saves that to NVS and goes straight to the schedule from then on
+
+To change it later — when a panel moves to a different door — **hold `ROOMS` in the header for
+three seconds** and the picker comes back.
+
+A short tap on `ROOMS` opens the room list for browsing instead. The panel's own room is marked
+`THIS DOOR`, a bar reads `VIEWING ANOTHER ROOM` while you're off it, and it returns home by
+itself after 60 seconds — a panel left showing someone else's schedule misinforms everyone
+walking past.
 
 ## 3. Board settings (Tools menu)
 
@@ -121,6 +136,10 @@ against your board's wiki page first. Two traps worth knowing:
 - **The backlight is on the CH422G expander (EXIO2), not a GPIO.** Guides saying "backlight
   GPIO 2" are misreading EXIO2 as GPIO2.
 
-**Touch is not used.** The board has a 5-point GT911 digitizer, but this build ignores it — the
-panel is display-only until booking-from-the-screen is designed properly (whose credits get
-charged is the hard part, not the tapping).
+**Touch is used for navigation only.** The GT911 digitizer drives the first-boot room picker,
+the `ROOMS` list and the hold-to-reassign gesture. It cannot book, cancel or change anything —
+that stays in the app, because the hard part is whose credits get charged, not the tapping.
+
+If touch never responds, the first thing to try is in `lgfx_waveshare_7b.h`: move the GT911 to
+`i2c_port = 0` with `bus_shared = true`. It currently sits on port 1, sharing pins 8 and 9 with
+the CH422G expander. Some boards also strap the GT911 to address `0x14` instead of `0x5D`.

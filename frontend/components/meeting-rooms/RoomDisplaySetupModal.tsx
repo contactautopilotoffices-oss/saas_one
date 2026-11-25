@@ -15,7 +15,7 @@ import { motion } from 'framer-motion';
  */
 
 interface Props {
-    room: { id: string; name: string };
+    room: { id: string; name: string; property_id?: string };
     onClose: () => void;
 }
 
@@ -91,16 +91,25 @@ const RoomDisplaySetupModal: React.FC<Props> = ({ room, onClose }) => {
                         For the screen mounted outside <span className="font-bold text-foreground">{room.name}</span>.
                     </p>
 
+                    {/* What panels are actually provisioned with: one property id per building. */}
+                    {room.property_id && (
+                        <CopyRow
+                            label="Property ID — flash this"
+                            value={room.property_id}
+                            hint="Paste into PROPERTY_ID in the firmware. Every panel in this building takes the same value; each one picks its own room on screen the first time it boots."
+                        />
+                    )}
+
                     <CopyRow
                         label="Room ID"
                         value={room.id}
-                        hint="Paste this into ROOM_ID in the panel firmware. One panel, one room."
+                        hint="This room alone. Only needed if you pin a panel to one room instead of using the property URL."
                     />
 
                     <CopyRow
                         label="Display URL"
                         value={displayUrl}
-                        hint="What the panel shows. Open it in a browser to check the room before flashing."
+                        hint="This room's schedule. Open it in a browser to check the room before flashing."
                     />
 
                     <a
