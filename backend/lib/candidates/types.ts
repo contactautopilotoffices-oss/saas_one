@@ -77,6 +77,8 @@ export interface Position {
   counts: Record<Stage, number>;
   /** The library JD it was opened from (owner 2026-11-17); null when none, absent before migration 20261117000002. */
   jd?: PositionJd | null;
+  /** Interviews held for it (status 'done'; owner 2026-11-25). Listed positions only; absent before the hiring-flow migration. */
+  interviewsDone?: number;
 }
 
 /**

@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, FileText, ListChecks, Plus, UserPlus, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, ClipboardCheck, Download, FileText, ListChecks, MoreHorizontal, PanelRightOpen, Plus, UserPlus, X } from 'lucide-react';
 import { boardColumns, findStage, reasonNeeded, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
-import CandidateDetails from './CandidateDetails';
+import CandidateDetails, { type CandidateTab } from './CandidateDetails';
 import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate } from './format';
 import { OutreachDialog } from './OutreachPanel';
@@ -14,8 +14,8 @@ import PositionForm, { type PositionSeed } from './PositionForm';
 import RecordForm from './RecordForm';
 import ScreeningQuestionsDialog from './ScreeningQuestionsDialog';
 import { RemarkDialog } from './Remarks';
-import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useRejectionReasons, useStages } from './stage-ui';
-import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, ScoreTag, Spinner, Tag, useUi, WELL } from './ui';
+import { retryStages, StageChip, StageOptions, stagesFailed, TONE_CHIP, TONE_DOT, useRejectionReasons, useStages } from './stage-ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, OVERLAY, ScoreTag, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The pipeline per position (owner 2026-11-15, to the mockup). One position at a time: the numbers a recruiter acts
@@ -87,8 +87,56 @@ export function AddToPositionSelect({ orgId, applicationIds, disabled, onAdded, 
 /** A person whose recorded source is a referral ("Referral", "Employee referral", "Referred by Neha"). */
 const isReferral = (r: CandidateRecord | null) => !!r?.candidateSource && /refer/i.test(r.candidateSource);
 
-function MemberCard({ member, stage, early, busy, onRemove, onOpen, onDragStart }: {
-    member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
+/**
+ * The card's "…" menu (owner 2026-11-25, to the reference board): the per-card actions in one place instead of a
+ * hover-only X. Escape or a click elsewhere closes it; focus goes back to the button.
+ */
+function CardMenu({ name, canOpen, busy, onOpen, onAssess, onRemove }: { name: string; canOpen: boolean; busy: boolean; onOpen: () => void; onAssess: () => void; onRemove: () => void }) {
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLDivElement>(null);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const firstItem = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        firstItem.current?.focus();
+        const onDown = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); trigger.current?.focus(); } };
+        document.addEventListener('mousedown', onDown);
+        document.addEventListener('keydown', onKey);
+        return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+    }, [open]);
+    const item = 'flex w-full items-center gap-x-2 rounded-lg px-2.5 py-1.5 text-left text-sm font-semibold outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50';
+    return (
+        <div ref={wrap} className="relative shrink-0">
+            <button ref={trigger} type="button" onClick={() => setOpen(o => !o)} aria-haspopup="menu" aria-expanded={open} aria-label={`Actions for ${name}`} title="Actions"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-tertiary outline-none transition-colors hover:bg-muted hover:text-text-primary focus-visible:ring-2 focus-visible:ring-primary/40">
+                <MoreHorizontal className="h-4 w-4" aria-hidden />
+            </button>
+            {open && (
+                <div role="menu" aria-label={`Actions for ${name}`} className={`${OVERLAY} absolute bottom-full right-0 z-20 mb-1 w-52 rounded-xl p-1`}>
+                    <button ref={firstItem} type="button" role="menuitem" disabled={!canOpen} onClick={() => { setOpen(false); onOpen(); }} className={`${item} text-text-primary hover:bg-muted`}>
+                        <PanelRightOpen className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />Open details
+                    </button>
+                    {/* Owner 2026-11-25: the reference's "Add assessment"; ours is sent per person, from their Assignment & documents tab. */}
+                    <button type="button" role="menuitem" disabled={!canOpen} onClick={() => { setOpen(false); onAssess(); }} className={`${item} text-text-primary hover:bg-muted`}>
+                        <ClipboardCheck className="h-4 w-4 shrink-0 text-text-secondary" aria-hidden />Send assessment
+                    </button>
+                    <button type="button" role="menuitem" disabled={busy} onClick={() => { setOpen(false); onRemove(); }} className={`${item} text-error hover:bg-error/[.08]`}>
+                        <X className="h-4 w-4 shrink-0" aria-hidden />Remove from this position
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/*
+ * Owner 2026-11-25, to the reference board: avatar and name with when they joined this position, the role line, then
+ * a divider and the at-a-glance row (rating, referral, resume, who moved them, days in the stage, the "…" menu). The
+ * stage itself is the area the card sits in, so the card no longer repeats it.
+ */
+function MemberCard({ member, stage, early, busy, onRemove, onOpen, onAssess, onDragStart }: {
+    member: PositionMember; stage: StageDef; early: boolean; busy: boolean; onRemove: (member: PositionMember) => void; onOpen: (member: PositionMember) => void; onAssess: (member: PositionMember) => void; onDragStart: (member: PositionMember) => void;
 }) {
     const r = member.record;
     const name = r?.fullName ?? 'Record removed';
@@ -97,23 +145,28 @@ function MemberCard({ member, stage, early, busy, onRemove, onOpen, onDragStart 
     const late = days > WAITING_DAYS && early && stage.kind === 'progress';
     return (
         <li draggable={!busy} onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', member.id); onDragStart(member); }}
-            className={`${CARD} group cursor-grab px-3 py-2.5 active:cursor-grabbing ${late ? 'ring-1 ring-inset ring-error/60' : ''}`}>
-            <div className="flex items-center gap-x-2">
+            className={`${CARD} cursor-grab px-3 pb-2 pt-3 active:cursor-grabbing ${late ? 'ring-1 ring-inset ring-error/60' : ''}`}>
+            <div className="flex items-start gap-x-2.5">
                 <Avatar name={name} size="sm" />
-                <button type="button" disabled={!r} onClick={() => r && onOpen(member)} className="min-w-0 flex-1 truncate text-left font-display text-[15px] font-semibold text-text-primary underline-offset-2 hover:underline disabled:no-underline">{name}</button>
-                <button type="button" onClick={() => onRemove(member)} disabled={busy} aria-label={`Remove ${name} from this position`} title="Remove from this position" className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-text-tertiary opacity-0 hover:bg-muted hover:text-text-primary group-hover:opacity-100 focus-visible:opacity-100"><X className="h-3.5 w-3.5" /></button>
+                <div className="min-w-0 flex-1">
+                    <button type="button" disabled={!r} onClick={() => r && onOpen(member)} title={name}
+                        className="block max-w-full truncate rounded text-left font-display text-[15px] font-semibold leading-snug text-text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary/40 disabled:no-underline">{name}</button>
+                    <p className="text-xs text-text-secondary" title="When they were added to this position">Added {formatDate(member.addedAt)}</p>
+                </div>
             </div>
-            {where && <p className="mt-1.5 text-[13px] leading-snug text-text-secondary">{where}</p>}
+            {where && <p className="mt-2 truncate text-xs leading-snug text-text-tertiary" title={where}>{where}</p>}
             {member.remark && <p className="mt-1.5 text-[13px] italic leading-snug text-text-secondary">“{member.remark}”</p>}
-            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <StageChip stage={stage} />
-                {/* Owner 2026-11-25: the panel's rating, and a referral, at a glance on the card. */}
-                <ScoreTag score={member.score} />
-                {isReferral(r) && <Tag tone="info" icon={UserPlus} title={`Source: ${r?.candidateSource}`}>Referral</Tag>}
-                {r?.hasResume === true && <Tag tone="success">Resume</Tag>}
-                {r?.hasResume === false && <Tag tone="warn">No resume</Tag>}
-                {member.stageChangedByName && <span className="min-w-0 truncate text-[13px] text-text-secondary">{member.stageChangedByName}</span>}
-                <span className={`${NUM_SM} ml-auto shrink-0 text-[13px] ${late ? 'text-red-700' : 'text-text-secondary'}`} title={`In this stage since ${formatDate(member.stageChangedAt)}`}>{days} d</span>
+            <div className="mt-2.5 flex min-w-0 items-center gap-x-2 border-t border-border-subtle pt-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {/* Owner 2026-11-25: the panel's rating, and a referral, at a glance on the card. */}
+                    <ScoreTag score={member.score} />
+                    {isReferral(r) && <Tag tone="info" icon={UserPlus} title={`Source: ${r?.candidateSource}`}>Referral</Tag>}
+                    {r?.hasResume === true && <Tag tone="success">Resume</Tag>}
+                    {r?.hasResume === false && <Tag tone="warn">No resume</Tag>}
+                    {member.stageChangedByName && <span className="min-w-0 max-w-full truncate text-xs text-text-secondary" title={`Moved here by ${member.stageChangedByName}`}>{member.stageChangedByName}</span>}
+                </div>
+                <span className={`${NUM_SM} shrink-0 text-[13px] ${late ? 'text-red-700' : 'text-text-secondary'}`} title={`In this stage since ${formatDate(member.stageChangedAt)}`}>{days} d</span>
+                <CardMenu name={name} canOpen={!!r} busy={busy} onOpen={() => onOpen(member)} onAssess={() => onAssess(member)} onRemove={() => onRemove(member)} />
             </div>
         </li>
     );
@@ -171,6 +224,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     // Edit from the panel opens the record's form here; saving or closing it returns to the panel.
     const [editor, setEditor] = useState<{ record: CandidateRecord; key: number; open: boolean } | null>(null);
     const [panelKey, setPanelKey] = useState(0);
+    const [showTab, setShowTab] = useState<{ tab: CandidateTab; nonce: number } | null>(null);
     const [view, setView] = useState<'board' | 'table'>('board');
     const [dragging, setDragging] = useState<PositionMember | null>(null);
     const [over, setOver] = useState<Stage | null>(null);
@@ -280,7 +334,11 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         onDrop: (e: React.DragEvent) => { e.preventDefault(); setOver(null); const m = dragging; setDragging(null); if (m) void move(m, stage); },
     });
     const openMember = (m: PositionMember, ids: string[], scopeLabel: string) => { if (m.record) setDetails({ memberId: m.id, record: m.record, ids, scopeLabel, open: true }); };
-    const cardProps = { busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (m: PositionMember) => openMember(m, inStage(m.stage).map(x => x.id), stageOf(m).name), onDragStart: setDragging };
+    const cardProps = {
+        busy, onRemove: (m: PositionMember) => void remove(m), onOpen: (m: PositionMember) => openMember(m, inStage(m.stage).map(x => x.id), stageOf(m).name), onDragStart: setDragging,
+        // Opens the person's panel on Assignment & documents, where an assessment is sent.
+        onAssess: (m: PositionMember) => { openMember(m, inStage(m.stage).map(x => x.id), stageOf(m).name); setShowTab(t => ({ tab: 'work', nonce: (t?.nonce ?? 0) + 1 })); },
+    };
     const card = (m: PositionMember) => <MemberCard key={m.id} member={m} stage={stageOf(m)} early={isEarly(m)} {...cardProps} />;
     const groups = stageGroups(listed);
 
@@ -390,12 +448,17 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                     {columns.map(column => {
                                         const active = column.stages.filter(st => st.kind !== 'rejected').reduce((n, st) => n + inStage(st.key).length, 0);
                                         const rejected = column.stages.filter(st => st.kind === 'rejected').reduce((n, st) => n + inStage(st.key).length, 0);
+                                        const tone = (column.stages.find(st => st.kind !== 'rejected') ?? column.stages[0])?.tone ?? 'grey';
                                         return (
-                                            <section key={column.name} aria-label={column.name} className={`${WELL} flex w-[264px] shrink-0 flex-col gap-y-2 px-2 py-2 ring-1 ring-inset ring-border-subtle`}>
-                                                <header className="flex items-baseline gap-x-2 px-1.5 pt-1">
-                                                    <span className="min-w-0 truncate font-display text-[15px] font-semibold text-text-primary" title={column.name}>{column.name}</span>
-                                                    {rejected > 0 && <span className="shrink-0 text-xs text-text-tertiary">{formatCount(rejected)} rejected</span>}
-                                                    <span className={`${NUM_SM} ml-auto shrink-0 rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary ring-1 ring-inset ring-border`}>{formatCount(active)}</span>
+                                            <section key={column.name} aria-label={column.name} className={`${WELL} flex w-[280px] shrink-0 flex-col gap-y-2.5 px-2.5 py-2.5 ring-1 ring-inset ring-border-subtle`}>
+                                                {/* Owner 2026-11-25, to the reference board: the round as a pill in its own colour (its first stage's), the count beside it. */}
+                                                <header className="flex items-center gap-x-2 px-1 pb-0.5 pt-1">
+                                                    <span title={column.name} className={`inline-flex h-7 min-w-0 items-center gap-x-1.5 rounded-full pl-2 pr-3 font-display text-sm font-semibold ${TONE_CHIP[tone]}`}>
+                                                        <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_DOT[tone]}`} aria-hidden />
+                                                        <span className="truncate">{column.name}</span>
+                                                    </span>
+                                                    <span className={`${NUM_SM} shrink-0 text-sm text-text-secondary`}>{formatCount(active)}<span className="sr-only"> in {column.name}</span></span>
+                                                    {rejected > 0 && <span className="ml-auto shrink-0 text-xs text-text-tertiary">{formatCount(rejected)} rejected</span>}
                                                 </header>
                                                 {column.stages.map(st => {
                                                     const items = inStage(st.key);
@@ -419,7 +482,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                                                 </div>
                                                             )}
                                                             {list === null ? <p className="px-1 pt-1 text-xs text-text-tertiary">Loading</p> : open && (
-                                                                <ul className="mt-1.5 space-y-2">
+                                                                <ul className="mt-2 space-y-2.5">
                                                                     {shown.map(card)}
                                                                     {!items.length && <li className="px-1 pb-1 text-xs text-text-tertiary">Drop a card here</li>}
                                                                     {!folds && items.length > ZONE_SHOWN && (
@@ -514,6 +577,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                     }}
                     onChanged={refresh}
                     pipeline={pipelineCtx}
+                    showTab={showTab}
                 />
             )}
             {editor && (
@@ -526,7 +590,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                     onSaved={saved => {
                         setEditor(e => (e ? { ...e, open: false } : e));
                         // A fresh panel, so it reads the saved record instead of the one it had loaded.
-                        setPanelKey(k => k + 1);
+                        setPanelKey(k => k + 1); setShowTab(null);
                         setDetails(d => (d ? { ...d, record: saved, open: true } : d));
                         refresh();
                         notify(`${saved.fullName} saved`, 'success');

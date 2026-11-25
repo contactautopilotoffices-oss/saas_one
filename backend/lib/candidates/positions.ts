@@ -100,6 +100,23 @@ async function countsFor(client: SupabaseClient, orgId: string, positionIds: str
   return out;
 }
 
+/**
+ * Owner 2026-11-25: interviews held per position (status 'done'), for the Positions cards. Read-only. Before the
+ * hiring-flow migration (20261121000003) there is no interviews table, so the map comes back empty and the field is
+ * left out rather than shown as 0.
+ */
+async function interviewsDoneFor(client: SupabaseClient, orgId: string, positionIds: string[]): Promise<Map<string, number> | null> {
+  const out = new Map<string, number>(positionIds.map((id) => [id, 0]));
+  if (!positionIds.length) return out;
+  for (let i = 0; i < positionIds.length; i += 200) {
+    const { data, error } = await client.from("recruitment_interviews").select("position_id")
+      .eq("organization_id", orgId).in("position_id", positionIds.slice(i, i + 200)).eq("status", "done");
+    if (error) { if (missingRelation(error)) return null; fail("count the interviews", error); }
+    for (const row of (data ?? []) as { position_id: string }[]) out.set(row.position_id, (out.get(row.position_id) ?? 0) + 1);
+  }
+  return out;
+}
+
 /** Open positions first, newest first; `status` narrows. */
 export async function listPositions(client: SupabaseClient, orgId: string, status: "open" | "closed" | "all" = "open"): Promise<Position[]> {
   const run = (columns: string) => {
@@ -112,9 +129,15 @@ export async function listPositions(client: SupabaseClient, orgId: string, statu
   if (error) fail("load the positions", error);
   const rows = (data ?? []) as unknown as Record<string, unknown>[];
   const ids = rows.map((r) => r.id as string);
-  const [counts, names, jds] = await Promise.all([countsFor(client, orgId, ids), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean)), jdLinksFor(client, orgId, ids)]);
+  const [counts, names, jds, done] = await Promise.all([
+    countsFor(client, orgId, ids), namesOf(client, rows.map((r) => r.recruiter_id as string).filter(Boolean)), jdLinksFor(client, orgId, ids),
+    interviewsDoneFor(client, orgId, ids),
+  ]);
   // Owner 2026-11-17: the library JD each came from (none before migration 20261117000002).
-  return rows.map((row) => ({ ...toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names), jd: jds.get(row.id as string) ?? null }));
+  return rows.map((row) => ({
+    ...toPosition(row, counts.get(row.id as string) ?? emptyCounts(), false, names), jd: jds.get(row.id as string) ?? null,
+    ...(done ? { interviewsDone: done.get(row.id as string) ?? 0 } : {}),
+  }));
 }
 
 export async function getPosition(client: SupabaseClient, orgId: string, id: string): Promise<Position> {

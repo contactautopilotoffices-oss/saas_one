@@ -3935,33 +3935,35 @@ html[data-app-zoom] .h-dvh { height: calc(100dvh / var(--app-zoom)); }
 html[data-app-zoom] .w-screen { width: calc(100vw / var(--app-zoom)); }
 
 /* ============================================
-   RECRUITMENT WORKSPACE SKIN (owner 2026-11-25)
+   RECRUITMENT WORKSPACE SKIN (owner 2026-11-25, revised the same day)
    While the Recruitment workspace (/recruitment, [data-recruitment-workspace]) is on screen, the app's tokens take
-   the Hub's look (design "21 · Hub"): indigo instead of the brand teal, ink text, glass cards. Set on <body> so the
-   dialogs and drawers the screens open (portalled to <body>) match too. Nothing changes anywhere else in the app.
+   the look of the owner's six reference screens: a light grey page, white cards with a hairline border and a soft
+   shadow, near-black ink, and a deep teal as the one action colour. Set on <body> so the dialogs and drawers the
+   screens open (portalled to <body>) match too. Nothing changes anywhere else in the app.
    The --color-* lines are repeated because Tailwind's theme copies resolve where they are declared.
    ============================================ */
 body:has([data-recruitment-workspace]) {
-  --primary: #4f46e5;
-  --primary-light: #6366f1;
-  --primary-dark: #4338ca;
-  --primary-rgb: 79, 70, 229;
-  --accent: #4f46e5;
-  --accent-light: #6366f1;
-  --accent-dark: #4338ca;
-  --surface: rgba(255, 255, 255, 0.86);
-  --surface-elevated: rgba(238, 240, 255, 0.78);
-  --card: rgba(255, 255, 255, 0.86);
-  --border: rgba(23, 21, 45, 0.12);
-  --border-subtle: rgba(23, 21, 45, 0.07);
-  --muted: rgba(23, 21, 45, 0.05);
-  --text-primary: #17152d;
-  --text-secondary: #4a4765;
-  --text-tertiary: #5f5c79;
-  --text-muted: #5f5c79;
-  --w-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.95), 0 0 0 1px rgba(79, 70, 229, 0.06), 0 10px 28px rgba(60, 60, 120, 0.08);
-  --w-shadow-hover: inset 0 0 0 1px rgba(255, 255, 255, 0.95), 0 0 0 1px rgba(79, 70, 229, 0.1), 0 16px 36px rgba(60, 60, 120, 0.13);
-  --w-shadow-drag: 0 0 0 1px rgba(79, 70, 229, 0.1), 0 24px 48px -8px rgba(60, 60, 120, 0.22);
+  --primary: #0f6b5c;
+  --primary-light: #14876f;
+  --primary-dark: #0b5347;
+  --primary-rgb: 15, 107, 92;
+  --accent: #0f6b5c;
+  --accent-light: #14876f;
+  --accent-dark: #0b5347;
+  --background: #f3f4f6;
+  --surface: #ffffff;
+  --surface-elevated: #f6f7f9;
+  --card: #ffffff;
+  --border: #e3e6ea;
+  --border-subtle: #eef0f3;
+  --muted: #f1f3f5;
+  --text-primary: #16181d;
+  --text-secondary: #4b5260;
+  --text-tertiary: #6b7280;
+  --text-muted: #6b7280;
+  --w-shadow: 0 0 0 1px #e3e6ea, 0 1px 2px rgba(16, 24, 40, 0.04);
+  --w-shadow-hover: 0 0 0 1px #d5d9df, 0 4px 12px rgba(16, 24, 40, 0.07);
+  --w-shadow-drag: 0 0 0 1px #d5d9df, 0 18px 36px -8px rgba(16, 24, 40, 0.18);
 
   --color-primary: var(--primary);
   --color-primary-light: var(--primary-light);
@@ -3969,6 +3971,7 @@ body:has([data-recruitment-workspace]) {
   --color-accent: var(--accent);
   --color-accent-light: var(--accent-light);
   --color-accent-dark: var(--accent-dark);
+  --color-background: var(--background);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-card: var(--card);
@@ -3980,34 +3983,23 @@ body:has([data-recruitment-workspace]) {
   --color-text-tertiary: var(--text-tertiary);
 }
 .dark body:has([data-recruitment-workspace]) {
-  /* #5b54e8, not #6366f1: white button text stays above 4.5:1. */
-  --primary: #5b54e8;
-  --primary-light: #818cf8;
-  --primary-dark: #4f46e5;
-  --primary-rgb: 91, 84, 232;
-  --accent: #5b54e8;
-  --surface: rgba(26, 27, 46, 0.9);
-  --surface-elevated: rgba(255, 255, 255, 0.08);
-  --card: rgba(26, 27, 46, 0.9);
-  --border: rgba(255, 255, 255, 0.14);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --muted: rgba(255, 255, 255, 0.07);
-  --text-primary: #f0eff4;
-  --text-secondary: #c2c0d0;
-  --text-tertiary: #a3a1b6;
-  --text-muted: #a3a1b6;
-  --w-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.13), 0 14px 38px rgba(0, 0, 0, 0.45);
-  --w-shadow-hover: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 18px 44px rgba(0, 0, 0, 0.5);
-  --w-shadow-drag: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 24px 48px -8px rgba(0, 0, 0, 0.6);
+  --primary: #14876f;
+  --primary-light: #1fa386;
+  --primary-dark: #0f6b5c;
+  --primary-rgb: 20, 135, 111;
+  --accent: #14876f;
+  --background: #0f1115;
+  --surface: #171a20;
+  --surface-elevated: #1d2128;
+  --card: #171a20;
+  --border: #2a2f38;
+  --border-subtle: #22262e;
+  --muted: #20242b;
+  --text-primary: #eef0f3;
+  --text-secondary: #b6bcc6;
+  --text-tertiary: #8d94a0;
+  --text-muted: #8d94a0;
+  --w-shadow: 0 0 0 1px #2a2f38;
+  --w-shadow-hover: 0 0 0 1px #363c47, 0 4px 12px rgba(0, 0, 0, 0.35);
+  --w-shadow-drag: 0 0 0 1px #363c47, 0 18px 36px -8px rgba(0, 0, 0, 0.55);
 }
-/* Floating panels (menus, popovers, sticky bars, dialogs) blur what is behind them, so the glass stays readable. */
-body:has([data-recruitment-workspace]) :is(.absolute, .fixed, .sticky).bg-surface,
-body:has([data-recruitment-workspace]) [role="dialog"] .bg-surface,
-body:has([data-recruitment-workspace]) [role="dialog"].bg-surface {
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  backdrop-filter: blur(24px) saturate(160%);
-}
-/* The screens' cards and buttons get the Hub's softer, rounder shapes. */
-[data-recruitment-views] .rounded-2xl { border-radius: 22px; }
-[data-recruitment-views] :is(button, a).rounded-xl.bg-primary,
-[data-recruitment-views] :is(button, a).rounded-xl.bg-surface.shadow-\[var\(--w-shadow\)\] { border-radius: 999px; }

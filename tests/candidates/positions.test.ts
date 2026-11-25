@@ -152,4 +152,18 @@ describe("positions and pipelines", () => {
     const [row] = (await db.query<{ deleted_at: unknown }>("select deleted_at from public.candidate_positions where id = $1", [doomed.id])).rows;
     assert.ok(row.deleted_at, "the row is kept, marked deleted");
   });
+
+  it("counts the interviews held per position (done only)", async () => {
+    const [position] = await listPositions(client, ORG, "open");
+    assert.equal(position.interviewsDone, 0);
+    for (const status of ["done", "done", "scheduled", "cancelled", "no_show"]) {
+      await db.query(
+        "insert into public.recruitment_interviews (id, organization_id, candidate_id, position_id, at, at_local, status) values (gen_random_uuid(), $1, $2, $3, now(), '2026-11-25T11:00', $4)",
+        [ORG, bilal.candidateId, position.id, status],
+      );
+    }
+    const listed = await listPositions(client, ORG, "all");
+    assert.equal(listed.find((p) => p.id === position.id)?.interviewsDone, 2);
+    assert.ok(listed.filter((p) => p.id !== position.id).every((p) => p.interviewsDone === 0));
+  });
 });

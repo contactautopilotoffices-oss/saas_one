@@ -8,8 +8,11 @@ import {
 } from '@/backend/lib/candidates/types';
 import { api, qs } from '@/frontend/components/candidates/api';
 import { formatDate } from '@/frontend/components/candidates/format';
-import { BTN_DANGER_FILLED } from '@/frontend/components/candidates/Remarks';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, Drawer, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from '@/frontend/components/candidates/ui';
+import { Dialog, Drawer, Spinner, useUi } from '@/frontend/components/candidates/ui';
+import {
+    EmptyBlock, K_AREA, K_BTN, K_BTN_DANGER, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN_PRIMARY, K_CARD, K_CARD_BASE, K_FIELD, K_LABEL, K_TABLE, K_TABLE_WRAP, K_TD, K_TH, K_TH_R, K_TR, K_WELL,
+    Loading, PageHeader, type PillTone, SearchBox, Segmented, SelectPill, StatusPill,
+} from '@/frontend/components/candidates/page-kit';
 
 /*
  * Hiring requests (owner 2026-11-17): Stages 1 and 2 of the Recruitment Module spec. One screen in two homes: the
@@ -26,7 +29,8 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, Drawer, EmptyState
  * the raiser of a request on hold may confirm it is still needed (spec A24).
  */
 
-const STATUS_TONE: Record<RequisitionStatus, 'success' | 'info' | 'warn' | 'neutral'> = { draft: 'neutral', submitted: 'info', on_hold: 'warn', sent_back: 'warn', approved: 'success', rejected: 'neutral', withdrawn: 'neutral' };
+const STATUS_TONE: Record<RequisitionStatus, PillTone> = { draft: 'grey', submitted: 'amber', on_hold: 'amber', sent_back: 'blue', approved: 'green', rejected: 'red', withdrawn: 'grey' };
+const INPUT = `${K_FIELD} w-full`;
 const lpa = (v: number | null) => (v === null ? '—' : `₹${(v / 100_000).toLocaleString('en-IN', { maximumFractionDigits: 1 })} LPA`);
 /** The form keeps rupees per year as lakhs typed by the user ("6" = ₹6 LPA). */
 const toLakhs = (v: number | null) => (v === null ? '' : String(v / 100_000));
@@ -81,6 +85,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const [dept, setDept] = useState('');
     const [loc, setLoc] = useState('');
     const [status, setStatus] = useState<RequisitionStatus | ''>('');
+    const [query, setQuery] = useState('');
     const [form, setForm] = useState<{ open: boolean; requisition: Requisition | null }>({ open: false, requisition: null });
     const [openId, setOpenId] = useState<string | null>(null);
     useEffect(() => {
@@ -101,8 +106,11 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const norm = (v: string | null) => (v ?? '').trim().toLowerCase();
     const shown = all
         .filter(r => filter === 'all' ? true : filter === 'mine' ? waitingOnMe(r) : ['draft', 'submitted', 'on_hold', 'sent_back'].includes(r.status))
-        .filter(r => (!dept || norm(r.department) === dept) && (!loc || norm(r.location) === loc) && (!status || r.status === status));
+        .filter(r => (!dept || norm(r.department) === dept) && (!loc || norm(r.location) === loc) && (!status || r.status === status))
+        .filter(r => !query.trim() || [r.roleTitle, r.requisitionNo, r.raisedByName, r.department, r.location].some(v => norm(v).includes(query.trim().toLowerCase())));
     const forMe = all.filter(waitingOnMe).length;
+    const openCount = all.filter(r => ['draft', 'submitted', 'on_hold', 'sent_back'].includes(r.status)).length;
+    const approvedCount = all.filter(r => r.status === 'approved').length;
     // The spec's tracker filters: department, location, status (the values the requests hold).
     const choices = (pick: (r: Requisition) => string | null) => {
         const seen = new Map<string, string>();
@@ -116,94 +124,106 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
     const formDepartments = [...new Set([...(state?.departments ?? []), ...deptChoices.map(([, v]) => v)])].sort((a, b) => a.localeCompare(b));
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-5">
             <RequisitionForm orgId={orgId} open={form.open} requisition={form.requisition} departments={formDepartments} hierarchy={state?.hierarchy?.departments ?? []} onClose={() => setForm(f => ({ ...f, open: false }))}
                 onSaved={r => { setForm({ open: false, requisition: null }); refresh(); if (r.status === 'draft') setOpenId(r.id); }} />
             <RequisitionDrawer orgId={orgId} id={openId} onClose={() => setOpenId(null)} onChanged={refresh}
                 onEdit={r => { setOpenId(null); setForm({ open: true, requisition: r }); }} />
 
-            <section className={`${CARD} flex flex-wrap items-center gap-x-4 gap-y-3 border border-dashed border-border px-4 py-4 sm:px-6`} aria-label="Raise a hiring request">
-                <span className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-elevated text-primary-dark sm:inline-flex" aria-hidden><Briefcase className="h-5 w-5" /></span>
-                <div className="min-w-0 flex-1 basis-72">
-                    <p className="font-display text-base font-semibold text-text-primary">{mode === 'hr' ? 'Manpower requisitions' : 'Hiring requests'}</p>
-                    <p className="text-sm text-text-secondary">{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to its department head, then the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
-                    {access && !access.configured && <p className="mt-1 flex items-center gap-x-1.5 text-xs text-amber-800"><AlertTriangle className="h-3.5 w-3.5" aria-hidden />The approvers are not set yet: ask the Tech team to set them in the Tech dashboard → HR Configs. Requests can be drafted but not submitted.</p>}
-                </div>
-                {mode === 'manager' && access?.canRaise && <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={BTN_PRIMARY}><Plus className="h-4 w-4" />Raise a request</button>}
-                {mode === 'manager' && access && !access.canRaise && <p className="basis-full text-xs text-text-secondary">{headOf.length ? 'You see the requests raised for the departments you head, and can endorse them. ' : 'You can follow your earlier requests here. '}Raising a new one is not switched on for your login: the Tech team decides who can.</p>}
-                {mode === 'manager' && access?.canRaise && headOf.length > 0 && <p className="basis-full text-xs text-text-secondary">You also see the requests raised for the departments you head, and can endorse them.</p>}
-            </section>
+            <PageHeader title={mode === 'hr' ? 'Requisitions' : 'My requests'}
+                sub={state ? `${all.length} ${all.length === 1 ? 'request' : 'requests'} · ${openCount} open · ${approvedCount} approved${forMe ? ` · ${forMe} waiting on you` : ''}` : 'Loading'}
+                actions={mode === 'manager' && access?.canRaise ? <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={K_BTN_PRIMARY}><Plus className="h-4 w-4" aria-hidden />Raise a request</button> : undefined} />
 
-            <section className={`${CARD} overflow-hidden`} aria-label="Hiring requests">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
-                    <h2 className="font-display text-base font-semibold text-text-primary">{mode === 'hr' ? 'Requisition tracker' : 'My requests'}</h2>
-                    <div role="group" aria-label="Which requests" className="inline-grid grid-cols-3 gap-x-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
-                        {([['open', 'Open'], ['mine', forMe ? `Waiting on me · ${forMe}` : 'Waiting on me'], ['all', 'All']] as const).map(([id, label]) => (
-                            <button key={id} type="button" onClick={() => setFilter(id)} aria-pressed={filter === id}
-                                className={`h-8 rounded-lg px-3 text-sm font-semibold transition-colors ${filter === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>{label}</button>
-                        ))}
-                    </div>
-                    {all.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter the requests">
-                            <label className="sr-only" htmlFor="req-f-dept">Department</label>
-                            <select id="req-f-dept" value={dept} onChange={e => setDept(e.target.value)} className={`${INPUT} h-8 w-auto min-w-[140px] px-2 text-sm`}>
-                                <option value="">All departments</option>
-                                {deptChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
-                            <label className="sr-only" htmlFor="req-f-loc">Location</label>
-                            <select id="req-f-loc" value={loc} onChange={e => setLoc(e.target.value)} className={`${INPUT} h-8 w-auto min-w-[130px] px-2 text-sm`}>
-                                <option value="">All locations</option>
-                                {locChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                            </select>
-                            <label className="sr-only" htmlFor="req-f-status">Status</label>
-                            <select id="req-f-status" value={status} onChange={e => setStatus(e.target.value as RequisitionStatus | '')} className={`${INPUT} h-8 w-auto min-w-[130px] px-2 text-sm`}>
-                                <option value="">Any status</option>
-                                {statusChoices.map(st => <option key={st} value={st}>{REQUISITION_STATUS_LABELS[st]}</option>)}
-                            </select>
-                            {(dept || loc || status) && <button type="button" onClick={() => { setDept(''); setLoc(''); setStatus(''); }} className={`${BTN_GHOST} h-8`}>Clear</button>}
-                        </div>
-                    )}
+            <div className={`${K_CARD} flex gap-x-3 px-4 py-3`} aria-label="How hiring requests work">
+                <Briefcase className="mt-0.5 hidden h-4 w-4 shrink-0 text-primary sm:block" aria-hidden />
+                <div className="min-w-0 space-y-1 text-sm text-text-secondary">
+                    <p>{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to its department head, then the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
+                    {access && !access.configured && <p className="flex items-center gap-x-1.5 text-xs font-medium text-amber-800 dark:text-amber-300"><AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />The approvers are not set yet: ask the Tech team to set them in the Tech dashboard → HR Configs. Requests can be drafted but not submitted.</p>}
+                    {mode === 'manager' && access && !access.canRaise && <p className="text-xs text-text-tertiary">{headOf.length ? 'You see the requests raised for the departments you head, and can endorse them. ' : 'You can follow your earlier requests here. '}Raising a new one is not switched on for your login: the Tech team decides who can.</p>}
+                    {mode === 'manager' && access?.canRaise && headOf.length > 0 && <p className="text-xs text-text-tertiary">You also see the requests raised for the departments you head, and can endorse them.</p>}
                 </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Filter the requests">
+                <SearchBox value={query} onChange={setQuery} placeholder="Search role, number or person" label="Search the requests" className="w-full sm:w-64" maxLength={80} />
+                <Segmented label="Which requests" value={filter} onChange={setFilter}
+                    options={[{ value: 'open', label: 'Open' }, { value: 'mine', label: forMe ? `Waiting on me · ${forMe}` : 'Waiting on me' }, { value: 'all', label: 'All' }]} />
+                {all.length > 0 && <>
+                    <SelectPill label="Department" value={dept} onChange={setDept} className="min-w-[150px]">
+                        <option value="">All departments</option>
+                        {deptChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </SelectPill>
+                    <SelectPill label="Location" value={loc} onChange={setLoc} className="min-w-[140px]">
+                        <option value="">All locations</option>
+                        {locChoices.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </SelectPill>
+                    <SelectPill label="Status" value={status} onChange={v => setStatus(v as RequisitionStatus | '')} className="min-w-[130px]">
+                        <option value="">Any status</option>
+                        {statusChoices.map(st => <option key={st} value={st}>{REQUISITION_STATUS_LABELS[st]}</option>)}
+                    </SelectPill>
+                </>}
+                {(dept || loc || status || query) && <button type="button" onClick={() => { setDept(''); setLoc(''); setStatus(''); setQuery(''); }} className={K_BTN_GHOST}>Clear</button>}
+            </div>
+
+            <section className={`${K_CARD} overflow-hidden`} aria-label={mode === 'hr' ? 'Requisition tracker' : 'My requests'}>
                 {!state ? (
-                    <p className="flex items-center gap-x-2 px-4 py-6 text-sm text-text-tertiary sm:px-6"><Spinner className="h-3.5 w-3.5" />Loading</p>
+                    <div className="px-4"><Loading /></div>
                 ) : shown.length === 0 ? (
-                    <EmptyState icon={ClipboardList} title={all.length ? 'Nothing here' : 'No hiring requests yet'}>{all.length ? 'Try another filter.' : mode === 'hr' ? 'Requests appear here when someone raises one from “Hiring requests” in their sidebar.' : 'Raise the first one above: the role, the budget band and why it is needed. The HR Head reviews it.'}</EmptyState>
+                    <EmptyBlock icon={ClipboardList} title={all.length ? 'Nothing here' : 'No hiring requests yet'}>{all.length ? 'Try another filter.' : mode === 'hr' ? 'Requests appear here when someone raises one from “Hiring requests” in their sidebar.' : 'Raise the first one: the role, the budget band and why it is needed.'}</EmptyBlock>
                 ) : (
-                    <ul className="divide-y divide-border-subtle">
-                        {shown.map(r => {
-                            const late = r.status === 'submitted' && r.ageDays > SLA_DAYS;
-                            return (
-                                <li key={r.id} className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 sm:px-6">
-                                    <button type="button" onClick={() => setOpenId(r.id)} className="min-w-0 flex-1 basis-64 text-left">
-                                        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                            <span className="font-display text-[15px] font-semibold text-text-primary hover:underline">{r.roleTitle}</span>
-                                            {r.requisitionNo && <span className="text-xs tabular-nums text-text-tertiary">{r.requisitionNo}</span>}
-                                            <Tag tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</Tag>
-                                            {waitingOnMe(r) && <Tag tone="warn">Your decision</Tag>}
-                                            {(r.endorsedBy?.length ?? 0) > 0 && <Tag tone="success">Endorsed</Tag>}
-                                        </span>
-                                        <span className="mt-0.5 block truncate text-xs text-text-secondary">
-                                            {[r.department, r.location, `${r.positions} ${r.positions === 1 ? 'position' : 'positions'}`, r.budgetMaxCtc !== null ? `${lpa(r.budgetMinCtc)} to ${lpa(r.budgetMaxCtc)}` : null, mode === 'hr' ? `by ${r.raisedByName ?? '—'}` : null].filter(Boolean).join(' · ')}
-                                        </span>
-                                    </button>
-                                    <div className="w-36 shrink-0">
-                                        <p className={LABEL}>Waiting on</p>
-                                        <p className="truncate text-sm font-medium text-text-primary">{r.currentLevel ? `${r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]}` : <span className="font-normal text-text-tertiary">—</span>}</p>
-                                        {r.currentLevel && <p className="text-xs text-text-tertiary">{APPROVAL_LEVEL_LABELS[r.currentLevel]}{r.needsDirector ? ' · out of plan or above the CTC level' : ''}</p>}
-                                    </div>
-                                    <div className="w-24 shrink-0">
-                                        <p className={LABEL}>In pipeline</p>
-                                        <p className={`${NUM_SM} text-text-primary`} title={r.positionId ? 'Candidates in the position opened from this request' : 'Counted once the request is approved and its position opens'}>{r.pipelineCount ?? <span className="font-normal text-text-tertiary">—</span>}</p>
-                                    </div>
-                                    <div className="w-24 shrink-0">
-                                        <p className={LABEL}>{r.status === 'submitted' || r.status === 'on_hold' ? 'Age' : 'Took'}</p>
-                                        <p className={`${NUM_SM} ${late ? 'text-red-700' : 'text-text-primary'}`}>{r.submittedAt ? <>{r.ageDays} <span className="text-xs font-normal text-text-tertiary">{r.ageDays === 1 ? 'day' : 'days'}</span></> : '—'}</p>
-                                    </div>
-                                    <button type="button" onClick={() => setOpenId(r.id)} className={waitingOnMe(r) ? BTN_PRIMARY : BTN_SECONDARY}>{waitingOnMe(r) ? 'Decide' : 'Open'}</button>
-                                </li>
-                            );
-                        })}
-                    </ul>
+                    <div className={K_TABLE_WRAP}>
+                        <table className={`${K_TABLE} min-w-[820px]`}>
+                            <thead>
+                                <tr>
+                                    <th scope="col" className={K_TH}>Role</th>
+                                    <th scope="col" className={K_TH}>Status</th>
+                                    <th scope="col" className={K_TH}>Waiting on</th>
+                                    <th scope="col" className={K_TH_R}>In pipeline</th>
+                                    <th scope="col" className={K_TH_R}>Age</th>
+                                    <th scope="col" className={K_TH}><span className="sr-only">Action</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {shown.map(r => {
+                                    const late = r.status === 'submitted' && r.ageDays > SLA_DAYS;
+                                    const mine = waitingOnMe(r);
+                                    return (
+                                        <tr key={r.id} className={K_TR}>
+                                            <td className={`${K_TD} max-w-[360px]`}>
+                                                <button type="button" onClick={() => setOpenId(r.id)} className="block max-w-full rounded text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                                                    <span className="flex flex-wrap items-center gap-x-2">
+                                                        <span className="font-semibold text-text-primary hover:underline">{r.roleTitle}</span>
+                                                        {r.requisitionNo && <span className="text-xs tabular-nums text-text-tertiary">{r.requisitionNo}</span>}
+                                                    </span>
+                                                    <span className="mt-0.5 block truncate text-xs text-text-tertiary">
+                                                        {[r.department, r.location, `${r.positions} ${r.positions === 1 ? 'position' : 'positions'}`, r.budgetMaxCtc !== null ? `${lpa(r.budgetMinCtc)} to ${lpa(r.budgetMaxCtc)}` : null, mode === 'hr' ? `by ${r.raisedByName ?? '—'}` : null].filter(Boolean).join(' · ')}
+                                                    </span>
+                                                </button>
+                                            </td>
+                                            <td className={K_TD}>
+                                                <span className="flex flex-wrap items-center gap-1.5">
+                                                    <StatusPill tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</StatusPill>
+                                                    {mine && <StatusPill tone="teal">Your decision</StatusPill>}
+                                                    {(r.endorsedBy?.length ?? 0) > 0 && <StatusPill tone="green">Endorsed</StatusPill>}
+                                                </span>
+                                            </td>
+                                            <td className={`${K_TD} max-w-[200px]`}>
+                                                <p className="truncate font-medium text-text-primary">{r.currentLevel ? `${r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]}` : <span className="font-normal text-text-tertiary">—</span>}</p>
+                                                {r.currentLevel && <p className="truncate text-xs text-text-tertiary" title={r.needsDirector ? 'Out of plan or above the CTC level' : undefined}>{APPROVAL_LEVEL_LABELS[r.currentLevel]}{r.needsDirector ? ' · out of plan or above the CTC level' : ''}</p>}
+                                            </td>
+                                            <td className={`${K_TD} text-right font-medium tabular-nums text-text-primary`} title={r.positionId ? 'Candidates in the position opened from this request' : 'Counted once the request is approved and its position opens'}>{r.pipelineCount ?? <span className="font-normal text-text-tertiary">—</span>}</td>
+                                            <td className={`${K_TD} whitespace-nowrap text-right font-medium tabular-nums ${late ? 'text-red-700 dark:text-red-400' : 'text-text-primary'}`}>
+                                                {r.submittedAt ? <>{r.ageDays} <span className="text-xs font-normal text-text-tertiary">{r.ageDays === 1 ? 'day' : 'days'}{r.status === 'submitted' || r.status === 'on_hold' ? '' : ' taken'}</span></> : <span className="font-normal text-text-tertiary">—</span>}
+                                            </td>
+                                            <td className={`${K_TD} text-right`}>
+                                                <button type="button" onClick={() => setOpenId(r.id)} className={mine ? K_BTN_PRIMARY : K_BTN} aria-label={`${mine ? 'Decide on' : 'Open'} ${r.roleTitle}`}>{mine ? 'Decide' : 'Open'}</button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </section>
         </div>
@@ -274,7 +294,7 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
 
     const field = (label: string, id: string, input: React.ReactNode, hint?: string) => (
         <div className="min-w-0">
-            <label htmlFor={id} className={LABEL}>{label}{hint ? <span className="text-text-tertiary"> · {hint}</span> : null}</label>
+            <label htmlFor={id} className={K_LABEL}>{label}{hint ? <span className="text-text-tertiary"> · {hint}</span> : null}</label>
             <div className="mt-1.5">{input}</div>
         </div>
     );
@@ -283,16 +303,16 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
             title={editing ? `Edit request${requisition.requisitionNo ? ` · ${requisition.requisitionNo}` : ''}` : 'Raise a hiring request'}
             description="Stage 1 of the hiring flow. The department head reviews it first, then the HR Head; an out-of-plan role, or one above the CTC level, also goes to the Director."
             footer={<>
-                <button type="button" onClick={cancel} disabled={!!busy} className={BTN_GHOST}>Cancel</button>
-                <button type="button" onClick={() => void save(false)} disabled={!!busy || !f.roleTitle.trim()} className={BTN_SECONDARY}>{busy === 'draft' && <Spinner />}Save as draft</button>
-                <button type="button" onClick={() => void save(true)} disabled={!!busy || !canSubmit} className={BTN_PRIMARY} title={canSubmit ? undefined : 'Needs the department and role from the list, the budget band maximum, the justification, the place in the structure and the internal mobility answer'}>{busy === 'submit' ? <Spinner /> : <Send className="h-4 w-4" />}Submit for approval</button>
+                <button type="button" onClick={cancel} disabled={!!busy} className={K_BTN_GHOST}>Cancel</button>
+                <button type="button" onClick={() => void save(false)} disabled={!!busy || !f.roleTitle.trim()} className={K_BTN}>{busy === 'draft' && <Spinner />}Save as draft</button>
+                <button type="button" onClick={() => void save(true)} disabled={!!busy || !canSubmit} className={K_BTN_PRIMARY} title={canSubmit ? undefined : 'Needs the department and role from the list, the budget band maximum, the justification, the place in the structure and the internal mobility answer'}>{busy === 'submit' ? <Spinner /> : <Send className="h-4 w-4" />}Submit for approval</button>
             </>}
         >
             <div className="space-y-5">
                 {restored && (
-                    <p role="status" className="flex flex-wrap items-center gap-x-2 rounded-lg bg-info/10 px-3 py-2 text-sm text-text-primary">
+                    <p role="status" className="flex flex-wrap items-center gap-x-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-500/30">
                         Brought back what you typed before. Nothing is sent until you save or submit.
-                        <button type="button" onClick={discardTyped} className="font-semibold text-primary-dark underline underline-offset-2">Start over</button>
+                        <button type="button" onClick={discardTyped} className="rounded font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Start over</button>
                     </p>
                 )}
                 <section className="grid gap-4 sm:grid-cols-2">
@@ -334,7 +354,7 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
                     {f.requestType === 'replacement' && field('Employee being replaced', 'req-rep', <input id="req-rep" value={f.replacingName} onChange={e => set('replacingName', e.target.value)} maxLength={120} className={INPUT} />)}
                     {field('Reporting manager', 'req-rm', <input id="req-rm" value={f.reportingManager} onChange={e => set('reportingManager', e.target.value)} maxLength={120} className={INPUT} />)}
                 </section>
-                <section className={`${WELL} grid gap-4 px-4 py-4 sm:grid-cols-2`} aria-label="Requirements">
+                <section className={`${K_WELL} grid gap-4 px-4 py-4 sm:grid-cols-2`} aria-label="Requirements">
                     {field('Budget band, minimum', 'req-bmin', <input id="req-bmin" type="number" min={0} step={0.5} value={f.budgetMin} onChange={e => set('budgetMin', e.target.value)} placeholder="e.g. 4" className={INPUT} />, 'LPA, CTC')}
                     {field('Budget band, maximum', 'req-bmax', <input id="req-bmax" type="number" min={0} step={0.5} value={f.budgetMax} onChange={e => set('budgetMax', e.target.value)} placeholder="e.g. 6" className={INPUT} />, 'LPA, CTC · required')}
                     {field('Required skills', 'req-skills', <input id="req-skills" value={f.requiredSkills} onChange={e => set('requiredSkills', e.target.value)} placeholder="MEP, BMS, HVAC" className={INPUT} />, 'comma-separated')}
@@ -342,8 +362,8 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
                     {field('Qualification', 'req-qual', <input id="req-qual" value={f.qualification} onChange={e => set('qualification', e.target.value)} maxLength={200} placeholder="e.g. B.E. Electrical" className={INPUT} />)}
                     {field('Target joining date', 'req-date', <input id="req-date" type="date" value={f.targetJoiningDate} onChange={e => set('targetJoiningDate', e.target.value)} className={INPUT} />)}
                 </section>
-                {field('Justification', 'req-why', <textarea id="req-why" rows={4} value={f.justification} onChange={e => set('justification', e.target.value)} maxLength={4000} placeholder="Why the role is needed now: the work, the site, what happens without it" className={`${INPUT} h-auto min-h-[100px] resize-y py-2.5 leading-relaxed`} />, 'required to submit')}
-                {field('Where it sits in the current structure', 'req-structure', <textarea id="req-structure" rows={2} value={f.structureNote} onChange={e => set('structureNote', e.target.value)} maxLength={2000} placeholder="e.g. Reports to the Cluster Head, Thane; a new seat next to the two Community Managers" className={`${INPUT} h-auto min-h-[64px] resize-y py-2.5 leading-relaxed`} />, 'required to submit')}
+                {field('Justification', 'req-why', <textarea id="req-why" rows={4} value={f.justification} onChange={e => set('justification', e.target.value)} maxLength={4000} placeholder="Why the role is needed now: the work, the site, what happens without it" className={`${K_AREA} min-h-[100px]`} />, 'required to submit')}
+                {field('Where it sits in the current structure', 'req-structure', <textarea id="req-structure" rows={2} value={f.structureNote} onChange={e => set('structureNote', e.target.value)} maxLength={2000} placeholder="e.g. Reports to the Cluster Head, Thane; a new seat next to the two Community Managers" className={`${K_AREA} min-h-[64px]`} />, 'required to submit')}
                 {field('Internal mobility', 'req-mobility', (
                     <select id="req-mobility" value={f.internalMobility} onChange={e => set('internalMobility', e.target.value as FormState['internalMobility'])} className={`${INPUT} sm:max-w-md`}>
                         <option value="">Could someone already in the company fill it?</option>
@@ -413,7 +433,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
         ['Qualification', r.qualification], ['Target joining', r.targetJoiningDate ? formatDate(r.targetJoiningDate) : null], ['Reporting manager', r.reportingManager],
         ['Raised by', `${r.raisedByName ?? '—'}${r.submittedAt ? `, ${formatDate(r.submittedAt)}` : ''}`],
         ['Internal mobility', r.internalMobility === true ? 'Yes: someone internal may be eligible' : r.internalMobility === false ? 'No: hire from outside' : null],
-        ...(r.roleIsNew ? [['New designation', <Tag key="new" tone="warn">Raised under “Others”</Tag>] as [string, React.ReactNode]] : []),
+        ...(r.roleIsNew ? [['New designation', <StatusPill key="new" tone="amber">Raised under “Others”</StatusPill>] as [string, React.ReactNode]] : []),
         ['In the approved plan', r.inPlan === null ? <span className="text-text-tertiary">not reviewed yet</span> : r.inPlan ? 'Yes' : 'No: out of plan'],
         ...((r.endorsedBy?.length ?? 0) > 0 ? [['Endorsed by', r.endorsedBy!.join(', ')] as [string, React.ReactNode]] : []),
         ...(r.positionId ? [['Candidates in pipeline', String(r.pipelineCount ?? 0)] as [string, React.ReactNode]] : []),
@@ -421,46 +441,46 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
 
     return (
         <Drawer open={!!id} onClose={onClose} labelId="req-drawer-title" title={r ? `${r.roleTitle}${r.requisitionNo ? ` · ${r.requisitionNo}` : ''}` : 'Hiring request'}
-            subtitle={r ? <span className="flex flex-wrap items-center gap-x-2"><Tag tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</Tag>{r.currentLevel && <span className="text-xs text-text-secondary">waiting on {r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]} ({APPROVAL_LEVEL_LABELS[r.currentLevel]}) · {r.ageDays} {r.ageDays === 1 ? 'day' : 'days'}</span>}</span> : undefined}
+            subtitle={r ? <span className="flex flex-wrap items-center gap-x-2"><StatusPill tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</StatusPill>{r.currentLevel && <span className="text-xs text-text-secondary">waiting on {r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]} ({APPROVAL_LEVEL_LABELS[r.currentLevel]}) · {r.ageDays} {r.ageDays === 1 ? 'day' : 'days'}</span>}</span> : undefined}
             footer={r && s ? <>
-                {s.canEdit && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={BTN_SECONDARY}>Edit</button>}
-                {s.canEdit && r.status === 'draft' && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'submit' }, 'Submitted for approval')} disabled={busy} className={BTN_PRIMARY}><Send className="h-4 w-4" />Submit for approval</button>}
-                {s.canEdit && r.status === 'sent_back' && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={BTN_PRIMARY}>Change and resubmit</button>}
+                {s.canEdit && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={K_BTN}>Edit</button>}
+                {s.canEdit && r.status === 'draft' && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'submit' }, 'Submitted for approval')} disabled={busy} className={K_BTN_PRIMARY}><Send className="h-4 w-4" />Submit for approval</button>}
+                {s.canEdit && r.status === 'sent_back' && <button type="button" onClick={() => onEdit(r)} disabled={busy} className={K_BTN_PRIMARY}>Change and resubmit</button>}
                 {/* Spec A24: the raiser tells the approver a request on hold is still needed */}
-                {s.canConfirmNeeded && !confirmWithdraw && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'still_needed' }, 'The approver is told the role is still needed')} disabled={busy} className={BTN_PRIMARY}><Check className="h-4 w-4" />Still needed</button>}
+                {s.canConfirmNeeded && !confirmWithdraw && <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'still_needed' }, 'The approver is told the role is still needed')} disabled={busy} className={K_BTN_PRIMARY}><Check className="h-4 w-4" />Still needed</button>}
                 {/* Owner 2026-11-20: only the person who raised it sees Withdraw (the server refuses anyone else) */}
                 {s.canWithdraw && !s.canDecide && (
                     confirmWithdraw
-                        ? <><span className="mr-auto text-sm text-text-secondary">Withdraw this request?</span><button type="button" onClick={() => setConfirmWithdraw(false)} className={BTN_GHOST}>Keep</button><button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'withdraw', reason: reason.trim() || undefined }, 'Withdrawn')} disabled={busy} className={BTN_DANGER_FILLED}>Withdraw</button></>
-                        : <button type="button" onClick={() => setConfirmWithdraw(true)} disabled={busy} className={`${BTN_GHOST} mr-auto text-error`}>Withdraw</button>
+                        ? <><span className="mr-auto text-sm text-text-secondary">Withdraw this request?</span><button type="button" onClick={() => setConfirmWithdraw(false)} className={K_BTN_GHOST}>Keep</button><button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'withdraw', reason: reason.trim() || undefined }, 'Withdrawn')} disabled={busy} className={K_BTN_DANGER}>Withdraw</button></>
+                        : <button type="button" onClick={() => setConfirmWithdraw(true)} disabled={busy} className={`${K_BTN_GHOST_DANGER} mr-auto`}>Withdraw</button>
                 )}
             </> : undefined}
         >
-            {!r || !s ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p> : (
+            {!r || !s ? <Loading /> : (
                 <div className="space-y-4">
                     {s.canDecide && (
-                        <section className={`${CARD} px-4 py-4 ring-1 ring-inset ring-primary/40`} aria-label="Your decision">
+                        <section className={`${K_CARD_BASE} border-primary/40 px-4 py-4`} aria-label="Your decision">
                             <p className="text-sm font-semibold text-text-primary">Your decision as {APPROVAL_LEVEL_LABELS[actingLevel!]}</p>
                             <p className="mt-0.5 text-xs text-text-secondary">
                                 {r.currentLevel === 'hod' && actingLevel === 'hr_head' ? 'The department head has not decided in 48 hours, so you can decide in their place. ' : ''}
                                 {r.status === 'on_hold' ? 'This request is on hold. Resume it to decide.' : actingLevel === 'hod' ? 'Your approval passes it to the HR Head.' : actingLevel === 'hr_head' ? 'In plan and within the CTC level, your approval opens the role and the Director is informed. Out of plan, or above the level, it goes to the Director.' : 'Your approval opens the role.'}
                             </p>
                             {r.status === 'on_hold' ? (
-                                <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setDecision('resume'); decide('resume'); }} disabled={busy} className={BTN_PRIMARY}>Resume</button></div>
+                                <div className="mt-3 flex justify-end"><button type="button" onClick={() => { setDecision('resume'); decide('resume'); }} disabled={busy} className={K_BTN_PRIMARY}>Resume</button></div>
                             ) : (
                                 <>
                                     <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
                                         {([['approve', 'Approve'], ['send_back', 'Send back'], ['hold', 'Put on hold'], ['reject', 'Reject']] as const).map(([d, label]) => (
                                             <button key={d} type="button" onClick={() => setDecision(d)} aria-pressed={decision === d}
-                                                className={`h-10 rounded-lg px-3 text-sm font-semibold ring-1 ring-inset ${decision === d ? (d === 'reject' ? 'bg-error/10 text-red-800 ring-error' : 'bg-primary/10 text-primary-dark ring-primary') : 'text-text-primary ring-border hover:bg-surface-elevated'}`}>{label}</button>
+                                                className={`h-10 rounded-lg px-3 text-sm font-semibold ring-1 ring-inset focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${decision === d ? (d === 'reject' ? 'bg-red-50 text-red-800 ring-red-600 dark:bg-red-500/15 dark:text-red-300' : 'bg-primary/10 text-primary-dark ring-primary dark:text-primary-light') : 'bg-surface text-text-primary ring-border hover:bg-surface-elevated'}`}>{label}</button>
                                         ))}
                                     </div>
                                     {decision === 'approve' && actingLevel === 'hr_head' && (
-                                        <div className={`${WELL} mt-3 px-3 py-3`}>
+                                        <div className={`${K_WELL} mt-3 px-3 py-3`}>
                                             <p className="text-sm font-semibold text-text-primary">Is this role in the approved headcount plan?</p>
                                             <div className="mt-2 flex gap-x-2">
-                                                <button type="button" onClick={() => setInPlan(true)} aria-pressed={inPlan === true} className={`${BTN_SECONDARY} h-9 ${inPlan === true ? 'ring-[1.5px] ring-inset ring-primary' : ''}`}><Check className="h-4 w-4" />In plan</button>
-                                                <button type="button" onClick={() => setInPlan(false)} aria-pressed={inPlan === false} className={`${BTN_SECONDARY} h-9 ${inPlan === false ? 'ring-[1.5px] ring-inset ring-primary' : ''}`}><X className="h-4 w-4" />Out of plan</button>
+                                                <button type="button" onClick={() => setInPlan(true)} aria-pressed={inPlan === true} className={`${K_BTN} ${inPlan === true ? 'ring-[1.5px] ring-inset ring-primary' : ''}`}><Check className="h-4 w-4" />In plan</button>
+                                                <button type="button" onClick={() => setInPlan(false)} aria-pressed={inPlan === false} className={`${K_BTN} ${inPlan === false ? 'ring-[1.5px] ring-inset ring-primary' : ''}`}><X className="h-4 w-4" />Out of plan</button>
                                             </div>
                                             <p className="mt-1.5 text-xs text-text-secondary">{inPlan === false ? 'Out of plan: the Director approves after you.' : inPlan === true ? 'In plan: approved by you (unless above the CTC level, when the Director approves too).' : ''}</p>
                                         </div>
@@ -468,10 +488,10 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                                     {decision && (
                                         <>
                                             <label htmlFor="req-reason" className="mt-3 block text-xs font-medium text-text-secondary">{decision === 'reject' || decision === 'hold' ? 'Reason' : decision === 'send_back' ? 'What needs to change' : 'Note'} {decision === 'reject' || decision === 'send_back' || decision === 'hold' ? <span className="text-error">*</span> : '(optional)'}</label>
-                                            <textarea id="req-reason" rows={2} value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} className={`${INPUT} mt-1 h-auto min-h-[64px] resize-y py-2 leading-relaxed`} />
+                                            <textarea id="req-reason" rows={2} value={reason} onChange={e => setReason(e.target.value)} maxLength={2000} className={`${K_AREA} mt-1 min-h-[64px]`} />
                                             <div className="mt-3 flex justify-end gap-x-2">
-                                                <button type="button" onClick={() => { setDecision(null); setReason(''); }} disabled={busy} className={BTN_GHOST}>Cancel</button>
-                                                <button type="button" onClick={() => decide()} disabled={busy} className={decision === 'reject' ? BTN_DANGER_FILLED : BTN_PRIMARY}>{busy && <Spinner />}{{ approve: 'Approve', reject: 'Reject', send_back: 'Send back', hold: 'Put on hold', resume: 'Resume' }[decision]}</button>
+                                                <button type="button" onClick={() => { setDecision(null); setReason(''); }} disabled={busy} className={K_BTN_GHOST}>Cancel</button>
+                                                <button type="button" onClick={() => decide()} disabled={busy} className={decision === 'reject' ? K_BTN_DANGER : K_BTN_PRIMARY}>{busy && <Spinner />}{{ approve: 'Approve', reject: 'Reject', send_back: 'Send back', hold: 'Put on hold', resume: 'Resume' }[decision]}</button>
                                             </div>
                                         </>
                                     )}
@@ -480,37 +500,37 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                         </section>
                     )}
                     {s.canEndorse && (
-                        <section className={`${CARD} px-4 py-4 ring-1 ring-inset ring-success/40`} aria-label="Endorse as department head">
+                        <section className={`${K_CARD_BASE} border-emerald-300 px-4 py-4 dark:border-emerald-500/40`} aria-label="Endorse as department head">
                             <p className="text-sm font-semibold text-text-primary">Endorse as head of {r.department}</p>
                             <p className="mt-0.5 text-xs text-text-secondary">Tells the approvers you support this request. It does not approve it, and the HR Head and Director still decide.</p>
                             <label htmlFor="req-endorse-note" className="mt-3 block text-xs font-medium text-text-secondary">Note (optional)</label>
-                            <textarea id="req-endorse-note" rows={2} value={endorseNote} onChange={e => setEndorseNote(e.target.value)} maxLength={1000} className={`${INPUT} mt-1 h-auto min-h-[56px] resize-y py-2 leading-relaxed`} />
+                            <textarea id="req-endorse-note" rows={2} value={endorseNote} onChange={e => setEndorseNote(e.target.value)} maxLength={1000} className={`${K_AREA} mt-1 min-h-[56px]`} />
                             <div className="mt-3 flex justify-end">
-                                <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'endorse', note: endorseNote.trim() || undefined }, 'Endorsed')} disabled={busy} className={BTN_PRIMARY}>{busy ? <Spinner /> : <ThumbsUp className="h-4 w-4" />}Endorse</button>
+                                <button type="button" onClick={() => void act(`/api/recruitment/requisitions/${encodeURIComponent(r.id)}`, { action: 'endorse', note: endorseNote.trim() || undefined }, 'Endorsed')} disabled={busy} className={K_BTN_PRIMARY}>{busy ? <Spinner /> : <ThumbsUp className="h-4 w-4" />}Endorse</button>
                             </div>
                         </section>
                     )}
-                    {r.status === 'sent_back' && r.decisionReason && <div role="status" className="rounded-xl bg-warning/[.08] px-4 py-3 text-sm ring-1 ring-inset ring-warning/40"><span className="font-semibold">Sent back:</span> {r.decisionReason}</div>}
-                    {r.status === 'rejected' && r.decisionReason && <div role="status" className="rounded-xl bg-error/[.06] px-4 py-3 text-sm ring-1 ring-inset ring-error/30"><span className="font-semibold">Rejected:</span> {r.decisionReason}</div>}
-                    {r.status === 'on_hold' && <div role="status" className={`${WELL} px-4 py-3 text-sm`}><span className="font-semibold">On hold</span>{r.holdSince ? ` since ${formatDate(r.holdSince)}` : ''}{r.holdReason ? `: ${r.holdReason}` : ''}</div>}
-                    {r.status === 'approved' && <div role="status" className="rounded-xl bg-success/[.08] px-4 py-3 text-sm ring-1 ring-inset ring-success/40"><span className="font-semibold">Approved</span>{r.decidedAt ? ` on ${formatDate(r.decidedAt)}` : ''}. {r.positionId ? 'The role is open under Recruitment → Positions.' : 'HR opens the position from here.'}</div>}
+                    {r.status === 'sent_back' && r.decisionReason && <div role="status" className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-500/30"><span className="font-semibold">Sent back:</span> {r.decisionReason}</div>}
+                    {r.status === 'rejected' && r.decisionReason && <div role="status" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900 ring-1 ring-inset ring-red-200 dark:bg-red-500/15 dark:text-red-100 dark:ring-red-500/30"><span className="font-semibold">Rejected:</span> {r.decisionReason}</div>}
+                    {r.status === 'on_hold' && <div role="status" className={`${K_WELL} px-4 py-3 text-sm text-text-primary`}><span className="font-semibold">On hold</span>{r.holdSince ? ` since ${formatDate(r.holdSince)}` : ''}{r.holdReason ? `: ${r.holdReason}` : ''}</div>}
+                    {r.status === 'approved' && <div role="status" className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-100 dark:ring-emerald-500/30"><span className="font-semibold">Approved</span>{r.decidedAt ? ` on ${formatDate(r.decidedAt)}` : ''}. {r.positionId ? 'The role is open under Recruitment → Positions.' : 'HR opens the position from here.'}</div>}
                     {r.previous && <p className="text-xs text-text-secondary">Last request for this role: <span className="font-semibold text-text-primary">{r.previous.requisitionNo ?? 'draft'}</span>, {REQUISITION_STATUS_LABELS[r.previous.status].toLowerCase()}, {formatDate(r.previous.createdAt)}.</p>}
 
                     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                        {rows.map(([k, v]) => <div key={k} className="min-w-0"><dt className={LABEL}>{k}</dt><dd className="mt-0.5 break-words font-medium text-text-primary">{v || <span className="font-normal text-text-tertiary">—</span>}</dd></div>)}
+                        {rows.map(([k, v]) => <div key={k} className="min-w-0"><dt className={K_LABEL}>{k}</dt><dd className="mt-0.5 break-words font-medium text-text-primary">{v || <span className="font-normal text-text-tertiary">—</span>}</dd></div>)}
                     </dl>
                     <div>
-                        <p className={LABEL}>Justification</p>
+                        <p className={K_LABEL}>Justification</p>
                         <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.justification || <span className="text-text-tertiary">—</span>}</p>
                     </div>
                     <div>
-                        <p className={LABEL}>Where it sits in the current structure</p>
+                        <p className={K_LABEL}>Where it sits in the current structure</p>
                         <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.structureNote || <span className="text-text-tertiary">—</span>}</p>
                     </div>
                     <section aria-label="History">
-                        <p className={LABEL}>History <span className="font-normal text-text-tertiary">· nothing here is ever edited</span></p>
+                        <p className={K_LABEL}>History <span className="font-normal text-text-tertiary">· nothing here is ever edited</span></p>
                         {s.approvals.length === 0 ? <p className="mt-1 text-sm text-text-tertiary">Not submitted yet.</p> : (
-                            <ol className="mt-2 space-y-2 border-l-2 border-border-subtle pl-3.5">
+                            <ol className="mt-2 space-y-2 border-l-2 border-border pl-3.5">
                                 {s.approvals.map(a => <li key={a.id} className="text-sm"><ApprovalLine a={a} /></li>)}
                             </ol>
                         )}

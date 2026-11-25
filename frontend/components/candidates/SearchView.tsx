@@ -27,7 +27,19 @@ import { RemarkDialog, statusNeedsRemark, useStatusRemark } from './Remarks';
 import RecordForm from './RecordForm';
 import ResultCard from './ResultCard';
 import UnderstoodCard from './UnderstoodCard';
-import { BTN_PRIMARY, BTN_SECONDARY, CARD, Dropdown, Spinner, useUi, WELL, type DropdownOption } from './ui';
+import { Dropdown, Spinner, useUi, type DropdownOption } from './ui';
+
+/*
+ * Recruitment workspace skin (owner 2026-11-25): white cards with a hairline border on the light grey page, an 8px
+ * radius on controls, teal as the one action colour and a visible teal focus ring. Tokens only, so dark mode follows.
+ */
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
+const PANEL = 'rounded-xl border border-border bg-surface';
+const BTN_PRIMARY = `inline-flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+const BTN_SECONDARY = `inline-flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-lg border border-border bg-surface px-3.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+/** The smaller bordered buttons of the bulk bar. */
+const BTN_BAR = `inline-flex h-8 shrink-0 items-center gap-x-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS}`;
+const TEXT_LINK = `rounded font-semibold text-primary underline underline-offset-2 hover:text-primary-dark ${FOCUS}`;
 
 /**
  * The search screen (owner 2026-11-06): keywords and filters change the list at once, straight from the database. AI is
@@ -420,6 +432,23 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                 onClose={() => setPositionOpen(false)}
                 onSaved={p => { setPositionOpen(false); setPositionTitle(p.title); onDataChanged(); }}
             />
+            {/* Page header (workspace skin): the screen's name, the live count under it, the actions on the right. */}
+            <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+                <div className="min-w-0">
+                    <h1 className="text-xl font-semibold tracking-tight text-text-primary">Search</h1>
+                    <p role="status" className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-text-secondary">
+                        <span className="tabular-nums">{total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}</span>
+                        {total !== null && starred.length > 0 && <span>· {starred.length === 1 ? 'have the starred keyword' : 'have every starred keyword'}{nearlyN ? ` · ${formatCount(nearlyN)} more have ${starred.length === 2 ? 'one of the two' : 'some of them'}` : ''}</span>}
+                        {loading && total !== null && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                    </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    {ranked && <button type="button" onClick={() => setRanked(null)} className={BTN_SECONDARY}><X className="h-4 w-4" aria-hidden />Remove ranking</button>}
+                    <button type="button" onClick={() => void rank()} disabled={ranking || !total || !!ranked} className={BTN_PRIMARY}>
+                        {ranking ? <Spinner /> : <Sparkles className="h-4 w-4" aria-hidden />}{ranking ? 'Comparing…' : ranked ? 'Ranked' : 'Rank with AI'}
+                    </button>
+                </div>
+            </header>
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
             {/* Owner 2026-11-24: a recruiter's own named searches. */}
             <SavedSearches orgId={orgId} filters={filters} onLoad={f => { setFilters(f); setPage(1); }} />
@@ -439,7 +468,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
             )}
 
             <div ref={rowRef} className="flex items-start gap-x-4 gap-y-4">
-                {over && overOpen && <button type="button" aria-label="Close filters" onClick={() => setOverOpen(false)} className="fixed inset-0 z-[79] bg-slate-900/30" />}
+                {over && overOpen && <button type="button" aria-label="Close filters" onClick={() => setOverOpen(false)} className="fixed inset-0 z-[79] bg-black/30" />}
 
                 <div
                     style={over ? undefined : { flexBasis: collapsed ? 56 : rail.width }}
@@ -447,7 +476,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                         ? `fixed inset-y-0 left-0 z-[80] w-[min(360px,100vw)] transition-[transform,visibility] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none ${overOpen ? 'visible translate-x-0' : 'invisible -translate-x-full'}`
                         : `sticky top-[var(--panel-sticky-top,5rem)] min-w-0 shrink-0 grow-0 ${dragging ? '' :'transition-[flex-basis] duration-300 ease-[var(--w-ease-patient)] motion-reduce:transition-none'}`}
                 >
-                    <aside aria-label="Filters" className={`${over ? 'h-full rounded-none' : 'max-h-[calc(100dvh/var(--app-zoom,1)-6rem)]'} ${CARD} overflow-y-auto overscroll-contain ${collapsed ? 'p-1.5' : 'px-4 py-4'}`}>
+                    <aside aria-label="Filters" className={`${over ? 'h-full rounded-none border-y-0 border-l-0' : 'max-h-[calc(100dvh/var(--app-zoom,1)-6rem)]'} ${PANEL} overflow-y-auto overscroll-contain ${collapsed ? 'p-1.5' : 'px-4 py-4'}`}>
                         {collapsed
                             ? <FilterStrip activeCount={activeCount} onExpand={() => changeRail({ collapsed: false })} collapseStyle={collapseStyle} />
                             : (
@@ -491,19 +520,18 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                         <div className="flex min-w-0 items-center gap-2.5">
                             {over && (
-                                <button type="button" onClick={() => setOverOpen(true)} aria-expanded={overOpen} className={`${BTN_SECONDARY} h-9 px-3`}>
-                                    <ListFilter className="h-4 w-4" aria-hidden />{activeCount ? `Filters (${activeCount})` : 'Filters'}
+                                <button type="button" onClick={() => setOverOpen(true)} aria-expanded={overOpen} aria-label={activeCount ? `Filters, ${activeCount} in use` : 'Filters'} className={BTN_SECONDARY}>
+                                    <ListFilter className="h-4 w-4" aria-hidden />Filters
+                                    {activeCount > 0 && <span aria-hidden className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-white">{activeCount}</span>}
                                 </button>
                             )}
-                            <p role="status" className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 font-display text-lg font-semibold text-text-primary">
-                                {total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}
-                                {total !== null && starred.length > 0 && <span className="font-body text-sm font-normal text-text-secondary">{starred.length === 1 ? 'have the starred keyword' : 'have every starred keyword'}{nearlyN ? ` · ${formatCount(nearlyN)} more have ${starred.length === 2 ? 'one of the two' : 'some of them'}` : ''}</span>}
-                                {loading && total !== null && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                            <p className="text-sm text-text-secondary">
+                                {total === null ? 'Loading results…' : <>Showing <span className="font-semibold tabular-nums text-text-primary">{formatCount(results.length)}</span> of <span className="tabular-nums">{formatCount(ranked?.matchingCount ?? total)}</span></>}
                             </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                            <span className="text-[13px] font-semibold text-text-secondary">Sort</span>
-                            <div className="w-[218px]">
+                            <span className="text-[13px] font-medium text-text-secondary">Sort by</span>
+                            <div className="w-[218px] max-w-full">
                                 <Dropdown
                                     variant="compact"
                                     label="Sort"
@@ -512,9 +540,6 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                                     onChange={value => { if (value !== 'match') update({ sort: value }); }}
                                 />
                             </div>
-                            <button type="button" onClick={() => void rank()} disabled={ranking || !total || !!ranked} className={`${BTN_PRIMARY} h-9 rounded-[10px] px-3`}>
-                                {ranking ? <Spinner /> : <Sparkles className="h-4 w-4" aria-hidden />}{ranking ? 'Comparing…' : ranked ? 'Ranked' : 'Rank with AI'}
-                            </button>
                         </div>
                     </div>
 
@@ -537,23 +562,22 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                             {filters.includeBlank
                                 ? `Showing ${formatCount(blankCount)} with blank details.`
                                 : `${formatCount(blankCount)} more ${blankCount === 1 ? 'has' : 'have'} blank details.`}
-                            <button type="button" onClick={() => update({ includeBlank: !filters.includeBlank })} className="font-bold text-primary-dark underline">
+                            <button type="button" onClick={() => update({ includeBlank: !filters.includeBlank })} className={TEXT_LINK}>
                                 {filters.includeBlank ? 'Hide them' : 'Show them'}
                             </button>
                         </p>
                     )}
 
                     {ranked && (
-                        <p className="flex flex-wrap items-center gap-x-1 gap-y-1 text-[13px] text-text-secondary">
-                            Ranked by AI.
-                            <button type="button" onClick={() => setRanked(null)} className="font-bold text-primary-dark underline">Remove ranking</button>
+                        <p className="inline-flex items-center gap-x-1.5 rounded-full border border-primary/25 bg-primary/[.06] px-2.5 py-1 text-xs font-semibold text-primary-dark dark:text-primary-light">
+                            <Sparkles className="h-3.5 w-3.5" aria-hidden />Ranked by AI
                         </p>
                     )}
 
                     {notices.length > 0 && (
                         <ul className="space-y-2" aria-live="polite">
                             {notices.map(n => (
-                                <li key={n} className={`${WELL} flex gap-2.5 border-l-2 border-warning px-4 py-3 text-sm text-text-primary`}>
+                                <li key={n} className={`${PANEL} flex gap-2.5 border-l-2 border-l-warning px-4 py-3 text-sm text-text-primary`}>
                                     <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />{n}
                                 </li>
                             ))}
@@ -561,21 +585,21 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                     )}
 
                     {listError && (
-                        <p role="alert" className={`${CARD} flex gap-x-3 gap-y-3 border-l-2 border-error px-4 py-4 text-sm text-text-primary`}>
+                        <p role="alert" className={`${PANEL} flex gap-x-3 gap-y-3 border-l-2 border-l-error px-4 py-4 text-sm text-text-primary`}>
                             <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{listError}
                         </p>
                     )}
 
                     {!list && !listError && [0, 1, 2].map(i => (
-                        <div key={i} className={`${CARD} space-y-3 px-4 py-4 sm:p-6`}>
-                            <div className="flex gap-x-3 gap-y-3"><Skeleton className="h-8 w-8 rounded-xl" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div></div>
+                        <div key={i} className={`${PANEL} space-y-3 p-4 sm:p-5`}>
+                            <div className="flex gap-x-3 gap-y-3"><Skeleton className="h-10 w-10 rounded-full" /><div className="flex-1 space-y-2"><Skeleton className="h-4 w-1/3" /><Skeleton className="h-3 w-1/2" /></div></div>
                             <Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-4/5" />
                         </div>
                     ))}
 
                     {total === 0 && !listError && (
-                        <div className={`${CARD} flex flex-col items-center gap-x-2 gap-y-2 px-4 py-10 text-center`}>
-                            <p className="font-display text-base font-semibold text-text-primary">{active ? 'No candidates match' : 'No candidates yet'}</p>
+                        <div className={`${PANEL} flex flex-col items-center gap-x-2 gap-y-2 px-4 py-10 text-center`}>
+                            <p className="text-base font-semibold text-text-primary">{active ? 'No candidates match' : 'No candidates yet'}</p>
                             {loosen
                                 ? <button type="button" onClick={() => update(loosen.clear)} className={BTN_PRIMARY}>Remove {loosen.label} to see {formatCount(loosen.count)} {loosen.count === 1 ? 'candidate' : 'candidates'}</button>
                                 : <p className="text-sm text-text-secondary">{active ? 'Try removing a few filters or keywords.' : 'Upload a sheet from the Sheets tab to get started.'}</p>}
@@ -583,30 +607,30 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                     )}
 
                     {results.length > 0 && (
-                        <div className={`flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl px-3 py-1.5 transition-colors ${pickedRecords.length ? 'bg-primary-dark text-white' : WELL}`} aria-live="polite">
-                            <label className={`inline-flex cursor-pointer items-center gap-x-2 gap-y-2 text-sm font-semibold ${pickedRecords.length ? 'text-white' : 'text-text-secondary'}`}>
-                                <input type="checkbox" checked={allPicked} onChange={e => pickAll(e.target.checked)} className="h-4 w-4 accent-[var(--primary-dark)]" />
+                        <div className={`flex min-h-12 flex-wrap items-center gap-x-2 gap-y-1.5 rounded-xl border px-3 py-2 transition-colors ${pickedRecords.length ? 'border-primary/30 bg-primary/[.05]' : 'border-border bg-surface'}`} aria-live="polite">
+                            <label className="mr-1 inline-flex cursor-pointer items-center gap-x-2 gap-y-2 text-sm font-semibold text-text-primary">
+                                <input type="checkbox" checked={allPicked} onChange={e => pickAll(e.target.checked)} className={`h-4 w-4 rounded accent-primary ${FOCUS}`} />
                                 {pickedRecords.length ? <span><span className="tabular-nums">{formatCount(pickedRecords.length)}</span> selected</span> : 'Select all shown'}
                             </label>
-                            {/* To the mockup (owner 2026-11-15): the bar goes dark while something is ticked. */}
+                            {/* Workspace skin (owner 2026-11-25): the bar takes a light teal tint while something is ticked. */}
                             {pickedRecords.length > 0 && (
                                 <>
-                                    {bulkBusy && <Spinner className="h-3.5 w-3.5 text-white/80" />}
-                                    <AddToPositionSelect orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} disabled={bulkBusy} onAdded={onDataChanged} dark />
+                                    {bulkBusy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                                    <AddToPositionSelect orgId={orgId} applicationIds={pickedRecords.map(r => r.id)} disabled={bulkBusy} onAdded={onDataChanged} />
                                     {/* Owner 2026-11-24: bulk WhatsApp / email with the application form link */}
-                                    <button type="button" onClick={() => setBulkSend(true)} disabled={bulkBusy} className="inline-flex h-8 items-center gap-x-1.5 rounded-lg border border-white/40 px-3 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"><Send className="h-4 w-4" />Send message</button>
+                                    <button type="button" onClick={() => setBulkSend(true)} disabled={bulkBusy} className={BTN_BAR}><Send className="h-4 w-4" aria-hidden />Send message</button>
                                     <select
                                         aria-label="Set the status of the selected candidates"
                                         value=""
                                         disabled={bulkBusy}
                                         onChange={e => { if (e.target.value) void bulkStatus(e.target.value as RecordStatus); }}
-                                        className="h-8 cursor-pointer rounded-lg border border-white/40 bg-transparent px-2 text-sm font-semibold text-white outline-none focus:border-white disabled:opacity-60 [&>option]:text-text-primary"
+                                        className={`h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary disabled:opacity-60 ${FOCUS}`}
                                     >
                                         <option value="">Change status</option>
                                         {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
                                     </select>
-                                    <button type="button" onClick={exportPicked} className="inline-flex h-8 items-center gap-x-1.5 rounded-lg border border-white/40 px-3 text-sm font-semibold text-white hover:bg-white/10"><Download className="h-4 w-4" />Export (logged)</button>
-                                    <button type="button" onClick={() => pickAll(false)} className="ml-auto inline-flex h-8 items-center gap-x-1 rounded-lg px-2 text-sm font-semibold text-white/80 hover:bg-white/10 hover:text-white"><X className="h-3.5 w-3.5" />Clear</button>
+                                    <button type="button" onClick={exportPicked} className={BTN_BAR}><Download className="h-4 w-4" aria-hidden />Export (logged)</button>
+                                    <button type="button" onClick={() => pickAll(false)} className={`ml-auto inline-flex h-8 items-center gap-x-1 rounded-lg px-2 text-sm font-semibold text-text-secondary hover:bg-muted hover:text-text-primary ${FOCUS}`}><X className="h-3.5 w-3.5" aria-hidden />Clear</button>
                                 </>
                             )}
                         </div>

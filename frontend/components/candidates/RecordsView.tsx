@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, CircleAlert, Download, FileText, PanelRightOpen, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
+import { Ban, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleDot, Download, FileSpreadsheet, FileText, PanelRightOpen, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
 import {
     originLabel, RECORD_STATUSES, recordOrigin, STATUS_LABELS,
     type BulkResponse, type CandidateListResponse, type CandidateRecord, type RecordStatus, type SheetsResponse,
@@ -16,9 +16,7 @@ import { downloadCsv, recordsToCsv } from './export-csv';
 import { formatCount, formatDate, formatDateShort, formatInr, formatMonths, formatNotice } from './format';
 import RecordForm from './RecordForm';
 import { BlacklistedTag, RemarkDialog, statusNeedsRemark } from './Remarks';
-import {
-    BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, StatusBadge, Toggle, useUi, WELL,
-} from './ui';
+import { EmptyState, initials, LABEL, NUM_SM, Spinner, Toggle, useUi } from './ui';
 
 type BlacklistFilter = 'hide' | 'only' | 'all';
 
@@ -28,6 +26,65 @@ type Loaded<T> = { key: string; data: T | null; error: string };
 
 /** Status changes sent at the same time by "Set status" on the ticked records. */
 const BULK_PARALLEL = 4;
+
+/*
+ * Recruitment workspace skin (owner 2026-11-25): a page header, a toolbar of bordered pill filters, and the list as a
+ * clean table in a white card (light grey header row, 52px rows). Neutral white/grey with teal as the action colour;
+ * tokens only, and every hardcoded tint has a dark: pair.
+ */
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
+const PANEL = 'rounded-xl border border-border bg-surface';
+const BTN_PRIMARY = `inline-flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-lg bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+const BTN_SECONDARY = `inline-flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-lg border border-border bg-surface px-3.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+const BTN_GHOST = `inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+const BTN_DANGER_GHOST = `inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-error transition-colors hover:bg-error/[.08] disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+const CHECKBOX = `h-4 w-4 cursor-pointer rounded accent-primary ${FOCUS}`;
+
+/** A coloured rounded pill per status: a light tint with dark text of the same family (light and dark pairs). */
+const STATUS_PILL: Record<RecordStatus, string> = {
+    new: 'bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/50 dark:text-sky-300 dark:ring-sky-900',
+    in_process: 'bg-teal-50 text-teal-800 ring-teal-200 dark:bg-teal-950/50 dark:text-teal-300 dark:ring-teal-900',
+    shortlisted: 'bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-900',
+    interview: 'bg-cyan-50 text-cyan-800 ring-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-300 dark:ring-cyan-900',
+    on_hold: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-900',
+    not_responding: 'bg-muted text-text-secondary ring-border',
+    rejected: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/50 dark:text-red-300 dark:ring-red-900',
+    joined: 'bg-green-50 text-green-800 ring-green-200 dark:bg-green-950/50 dark:text-green-300 dark:ring-green-900',
+    others: 'bg-stone-100 text-stone-700 ring-stone-200 dark:bg-stone-800/60 dark:text-stone-300 dark:ring-stone-700',
+};
+
+function StatusPill({ status }: { status: RecordStatus }) {
+    return (
+        <span className={`inline-flex h-6 max-w-full items-center whitespace-nowrap rounded-full px-2.5 text-xs font-semibold ring-1 ring-inset ${STATUS_PILL[status]}`}>
+            {STATUS_LABELS[status]}
+        </span>
+    );
+}
+
+/** 32px round initials, teal on a light teal tint. */
+function RowAvatar({ name, size = 'h-8 w-8 text-xs' }: { name: string; size?: string }) {
+    return (
+        <span aria-hidden className={`${size} inline-flex shrink-0 select-none items-center justify-center rounded-full bg-primary/10 font-semibold text-primary-dark dark:text-primary-light`}>
+            {initials(name)}
+        </span>
+    );
+}
+
+/** A native select dressed as a white bordered pill, with a leading icon and a caret. */
+function PillSelect({ icon: Icon, label, value, onChange, children, active }: {
+    icon: React.ComponentType<{ className?: string }>; label: string; value: string; onChange: (v: string) => void; children: React.ReactNode; active: boolean;
+}) {
+    return (
+        <label className={`relative inline-flex h-9 min-w-0 items-center rounded-full border bg-surface transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary ${active ? 'border-primary/50' : 'border-border hover:border-text-tertiary'}`}>
+            <span className="sr-only">{label}</span>
+            <Icon className={`pointer-events-none absolute left-3 h-4 w-4 ${active ? 'text-primary' : 'text-text-tertiary'}`} aria-hidden />
+            <select value={value} onChange={e => onChange(e.target.value)} className="h-full w-full min-w-0 cursor-pointer appearance-none truncate rounded-full bg-transparent py-0 pl-9 pr-8 text-sm font-medium text-text-primary outline-none">
+                {children}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 h-4 w-4 text-text-tertiary" aria-hidden />
+        </label>
+    );
+}
 
 /** The sheet's name, "From resume" or "Added manually" (owner 2026-11-11); only a sheet's name is in the full text colour. */
 function SourceCell({ r }: { r: CandidateRecord }) {
@@ -212,24 +269,42 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
 
     return (
         <div className="space-y-4">
-            {/* Toolbar */}
+            {/* Page header (workspace skin): the screen's name, the live count under it, the actions on the right. */}
+            <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+                <div className="min-w-0">
+                    <h1 className="text-xl font-semibold tracking-tight text-text-primary">Candidates</h1>
+                    <p role="status" className="mt-0.5 flex items-center gap-2 text-sm text-text-secondary">
+                        <span className="tabular-nums">{!data ? 'Loading…' : `${formatCount(total)} ${deleted ? 'deleted ' : ''}${total === 1 ? 'candidate' : 'candidates'}${filtering ? ' match' : ''}`}</span>
+                        {loading && data && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
+                    </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Toggle checked={deleted} onChange={v => { setDeleted(v); setPage(1); }} label="Show deleted" />
+                    <button type="button" onClick={() => openEditor(null)} className={BTN_PRIMARY}>
+                        <Plus className="h-4 w-4" aria-hidden />Add candidate
+                    </button>
+                </div>
+            </header>
+
+            {/* Toolbar: the search box, then the filters as bordered pill dropdowns */}
             <div className="flex flex-col gap-x-3 gap-y-3 lg:flex-row lg:items-center">
-                <label className="relative flex min-w-0 flex-1 items-center">
+                <label className="relative flex min-w-0 flex-1 items-center lg:max-w-md">
                     <span className="sr-only">Search candidates</span>
                     <Search className="pointer-events-none absolute left-3 h-4 w-4 text-text-tertiary" aria-hidden />
-                    <input value={qInput} onChange={e => setQInput(e.target.value)} placeholder="Search name, email, phone, role, location…" className={`${INPUT} pl-9 pr-9`} />
+                    <input value={qInput} onChange={e => setQInput(e.target.value)} placeholder="Search name, email, phone, role, location…"
+                        className="h-9 w-full min-w-0 rounded-lg border border-border bg-surface pl-9 pr-9 text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary sm:text-sm" />
                     {qInput && (
-                        <button type="button" onClick={() => setQInput('')} aria-label="Clear search" className="absolute right-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-muted">
-                            <X className="h-4 w-4" />
+                        <button type="button" onClick={() => setQInput('')} aria-label="Clear search" className={`absolute right-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary hover:bg-muted hover:text-text-primary ${FOCUS}`}>
+                            <X className="h-4 w-4" aria-hidden />
                         </button>
                     )}
                 </label>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-3 sm:flex sm:flex-wrap sm:items-center">
-                    <select aria-label="Filter by status" value={status} onChange={e => { setStatus(e.target.value as RecordStatus | ''); setPage(1); }} className={`${INPUT} sm:w-40`}>
+                <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-3 sm:flex sm:flex-wrap sm:items-center">
+                    <PillSelect icon={CircleDot} label="Filter by status" value={status} active={!!status} onChange={v => { setStatus(v as RecordStatus | ''); setPage(1); }}>
                         <option value="">All statuses</option>
                         {RECORD_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-                    </select>
-                    <select aria-label="Filter by where the record came from" value={sheetId} onChange={e => { setSheetId(e.target.value); setPage(1); }} className={`${INPUT} sm:w-48`}>
+                    </PillSelect>
+                    <PillSelect icon={FileSpreadsheet} label="Filter by where the record came from" value={sheetId} active={!!sheetId} onChange={v => { setSheetId(v); setPage(1); }}>
                         <option value="">All sources</option>
                         <option value="manual">Added manually</option>
                         <option value="resume">From resume</option>
@@ -238,24 +313,20 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                 {sheets.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                             </optgroup>
                         )}
-                    </select>
-                    <select aria-label="Blacklisted people" value={blacklisted} onChange={e => { setBlacklisted(e.target.value as BlacklistFilter); setPage(1); }} className={`${INPUT} sm:w-44`}>
+                    </PillSelect>
+                    <PillSelect icon={Ban} label="Blacklisted people" value={blacklisted} active={blacklisted !== 'hide'} onChange={v => { setBlacklisted(v as BlacklistFilter); setPage(1); }}>
                         <option value="hide">Hide blacklisted</option>
                         <option value="only">Only blacklisted</option>
                         <option value="all">Everyone</option>
-                    </select>
-                    <Toggle checked={deleted} onChange={v => { setDeleted(v); setPage(1); }} label="Show deleted" />
-                    <button type="button" onClick={() => openEditor(null)} className={`${BTN_PRIMARY} col-span-2 sm:col-span-1`}>
-                        <Plus className="h-4 w-4" />Add candidate
-                    </button>
+                    </PillSelect>
                 </div>
             </div>
 
             {deleted && <p className="text-sm text-text-secondary">Showing deleted records. Restore a record to bring it back into search, or delete it permanently.</p>}
 
             {selected.length > 0 && (
-                <div className={`${WELL} flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-2`} aria-live="polite">
-                    <p className="text-sm text-text-primary"><span className="font-semibold tabular-nums">{formatCount(selected.length)}</span> selected</p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2 rounded-xl border border-primary/30 bg-primary/[.05] px-3 py-2" aria-live="polite">
+                    <p className="pl-1 text-sm text-text-primary"><span className="font-semibold tabular-nums">{formatCount(selected.length)}</span> selected</p>
                     <button type="button" onClick={() => setSelection({ key: '', ids: [] })} className={BTN_GHOST}>Clear</button>
                     <span className="flex-1" />
                     {!deleted && (
@@ -266,12 +337,12 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                 value=""
                                 disabled={statusBusy}
                                 onChange={e => { if (e.target.value) void setStatusOfSelected(e.target.value as RecordStatus); }}
-                                className="h-9 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
+                                className={`h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-sm font-semibold text-text-primary disabled:opacity-60 ${FOCUS}`}
                             >
                                 <option value="">Set status…</option>
                                 {RECORD_STATUSES.map(st => <option key={st} value={st}>{STATUS_LABELS[st]}</option>)}
                             </select>
-                            <button type="button" onClick={exportSelected} className={BTN_GHOST}><Download className="h-4 w-4" />Export to Excel</button>
+                            <button type="button" onClick={exportSelected} className={`${BTN_SECONDARY} h-8 px-3`}><Download className="h-4 w-4" aria-hidden />Export to Excel</button>
                         </>
                     )}
                     {deleted ? (
@@ -286,7 +357,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 </div>
             )}
 
-            <div className={`${CARD} overflow-hidden`}>
+            <div className={`${PANEL} overflow-hidden`}>
                 {list?.error && !loading ? (
                     <div role="alert" className="flex flex-col items-center px-4 py-12 text-center">
                         <CircleAlert className="mb-3 h-8 w-8 text-error" aria-hidden />
@@ -294,7 +365,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         <button type="button" onClick={reload} className={`${BTN_SECONDARY} mt-4`}>Try again</button>
                     </div>
                 ) : !data && loading ? (
-                    <div className="space-y-3 px-4 py-4 sm:p-6">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
+                    <div className="space-y-3 p-4">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                 ) : records.length === 0 ? (
                     <EmptyState icon={Users} title={deleted ? 'No deleted records' : filtering ? 'No matching candidates' : 'No candidates yet'}>
                         {deleted ? 'Deleted records show up here so you can restore them.'
@@ -308,14 +379,15 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                             {records.map(r => (
                                 <li key={r.id} className="space-y-2 px-4 py-3">
                                     <div className="flex items-start gap-x-2 gap-y-2">
-                                        <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="mt-1 h-4 w-4 shrink-0 accent-primary" />
+                                        <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className={`mt-2.5 shrink-0 ${CHECKBOX}`} />
+                                        <RowAvatar name={r.fullName} size="h-9 w-9 text-xs" />
                                         <div className="min-w-0 flex-1">
-                                            <button type="button" onClick={() => setDetails({ record: r, open: true })} className="break-words text-left font-semibold text-text-primary underline-offset-2 hover:underline">{r.fullName}</button>
-                                            {r.role && <p className="text-sm text-primary-dark">For {r.role}</p>}
+                                            <button type="button" onClick={() => setDetails({ record: r, open: true })} className={`break-words rounded text-left font-semibold text-text-primary underline-offset-2 hover:underline ${FOCUS}`}>{r.fullName}</button>
+                                            {r.role && <p className="text-sm text-text-secondary">For {r.role}</p>}
                                             <p className="break-words text-xs text-text-secondary">{[r.currentDesignation, r.location].filter(Boolean).join(' · ') || '—'}</p>
                                         </div>
                                         <span className="flex flex-col items-end gap-1">
-                                            <StatusBadge status={r.status} />
+                                            <StatusPill status={r.status} />
                                             {r.blacklisted && <BlacklistedTag />}
                                         </span>
                                     </div>
@@ -335,52 +407,57 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         {/* md and up: table, scrolling inside its own container */}
                         <div className="hidden overflow-x-auto md:block">
                             <table className="w-full min-w-[1120px] border-collapse text-sm">
-                                <thead className="bg-surface-elevated">
-                                    <tr className={`${LABEL} text-left`}>
-                                        <th scope="col" className="w-10 py-3 pl-4">
-                                            <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select every record on this page" className="h-4 w-4 accent-primary" />
+                                <thead className="border-b border-border bg-surface-elevated">
+                                    <tr className="text-left text-xs font-semibold text-text-secondary">
+                                        <th scope="col" className="w-10 py-2.5 pl-4">
+                                            <input type="checkbox" checked={allOnPage} onChange={togglePage} aria-label="Select every record on this page" className={CHECKBOX} />
                                         </th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Candidate</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Current role</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Sourced for</th>
-                                        <th scope="col" className="px-3 py-3 text-right font-semibold">Relevant exp</th>
-                                        <th scope="col" className="px-3 py-3 text-right font-semibold">Notice</th>
-                                        <th scope="col" className="px-3 py-3 text-right font-semibold">Expected</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Status</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">Came from</th>
-                                        <th scope="col" className="px-3 py-3 font-semibold">{deleted ? 'Deleted' : 'Updated'}</th>
-                                        <th scope="col" className="sticky right-0 bg-surface-elevated px-3 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">Candidate</th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">Current role</th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">Sourced for</th>
+                                        <th scope="col" className="px-3 py-2 text-right font-semibold">Relevant exp</th>
+                                        <th scope="col" className="px-3 py-2 text-right font-semibold">Notice</th>
+                                        <th scope="col" className="px-3 py-2 text-right font-semibold">Expected</th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">Status</th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">Came from</th>
+                                        <th scope="col" className="px-3 py-2 font-semibold">{deleted ? 'Deleted' : 'Updated'}</th>
+                                        <th scope="col" className="sticky right-0 bg-surface-elevated px-3 py-2 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border-subtle">
                                     {records.map(r => (
-                                        <tr key={r.id} className={`group align-middle hover:bg-surface-elevated ${selected.includes(r.id) ? 'bg-primary/[.04]' : ''}`}>
-                                            <td className="w-10 py-2.5 pl-4">
-                                                <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className="h-4 w-4 accent-primary" />
+                                        <tr key={r.id} className={`group h-[52px] align-middle transition-colors hover:bg-surface-elevated ${selected.includes(r.id) ? 'bg-primary/[.04]' : ''}`}>
+                                            <td className="w-10 py-2 pl-4">
+                                                <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className={CHECKBOX} />
                                             </td>
-                                            <td className="max-w-[200px] px-3 py-2.5">
-                                                <button type="button" onClick={() => setDetails({ record: r, open: true })} className="block max-w-full truncate text-left font-semibold text-text-primary underline-offset-2 hover:underline" title={`Open ${r.fullName}`}>{r.fullName}</button>
-                                                {(r.email || r.phone) && <p className="truncate text-xs tabular-nums text-text-secondary" title={[r.email, r.phone].filter(Boolean).join(' · ')}>{r.email || r.phone}</p>}
+                                            <td className="max-w-[240px] px-3 py-2">
+                                                <div className="flex min-w-0 items-center gap-2.5">
+                                                    <RowAvatar name={r.fullName} />
+                                                    <div className="min-w-0">
+                                                        <button type="button" onClick={() => setDetails({ record: r, open: true })} className={`block max-w-full truncate rounded text-left font-semibold text-text-primary underline-offset-2 hover:underline ${FOCUS}`} title={`Open ${r.fullName}`}>{r.fullName}</button>
+                                                        {(r.email || r.phone) && <p className="truncate text-xs tabular-nums text-text-secondary" title={[r.email, r.phone].filter(Boolean).join(' · ')}>{r.email || r.phone}</p>}
+                                                    </div>
+                                                </div>
                                             </td>
-                                            <td className="max-w-[180px] px-3 py-2.5">
+                                            <td className="max-w-[180px] px-3 py-2">
                                                 <p className="truncate text-text-primary" title={r.currentDesignation ?? ''}>{r.currentDesignation || '—'}</p>
                                                 {(r.currentOrganization || r.location) && <p className="truncate text-xs text-text-secondary" title={[r.currentOrganization, r.location].filter(Boolean).join(' · ')}>{[r.currentOrganization, r.location].filter(Boolean).join(' · ')}</p>}
                                             </td>
-                                            <td className="max-w-[140px] truncate px-3 py-2.5 text-text-primary" title={r.role ?? ''}>{r.role || '—'}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatMonths(r.relevantExpMonths)}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatNotice(r.noticePeriodDays)}</td>
-                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2.5 text-right text-text-primary`}>{formatInr(r.expectedInhand)}</td>
-                                            <td className="px-3 py-2.5"><span className="flex flex-wrap items-center gap-1"><StatusBadge status={r.status} />{r.blacklisted && <BlacklistedTag />}</span></td>
-                                            <td className="max-w-[170px] px-3 py-2.5">
+                                            <td className="max-w-[140px] truncate px-3 py-2 text-text-primary" title={r.role ?? ''}>{r.role || '—'}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2 text-right text-text-primary`}>{formatMonths(r.relevantExpMonths)}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2 text-right text-text-primary`}>{formatNotice(r.noticePeriodDays)}</td>
+                                            <td className={`${NUM_SM} whitespace-nowrap px-3 py-2 text-right text-text-primary`}>{formatInr(r.expectedInhand)}</td>
+                                            <td className="px-3 py-2"><span className="flex flex-wrap items-center gap-1"><StatusPill status={r.status} />{r.blacklisted && <BlacklistedTag />}</span></td>
+                                            <td className="max-w-[170px] px-3 py-2">
                                                 <p className="truncate" title={originLabel(r)}><SourceCell r={r} /></p>
                                                 {r.hasResume !== undefined && (
-                                                    <p className={`flex items-center gap-x-1 text-xs ${r.hasResume ? 'font-medium text-emerald-800' : 'text-text-tertiary'}`}>
+                                                    <p className={`flex items-center gap-x-1 text-xs ${r.hasResume ? 'font-medium text-emerald-800 dark:text-emerald-300' : 'text-text-tertiary'}`}>
                                                         {r.hasResume && <FileText className="h-3 w-3 shrink-0" aria-hidden />}{r.hasResume ? 'Resume on file' : 'No resume'}
                                                     </p>
                                                 )}
                                             </td>
-                                            <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-text-secondary" title={formatDate(deleted ? r.deletedAt : r.updatedAt)}>{formatDateShort(deleted ? r.deletedAt : r.updatedAt)}</td>
-                                            <td className="sticky right-0 whitespace-nowrap bg-surface px-3 py-2.5 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
+                                            <td className="whitespace-nowrap px-3 py-2 tabular-nums text-text-secondary" title={formatDate(deleted ? r.deletedAt : r.updatedAt)}>{formatDateShort(deleted ? r.deletedAt : r.updatedAt)}</td>
+                                            <td className="sticky right-0 whitespace-nowrap bg-surface px-3 py-2 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
                                                 <div className="flex justify-end gap-x-0.5">{rowActions(r)}</div>
                                             </td>
                                         </tr>
@@ -392,7 +469,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 )}
 
                 {total > 0 && (
-                    <div className="flex items-center justify-between gap-x-3 gap-y-3 border-t border-border-subtle px-4 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-border px-4 py-2.5">
                         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                             <p className="text-xs text-text-secondary">
                                 <span className="tabular-nums">{formatCount(from)}–{formatCount(to)}</span> of <span className="font-semibold tabular-nums text-text-primary">{formatCount(total)}</span>
@@ -404,11 +481,11 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                             )}
                         </div>
                         <div className="flex items-center gap-x-1 gap-y-1">
-                            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading} className={BTN_GHOST} aria-label="Previous page">
+                            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1 || loading} className={`${BTN_SECONDARY} h-8 px-2.5`} aria-label="Previous page">
                                 <ChevronLeft className="h-4 w-4" /><span className="hidden sm:inline">Previous</span>
                             </button>
-                            <span className="px-1 text-xs tabular-nums text-text-tertiary">{page} / {pages}</span>
-                            <button type="button" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages || loading} className={BTN_GHOST} aria-label="Next page">
+                            <span className="px-1 text-xs tabular-nums text-text-secondary">Page {page} of {pages}</span>
+                            <button type="button" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages || loading} className={`${BTN_SECONDARY} h-8 px-2.5`} aria-label="Next page">
                                 <span className="hidden sm:inline">Next</span><ChevronRight className="h-4 w-4" />
                             </button>
                         </div>

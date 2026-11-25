@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, CircleHelp, Star, X } from 'lucide-react';
+import { Check, CircleHelp, Star, X } from 'lucide-react';
 import { positionFit, type FitVerdict } from '@/backend/lib/candidates/position-fit';
 import { boardColumns, findStage, nextRoundStage, reasonNeeded, rejectStageFor, stageGroups, unlistedStage, withReason, type StageDef } from '@/backend/lib/candidates/stage-list';
 import type { CandidateRecord, Position, PositionMember, Stage } from '@/backend/lib/candidates/types';
@@ -11,7 +11,7 @@ import { ScheduleInterviewForm } from './InterviewScheduler';
 import { OutreachBody } from './OutreachPanel';
 import { BTN_DANGER_FILLED, REMARK_MAX } from './Remarks';
 import { StageChip, StageOptions, useRejectionReasons, useStages } from './stage-ui';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, ScoreTag, Spinner, useUi, WELL } from './ui';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, INPUT, LABEL, Spinner, useUi, WELL } from './ui';
 
 /*
  * The candidate's panel opened from the Pipeline tab (owner 2026-11-17). The panel knows the position it was opened
@@ -47,7 +47,7 @@ const RECOMMENDATIONS = [['move_ahead', 'Move ahead'], ['hold', 'Hold'], ['rejec
 
 /**
  * The strip at the top of the panel, and the one form it has open at a time. `onHistory`: an entry was written (the
- * Activity tab refetches).
+ * Activity tab refetches). The panel itself shows `ctx`'s previous / next and `member.score` (owner 2026-11-25).
  */
 export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
     orgId: string; record: CandidateRecord; ctx: PipelineContext; onHistory: () => void;
@@ -113,51 +113,46 @@ export function PipelineStrip({ orgId, record, ctx, onHistory, tab }: {
     );
 
     return (
-        <section aria-label={`In ${position.title}`} className={`${CARD} px-4 py-3`}>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-                <span className="min-w-0 truncate text-sm font-semibold text-text-primary" title={position.title}>{position.title}{position.location ? <span className="font-normal text-text-secondary"> · {position.location}</span> : null}</span>
-                <StageChip stage={here} />
-                <span className="text-xs text-text-secondary" title={`Since ${formatDate(member.stageChangedAt)}`}>{days} {days === 1 ? 'day' : 'days'} in this stage{member.stageChangedByName ? ` · moved by ${member.stageChangedByName}` : ''}</span>
-                <span className="ml-auto flex items-center gap-x-1">
-                    <button type="button" onClick={() => ctx.onPrev?.()} disabled={!ctx.onPrev} aria-label="Previous candidate" title="Previous candidate" className={`${BTN_GHOST} h-8 px-1.5`}><ChevronLeft className="h-4 w-4" /></button>
-                    <span className="text-xs tabular-nums text-text-secondary" aria-live="polite">{ctx.index} of {ctx.total} in {ctx.scopeLabel}</span>
-                    <button type="button" onClick={() => ctx.onNext?.()} disabled={!ctx.onNext} aria-label="Next candidate" title="Next candidate" className={`${BTN_GHOST} h-8 px-1.5`}><ChevronRight className="h-4 w-4" /></button>
-                </span>
+        // Owner 2026-11-25 (reference layout): the strip is the "Hiring process" card: where the person is, the stepper of
+        // the board's columns, and "Move stage" at the top right. Previous / next sit at the top of the panel, and the
+        // ratings in the panel's "Candidate score" card.
+        <section aria-labelledby="pipe-hiring-title" className={`${CARD} px-4 py-4`}>
+            <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                <div className="min-w-0 flex-1">
+                    <h3 id="pipe-hiring-title" className="text-sm font-semibold text-text-primary">Hiring process</h3>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-secondary">
+                        <span className="min-w-0 truncate font-semibold text-text-primary" title={position.title}>{position.title}{position.location ? <span className="font-normal text-text-secondary"> · {position.location}</span> : null}</span>
+                        <StageChip stage={here} />
+                        <span title={`Since ${formatDate(member.stageChangedAt)}`}>{days} {days === 1 ? 'day' : 'days'} in this stage{member.stageChangedByName ? ` · moved by ${member.stageChangedByName}` : ''}</span>
+                    </p>
+                </div>
+                <label htmlFor="pipe-move" className="sr-only">Move stage</label>
+                <select id="pipe-move" value="" disabled={busy} onChange={e => { if (e.target.value) open({ kind: 'move', stage: e.target.value as Stage }); }}
+                    className="h-9 shrink-0 cursor-pointer rounded-xl border border-primary bg-surface px-3 text-[13px] font-bold text-text-primary outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60">
+                    <option value="">Move stage…</option>
+                    <StageOptions groups={stageGroups(stages).map(g => ({ ...g, stages: g.stages.filter(x => x.key !== member.stage) })).filter(g => g.stages.length)} />
+                </select>
             </div>
-            {member.remark && <p className="mt-1 text-xs italic text-text-secondary">“{member.remark}”</p>}
+            {member.remark && <p className="mt-1.5 text-xs italic text-text-secondary">“{member.remark}”</p>}
 
-            {/* Owner 2026-11-25: where the person is in the hiring process (the board's columns), and the panel's ratings. */}
+            {/* Owner 2026-11-25: where the person is in the hiring process (the board's columns), filled up to here. */}
             {(() => {
                 const cols = boardColumns(stages, x => x.key === member.stage);
                 const at = cols.findIndex(c => c.stages.some(x => x.key === member.stage));
                 const rejected = here.kind === 'rejected';
                 return cols.length > 1 && at >= 0 ? (
-                    <ol aria-label="Hiring process" className="mt-2.5 flex gap-x-1">
+                    <ol aria-label="Hiring process stages" className="mt-3.5 flex gap-x-1.5">
                         {cols.map((c, i) => (
                             <li key={c.name} aria-current={i === at ? 'step' : undefined} className="min-w-0 flex-1">
-                                <span aria-hidden className={`block h-1.5 rounded-full ${i < at ? 'bg-primary' : i === at ? (rejected ? 'bg-error' : 'bg-primary') : 'bg-muted'}`} />
-                                <span className={`mt-1 block truncate text-[11px] ${i === at ? 'font-semibold text-text-primary' : i < at ? 'text-text-secondary' : 'text-text-tertiary'}`} title={c.name}>{c.name}{i === at && rejected ? ' (rejected)' : ''}</span>
+                                <span aria-hidden className={`block h-2 rounded-full ${i < at ? 'bg-primary' : i === at ? (rejected ? 'bg-error' : 'bg-primary') : 'bg-muted'}`} />
+                                <span className={`mt-1.5 block truncate text-xs ${i === at ? 'font-semibold text-text-primary' : i < at ? 'text-text-secondary' : 'text-text-tertiary'}`} title={c.name}>{c.name}{i === at && rejected ? ' (rejected)' : ''}</span>
                             </li>
                         ))}
                     </ol>
                 ) : null;
             })()}
-            {member.score && (
-                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <ScoreTag score={member.score} />
-                    {member.score.rounds.length > 1 && member.score.rounds.map(rd => (
-                        <span key={rd.round} className="text-xs text-text-secondary">{rd.round} <span className="font-semibold tabular-nums text-text-primary">{rd.overall.toFixed(1)}</span></span>
-                    ))}
-                </div>
-            )}
 
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <label htmlFor="pipe-move" className="sr-only">Move to stage</label>
-                <select id="pipe-move" value="" disabled={busy} onChange={e => { if (e.target.value) open({ kind: 'move', stage: e.target.value as Stage }); }}
-                    className="h-8 cursor-pointer rounded-lg border border-border bg-surface px-2 text-xs font-semibold text-text-primary outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60">
-                    <option value="">Move to…</option>
-                    <StageOptions groups={stageGroups(stages).map(g => ({ ...g, stages: g.stages.filter(x => x.key !== member.stage) })).filter(g => g.stages.length)} />
-                </select>
+            <div className="mt-3.5 flex flex-wrap items-center gap-1.5 border-t border-border-subtle pt-3">
                 {quick('Schedule interview', { kind: 'interview' })}
                 {next && quick(`Next: ${next.name}`, { kind: 'move', stage: next.key })}
                 {reject && reject.key !== member.stage && quick(`Reject${reject.name.toLowerCase() === 'rejected' ? '' : ` (${reject.name})`}`, { kind: 'move', stage: reject.key })}
