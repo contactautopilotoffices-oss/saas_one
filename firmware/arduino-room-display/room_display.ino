@@ -27,6 +27,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include "lgfx_waveshare_7b.h"
 
 /* ========================= CONFIGURE THESE ========================= */
@@ -37,8 +38,15 @@ static const char *WIFI_PASS = "Your_WiFi_Password";
 /* Your app's origin. No trailing slash. */
 static const char *SERVER_BASE = "https://app.autopilotoffices.com";
 
-/* meeting_rooms.id for the room this panel hangs outside. One value per panel. */
-static const char *ROOM_ID = "00000000-0000-0000-0000-000000000000";
+/*
+ * properties.id for THE BUILDING this panel is in — not a room.
+ *
+ * Every panel in a property takes this same value, so one firmware image serves the whole site.
+ * The first time a panel boots it lists the property's rooms and asks which door it is on; the
+ * answer is kept in NVS and it goes straight to that room from then on. Hold ROOMS in the header
+ * for three seconds to pick again, e.g. when a panel is moved.
+ */
+static const char *PROPERTY_ID = "00000000-0000-0000-0000-000000000000";
 
 /* =================================================================== */
 
@@ -122,6 +130,61 @@ static RoomState g_state;
 static bool g_haveData = false;
 static uint8_t g_failures = 0;
 static int g_lastDrawnMin = -1;
+
+/* ---- the property's rooms, for the picker ---- */
+#define MAX_PICKER_ROOMS 12
+
+struct PickerRoom {
+    char id[40];
+    char name[48];
+    char meta[64];
+};
+
+static PickerRoom g_rooms[MAX_PICKER_ROOMS];
+static uint8_t g_roomCount = 0;
+static char g_propertyName[48] = "";
+
+/* The room this panel is assigned to (its door), and the one currently on screen. */
+static char g_homeRoomId[40] = "";
+static char g_viewRoomId[40] = "";
+
+/* Screen the panel is on. */
+enum Screen { SCREEN_PICKER, SCREEN_SCHEDULE };
+static Screen g_screen = SCREEN_PICKER;
+
+/* Overlay room list on top of the schedule. */
+static bool g_menuOpen = false;
+
+/* Millis when the view wandered off the home room; 0 when at home. */
+static uint32_t g_awaySince = 0;
+static const uint32_t AUTO_RETURN_MS = 60000;
+
+/* ---- NVS: remembers which door this panel is on across reboots ---- */
+static Preferences g_prefs;
+
+static void loadAssignedRoom()
+{
+    g_prefs.begin("doorpanel", true);
+    String saved = g_prefs.getString("roomId", "");
+    g_prefs.end();
+    strlcpy(g_homeRoomId, saved.c_str(), sizeof(g_homeRoomId));
+}
+
+static void saveAssignedRoom(const char *id)
+{
+    g_prefs.begin("doorpanel", false);
+    g_prefs.putString("roomId", id);
+    g_prefs.end();
+    strlcpy(g_homeRoomId, id, sizeof(g_homeRoomId));
+}
+
+static void clearAssignedRoom()
+{
+    g_prefs.begin("doorpanel", false);
+    g_prefs.remove("roomId");
+    g_prefs.end();
+    g_homeRoomId[0] = '\0';
+}
 
 /* Server clock, carried forward locally between polls. */
 static int g_serverNowMin = 0;
@@ -260,6 +323,12 @@ static void drawTopBar()
         textClipped(204, 24, g_state.propertyName, 360, C_DIM, &fonts::FreeSans12pt7b);
     }
 
+    /* ROOMS tap target — keep in step with headerRoomsHit(). */
+    if (g_screen == SCREEN_SCHEDULE && g_roomCount > 1) {
+        lcd.fillRoundRect(SCREEN_W - 230, 16, 110, 30, 8, C_ROWBG);
+        textAt(SCREEN_W - 212, 23, "ROOMS", C_DIM, &fonts::FreeSansBold9pt7b);
+    }
+
     bool live = g_failures == 0;
     lcd.fillCircle(SCREEN_W - 104, TOPBAR_H / 2, 4, live ? C_FREE : C_BUSY);
     textAt(SCREEN_W - 92, 24, live ? "Live" : "Offline", C_FAINT, &fonts::FreeSans9pt7b);
@@ -273,9 +342,17 @@ static void drawLeftPanel()
     const int x = 24;
     const int w = LEFT_W - 48;
 
-    textClipped(x, 86, g_state.roomName, w, C_TEXT, &fonts::FreeSansBold24pt7b);
+    /* Says plainly that this is not the room the panel is mounted outside. */
+    int nameY = 86;
+    if (g_awaySince) {
+        lcd.fillRoundRect(x, 74, w, 26, 6, C_ROWBG);
+        textAt(x + 10, 79, "VIEWING ANOTHER ROOM", C_NEXT, &fonts::FreeSansBold9pt7b);
+        nameY = 110;
+    }
+
+    textClipped(x, nameY, g_state.roomName, w, C_TEXT, &fonts::FreeSansBold24pt7b);
     if (g_state.metaLine[0]) {
-        textClipped(x, 128, g_state.metaLine, w, C_FAINT, &fonts::FreeSans9pt7b);
+        textClipped(x, nameY + 42, g_state.metaLine, w, C_FAINT, &fonts::FreeSans9pt7b);
     }
 
     /* Status pill */
@@ -448,15 +525,13 @@ static void connectWifi()
     }
 }
 
-static bool fetchState()
+/** One GET, parsed into `doc`. Shared by the schedule feed and the room list. */
+static bool httpGetJson(const char *url, JsonDocument &doc)
 {
     if (WiFi.status() != WL_CONNECTED) {
         connectWifi();
         if (WiFi.status() != WL_CONNECTED) return false;
     }
-
-    char url[192];
-    snprintf(url, sizeof(url), "%s/api/public/room-display/%s", SERVER_BASE, ROOM_ID);
 
     WiFiClientSecure client;
     /*
@@ -478,10 +553,42 @@ static bool fetchState()
         return false;
     }
 
-    JsonDocument doc;
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
-    if (err) return false;
+    return !err;
+}
+
+/** Loads the property's rooms for the picker. Called once at boot. */
+static bool fetchRooms()
+{
+    char url[192];
+    snprintf(url, sizeof(url), "%s/api/public/property-display/%s", SERVER_BASE, PROPERTY_ID);
+
+    JsonDocument doc;
+    if (!httpGetJson(url, doc)) return false;
+
+    strlcpy(g_propertyName, doc["property"]["name"] | "", sizeof(g_propertyName));
+
+    g_roomCount = 0;
+    for (JsonObject r : doc["rooms"].as<JsonArray>()) {
+        if (g_roomCount >= MAX_PICKER_ROOMS) break;
+        PickerRoom &pr = g_rooms[g_roomCount];
+        strlcpy(pr.id, r["id"] | "", sizeof(pr.id));
+        strlcpy(pr.name, r["name"] | "", sizeof(pr.name));
+        strlcpy(pr.meta, r["meta_line"] | "", sizeof(pr.meta));
+        if (pr.id[0]) g_roomCount++;
+    }
+
+    return g_roomCount > 0;
+}
+
+static bool fetchState(const char *roomId)
+{
+    char url[192];
+    snprintf(url, sizeof(url), "%s/api/public/room-display/%s", SERVER_BASE, roomId);
+
+    JsonDocument doc;
+    if (!httpGetJson(url, doc)) return false;
 
     /* Build into a local copy so a half-parsed payload never reaches the screen. */
     RoomState s = {};
@@ -564,7 +671,120 @@ static bool fetchState()
     return true;
 }
 
+/* ========================= picker screen ========================= */
+
+/* Three columns of room cards. Geometry is shared with the hit test below. */
+static const int PICK_COLS = 3;
+static const int PICK_X0 = 40;
+static const int PICK_Y0 = 170;
+static const int PICK_W = 300;
+static const int PICK_H = 86;
+static const int PICK_GAP = 14;
+
+static void pickerCardRect(uint8_t i, int &x, int &y)
+{
+    x = PICK_X0 + (i % PICK_COLS) * (PICK_W + PICK_GAP);
+    y = PICK_Y0 + (i / PICK_COLS) * (PICK_H + PICK_GAP);
+}
+
+static void drawPicker()
+{
+    lcd.fillScreen(C_BG_RIGHT);
+    drawTopBar();
+
+    textAt(40, 90, "Which room is this panel outside?", C_TEXT, &fonts::FreeSansBold18pt7b);
+    textAt(40, 132, "Tap once. This panel remembers it.", C_FAINT, &fonts::FreeSans12pt7b);
+
+    if (g_roomCount == 0) {
+        textAt(40, 220, "No rooms found for this property", C_FAINT, &fonts::FreeSansBold12pt7b);
+        textAt(40, 250, "Check PROPERTY_ID in the sketch", C_FAINT, &fonts::FreeSans9pt7b);
+        return;
+    }
+
+    for (uint8_t i = 0; i < g_roomCount; i++) {
+        int x, y;
+        pickerCardRect(i, x, y);
+        bool isHome = g_homeRoomId[0] && strcmp(g_rooms[i].id, g_homeRoomId) == 0;
+
+        lcd.fillRoundRect(x, y, PICK_W, PICK_H, 12, isHome ? C_BUSY_SOFT : C_BG_LEFT);
+        if (isHome) lcd.drawRoundRect(x, y, PICK_W, PICK_H, 12, C_BUSY);
+
+        textClipped(x + 18, y + 16, g_rooms[i].name, PICK_W - 36, C_TEXT,
+                    &fonts::FreeSansBold12pt7b);
+        textClipped(x + 18, y + 50, g_rooms[i].meta, PICK_W - 36, C_FAINT, &fonts::FreeSans9pt7b);
+    }
+}
+
+/** Which card a tap landed on, or -1. */
+static int pickerHit(int tx, int ty)
+{
+    for (uint8_t i = 0; i < g_roomCount; i++) {
+        int x, y;
+        pickerCardRect(i, x, y);
+        if (tx >= x && tx < x + PICK_W && ty >= y && ty < y + PICK_H) return i;
+    }
+    return -1;
+}
+
+/* ========================= room menu overlay ========================= */
+
+static const int MENU_X = 660;
+static const int MENU_Y = TOPBAR_H + 8;
+static const int MENU_W = 330;
+static const int MENU_ROW_H = 46;
+
+static void drawMenu()
+{
+    int h = g_roomCount * MENU_ROW_H + 8;
+    lcd.fillRoundRect(MENU_X, MENU_Y, MENU_W, h, 12, C_BG_LEFT);
+    lcd.drawRoundRect(MENU_X, MENU_Y, MENU_W, h, 12, C_HAIR);
+
+    for (uint8_t i = 0; i < g_roomCount; i++) {
+        int y = MENU_Y + 4 + i * MENU_ROW_H;
+        bool isCurrent = strcmp(g_rooms[i].id, g_viewRoomId) == 0;
+        bool isHome = strcmp(g_rooms[i].id, g_homeRoomId) == 0;
+
+        if (isCurrent) lcd.fillRect(MENU_X + 4, y, MENU_W - 8, MENU_ROW_H - 2, C_ROWBG);
+        textClipped(MENU_X + 16, y + 13, g_rooms[i].name, MENU_W - 110,
+                    isCurrent ? C_TEXT : C_DIM, &fonts::FreeSansBold12pt7b);
+        if (isHome) {
+            textRight(MENU_X + MENU_W - 16, y + 16, "THIS DOOR", C_FAINT, &fonts::FreeSans9pt7b);
+        }
+    }
+}
+
+static int menuHit(int tx, int ty)
+{
+    if (tx < MENU_X || tx > MENU_X + MENU_W) return -1;
+    for (uint8_t i = 0; i < g_roomCount; i++) {
+        int y = MENU_Y + 4 + i * MENU_ROW_H;
+        if (ty >= y && ty < y + MENU_ROW_H) return i;
+    }
+    return -1;
+}
+
+/** The ROOMS tap target in the header. */
+static bool headerRoomsHit(int tx, int ty)
+{
+    return ty < TOPBAR_H && tx > SCREEN_W - 230 && tx < SCREEN_W - 120;
+}
+
 /* ========================= arduino ========================= */
+
+static void showRoom(const char *roomId)
+{
+    strlcpy(g_viewRoomId, roomId, sizeof(g_viewRoomId));
+    g_awaySince = strcmp(roomId, g_homeRoomId) == 0 ? 0 : millis();
+
+    if (fetchState(roomId)) {
+        g_failures = 0;
+        g_screen = SCREEN_SCHEDULE;
+        lcd.fillScreen(C_BG_RIGHT);
+        drawAll();
+    } else {
+        drawMessage("Cannot reach server", "Check SERVER_BASE and the network");
+    }
+}
 
 void setup()
 {
@@ -581,38 +801,127 @@ void setup()
     /* Backlight comes up only once there is a frame to look at. */
     backlight(true);
 
+    loadAssignedRoom();
+
     drawMessage("Connecting", WIFI_SSID);
     connectWifi();
 
     if (WiFi.status() != WL_CONNECTED) {
         drawMessage("No Wi-Fi", "Check the SSID and password in the sketch");
-    } else {
-        drawMessage("Loading schedule", SERVER_BASE);
-        if (fetchState()) {
-            g_failures = 0;
-            lcd.fillScreen(C_BG_RIGHT);
-            drawAll();
-        } else {
-            drawMessage("Cannot reach server", "Check SERVER_BASE and ROOM_ID");
-        }
+        return;
     }
+
+    drawMessage("Loading rooms", SERVER_BASE);
+    if (!fetchRooms()) {
+        drawMessage("Cannot reach server", "Check SERVER_BASE and PROPERTY_ID");
+        return;
+    }
+
+    /* A room assigned on a previous boot may since have been removed from the property. */
+    bool homeStillExists = false;
+    for (uint8_t i = 0; i < g_roomCount; i++) {
+        if (strcmp(g_rooms[i].id, g_homeRoomId) == 0) homeStillExists = true;
+    }
+
+    if (g_homeRoomId[0] && homeStillExists) {
+        showRoom(g_homeRoomId);
+    } else {
+        if (g_homeRoomId[0]) clearAssignedRoom();
+        g_screen = SCREEN_PICKER;
+        drawPicker();
+    }
+}
+
+/**
+ * One tap, debounced to the release edge so a held finger does not fire repeatedly.
+ * Returns true and fills x/y once per touch, plus how long it was held.
+ */
+static bool readTap(int &x, int &y, uint32_t &heldMs)
+{
+    static bool wasDown = false;
+    static uint32_t downAt = 0;
+    static int lastX = 0, lastY = 0;
+
+    uint16_t tx, ty;
+    bool down = lcd.getTouch(&tx, &ty);
+
+    if (down) {
+        if (!wasDown) downAt = millis();
+        wasDown = true;
+        lastX = tx;
+        lastY = ty;
+        return false;
+    }
+
+    if (wasDown) {
+        wasDown = false;
+        x = lastX;
+        y = lastY;
+        heldMs = millis() - downAt;
+        return true;
+    }
+
+    return false;
 }
 
 void loop()
 {
     static uint32_t lastPoll = 0;
 
+    /* ---- touch ---- */
+    int tx, ty;
+    uint32_t held;
+    if (readTap(tx, ty, held)) {
+        if (g_screen == SCREEN_PICKER) {
+            int hit = pickerHit(tx, ty);
+            if (hit >= 0) {
+                saveAssignedRoom(g_rooms[hit].id);
+                showRoom(g_rooms[hit].id);
+            }
+        } else if (g_menuOpen) {
+            int hit = menuHit(tx, ty);
+            g_menuOpen = false;
+            if (hit >= 0) {
+                showRoom(g_rooms[hit].id);
+            } else {
+                /* Tapped away: close the overlay by repainting underneath. */
+                lcd.fillScreen(C_BG_RIGHT);
+                drawAll();
+            }
+        } else if (headerRoomsHit(tx, ty)) {
+            /* A long hold re-assigns which door this panel is on. */
+            if (held >= 3000) {
+                clearAssignedRoom();
+                g_screen = SCREEN_PICKER;
+                drawPicker();
+            } else if (g_roomCount > 1) {
+                g_menuOpen = true;
+                drawMenu();
+            }
+        }
+    }
+
+    if (g_screen != SCREEN_SCHEDULE) {
+        delay(50);
+        return;
+    }
+
     /* Cheap minute tick: repaint just the clock between polls. */
-    if (g_haveData && localNowMin() != g_lastDrawnMin) {
+    if (g_haveData && !g_menuOpen && localNowMin() != g_lastDrawnMin) {
         drawClock();
+    }
+
+    /* A panel left showing another room misinforms everyone walking past. Go home. */
+    if (g_awaySince && !g_menuOpen && millis() - g_awaySince >= AUTO_RETURN_MS) {
+        showRoom(g_homeRoomId);
     }
 
     if (millis() - lastPoll >= POLL_MS) {
         lastPoll = millis();
 
-        if (fetchState()) {
+        if (fetchState(g_viewRoomId)) {
             g_failures = 0;
-            drawAll();
+            if (!g_menuOpen) drawAll();
         } else if (++g_failures >= 4) {
             /* Several misses running: say so rather than leave a stale day on the wall. */
             if (g_haveData) {
@@ -623,5 +932,5 @@ void loop()
         }
     }
 
-    delay(200);
+    delay(50);
 }

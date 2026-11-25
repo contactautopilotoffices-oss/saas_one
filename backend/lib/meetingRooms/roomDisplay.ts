@@ -182,7 +182,7 @@ function istNow(): { date: string; nowMin: number; dateLabel: string } {
 }
 
 /** "Floor 3 · Seats 12 · Display + VC" from whatever the room actually has. */
-function buildMetaLine(
+export function buildMetaLine(
     location: string | null,
     capacity: number | null,
     amenities: string[]

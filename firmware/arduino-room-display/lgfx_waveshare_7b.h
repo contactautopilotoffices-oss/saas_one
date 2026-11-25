@@ -27,6 +27,7 @@
 class LGFX_Waveshare7B : public lgfx::LGFX_Device {
     lgfx::Bus_RGB _bus;
     lgfx::Panel_RGB _panel;
+    lgfx::Touch_GT911 _touch;
 
 public:
     LGFX_Waveshare7B(void)
@@ -98,6 +99,38 @@ public:
         }
 
         _panel.setBus(&_bus);
+
+        {
+            /*
+             * GT911 capacitive touch, 5-point, on the same I2C pins as the CH422G expander.
+             *
+             * The sketch drives the CH422G with Arduino's Wire on port 0, so the touch gets
+             * port 1 on the same two pins. Electrically that is one bus with two controllers:
+             * fine here because the expander is only written at boot and on a backlight change,
+             * while touch is polled. IF TOUCH NEVER RESPONDS, this is the first thing to try:
+             * move it to i2c_port 0 and set bus_shared = true.
+             *
+             * Note the pins: 8 and 9. Not 19/20 — those are the ESP32-S3's native USB D-/D+.
+             */
+            auto cfg = _touch.config();
+            cfg.x_min = 0;
+            cfg.x_max = 1023;
+            cfg.y_min = 0;
+            cfg.y_max = 599;
+            cfg.pin_int = -1; /* polled; INT runs through the expander on this board */
+            cfg.pin_rst = -1;
+            cfg.bus_shared = false;
+            cfg.offset_rotation = 0;
+            cfg.i2c_port = 1;
+            cfg.pin_sda = 8;
+            cfg.pin_scl = 9;
+            cfg.freq = 400000;
+            /* GT911 answers on 0x5D or 0x14 depending on how it was strapped at reset. */
+            cfg.i2c_addr = 0x5D;
+            _touch.config(cfg);
+            _panel.setTouch(&_touch);
+        }
+
         setPanel(&_panel);
     }
 };

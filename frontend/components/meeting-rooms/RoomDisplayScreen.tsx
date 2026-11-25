@@ -20,6 +20,12 @@ import type { RoomDisplayState, AgendaRow } from '@/backend/lib/meetingRooms/roo
 
 interface Props {
     initialState: RoomDisplayState;
+    /**
+     * Supplied when the panel was provisioned per property, so the room it is assigned to can be
+     * changed on screen — for when a panel is moved to a different door. Absent on the per-room
+     * route, where the room is fixed by the URL.
+     */
+    onReassign?: () => void;
 }
 
 const PANEL_W = 1024;
@@ -54,7 +60,7 @@ const MAX_ROWS = 8;
 const AUTO_RETURN_SECONDS = 60;
 
 
-const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
+const RoomDisplayScreen: React.FC<Props> = ({ initialState, onReassign }) => {
     const [state, setState] = useState<RoomDisplayState>(initialState);
     const [online, setOnline] = useState(true);
     const [clock, setClock] = useState('');
@@ -164,8 +170,8 @@ const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
                     )}
                 </div>
                 <div className="flex shrink-0 items-center gap-4">
-                    {/* Room menu. Only offered when the property actually has another room. */}
-                    {state.property_rooms.length > 1 && (
+                    {/* Offered when there is another room to show, or a room to reassign to. */}
+                    {(state.property_rooms.length > 1 || onReassign) && (
                         <button
                             onClick={() => setMenuOpen(o => !o)}
                             className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors"
@@ -240,6 +246,20 @@ const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
                                 </button>
                             );
                         })}
+
+                        {/* Only when the panel owns its room assignment, i.e. the property route. */}
+                        {onReassign && (
+                            <button
+                                onClick={() => {
+                                    setMenuOpen(false);
+                                    onReassign();
+                                }}
+                                className="w-full px-4 py-3 text-left text-[14px]"
+                                style={{ color: C.next, background: 'rgba(59,130,246,0.08)' }}
+                            >
+                                Change this panel&apos;s room…
+                            </button>
+                        )}
                     </div>
                 </>
             )}
