@@ -227,6 +227,14 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                             <Pill on={f.hasResume === 'no'} onClick={() => update({ hasResume: 'no' })}>No resume</Pill>
                         </div>
                     </div>
+                    {/* Owner 2026-11-24: leave out people messaged recently, so nobody is contacted twice in a short time. */}
+                    <div className="space-y-1.5">
+                        <span className={FIELD_LABEL}>Last contacted</span>
+                        <div role="group" aria-label="Last contacted" className="flex flex-wrap gap-1.5">
+                            <Pill on={!f.notContactedDays} onClick={() => update({ notContactedDays: null })}>Any</Pill>
+                            {([7, 30, 90] as const).map(d => <Pill key={d} on={f.notContactedDays === d} onClick={() => update({ notContactedDays: d })}>{`Not in ${d} days`}</Pill>)}
+                        </div>
+                    </div>
                     {/* Owner 2026-11-15: blacklisted people are left out of every search unless asked for. */}
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
                         <input type="checkbox" checked={f.showBlacklisted} onChange={e => update({ showBlacklisted: e.target.checked })} className="h-4 w-4 accent-primary" />

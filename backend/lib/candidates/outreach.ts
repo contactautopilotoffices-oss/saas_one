@@ -22,6 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { loadBlacklist, recordAction, type Actor } from "./actions";
+import { markContacted } from "./audit";
 import { parsePhone } from "./normalize";
 import { CandidateActionError, getRecord } from "./records";
 import { oneLine, stageName, STAGE_MESSAGE_MAX } from "./stage-list";
@@ -357,6 +358,7 @@ export async function sendOutreach(client: SupabaseClient, orgId: string, by: Ac
   if (error) fail(result.success ? "record the message that was sent" : "record the failed message", error);
   const saved = toRecord(data as unknown as OutreachRow, new Map(preview.positionId && preview.positionTitle ? [[preview.positionId, preview.positionTitle]] : []));
   if (!result.success) throw new CandidateActionError(502, `WhatsApp did not accept the message: ${(result.error ?? "unknown error").slice(0, 200)}`);
+  await markContacted(client, orgId, preview.candidateId);
 
   await recordAction(client, orgId, by, {
     candidateId: preview.candidateId,

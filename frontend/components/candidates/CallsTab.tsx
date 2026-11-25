@@ -10,6 +10,7 @@ import {
 import { boardColumns, columnIndexOf, findStage, stageName, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { api, putSignedUpload, qs } from './api';
 import { useStages } from './stage-ui';
+import ScreeningPanel from './ScreeningPanel';
 import { formatDate, formatInr, formatNotice } from './format';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
 
@@ -150,6 +151,8 @@ export default function CallsTab({ orgId, record, onLogged, onRecord }: {
 
     return (
         <div className="space-y-4">
+            {/* Owner 2026-11-24: the JD and the screening questions beside the call (option A: record on the phone, upload here) */}
+            <ScreeningPanel orgId={orgId} record={record} onChanged={onLogged} />
             <AddCall orgId={orgId} record={record} calls={calls ?? []} onAdded={call => { setSelectedId(call.id); refresh(); onLogged(); }} />
 
             <section aria-label="Calls on this candidate">

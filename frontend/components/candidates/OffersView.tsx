@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { BadgeIndianRupee, Check, Phone, Send, X } from 'lucide-react';
-import { OFFER_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type Offer } from '@/backend/lib/candidates/types';
+import { BadgeIndianRupee, Check, ClipboardCheck, Link2, Phone, Send, X } from 'lucide-react';
+import type { OutreachSettings } from '@/backend/lib/candidates/outreach-settings';
+import { OFFER_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type Offer, type OfferHandover } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatDate } from './format';
 import { BTN_DANGER_FILLED } from './Remarks';
-import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * Selection and the offer, to joining (owner 2026-11-21; spec Stages 7-9, screen 11 "Offer screen"). On a candidate:
@@ -17,6 +18,8 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, 
  */
 
 const lpa = (v: number | null) => (v === null ? '—' : `₹${(v / 100_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} LPA`);
+const LEVEL: Record<NonNullable<Offer['currentLevel']>, string> = { hiring_manager: 'the hiring manager', hr_head: 'the HR Head', director: 'the Director' };
+const inr = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 const TONE: Record<Offer['status'], 'success' | 'info' | 'warn' | 'neutral'> = { pending: 'warn', approved: 'info', rejected: 'neutral', released: 'info', accepted: 'success', declined: 'neutral', joined: 'success', dropped: 'neutral', withdrawn: 'neutral' };
 
 /** On a candidate (the Interviews tab): the combined scorecard per position, the offers, and "Select and make an offer". */
@@ -43,7 +46,7 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
         const res = await api<{ offer: Offer }>('/api/candidates/offers', { json: { orgId, applicationId: record.id, positionId: form.positionId, proposedCtc: ctc, joiningDate: form.joining || null, note: form.note.trim() || undefined } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); return; }
-        notify(`Offer sent for approval to ${res.data.offer.currentApproverName ?? 'the HR Head'}${res.data.offer.needsDirector ? '; above the band, so the Director approves too' : ''}`, 'success');
+        notify(`Offer sent for approval to ${res.data.offer.currentApproverName ?? (res.data.offer.currentLevel ? LEVEL[res.data.offer.currentLevel] : 'the HR Head')}${res.data.offer.needsDirector ? '; the Director approves too' : ''}. Add the salary breakup from the offer.`, 'success');
         setForm(null);
         setNonce(n => n + 1);
     };
@@ -69,7 +72,7 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
                                     <button type="button" onClick={() => setForm(null)} disabled={busy} className={BTN_GHOST}>Cancel</button>
                                     <button type="button" onClick={() => void make()} disabled={busy || !form.ctc} className={BTN_PRIMARY}>{busy && <Spinner />}Send for approval</button>
                                 </div>
-                                <p className="text-xs text-text-tertiary sm:col-span-3">The HR Head approves; above the hiring request&rsquo;s budget band the Director approves too. The letter goes out only after that, when HR releases it.</p>
+                                <p className="text-xs text-text-tertiary sm:col-span-3">The hiring manager (who raised the request), then the HR Head, then the Director approve the offer and its salary breakup. The candidate sees nothing until HR releases the letter of intent.</p>
                             </div>
                         ) : <button type="button" onClick={() => setForm({ positionId, ctc: '', joining: '', note: '' })} className={`${BTN_SECONDARY} mt-2`}><Check className="h-4 w-4" />Select and make an offer</button>)}
                     </div>
@@ -97,6 +100,12 @@ export default function OffersView({ orgId }: { orgId: string }) {
         });
         return () => ctrl.abort();
     }, [orgId, nonce]);
+    const [handovers, setHandovers] = useState<OfferHandover[]>([]);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ handovers: OfferHandover[] }>(`/api/candidates/offers${qs({ orgId, handovers: '1' })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setHandovers(res.data.handovers); });
+        return () => ctrl.abort();
+    }, [orgId, nonce]);
     const shown = (offers ?? []).filter(o => filter === 'all' || ['pending', 'approved', 'released', 'accepted'].includes(o.status));
     const mine = (offers ?? []).filter(o => o.canDecide).length;
     return (
@@ -111,6 +120,7 @@ export default function OffersView({ orgId }: { orgId: string }) {
                 </div>
             </div>
             {error && <p role="alert" className="text-sm text-error">{error}</p>}
+            <Handovers orgId={orgId} handovers={handovers} onChanged={() => setNonce(n => n + 1)} />
             {offers === null ? <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading</p>
                 : shown.length === 0 ? <EmptyState icon={BadgeIndianRupee} title={offers.length ? 'Nothing in progress' : 'No offers yet'}>{offers.length ? 'Switch to All to see the closed ones.' : 'Select a candidate from their Interviews tab to make the first one.'}</EmptyState>
                 : shown.map(o => <OfferCard key={o.id} orgId={orgId} offer={o} onChanged={() => setNonce(n => n + 1)} />)}
@@ -122,6 +132,8 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
     const { notify } = useUi();
     const [busy, setBusy] = useState(false);
     const [step, setStep] = useState<null | 'reject' | 'revise' | 'letter' | 'declined' | 'accepted' | 'dropped' | 'contact'>(null);
+    const [breakupOpen, setBreakupOpen] = useState(false);
+    const rows = Object.entries(o.breakup ?? {});
     const [text, setText] = useState('');
     const [date, setDate] = useState(o.joiningDate ?? '');
     const [letter, setLetter] = useState(o.letter ?? '');
@@ -155,7 +167,15 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
                 {o.variancePct !== null && <span className="font-semibold text-red-800"> · {o.variancePct}% above the band</span>}
                 <span className="text-text-secondary"> · joining {o.joiningDate ? formatDate(o.joiningDate) : '—'}</span>
             </p>
-            {o.status === 'pending' && <p className="text-xs text-text-secondary">Waiting on {o.currentApproverName ?? (o.currentLevel === 'director' ? 'the Director' : 'the HR Head')}{o.needsDirector && o.currentLevel === 'hr_head' ? ', then the Director (above the band)' : ''}.</p>}
+            {o.status === 'pending' && <p className="text-xs text-text-secondary">Waiting on {o.currentApproverName ?? (o.currentLevel ? LEVEL[o.currentLevel] : 'the approver')}{o.currentLevel === 'hiring_manager' ? ' (hiring manager), then the HR Head' : ''}{o.needsDirector && o.currentLevel !== 'director' ? ', then the Director' : ''}.</p>}
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+                <span>Salary breakup: {rows.length ? rows.map(([k, v]) => `${k} ${inr(v)}`).join(' · ') : 'not given yet'}</span>
+                {(o.status === 'pending' || o.status === 'approved') && <button type="button" onClick={() => setBreakupOpen(true)} className={`${BTN_GHOST} h-7`}>{rows.length ? 'Edit' : 'Add the breakup'}</button>}
+            </div>
+            {o.publicUrl && o.status === 'released' && (
+                <p className="text-xs text-text-secondary"><button type="button" onClick={() => { void navigator.clipboard.writeText(o.publicUrl ?? '').then(() => notify('The letter page link is copied', 'success'), () => undefined); }} className={`${BTN_GHOST} h-7 px-0`}><Link2 className="h-3.5 w-3.5" />Copy the candidate&rsquo;s letter page</button> · they accept or decline there</p>
+            )}
+            {o.respondedVia === 'candidate' && <p className="text-xs text-text-secondary">Answered by the candidate on the letter page.</p>}
             {o.responseReason && <p className="text-xs text-text-secondary">“{o.responseReason}”</p>}
             {o.status === 'accepted' && <p className="text-xs text-text-secondary">Last contact {o.lastContactAt ? formatDate(o.lastContactAt) : '—'} · call at least once a week until joining.</p>}
 
@@ -207,6 +227,7 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
             {step === 'contact' && box('What was said', false, () => void act({ action: 'contact', note: text || undefined }, 'Call logged'), 'Log the call')}
             {step === 'dropped' && box('Why are they not joining?', true, () => void act({ action: 'joining', outcome: 'dropped', reason: text }, 'Dropped: the position is open again; the HR Head and Director are told'), 'Record', true)}
 
+            {breakupOpen && <BreakupEditor orgId={orgId} offer={o} onClose={() => setBreakupOpen(false)} onSaved={() => { setBreakupOpen(false); onChanged(); }} />}
             {!compact && o.events.length > 0 && (
                 <details className="mt-2 text-xs text-text-secondary">
                     <summary className="cursor-pointer">History</summary>
@@ -214,5 +235,91 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
                 </details>
             )}
         </div>
+    );
+}
+
+/** Owner 2026-11-24: the salary breakup (annexure). Saving starts the approval again from the first approver. */
+function BreakupEditor({ orgId, offer, onClose, onSaved }: { orgId: string; offer: Offer; onClose: () => void; onSaved: () => void }) {
+    const { notify } = useUi();
+    const [cfg, setCfg] = useState<OutreachSettings['offer'] | null>(null);
+    const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(Object.entries(offer.breakup ?? {}).map(([k, v]) => [k, String(v)])));
+    const [ctc, setCtc] = useState(String(offer.proposedCtc / 100_000));
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ settings: OutreachSettings }>(`/api/candidates/outreach/settings${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setCfg(res.data.settings.offer); });
+        return () => ctrl.abort();
+    }, [orgId]);
+    const n = (k: string) => { const v = Number(values[k]); return Number.isFinite(v) ? v : 0; };
+    const gross = (cfg?.earnings ?? []).reduce((t, k) => t + n(k), 0);
+    const ded = (cfg?.deductions ?? []).reduce((t, k) => t + n(k), 0);
+    const benefits = (cfg?.benefits ?? []).reduce((t, k) => t + n(k), 0);
+    const annual = gross * 12 + benefits;
+    const save = async () => {
+        const breakup: Record<string, number> = {};
+        for (const [k, v] of Object.entries(values)) if (v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0) breakup[k] = Math.round(Number(v));
+        const proposedCtc = Math.round(Number(ctc) * 100_000);
+        if (!(proposedCtc > 0)) { notify('Give the CTC in lakhs per year.', 'error'); return; }
+        setBusy(true);
+        const res = await api<{ offer: Offer }>(`/api/candidates/offers/${encodeURIComponent(offer.id)}`, { method: 'PATCH', json: { orgId, action: 'breakup', breakup, proposedCtc } });
+        setBusy(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify(`Saved. Approval starts again with ${res.data.offer.currentApproverName ?? 'the first approver'}.`, 'success');
+        onSaved();
+    };
+    const field = (k: string) => (
+        <label key={k} className="flex items-center justify-between gap-3 text-sm"><span className="text-text-secondary">{k}</span>
+            <input type="number" min={0} step={100} value={values[k] ?? ''} onChange={e => setValues(v => ({ ...v, [k]: e.target.value }))} className={`${INPUT} h-9 w-36 text-right`} /></label>
+    );
+    return (
+        <Dialog open onClose={onClose} title={`Salary breakup: ${offer.candidateName}`} labelId={`breakup-${offer.id}`} size="lg"
+            description="In rupees: earnings and deductions per month, benefits per year. The hiring manager, the HR Head and the Director approve it before the candidate sees it; saving a change starts the approval again."
+            footer={<button type="button" onClick={() => void save()} disabled={busy || !cfg} className={BTN_PRIMARY}>{busy && <Spinner />}Save and send for approval</button>}>
+            {!cfg ? <div className="flex justify-center py-6"><Spinner /></div> : (
+                <div className="space-y-4">
+                    <label className="block text-sm"><span className={LABEL}>Offer CTC (lakhs per year)</span><input type="number" min={0} step={0.1} value={ctc} onChange={e => setCtc(e.target.value)} className={`${INPUT} mt-1 h-9 sm:max-w-[200px]`} /></label>
+                    <div className="grid gap-4 sm:grid-cols-3">
+                        <div className="space-y-2"><p className="text-sm font-semibold">Earnings (per month)</p>{cfg.earnings.map(field)}<p className="text-sm font-semibold">Gross {inr(gross)}</p></div>
+                        <div className="space-y-2"><p className="text-sm font-semibold">Deductions (per month)</p>{cfg.deductions.map(field)}<p className="text-sm font-semibold">Net {inr(gross - ded)}</p></div>
+                        <div className="space-y-2"><p className="text-sm font-semibold">Benefits (per year)</p>{cfg.benefits.map(field)}</div>
+                    </div>
+                    <p className={`text-sm ${Math.abs(annual - Number(ctc) * 100_000) > 1000 && gross > 0 ? 'text-warning' : 'text-text-secondary'}`}>Gross × 12 + benefits = {inr(annual)} a year{gross > 0 ? ` (the CTC is ${lpa(Math.round(Number(ctc) * 100_000))})` : ''}. Change the rows in Recruitment → Outreach → Assignment &amp; offer.</p>
+                </div>
+            )}
+        </Dialog>
+    );
+}
+
+/** Owner 2026-11-24: accepted offers, ready for onboarding (HRMS), with everything collected. */
+function Handovers({ orgId, handovers, onChanged }: { orgId: string; handovers: OfferHandover[]; onChanged: () => void }) {
+    const { notify } = useUi();
+    const [busy, setBusy] = useState<string | null>(null);
+    const pending = handovers.filter(h => h.status === 'pending');
+    if (!pending.length) return null;
+    const take = async (id: string) => {
+        setBusy(id);
+        const res = await api<{ ok: true }>('/api/candidates/offers', { method: 'PATCH', json: { orgId, handoverId: id } });
+        setBusy(null);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        notify('Marked as taken by onboarding', 'success');
+        onChanged();
+    };
+    return (
+        <section className={`${CARD} space-y-2 px-4 py-3`} aria-label="Handovers to onboarding">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-text-primary"><ClipboardCheck className="h-4 w-4" aria-hidden />Ready for onboarding ({pending.length})</p>
+            {pending.map(h => {
+                const snap = h.snapshot as { candidate?: { email?: string | null; phone?: string | null }; department?: string | null; documents?: { item: string; status: string }[] };
+                const docs = snap.documents ?? [];
+                return (
+                    <div key={h.id} className={`${WELL} flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm`}>
+                        <span className="font-semibold text-text-primary">{h.candidateName}</span>
+                        <span className="text-text-secondary">{[h.positionTitle, snap.department].filter(Boolean).join(' · ')}</span>
+                        <span className="text-text-secondary">joining {h.joiningDate ? formatDate(h.joiningDate) : '—'}</span>
+                        <span className="text-xs text-text-tertiary">{[snap.candidate?.email, snap.candidate?.phone].filter(Boolean).join(' · ')} · documents {docs.filter(d => d.status === 'verified').length}/{docs.length} verified</span>
+                        <button type="button" onClick={() => void take(h.id)} disabled={busy === h.id} className={`${BTN_SECONDARY} ml-auto h-8`}>{busy === h.id && <Spinner />}Taken by onboarding</button>
+                    </div>
+                );
+            })}
+        </section>
     );
 }

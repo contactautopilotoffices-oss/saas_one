@@ -91,6 +91,11 @@ export const REQUISITION_FOLLOWUPS_MIGRATION = readFileSync(path.join("supabase"
 export const REQUISITION_HOD_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261124000001_recruitment_requisition_hod_and_fields.sql"), "utf8");
 /** Owner 2026-11-24: the job application form, and bulk / automatic outreach. */
 export const OUTREACH_CAMPAIGNS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261124000002_recruitment_outreach.sql"), "utf8");
+/** Owner 2026-11-24: screening questions on WhatsApp, and the interview page with RSVP. */
+export const SCREENING_RSVP_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261124000003_recruitment_screening_rsvp.sql"), "utf8");
+/** Owner 2026-11-24: assignments, documents, the LOI, handovers, the audit log, consent, saved searches, the message log. */
+export const ASSIGNMENT_LOI_AUDIT_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261124000004_recruitment_assignment_loi_audit.sql"), "utf8");
+export const POSITION_SCREENING_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261125000001_recruitment_position_screening.sql"), "utf8");
 /** Connected trackers (owner 2026-11-21): Google Sheet / Excel links synced into the candidate database. */
 export const TRACKERS_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261121000002_candidate_tracker_connections.sql"), "utf8");
 export const TRACKER_PREVIEW_MIGRATION = readFileSync(path.join("supabase", "migrations", "20261122000004_tracker_preview.sql"), "utf8");
@@ -128,6 +133,9 @@ export async function freshDb(options: { resumeSourcing?: boolean; resumeFields?
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKERS_MIGRATION);
   if (options.resumeFields !== false && options.trackers !== false) await db.exec(TRACKER_PREVIEW_MIGRATION);
   if (options.resumeFields !== false && options.hiringFlow !== false) await db.exec(HIRING_FLOW_MIGRATION);
+  if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(SCREENING_RSVP_MIGRATION);
+  if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(ASSIGNMENT_LOI_AUDIT_MIGRATION);
+  if (options.resumeFields !== false && options.hiringFlow !== false && options.requisitionFollowups !== false) await db.exec(POSITION_SCREENING_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false) await db.exec(STAGES_MIGRATION);
   if (options.resumeFields !== false && options.stages !== false && options.interviews !== false) await db.exec(INTERVIEWS_MIGRATION);
   if (options.resumeFields !== false && options.resumeSourcing !== false) await db.exec(RESUME_SOURCING_MIGRATION);

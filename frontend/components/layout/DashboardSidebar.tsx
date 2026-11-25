@@ -110,7 +110,8 @@ export default function DashboardSidebar({
                 // The badge (phase 3) reminds this laptop when its resumes have not been uploaded for a week.
                 // Owner 2026-11-15: Candidate Search grew into the Recruitment module (search, pipeline, candidates, resumes).
                 // Owner 2026-11-16: marked beta while HR starts using it.
-                { label: 'Recruitment', href: '/hr-tickets?tab=candidates', icon: UserSearch, domain: 'tickets' as const, badge: 'resumes', beta: true },
+                // Owner 2026-11-25: Recruitment opens its own workspace (the base of the HRMS), like Business Development opens the CRM.
+                { label: 'Recruitment', href: '/recruitment', icon: UserSearch, domain: 'tickets' as const, badge: 'resumes', beta: true },
             ];
         }
 

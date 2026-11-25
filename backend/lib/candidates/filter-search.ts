@@ -62,8 +62,22 @@ const FiltersSchema = z.object({
   hasResume: z.enum(["", "yes", "no"]),
   includeBlank: z.boolean(),
   showBlacklisted: z.boolean(),
+  notContactedDays: z.union([z.literal(7), z.literal(30), z.literal(90), z.null()]).optional(),
   sort: z.enum(SORTS),
 });
+
+/**
+ * Owner 2026-11-24: "not contacted in N days" leaves out the people the app messaged in that time (candidates.
+ * last_contacted_at, migration 20261124000004). Read first, as a list of people to skip (the most recent 1,000).
+ */
+async function contactedRecently(client: SupabaseClient, orgId: string, f: SearchFilters): Promise<string[]> {
+  if (!f.notContactedDays) return [];
+  const since = new Date(Date.now() - f.notContactedDays * 86_400_000).toISOString();
+  const { data, error } = await client.from("candidates").select("id").eq("organization_id", orgId).gte("last_contacted_at", since).order("last_contacted_at", { ascending: false }).limit(1000);
+  if (error) return [];
+  return ((data ?? []) as { id: string }[]).map((r) => r.id);
+}
+const skipping = <Q extends { not: (column: string, op: string, value: string) => Q }>(q: Q, ids: string[]): Q => (ids.length ? q.not("candidate_id", "in", `(${ids.join(",")})`) : q);
 
 export function parseFilters(value: unknown): SearchFilters {
   const given = (value ?? {}) as Partial<SearchFilters>;
@@ -244,7 +258,8 @@ export function resetResumeColumnsCheck(): void {
 }
 
 async function countMatching(client: SupabaseClient, orgId: string, f: SearchFilters, allowBlank: boolean, today: string, view: string): Promise<number> {
-  const run = () => applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view, f.showBlacklisted), f, allowBlank, today, view === FILTER_VIEW);
+  const skip = await contactedRecently(client, orgId, f);
+  const run = () => skipping(applyFilters(visible(client, orgId, "id", { count: "exact", head: true }, view, f.showBlacklisted), f, allowBlank, today, view === FILTER_VIEW), skip);
   let { count, error } = await run();
   if (noteBlacklistMissing(error)) ({ count, error } = await run());
   if (error) failed(error);
@@ -265,8 +280,9 @@ export async function filterRecords(
   const from = (current - 1) * size;
   const sort = SORT_COLUMNS[given.sort];
 
+  const skip = await contactedRecently(client, orgId, given);
   const run = (f: SearchFilters, columns: string, view: string) =>
-    applyFilters(visible(client, orgId, columns, { count: "exact" }, view, f.showBlacklisted), f, f.includeBlank, today, view === FILTER_VIEW)
+    skipping(applyFilters(visible(client, orgId, columns, { count: "exact" }, view, f.showBlacklisted), f, f.includeBlank, today, view === FILTER_VIEW), skip)
       .order(sort.column, { ascending: sort.ascending, nullsFirst: false })
       .order("id")
       .range(from, from + size - 1);

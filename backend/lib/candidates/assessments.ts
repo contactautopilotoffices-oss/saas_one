@@ -8,7 +8,8 @@ import { parsePhone } from './normalize';
 import { CandidateActionError, getRecord } from './records';
 
 const TABLE = 'candidate_assessment_invites';
-export const ASSESSMENT_CAMPAIGN = 'candidate_assessment_invite_v1';
+/** Owner 2026-11-24: the approved template in use is v2 (same four parameters: first name, title, minutes, link). */
+export const ASSESSMENT_CAMPAIGN = 'candidate_assessment_invite_v2';
 export interface AssessmentChoice { id: string; title: string; duration: number; url: string }
 export interface AssessmentInvite { id: string; test_id: string; channel: 'email' | 'whatsapp'; status: 'sending' | 'sent' | 'failed' | 'unknown'; recipient: string; error: string | null; mail_id: string | null }
 function check(error: { code?: string; message?: string } | null) {

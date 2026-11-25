@@ -134,6 +134,8 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
     const exportSelected = () => {
         if (!selectedRecords.length) return;
         downloadCsv(`candidates-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(selectedRecords));
+        // Owner 2026-11-24: every export is kept in the audit log.
+        void api('/api/candidates/audit', { json: { orgId, action: 'export', count: selectedRecords.length, what: 'candidate records' } });
         notify(`${formatCount(selectedRecords.length)} ${selectedRecords.length === 1 ? 'candidate' : 'candidates'} exported`, 'success');
     };
     // Owner 2026-11-15: "Others" needs a remark; one remark covers every ticked record.

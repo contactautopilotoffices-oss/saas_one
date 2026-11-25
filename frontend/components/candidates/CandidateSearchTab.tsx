@@ -47,6 +47,9 @@ interface Counts { candidates: number | null; sheets: number | null; resumes: nu
 const NO_COUNTS: Counts = { candidates: null, sheets: null, resumes: null, positions: null, reading: 0, attention: 0 };
 
 type View = 'dashboard' | 'search' | 'requisitions' | 'positions' | 'pipeline' | 'offers' | 'candidates' | 'resumes' | 'email' | 'outreach' | 'sheets' | 'settings';
+/** Owner 2026-11-25: the Recruitment workspace (/recruitment) drives these views from its own rail. */
+export type RecruitmentView = View;
+export const RECRUITMENT_VIEW_IDS: readonly View[] = ['dashboard', 'search', 'requisitions', 'positions', 'pipeline', 'offers', 'candidates', 'resumes', 'email', 'outreach', 'sheets', 'settings'];
 const VIEWS: Array<{ id: View; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'search', label: 'Search', icon: Search },
     // Owner 2026-11-21: the spec's dashboard views (Today, Roles, Funnel).
@@ -68,13 +71,25 @@ const VIEWS: Array<{ id: View; label: string; icon: React.ComponentType<{ classN
     { id: 'settings', label: 'Configurations', icon: Settings2 },
 ];
 
-export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
+export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', view: viewProp, onViewChange, hideTabs = false }: {
     orgId: string;
     /** The filters' collapse button follows the host console's sidebar button: "panel" (Tech) or "chevron" (HR logins). */
     collapseStyle?: PanelToggleVariant;
+    /**
+     * Owner 2026-11-25 (Recruitment workspace): when given, the host picks the view (null: none shown, e.g. while the
+     * workspace's Home is open) and `onViewChange` is asked to switch it. Views already opened stay mounted, hidden.
+     */
+    view?: View | null;
+    onViewChange?: (view: View) => void;
+    /** The host shows the module's name and its own navigation, so the name and the tab bar are left out. */
+    hideTabs?: boolean;
 }) {
-    const [view, setView] = useState<View>('search');
-    const [visited, setVisited] = useState<Record<View, boolean>>({ dashboard: false, search: true, requisitions: false, positions: false, pipeline: false, offers: false, candidates: false, sheets: false, resumes: false, email: false, outreach: false, settings: false });
+    const controlled = viewProp !== undefined;
+    const [ownView, setOwnView] = useState<View>('search');
+    const view: View | null = controlled ? viewProp : ownView;
+    const [visited, setVisited] = useState<Record<View, boolean>>({ dashboard: false, search: !controlled || viewProp === 'search', requisitions: false, positions: false, pipeline: false, offers: false, candidates: false, sheets: false, resumes: false, email: false, outreach: false, settings: false });
+    // A view the host opened is mounted from then on (React allows this state update during render).
+    if (view && !visited[view]) setVisited(s => ({ ...s, [view]: true }));
     const [requisitionVersion, setRequisitionVersion] = useState(0);
     const [noAccess, setNoAccess] = useState(false);
     // The last toast is kept after it hides so its exit animation has content; a new id remounts it (restarts the timer).
@@ -140,7 +155,8 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
     const countOf: Record<View, number | null> = { dashboard: null, offers: null, search: null, requisitions: null, positions: counts.positions, pipeline: null, candidates: counts.candidates, sheets: counts.sheets, resumes: counts.resumes, email: null, outreach: null, settings: null };
 
     const open = (v: View) => {
-        setView(v);
+        if (controlled) { onViewChange?.(v); return; }
+        setOwnView(v);
         if (!visited[v]) setVisited(s => ({ ...s, [v]: true }));
     };
     const openSearch = (position: Position) => { setSearchRequest(r => ({ position, nonce: (r?.nonce ?? 0) + 1 })); open('search'); };
@@ -161,8 +177,9 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
             {/* One width for every view (owner 2026-11-11), so the tab bar does not shift when the view changes: the
                 whole width of the page, so nothing is left empty beside it when the sidebar is collapsed. */}
             <div className="w-full min-w-0 space-y-5">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {view !== null && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                     {/* The module's name: this row replaces the HR page header on the Recruitment tab. */}
+                    {!hideTabs && <>
                     <div className="flex items-center gap-2">
                         <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400"><UserSearch className="h-5 w-5" /></div>
                         <h1 className="font-display text-lg font-black tracking-tight text-text-primary sm:text-xl">Recruitment</h1>
@@ -199,6 +216,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
                             );
                         })}
                     </div>
+                    </>}
                     <div className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-2" aria-live="polite">
                         {reading && (
                             <button type="button" onClick={() => open('resumes')} className="inline-flex h-9 items-center gap-x-2 rounded-[10px] bg-surface px-3 text-sm font-semibold text-text-secondary shadow-[var(--w-shadow)] hover:text-text-primary" title="Resumes are being read in the background. You can keep working.">
@@ -214,7 +232,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel' }: {
                         <RecruitmentMailButton orgId={orgId} onOpenEmail={() => open('email')} />
                         <button type="button" onClick={() => open('resumes')} className={`${BTN_SECONDARY} h-9 rounded-[10px] px-3`} title="Upload resumes from the Resumes tab"><Upload className="h-4 w-4" />Upload resumes</button>
                     </div>
-                </div>
+                </div>}
 
                 {VIEWS.map(({ id }) => visited[id] && (
                     <div key={id} role="tabpanel" id={`cand-panel-${id}`} aria-labelledby={`cand-tab-${id}`} hidden={view !== id} className="min-w-0">

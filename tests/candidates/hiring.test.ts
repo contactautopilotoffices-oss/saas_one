@@ -18,7 +18,8 @@ import {
 import { addMembers, createPosition, getPosition } from "../../backend/lib/candidates/positions";
 import { recruitmentDashboard } from "../../backend/lib/candidates/recruitment-dashboard";
 import { createRecord } from "../../backend/lib/candidates/records";
-import { saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
+import { DEFAULT_OUTREACH } from "../../backend/lib/candidates/outreach-settings";
+import { saveOutreachSettings, saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
 
 import { freshDb } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -135,7 +136,7 @@ describe("the hiring flow after booking", () => {
     sent.length = 0;
     const released = await releaseOffer(client, ORG, ME, offer.id, deps);
     assert.equal(released.status, "released");
-    assert.ok(sent.some((s) => s.to === "farah@example.com" && /Offer letter/.test(s.subject)), "the letter goes to the candidate");
+    assert.ok(sent.some((s) => s.to === "farah@example.com" && /Letter of intent/.test(s.subject)), "the letter goes to the candidate");
   });
 
   it("chases an unanswered offer, records the answer, and closes the position when the person joins", async () => {
@@ -155,6 +156,8 @@ describe("the hiring flow after booking", () => {
     await db.query("update public.candidate_positions set status = 'open', closed_at = null where id = $1", [positionId]);
     const { record } = await createRecord(client, ORG, RECRUITER, { fullName: "Imran Shaikh", phone: "9876500003", email: "imran@example.com", role: "Accounts Executive" });
     await addMembers(client, ORG, ME, positionId, [record.id]);
+    // Owner 2026-11-24: the Director approves every offer by default; with that switched off, within the band it is the HR Head only.
+    await saveOutreachSettings(client, ORG, { ...DEFAULT_OUTREACH, offer: { ...DEFAULT_OUTREACH.offer, directorAlways: false } });
     const offer = await createOffer(client, ORG, ME, { applicationId: record.id, positionId, proposedCtc: 350_000, joiningDate: "2026-12-20" }, deps);
     assert.equal(offer.needsDirector, false, "within the band: the HR Head only");
     await decideOffer(client, ORG, by(HR_HEAD, "Anita Verma"), offer.id, { decision: "approve" }, deps);
@@ -176,5 +179,10 @@ describe("the hiring flow after booking", () => {
     assert.ok(role, "the open role is listed");
     assert.equal(d.funnel.reduce((n, f) => n + f.count + f.rejected, 0), 2, "both people are counted once");
     assert.ok(Array.isArray(d.today.interviews) && Array.isArray(d.today.offersAwaiting));
+    // Owner 2026-11-25 (workspace Pipeline and Insights tabs): the role's people by column, and where they came from.
+    assert.equal(role.byColumn.length, d.funnel.length, "one count per board column");
+    assert.equal(role.byColumn.reduce((n, c) => n + c, 0), role.inPipeline, "the columns add up to the people in the running");
+    assert.equal(role.byColumn.reduce((n, c) => n + c, 0) + role.rejectedByColumn.reduce((n, c) => n + c, 0), 2, "and with the rejected, everyone");
+    assert.equal(d.sources.reduce((n, s) => n + s.count, 0), 2, "each person's source is counted once");
   });
 });

@@ -17,6 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { recordAction, type Actor } from "./actions";
+import { markContacted } from "./audit";
 import { personalLink, systemActor } from "./applications";
 import { filterRecords } from "./filter-search";
 import { EMPTY_FILTERS, type SearchFilters } from "./filters";
@@ -254,7 +255,7 @@ async function sendOne(client: SupabaseClient, orgId: string, c: CampaignRow, se
     await finish(client, row.id, result.success
       ? { status: "sent", sent_at: new Date().toISOString(), recipient: `91${phoneKey}`, link_id: linkId, provider_ref: result.providerReference ?? null }
       : { status: "failed", recipient: `91${phoneKey}`, error: (result.error ?? "WhatsApp did not accept the message").slice(0, 500) });
-    if (result.success) await logSent(client, orgId, c, row, "whatsapp", template);
+    if (result.success) { await logSent(client, orgId, c, row, "whatsapp", template); await markContacted(client, orgId, row.candidate_id); }
     return;
   }
 
@@ -266,6 +267,7 @@ async function sendOne(client: SupabaseClient, orgId: string, c: CampaignRow, se
   try {
     const sent = await senders.email({ connectionId: c.mail_connection_id, to: emailKey as string, subject: subject.text.replace(/[\r\n]+/g, " ").slice(0, 250), body: body.text });
     await finish(client, row.id, { status: "sent", sent_at: new Date().toISOString(), recipient: emailKey, link_id: linkId, provider_ref: sent.messageId });
+    await markContacted(client, orgId, row.candidate_id);
     // The Email tab shows it with the rest of the mailbox's mail.
     const { error: mailError } = await client.from("recruitment_mail_messages").insert({
       organization_id: orgId, connection_id: c.mail_connection_id, candidate_id: row.candidate_id, message_id: sent.messageId, thread_id: sent.threadId ?? sent.messageId,

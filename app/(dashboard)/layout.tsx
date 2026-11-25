@@ -90,7 +90,8 @@ export default function DashboardLayout({
     const isPettyCashWorkspace = !!pathname && /\/petty-cash(\/|$)/.test(pathname);
     // The Accounts (Finance) workspace renders its OWN chrome via its nested
     // layout — same pattern as the FMS dashboard — so skip the shared sidebar.
-    const isAccountsWorkspace = !!pathname && /\/(accounts|aop)(\/|$)/.test(pathname);
+    // Owner 2026-11-25: so does the Recruitment workspace (its own rail and the way back to the app).
+    const isAccountsWorkspace = !!pathname && /\/(accounts|aop|recruitment)(\/|$)/.test(pathname);
 
     if (isFullDashboard || isPettyCashWorkspace) {
         // FMS dashboard renders its own chrome (no shared sidebar) — still surface

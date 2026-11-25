@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, FileText, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, FileText, ListChecks, Plus, X } from 'lucide-react';
 import { boardColumns, findStage, reasonNeeded, sideStages, stageGroups, unlistedStage, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { recordOrigin, type CandidateRecord, type Position, type PositionMember, type Stage } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
@@ -12,9 +12,10 @@ import { OutreachDialog } from './OutreachPanel';
 import type { PipelineContext } from './PipelineContext';
 import PositionForm, { type PositionSeed } from './PositionForm';
 import RecordForm from './RecordForm';
+import ScreeningQuestionsDialog from './ScreeningQuestionsDialog';
 import { RemarkDialog } from './Remarks';
 import { retryStages, StageChip, StageOptions, stagesFailed, TONE_DOT, useRejectionReasons, useStages } from './stage-ui';
-import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, INPUT, LABEL, NUM_SM, Spinner, Tag, useUi, WELL } from './ui';
 
 /*
  * The pipeline per position (owner 2026-11-15, to the mockup). One position at a time: the numbers a recruiter acts
@@ -136,8 +137,25 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
     const [nonce, setNonce] = useState(0);
     const [busy, setBusy] = useState(false);
     const [pendingMove, setPendingMove] = useState<{ member: PositionMember; stage: StageDef } | null>(null);
+    // Owner 2026-11-24: after a move to a rejected stage, the soft rejection email on offer.
+    const [rejection, setRejection] = useState<{ member: PositionMember; templateId: string; positionId: string } | null>(null);
+    const [rejecting, setRejecting] = useState(false);
+    const sendRejection = async () => {
+        if (!rejection) return;
+        setRejecting(true);
+        const res = await api<{ campaign: { counts: { sent: number; skipped: number; failed: number; unknown: number } } }>('/api/candidates/outreach/campaigns', {
+            json: { orgId, action: 'send', applicationIds: [rejection.member.applicationId ?? rejection.member.record?.id], positionId: rejection.positionId, emailTemplateId: rejection.templateId },
+        });
+        setRejecting(false);
+        if (!res.ok) { notify(res.error, 'error'); return; }
+        const c = res.data.campaign.counts;
+        notify(c.sent ? 'Rejection email sent' : 'The email was not sent. See Outreach → Sends for why.', c.sent ? 'success' : 'info');
+        setRejection(null);
+    };
     // Owner 2026-11-16: right after a drop on a stage marked for WhatsApp (Configurations), offer to tell the candidate.
     const [outreach, setOutreach] = useState<{ record: CandidateRecord; positionId: string; positionTitle: string; stageName: string; remark: string | null; open: boolean } | null>(null);
+    // Owner 2026-11-25: the position's own screening questions, drafted by the AI from its JD.
+    const [questionsOpen, setQuestionsOpen] = useState(false);
     const stageList = useStages(orgId);
     const rejectionReasons = useRejectionReasons(orgId);
     // Owner 2026-11-17: the panel knows which person of the pipeline it shows and the people it walks through (the
@@ -190,12 +208,18 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         // Owner 2026-11-21 (spec): a reason to reject or to move back a round, as for a stage that needs a remark.
         if ((stage.needsRemark || reasonNeeded(stageList?.stages ?? [], member.stage, stageKey)) && !remark) { setPendingMove({ member, stage }); return; }
         setBusy(true);
-        const res = await api<{ member: PositionMember }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
+        const res = await api<{ member: PositionMember; screening?: { status: string; note: string | null } | null; rejectionEmail?: { templateId: string } | null }>(`/api/candidates/positions/${encodeURIComponent(position.id)}/members/${encodeURIComponent(member.id)}`, { method: 'PATCH', json: { orgId, stage: stageKey, ...(remark ? { remark } : {}) } });
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setPendingMove(null);
-        notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}`, 'success');
+        // Owner 2026-11-24: the screening questions go on the move to the screening stage; say what happened.
+        const sc = res.data.screening;
+        notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}${sc ? (sc.status === 'sent' ? ' · screening questions sent on WhatsApp' : ` · screening not sent: ${sc.note ?? ''}`) : ''}`, sc && sc.status !== 'sent' ? 'info' : 'success');
         refresh();
+        // Owner 2026-11-24: a rejected stage offers the soft rejection email (HR's template, from the connected mailbox).
+        if (res.data.rejectionEmail && member.record && !member.record.blacklisted && member.record.email) {
+            setRejection({ member, templateId: res.data.rejectionEmail.templateId, positionId: position.id });
+        }
         // The editable update needs the stages migration (stage_update); before it, nothing is offered.
         if (stage.whatsapp && member.record && !member.record.blacklisted && stageList?.source !== 'legacy') {
             setOutreach({ record: member.record, positionId: position.id, positionTitle: position.title, stageName: stage.name, remark, open: true });
@@ -213,6 +237,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         const records = (list ?? []).map(m => m.record).filter((r): r is CandidateRecord => !!r);
         if (!records.length || !position) return;
         downloadCsv(`${position.title.replace(/[^\w-]+/g, '_')}-pipeline-${new Date().toISOString().slice(0, 10)}.csv`, recordsToCsv(records));
+        // Owner 2026-11-24: every export is kept in the audit log.
+        void api('/api/candidates/audit', { json: { orgId, action: 'export', count: records.length, what: `people in the ${position.title} pipeline` } });
         notify(`${formatCount(records.length)} exported (logged)`, 'success');
     };
 
@@ -284,6 +310,13 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                 onClose={() => { if (!busy) setPendingMove(null); }}
                 onSubmit={remark => { if (pendingMove) void move(pendingMove.member, pendingMove.stage.key, remark); }}
             />
+            <Dialog open={!!rejection} onClose={() => { if (!rejecting) setRejection(null); }} labelId="reject-email-title" size="sm"
+                title={`Send ${rejection?.member.record?.fullName ?? 'them'} the rejection email?`}
+                description="A polite note from the HR mailbox (Outreach → Templates → Soft rejection). Nothing is sent unless you press Send."
+                footer={<>
+                    <button type="button" onClick={() => setRejection(null)} disabled={rejecting} className={BTN_GHOST}>Not now</button>
+                    <button type="button" onClick={() => void sendRejection()} disabled={rejecting} className={BTN_PRIMARY}>{rejecting && <Spinner />}Send the email</button>
+                </>} />
             <OutreachDialog
                 orgId={orgId} open={!!outreach?.open} record={outreach?.record ?? null}
                 positionId={outreach?.positionId ?? null} positionTitle={outreach?.positionTitle ?? null} stageName={outreach?.stageName ?? ''} movedRemark={outreach?.remark ?? null}
@@ -315,6 +348,8 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                                 className={`h-8 rounded-lg px-3 text-sm font-semibold capitalize transition-colors ${view === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>{id}</button>
                         ))}
                     </div>
+                    {position && <button type="button" onClick={() => setQuestionsOpen(true)} className={BTN_SECONDARY}><ListChecks className="h-4 w-4" />Screening questions</button>}
+                    {questionsOpen && position && <ScreeningQuestionsDialog orgId={orgId} positionId={position.id} positionTitle={position.title} onClose={() => setQuestionsOpen(false)} />}
                     <button type="button" onClick={exportMembers} disabled={!list?.length} className={BTN_SECONDARY}><Download className="h-4 w-4" />Export (logged)</button>
                     {onSearch && position && <button type="button" onClick={() => onSearch(position)} className={BTN_PRIMARY}><Plus className="h-4 w-4" />Add candidates</button>}
                 </span>

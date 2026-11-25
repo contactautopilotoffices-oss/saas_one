@@ -393,6 +393,8 @@ function InterviewFollowUp({ orgId, interview: i, onChanged }: { orgId: string; 
             <div className="flex flex-wrap items-center gap-2">
                 <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'done' ? 'bg-emerald-50 text-emerald-800' : status === 'scheduled' ? 'bg-sky-50 text-sky-800' : 'bg-slate-100 text-slate-700'}`}>{INTERVIEW_STATUS_LABELS[status]}</span>
                 {i.statusReason && <span className="text-xs text-text-secondary">“{i.statusReason}”</span>}
+                {/* Owner 2026-11-24: the candidate's answer on their interview page */}
+                {status === 'scheduled' && i.rsvp && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${i.rsvp === 'yes' ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`} title={i.rsvpNote ?? undefined}>{i.rsvp === 'yes' ? 'Confirmed' : `Cannot attend${i.rsvpNote ? `: ${i.rsvpNote}` : ''}`}</span>}
                 {status === 'scheduled' && (
                     <span className="ml-auto flex flex-wrap gap-1">
                         <button type="button" onClick={() => void patch({ status: 'done' }, 'Marked done')} disabled={busy} className={`${BTN_GHOST} h-8`}><Check className="h-4 w-4" />Done</button>

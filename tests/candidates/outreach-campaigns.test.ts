@@ -148,7 +148,7 @@ describe("job application form and outreach", () => {
     assert.equal(whatsapp.length, 1, "only Neha is messaged, once");
     const [first] = whatsapp;
     assert.equal(first.phone, "919876533333");
-    assert.equal(first.campaignName, "candidate_job_opening_v1");
+    assert.equal(first.campaignName, "hr_candidate_job_opening_v1");
     assert.deepEqual(first.templateParams.slice(0, 3), ["Neha", "Senior Graphic Designer", "Mumbai"]);
     assert.match(first.templateParams[3], /\/apply\/[A-Za-z0-9_-]{32}$/, "her own application link");
     const after1 = await getCampaign(client, ORG, c.id);

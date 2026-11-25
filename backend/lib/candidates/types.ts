@@ -1052,6 +1052,9 @@ export interface Interview {
   statusReason?: string | null;
   /** The panel's scorecards (HR sees all of them). */
   scorecards?: Scorecard[];
+  /** Owner 2026-11-24: the candidate's answer on the interview page (will they attend), and why not. */
+  rsvp?: "yes" | "no" | null;
+  rsvpNote?: string | null;
 }
 
 /** What scheduling sent, for the form to say. */
@@ -1397,7 +1400,8 @@ export interface Offer {
   breakup: Record<string, number>;
   joiningDate: string | null;
   status: OfferStatus;
-  currentLevel: "hr_head" | "director" | null;
+  /** Owner 2026-11-24: the hiring manager (who raised the request) approves the annexure first. */
+  currentLevel: "hiring_manager" | "hr_head" | "director" | null;
   currentApproverName: string | null;
   needsDirector: boolean;
   letter: string | null;
@@ -1415,6 +1419,16 @@ export interface Offer {
   events: { action: string; level: string | null; reason: string | null; byName: string | null; at: string }[];
   /** What the signed-in person may do with it now. */
   canDecide?: boolean;
+  /** Owner 2026-11-24: the candidate's letter-of-intent page, once released (HR only). */
+  publicUrl?: string | null;
+  /** Who recorded the answer: HR, or the candidate on the page. */
+  respondedVia?: "hr" | "candidate" | null;
+}
+
+/** Owner 2026-11-24: an accepted offer handed to onboarding (HRMS). */
+export interface OfferHandover {
+  id: string; offerId: string; candidateName: string; positionTitle: string | null; joiningDate: string | null; status: "pending" | "taken";
+  takenByName: string | null; takenAt: string | null; createdAt: string; snapshot: Record<string, unknown>;
 }
 
 /** The dashboard (spec: Today, Roles, Funnel). */
@@ -1425,6 +1439,30 @@ export interface RecruitmentDashboard {
     waiting: { candidateName: string; positionTitle: string; stageName: string; days: number }[];
     offersAwaiting: { id: string; candidateName: string; positionTitle: string | null; status: OfferStatus; days: number }[];
   };
-  roles: { id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string }[];
+  roles: {
+    id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string;
+    /** Owner 2026-11-25 (Recruitment workspace, Pipeline tab): people in the running per board column, in `funnel` order. */
+    byColumn: number[];
+    /** And how many were rejected in each column, in the same order. */
+    rejectedByColumn: number[];
+  }[];
   funnel: { column: string; count: number; rejected: number }[];
+  /**
+   * Owner 2026-11-25 (Insights tab): where the people in the open roles' pipelines came from, by the source on their
+   * candidate record ("Not recorded" when it is empty), most first.
+   */
+  sources: { source: string; count: number }[];
+  /** Owner 2026-11-24: the last 90 days, for the HR Head and the Director. */
+  metrics?: RecruitmentMetrics;
+}
+
+export interface RecruitmentMetrics {
+  periodDays: number;
+  /** Days from the position opening to the offer's acceptance (average, and how many offers it covers). */
+  timeToFill: { days: number | null; offers: number };
+  offerAcceptance: { released: number; accepted: number; declined: number; waiting: number; ratePct: number | null };
+  rejectionReasons: { reason: string; count: number }[];
+  /** Hours from submitting to the final decision. */
+  approvalTurnaround: { requisitionHours: number | null; requisitions: number; offerHours: number | null; offers: number };
+  recruiterLoad: { recruiter: string; openRoles: number; inPipeline: number; ageing: number }[];
 }

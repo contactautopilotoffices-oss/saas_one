@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { FormError, MAX_RESUME_BYTES, publicForm, submitApplication } from "@/backend/lib/candidates/applications";
@@ -41,6 +41,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   let answers: Record<string, unknown> = {};
   let consent = false;
   let resume: { name: string; type: string; bytes: Uint8Array } | null = null;
+  // Owner 2026-11-24: the assignment and documents pages send more than one file, as "file_<question id>".
+  const files: Record<string, { name: string; type: string; bytes: Uint8Array }> = {};
   try {
     const form = await request.formData();
     answers = JSON.parse(String(form.get("answers") ?? "{}")) as Record<string, unknown>;
@@ -52,11 +54,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (f.size > MAX_RESUME_BYTES) return NextResponse.json({ error: "The file is over 4 MB. Attach a smaller one.", field: "resume" }, { status: 400 });
       resume = { name: f.name || "resume", type: f.type, bytes: new Uint8Array(await f.arrayBuffer()) };
     }
+    let total = 0;
+    for (const [key, value] of form.entries()) {
+      if (!/^file_[a-z0-9_]{1,40}$/.test(key) || typeof value !== "object" || !("arrayBuffer" in value) || (value as File).size === 0) continue;
+      const f = value as File;
+      total += f.size;
+      if (f.size > MAX_RESUME_BYTES) return NextResponse.json({ error: "A file is over 4 MB. Attach a smaller one.", field: key.slice(5) }, { status: 400 });
+      if (total > 4 * MAX_RESUME_BYTES || Object.keys(files).length >= 12) return NextResponse.json({ error: "Too many files at once. Upload the rest in a second go." }, { status: 400 });
+      files[key.slice(5)] = { name: f.name || "file", type: f.type, bytes: new Uint8Array(await f.arrayBuffer()) };
+    }
   } catch {
     return NextResponse.json({ error: "The form could not be read. Please try again." }, { status: 400 });
   }
   try {
-    const result = await submitApplication(getCandidatesAdmin(), token, { answers, consent, resume, ip, userAgent: request.headers.get("user-agent") });
+    const client = getCandidatesAdmin();
+    const result = await submitApplication(client, token, { answers, consent, resume, files, ip, userAgent: request.headers.get("user-agent") });
+    if (result.assignmentId && result.organizationId) {
+      // The AI score (HR only) after the reply, so the candidate does not wait for it.
+      const { assignmentId, organizationId } = result;
+      after(async () => {
+        const { scoreAssignment } = await import("@/backend/lib/candidates/assignment-score");
+        await scoreAssignment(client, organizationId, assignmentId);
+      });
+    }
     return NextResponse.json({ thanks: result.thanks }, { headers: noStore });
   } catch (error) {
     if (error instanceof FormError) return NextResponse.json({ error: error.message, field: error.fieldId }, { status: 400 });

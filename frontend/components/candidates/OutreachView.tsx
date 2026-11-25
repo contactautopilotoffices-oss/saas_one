@@ -23,9 +23,10 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Drawer, EmptyState, INPUT,
  *   Automatic        : what happens when a hiring request is approved.
  */
 
-type Section = 'sends' | 'applications' | 'form' | 'templates' | 'auto';
+type Section = 'sends' | 'applications' | 'form' | 'screening' | 'offer' | 'templates' | 'auto';
 const SECTIONS: { id: Section; label: string }[] = [
-    { id: 'sends', label: 'Sends' }, { id: 'applications', label: 'Applications' }, { id: 'form', label: 'Application form' }, { id: 'templates', label: 'Templates' }, { id: 'auto', label: 'Automatic' },
+    { id: 'sends', label: 'Sends' }, { id: 'applications', label: 'Applications' }, { id: 'form', label: 'Application form' },
+    { id: 'screening', label: 'Screening & interviews' }, { id: 'offer', label: 'Assignment & offer' }, { id: 'templates', label: 'Templates' }, { id: 'auto', label: 'Automatic' },
 ];
 const TYPE_LABELS: Record<ApplicationField['type'], string> = { text: 'Short answer', textarea: 'Paragraph', number: 'Number', email: 'Email', phone: 'Mobile number', select: 'Choice', date: 'Date', file: 'File (resume)' };
 const STATUS_TONE: Record<CampaignSummary['status'], 'info' | 'success' | 'neutral' | 'warn'> = { queued: 'info', sending: 'info', done: 'success', cancelled: 'neutral' };
@@ -45,7 +46,7 @@ export default function OutreachView({ orgId }: { orgId: string }) {
             </div>
             {section === 'sends' && <SendsPanel orgId={orgId} />}
             {section === 'applications' && <ApplicationsPanel orgId={orgId} />}
-            {(section === 'form' || section === 'templates' || section === 'auto') && <SettingsPanel orgId={orgId} section={section} />}
+            {(section === 'form' || section === 'screening' || section === 'offer' || section === 'templates' || section === 'auto') && <SettingsPanel orgId={orgId} section={section} />}
         </div>
     );
 }
@@ -250,7 +251,7 @@ function ApplicationsPanel({ orgId }: { orgId: string }) {
 
 // Settings: form, templates, automatic ----------------------------------------------------------------------------------
 
-function SettingsPanel({ orgId, section }: { orgId: string; section: 'form' | 'templates' | 'auto' }) {
+function SettingsPanel({ orgId, section }: { orgId: string; section: 'form' | 'screening' | 'offer' | 'templates' | 'auto' }) {
     const { notify } = useUi();
     const [meta, setMeta] = useState<Omit<SettingsResponse, 'settings'> | null>(null);
     const [saved, setSaved] = useState<OutreachSettings | null>(null);
@@ -282,6 +283,8 @@ function SettingsPanel({ orgId, section }: { orgId: string; section: 'form' | 't
     return (
         <div className="space-y-4 pb-16">
             {section === 'form' && <FormEditor value={draft.applicationForm} targets={meta.targets} onChange={applicationForm => setDraft(d => d && { ...d, applicationForm })} />}
+            {section === 'screening' && <ScreeningEditor orgId={orgId} value={draft} targets={meta.targets} onChange={setDraft} />}
+            {section === 'offer' && <OfferSettingsEditor value={draft} onChange={setDraft} />}
             {section === 'templates' && <TemplatesEditor value={draft.templates} placeholders={meta.placeholders} onChange={templates => setDraft(d => d && { ...d, templates })} />}
             {section === 'auto' && <AutoEditor value={draft} onChange={setDraft} />}
             <div className="sticky bottom-3 z-10 flex flex-wrap items-center justify-end gap-2 rounded-xl bg-surface/95 px-4 py-2.5 shadow-[var(--w-shadow-hover)] ring-1 ring-border-subtle backdrop-blur">
@@ -300,12 +303,51 @@ const slug = (s: string, taken: string[]) => {
     return id;
 };
 
+/**
+ * The questions of a form (the application form, or the screening questions): text, answer type, where the answer goes
+ * on the record, required, order. `screening`: no file upload and no name / email / mobile (the person is known).
+ */
+function FieldsEditor({ fields, targets, onChange, screening = false }: { fields: ApplicationField[]; targets: Record<ApplicationTarget, string>; onChange: (f: ApplicationField[]) => void; screening?: boolean }) {
+    const setField = (i: number, patch: Partial<ApplicationField>) => onChange(fields.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+    const move = (i: number, by: -1 | 1) => { const next = [...fields]; const [f] = next.splice(i, 1); next.splice(i + by, 0, f); onChange(next); };
+    const used = fields.map(f => f.target).filter(Boolean);
+    const locked = (f: ApplicationField) => !screening && !!f.target && REQUIRED_TARGETS.includes(f.target);
+    const allowedTargets = (Object.keys(targets) as ApplicationTarget[]).filter(t => !screening || (t !== 'resume' && !REQUIRED_TARGETS.includes(t)));
+    return (
+        <>
+            <ol className="space-y-2">
+                {fields.map((f, i) => (
+                    <li key={f.id} className={`${WELL} grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-end`}>
+                        <label className="block"><span className={LABEL}>Question</span><input value={f.label} onChange={e => setField(i, { label: e.target.value })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
+                        <label className="block"><span className={LABEL}>Answer type</span>
+                            <select value={f.type} disabled={locked(f) || f.target === 'resume'} onChange={e => setField(i, { type: e.target.value as ApplicationField['type'], ...(e.target.value === 'select' && !f.options?.length ? { options: ['Yes', 'No'] } : {}) })} className={`${INPUT} mt-1 h-9`}>
+                                {APPLICATION_FIELD_TYPES.filter(t => t !== 'file' || f.target === 'resume').map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+                            </select>
+                        </label>
+                        <label className="block"><span className={LABEL}>Fills on the record</span>
+                            <select value={f.target ?? ''} disabled={locked(f)} onChange={e => setField(i, { target: (e.target.value || null) as ApplicationTarget | null, ...(e.target.value === 'resume' ? { type: 'file' } : f.type === 'file' ? { type: 'text' } : {}) })} className={`${INPUT} mt-1 h-9`}>
+                                <option value="">{screening ? 'Kept with the answers only' : 'Kept with the application only'}</option>
+                                {allowedTargets.filter(t => t === f.target || !used.includes(t)).map(t => <option key={t} value={t}>{targets[t]}</option>)}
+                            </select>
+                        </label>
+                        <div className="flex items-center gap-1">
+                            <label className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-text-secondary"><input type="checkbox" checked={f.required} disabled={locked(f)} onChange={e => setField(i, { required: e.target.checked })} className="h-4 w-4" />Required</label>
+                            <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowUp className="h-4 w-4" /></button>
+                            <button type="button" aria-label="Move down" disabled={i === fields.length - 1} onClick={() => move(i, 1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowDown className="h-4 w-4" /></button>
+                            <button type="button" aria-label={`Remove "${f.label}"`} disabled={locked(f)} onClick={() => onChange(fields.filter((_, j) => j !== i))} className={`${BTN_GHOST} h-8 w-8 px-0 text-error`} title={locked(f) ? 'Always asked' : undefined}><Trash2 className="h-4 w-4" /></button>
+                        </div>
+                        <label className="block md:col-span-2"><span className={LABEL}>Hint (optional)</span><input value={f.help ?? ''} onChange={e => setField(i, { help: e.target.value || undefined })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
+                        {f.type === 'select' && <label className="block md:col-span-2"><span className={LABEL}>Options, comma-separated</span><input value={(f.options ?? []).join(', ')} onChange={e => setField(i, { options: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} className={`${INPUT} mt-1 h-9`} /></label>}
+                    </li>
+                ))}
+            </ol>
+            <button type="button" onClick={() => onChange([...fields, { id: slug('question', fields.map(x => x.id)), label: '', type: 'text', required: false, target: null }])} className={BTN_SECONDARY}><Plus className="h-4 w-4" />Add a question</button>
+        </>
+    );
+}
+
 function FormEditor({ value, targets, onChange }: { value: OutreachSettings['applicationForm']; targets: Record<ApplicationTarget, string>; onChange: (v: OutreachSettings['applicationForm']) => void }) {
     const set = (patch: Partial<OutreachSettings['applicationForm']>) => onChange({ ...value, ...patch });
-    const setField = (i: number, patch: Partial<ApplicationField>) => set({ fields: value.fields.map((f, j) => (j === i ? { ...f, ...patch } : f)) });
-    const move = (i: number, by: -1 | 1) => { const fields = [...value.fields]; const [f] = fields.splice(i, 1); fields.splice(i + by, 0, f); set({ fields }); };
-    const used = value.fields.map(f => f.target).filter(Boolean);
-    const locked = (f: ApplicationField) => !!f.target && REQUIRED_TARGETS.includes(f.target);
     return (
         <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Application form">
             <div>
@@ -317,35 +359,159 @@ function FormEditor({ value, targets, onChange }: { value: OutreachSettings['app
                 <label className="block"><span className={LABEL}>Thank-you message</span><input value={value.thanks} onChange={e => set({ thanks: e.target.value })} maxLength={500} className={`${INPUT} mt-1`} /></label>
                 <label className="block sm:col-span-2"><span className={LABEL}>Introduction</span><textarea value={value.intro} onChange={e => set({ intro: e.target.value })} rows={2} maxLength={1000} className={`${INPUT} mt-1 h-auto py-2`} /></label>
             </div>
-            <ol className="space-y-2">
-                {value.fields.map((f, i) => (
-                    <li key={f.id} className={`${WELL} grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.3fr)_auto] md:items-end`}>
-                        <label className="block"><span className={LABEL}>Question</span><input value={f.label} onChange={e => setField(i, { label: e.target.value })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
-                        <label className="block"><span className={LABEL}>Answer type</span>
-                            <select value={f.type} disabled={locked(f) || f.target === 'resume'} onChange={e => setField(i, { type: e.target.value as ApplicationField['type'], ...(e.target.value === 'select' && !f.options?.length ? { options: ['Yes', 'No'] } : {}) })} className={`${INPUT} mt-1 h-9`}>
-                                {APPLICATION_FIELD_TYPES.filter(t => t !== 'file' || f.target === 'resume').map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
-                            </select>
-                        </label>
-                        <label className="block"><span className={LABEL}>Fills on the record</span>
-                            <select value={f.target ?? ''} disabled={locked(f)} onChange={e => setField(i, { target: (e.target.value || null) as ApplicationTarget | null, ...(e.target.value === 'resume' ? { type: 'file' } : f.type === 'file' ? { type: 'text' } : {}) })} className={`${INPUT} mt-1 h-9`}>
-                                <option value="">Kept with the application only</option>
-                                {(Object.keys(targets) as ApplicationTarget[]).filter(t => t === f.target || !used.includes(t)).map(t => <option key={t} value={t}>{targets[t]}</option>)}
-                            </select>
-                        </label>
-                        <div className="flex items-center gap-1">
-                            <label className="mr-1 inline-flex items-center gap-1.5 text-xs font-semibold text-text-secondary"><input type="checkbox" checked={f.required} disabled={locked(f)} onChange={e => setField(i, { required: e.target.checked })} className="h-4 w-4" />Required</label>
-                            <button type="button" aria-label="Move up" disabled={i === 0} onClick={() => move(i, -1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowUp className="h-4 w-4" /></button>
-                            <button type="button" aria-label="Move down" disabled={i === value.fields.length - 1} onClick={() => move(i, 1)} className={`${BTN_GHOST} h-8 w-8 px-0`}><ArrowDown className="h-4 w-4" /></button>
-                            <button type="button" aria-label={`Remove "${f.label}"`} disabled={locked(f)} onClick={() => set({ fields: value.fields.filter((_, j) => j !== i) })} className={`${BTN_GHOST} h-8 w-8 px-0 text-error`} title={locked(f) ? 'Always asked' : undefined}><Trash2 className="h-4 w-4" /></button>
-                        </div>
-                        <label className="block md:col-span-2"><span className={LABEL}>Hint (optional)</span><input value={f.help ?? ''} onChange={e => setField(i, { help: e.target.value || undefined })} maxLength={200} className={`${INPUT} mt-1 h-9`} /></label>
-                        {f.type === 'select' && <label className="block md:col-span-2"><span className={LABEL}>Options, comma-separated</span><input value={(f.options ?? []).join(', ')} onChange={e => setField(i, { options: e.target.value.split(',').map(x => x.trim()).filter(Boolean) })} className={`${INPUT} mt-1 h-9`} /></label>}
-                    </li>
-                ))}
-            </ol>
-            <button type="button" onClick={() => set({ fields: [...value.fields, { id: slug('question', value.fields.map(x => x.id)), label: '', type: 'text', required: false, target: null }] })} className={BTN_SECONDARY}><Plus className="h-4 w-4" />Add a question</button>
+            <FieldsEditor fields={value.fields} targets={targets} onChange={fields => set({ fields })} />
             <label className="block"><span className={LABEL}>Consent (the candidate must tick it)</span><textarea value={value.consentText} onChange={e => set({ consentText: e.target.value })} rows={2} maxLength={1000} className={`${INPUT} mt-1 h-auto py-2`} /></label>
         </section>
+    );
+}
+
+/**
+ * Screening and interviews (owner 2026-11-24): the screening questions sent on WhatsApp when someone moves to the
+ * screening stage, the interview invite and reminder templates and guidelines, the company profile link, and the
+ * rejection email. "Keep it configurable": all of it is HR's.
+ */
+function ScreeningEditor({ orgId, value, targets, onChange }: { orgId: string; value: OutreachSettings; targets: Record<ApplicationTarget, string>; onChange: (v: OutreachSettings) => void }) {
+    const s = value.screening;
+    const iv = value.interview;
+    const setS = (patch: Partial<OutreachSettings['screening']>) => onChange({ ...value, screening: { ...s, ...patch } });
+    const setI = (patch: Partial<OutreachSettings['interview']>) => onChange({ ...value, interview: { ...iv, ...patch } });
+    const [stages, setStages] = useState<{ key: string; name: string }[]>([]);
+    useEffect(() => {
+        const ctrl = new AbortController();
+        void api<{ stages: { key: string; name: string; hidden?: boolean }[] }>(`/api/candidates/stages${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setStages(res.data.stages.filter(x => !x.hidden)); });
+        return () => ctrl.abort();
+    }, [orgId]);
+    const wa = value.templates.filter(t => t.channel === 'whatsapp');
+    const em = value.templates.filter(t => t.channel === 'email');
+    const lines = (v: string) => v.split('\n').map(x => x.trim()).filter(Boolean);
+    const stageOptions = (current: string) => [...stages, ...(current && !stages.some(x => x.key === current) ? [{ key: current, name: current }] : [])];
+    return (
+        <div className="space-y-4">
+            <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Screening">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Screening questions</h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">When someone moves to the screening stage, they get a WhatsApp from the person who moved them, with their own link to these questions. Their answers fill their record and show on their Calls tab, beside the job description, for the screening call. No answer: a reminder at 24 h and 48 h, then &quot;No response&quot;.</p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={s.enabled} onChange={e => setS({ enabled: e.target.checked })} className="h-4 w-4" />Send the screening questions on the move</label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block"><span className={LABEL}>The stage that sends them</span>
+                        <select value={s.stageKey} onChange={e => setS({ stageKey: e.target.value })} className={`${INPUT} mt-1`}>{stageOptions(s.stageKey).map(x => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
+                    </label>
+                    <label className="block"><span className={LABEL}>WhatsApp template</span>
+                        <select value={s.whatsappTemplateId} onChange={e => setS({ whatsappTemplateId: e.target.value })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                    </label>
+                    <label className="block"><span className={LABEL}>Most questions per position (standard ones included)</span><input type="number" min={5} max={40} value={s.maxQuestions} onChange={e => setS({ maxQuestions: Math.max(5, Math.min(40, Number(e.target.value) || 25)) })} className={`${INPUT} mt-1`} /></label>
+                    <label className="block"><span className={LABEL}>No answer after (hours)</span><input type="number" min={24} max={336} value={s.noResponseAfterHours} onChange={e => setS({ noResponseAfterHours: Math.max(24, Math.min(336, Number(e.target.value) || 72)) })} className={`${INPUT} mt-1`} /></label>
+                    <label className="block"><span className={LABEL}>Then move them to</span>
+                        <select value={s.noResponseStageKey} onChange={e => setS({ noResponseStageKey: e.target.value })} className={`${INPUT} mt-1`}>
+                            <option value="">Leave them where they are</option>
+                            {stageOptions(s.noResponseStageKey).filter(x => x.key !== s.stageKey).map(x => <option key={x.key} value={x.key}>{x.name}</option>)}
+                        </select>
+                    </label>
+                    <label className="block sm:col-span-2"><span className={LABEL}>Introduction on the questions page</span><input value={s.intro} onChange={e => setS({ intro: e.target.value })} maxLength={1000} className={`${INPUT} mt-1`} /></label>
+                </div>
+                <FieldsEditor fields={s.fields} targets={targets} onChange={fields => setS({ fields })} screening />
+            </section>
+            <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Interviews">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Interviews</h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">Each interview gets its own page for the candidate: the job description, your company profile, these guidelines, how to join (or the address), and &quot;Will you attend? Yes / No&quot;. The WhatsApp invite and the reminder (the day before) link to it. A &quot;No&quot; tells whoever booked the interview.</p>
+                </div>
+                <label className="block"><span className={LABEL}>Company profile link ({'{{company_profile}}'})</span><input value={value.companyProfileUrl} onChange={e => onChange({ ...value, companyProfileUrl: e.target.value })} maxLength={500} placeholder="https://…" className={`${INPUT} mt-1`} /></label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block"><span className={LABEL}>WhatsApp invite</span>
+                        <select value={iv.inviteTemplateId} onChange={e => setI({ inviteTemplateId: e.target.value })} className={`${INPUT} mt-1`}><option value="">The standard invite</option>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                    </label>
+                    <label className="block"><span className={LABEL}>WhatsApp reminder (the day before)</span>
+                        <select value={iv.reminderTemplateId} onChange={e => setI({ reminderTemplateId: e.target.value })} className={`${INPUT} mt-1`}><option value="">No WhatsApp reminder</option>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                    </label>
+                    <label className="block"><span className={LABEL}>Guidelines for a video interview, one per line</span><textarea value={iv.guidelinesOnline.join('\n')} onChange={e => setI({ guidelinesOnline: lines(e.target.value) })} rows={5} className={`${INPUT} mt-1 h-auto py-2`} /></label>
+                    <label className="block"><span className={LABEL}>Guidelines for an in-person interview, one per line</span><textarea value={iv.guidelinesInPerson.join('\n')} onChange={e => setI({ guidelinesInPerson: lines(e.target.value) })} rows={5} className={`${INPUT} mt-1 h-auto py-2`} /></label>
+                </div>
+            </section>
+            <section className={`${CARD} space-y-3 px-4 py-4 sm:px-6`} aria-label="Rejection email">
+                <h2 className="font-display text-base font-semibold text-text-primary">Rejection email</h2>
+                <p className="text-sm text-text-secondary">Offered after someone is moved to a rejected stage. HR presses Send; nothing goes on its own. Edit its wording under Templates.</p>
+                <select aria-label="Rejection email template" value={value.rejectionEmailTemplateId} onChange={e => onChange({ ...value, rejectionEmailTemplateId: e.target.value })} className={`${INPUT} sm:max-w-md`}>
+                    <option value="">Don&apos;t offer an email</option>{em.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+            </section>
+        </div>
+    );
+}
+
+/** Owner 2026-11-24: the ready-made assignments, the documents to ask for, and the offer's breakup rows and approvals. */
+function OfferSettingsEditor({ value, onChange }: { value: OutreachSettings; onChange: (v: OutreachSettings) => void }) {
+    const a = value.assignment;
+    const docs = value.documents;
+    const o = value.offer;
+    const setA = (patch: Partial<OutreachSettings['assignment']>) => onChange({ ...value, assignment: { ...a, ...patch } });
+    const setO = (patch: Partial<OutreachSettings['offer']>) => onChange({ ...value, offer: { ...o, ...patch } });
+    const setLib = (i: number, patch: Partial<OutreachSettings['assignment']['library'][number]>) => setA({ library: a.library.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
+    const wa = value.templates.filter(t => t.channel === 'whatsapp');
+    const lines = (v: string) => v.split('\n').map(x => x.trim()).filter(Boolean);
+    const rows = (label: string, list: string[], set: (v: string[]) => void) => (
+        <label className="block"><span className={LABEL}>{label}, one per line</span><textarea value={list.join('\n')} onChange={e => set(lines(e.target.value).slice(0, 20))} rows={5} className={`${INPUT} mt-1 h-auto py-2`} /></label>
+    );
+    return (
+        <div className="space-y-4">
+            <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Assignments">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Assignments</h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">Ready-made assignments per department: HR picks one when sending (Candidate → Assignment &amp; documents) and can still edit it. The candidate gets a WhatsApp with their own page: the brief, the Drive link, the deadline, and where to submit. The AI score against the JD shows to HR only.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block"><span className={LABEL}>WhatsApp template</span>
+                        <select value={a.whatsappTemplateId} onChange={e => setA({ whatsappTemplateId: e.target.value })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                    <label className="block"><span className={LABEL}>Days to submit (default)</span><input type="number" min={1} max={30} value={a.defaultDueDays} onChange={e => setA({ defaultDueDays: Math.max(1, Math.min(30, Number(e.target.value) || 3)) })} className={`${INPUT} mt-1`} /></label>
+                </div>
+                <ol className="space-y-3">
+                    {a.library.map((t, i) => (
+                        <li key={t.id} className={`${WELL} grid gap-2 px-3 py-3 sm:grid-cols-2`}>
+                            <input aria-label="Name" placeholder="Name (for HR)" value={t.name} onChange={e => setLib(i, { name: e.target.value })} maxLength={80} className={INPUT} />
+                            <input aria-label="Department" placeholder="Department" value={t.department} onChange={e => setLib(i, { department: e.target.value })} maxLength={80} className={INPUT} />
+                            <input aria-label="Title" placeholder="Title the candidate sees" value={t.title} onChange={e => setLib(i, { title: e.target.value })} maxLength={200} className={`${INPUT} sm:col-span-2`} />
+                            <textarea aria-label="Brief" placeholder="The brief" value={t.brief} onChange={e => setLib(i, { brief: e.target.value })} rows={4} maxLength={8000} className={`${INPUT} h-auto py-2 sm:col-span-2`} />
+                            <textarea aria-label="Guidelines" placeholder="Guidelines (optional)" value={t.guidelines} onChange={e => setLib(i, { guidelines: e.target.value })} rows={2} maxLength={4000} className={`${INPUT} h-auto py-2 sm:col-span-2`} />
+                            <input aria-label="Drive link" placeholder="Drive link (optional)" value={t.driveLink} onChange={e => setLib(i, { driveLink: e.target.value })} maxLength={500} className={INPUT} />
+                            <div className="flex items-center gap-2">
+                                <input aria-label="Days to submit" type="number" min={1} max={30} value={t.dueDays} onChange={e => setLib(i, { dueDays: Math.max(1, Math.min(30, Number(e.target.value) || 3)) })} className={`${INPUT} w-24`} /><span className="text-sm text-text-secondary">days</span>
+                                <button type="button" aria-label={`Remove ${t.name}`} onClick={() => setA({ library: a.library.filter((_, j) => j !== i) })} className={`${BTN_GHOST} ml-auto h-9 w-9 px-0 text-error`}><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                        </li>
+                    ))}
+                </ol>
+                <button type="button" disabled={a.library.length >= 50} onClick={() => setA({ library: [...a.library, { id: slug('assignment', a.library.map(t => t.id)), name: 'New assignment', department: '', title: '', brief: '', guidelines: '', driveLink: '', dueDays: a.defaultDueDays }] })} className={`${BTN_SECONDARY} h-9`}><Plus className="h-4 w-4" />Add a ready-made assignment</button>
+            </section>
+            <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Documents">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Documents after selection</h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">&quot;Ask for documents&quot; on a candidate sends a WhatsApp with their own upload page; each file comes straight into the system for HR to verify.</p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block"><span className={LABEL}>WhatsApp template</span>
+                        <select value={docs.whatsappTemplateId} onChange={e => onChange({ ...value, documents: { ...docs, whatsappTemplateId: e.target.value } })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                    {rows('Documents to ask for', docs.items, items => onChange({ ...value, documents: { ...docs, items } }))}
+                </div>
+            </section>
+            <section className={`${CARD} space-y-4 px-4 py-4 sm:px-6`} aria-label="Offer">
+                <div>
+                    <h2 className="font-display text-base font-semibold text-text-primary">Offer: salary breakup and approvals</h2>
+                    <p className="mt-0.5 text-sm text-text-secondary">The breakup (annexure) is approved before the candidate sees it: the hiring manager first (who raised the request), then the HR Head, then the Director. Once released, the candidate gets the letter of intent with the breakup by email and WhatsApp, and accepts or declines on its page.</p>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-2">
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={o.hiringManagerApproves} onChange={e => setO({ hiringManagerApproves: e.target.checked })} className="h-4 w-4" />The hiring manager approves first</label>
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={o.directorAlways} onChange={e => setO({ directorAlways: e.target.checked })} className="h-4 w-4" />The Director approves every offer (not only those above the budget)</label>
+                </div>
+                <label className="block sm:max-w-md"><span className={LABEL}>Letter of intent WhatsApp template</span>
+                    <select value={o.loiTemplateId} onChange={e => setO({ loiTemplateId: e.target.value })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+                <div className="grid gap-3 sm:grid-cols-3">
+                    {rows('Earnings (per month)', o.earnings, earnings => setO({ earnings }))}
+                    {rows('Deductions (per month)', o.deductions, deductions => setO({ deductions }))}
+                    {rows('Benefits (per year)', o.benefits, benefits => setO({ benefits }))}
+                </div>
+            </section>
+        </div>
     );
 }
 
@@ -372,7 +538,7 @@ function TemplatesEditor({ value, placeholders, onChange }: { value: OutreachTem
                         </div>
                         {t.channel === 'whatsapp' ? (
                             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                                <label className="block"><span className={LABEL}>AiSensy campaign name</span><input value={t.campaign ?? ''} onChange={e => setT(i, { campaign: e.target.value })} maxLength={120} placeholder="candidate_job_opening_v1" className={`${INPUT} mt-1 h-9 font-mono text-xs`} /></label>
+                                <label className="block"><span className={LABEL}>AiSensy campaign name</span><input value={t.campaign ?? ''} onChange={e => setT(i, { campaign: e.target.value })} maxLength={120} placeholder="hr_candidate_job_opening_v1" className={`${INPUT} mt-1 h-9 font-mono text-xs`} /></label>
                                 <div><span className={LABEL}>Variables in order</span>
                                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
                                         {(t.params ?? []).map((p, j) => (

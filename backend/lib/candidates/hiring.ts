@@ -20,18 +20,24 @@
  *
  * Every message is an email (WhatsApp is parked by the owner). Nothing here decides who is hired: people do.
  */
+import { randomBytes } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { recordAction, type Actor } from "./actions";
+import { audit, logMessage } from "./audit";
+import { parsePhone } from "./normalize";
+import { withinSendingHours } from "./outreach";
+import { guidelinesLine, whatsappParams, type OfferConfig } from "./outreach-settings";
 import { CandidateActionError } from "./records";
 import { activeRoles, HR_ROLES, loadRecruitmentConfig } from "./requisitions";
 import { findStage } from "./stage-list";
 import { loadStages } from "./stages";
 import { moveMember } from "./positions";
 import {
-  APPROVAL_LEVEL_LABELS, INTERVIEW_STATUS_LABELS, RECOMMENDATIONS, SCORECARD_SKILLS,
-  type InterviewStatus, type Offer, type OfferStatus, type RecruitmentConfig, type Scorecard,
+  INTERVIEW_STATUS_LABELS, RECOMMENDATIONS, SCORECARD_SKILLS,
+  type InterviewStatus, type Offer, type OfferHandover, type OfferStatus, type RecruitmentConfig, type Scorecard,
 } from "./types";
 
 export const HIRING_FLOW_MIGRATION_MESSAGE = "This needs a database update first: run 20261121000003_recruitment_hiring_flow.sql in Supabase.";
@@ -77,6 +83,26 @@ export interface FlowDeps {
   scorecardLink: (orgId: string, card: { id: string; userId: string; interviewId: string; expiresAt: Date }, payload: Record<string, unknown>) => Promise<string | null>;
   appUrl: string;
   now?: () => Date;
+  /** Owner 2026-11-24: the WhatsApp interview reminder (AiSensy); none in tests unless a fake is passed. */
+  sendWhatsApp?: (o: { phone: string; campaignName: string; templateParams: string[]; userName?: string }) => Promise<{ success: boolean; error?: string }>;
+  /** Owner 2026-11-24: an offer approver's one-time decision link (no login: the hiring manager approves from email). */
+  offerDecisionLink?: (orgId: string, offerId: string, approverId: string, level: OfferLevel, summary: OfferLinkSummary) => Promise<string | null>;
+  /** Stops the unused decision links of an offer (before the next level's link goes out). */
+  revokeOfferLinks?: (offerId: string) => Promise<void>;
+  /** The bell in the app (NotificationService); none in tests unless a fake is passed. */
+  notifyInApp?: (userIds: string[], n: { organizationId: string; title: string; message: string }) => Promise<void>;
+}
+
+/** Owner 2026-11-24: who approves an offer's annexure, in order. */
+export type OfferLevel = "hiring_manager" | "hr_head" | "director";
+export const OFFER_LEVEL_LABELS: Record<OfferLevel, string> = { hiring_manager: "Hiring manager", hr_head: "HR Head", director: "Director" };
+export const OFFER_ENTITY = "recruitment_offer";
+/** What the approver's decision page shows (kept on the token). */
+export interface OfferLinkSummary {
+  candidateName: string; role: string | null; ctc: number; bandMin: number | null; bandMax: number | null; joiningDate: string | null;
+  proposedBy: string | null; note: string | null; breakup: Record<string, number>;
+  /** The breakup grouped by HR's rows, with the totals. */
+  groups?: ReturnType<typeof breakupGroups>;
 }
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "").replace(/\/$/, "");
@@ -96,6 +122,24 @@ export function defaultFlowDeps(): FlowDeps {
       return raw ? `${APP_URL}/api/candidates/scorecards/${raw}` : null;
     },
     appUrl: APP_URL,
+    async sendWhatsApp(o) {
+      const { AiSensyService } = await import("@/backend/services/AiSensyService");
+      return AiSensyService.sendTemplate(o);
+    },
+    async offerDecisionLink(orgId, offerId, approverId, level, summary) {
+      if (!APP_URL) return null;
+      const { issueEmailActionToken } = await import("@/backend/lib/emailActions/tokens");
+      const raw = await issueEmailActionToken({ organizationId: orgId, userId: approverId, entityType: OFFER_ENTITY, entityId: offerId, action: "decide", payload: { level, summary } });
+      return raw ? `${APP_URL}/api/recruitment/offers/act/${raw}` : null;
+    },
+    async notifyInApp(userIds, n) {
+      const { NotificationService } = await import("@/backend/services/NotificationService");
+      await NotificationService.sendToMany(userIds, { organizationId: n.organizationId, type: "recruitment_update", title: n.title.slice(0, 120), message: n.message.slice(0, 500), deepLink: "/hr-tickets" });
+    },
+    async revokeOfferLinks(offerId) {
+      const { revokeTokensForEntity } = await import("@/backend/lib/emailActions/tokens");
+      await revokeTokensForEntity(OFFER_ENTITY, offerId);
+    },
   };
 }
 
@@ -137,13 +181,17 @@ const INTERVIEW_COLUMNS = "id, organization_id, candidate_id, application_id, po
 export async function fileInterview(client: SupabaseClient, orgId: string, by: Actor, row: {
   id: string; candidateId: string; applicationId: string | null; positionId: string; round: string; atLocal: string; mode: string; venue: string | null;
   interviewers: { id: string; name: string }[]; joinPath: string | null;
+  /** Owner 2026-11-24 (migration 20261124000003): the interview page's key; left out before the migration. */
+  publicToken?: string | null;
 }): Promise<Map<string, string>> {
   const cards = new Map<string, string>();
-  const { error } = await client.from(INTERVIEWS).insert({
+  const values: Record<string, unknown> = {
     id: row.id, organization_id: orgId, candidate_id: row.candidateId, application_id: row.applicationId, position_id: row.positionId, round: row.round,
     at: istToInstant(row.atLocal).toISOString(), at_local: row.atLocal, mode: row.mode, venue: row.venue, interviewer_ids: row.interviewers.map((p) => p.id),
     join_path: row.joinPath, created_by: by.id,
-  });
+  };
+  let { error } = await client.from(INTERVIEWS).insert(row.publicToken ? { ...values, public_token: row.publicToken } : values);
+  if (error && row.publicToken && /public_token/.test(error.message ?? "")) ({ error } = await client.from(INTERVIEWS).insert(values));
   if (error) {
     if (!missingFlow(error)) console.error("[candidates] hiring: the interview was not filed", error);
     return cards;
@@ -255,15 +303,20 @@ export async function rescheduleInterview(client: SupabaseClient, orgId: string,
 }
 
 /** Each interview's status and scorecards, for the Interviews tab (HR sees every scorecard). */
-export async function interviewExtras(client: SupabaseClient, orgId: string, ids: string[]): Promise<Map<string, { status: InterviewStatus; statusReason: string | null; scorecards: Scorecard[] }>> {
-  const out = new Map<string, { status: InterviewStatus; statusReason: string | null; scorecards: Scorecard[] }>();
+export async function interviewExtras(client: SupabaseClient, orgId: string, ids: string[]): Promise<Map<string, { status: InterviewStatus; statusReason: string | null; scorecards: Scorecard[]; rsvp: "yes" | "no" | null; rsvpNote: string | null }>> {
+  const out = new Map<string, { status: InterviewStatus; statusReason: string | null; scorecards: Scorecard[]; rsvp: "yes" | "no" | null; rsvpNote: string | null }>();
   if (!ids.length) return out;
-  const [rows, cards] = await Promise.all([
-    client.from(INTERVIEWS).select("id, status, status_reason").eq("organization_id", orgId).in("id", ids),
+  const read = (columns: string) => client.from(INTERVIEWS).select(columns).eq("organization_id", orgId).in("id", ids);
+  const [first, cards] = await Promise.all([
+    read("id, status, status_reason, rsvp, rsvp_note"),
     client.from(CARDS).select("id, interview_id, panel_name, ratings, overall, recommendation, comments, submitted_at").eq("organization_id", orgId).in("interview_id", ids),
   ]);
+  // Before migration 20261124000003 there is no RSVP: read without it.
+  const rows = first.error && /rsvp/.test(first.error.message ?? "") ? await read("id, status, status_reason") : first;
   if (rows.error) return out;
-  for (const r of (rows.data ?? []) as { id: string; status: InterviewStatus; status_reason: string | null }[]) out.set(r.id, { status: r.status, statusReason: r.status_reason, scorecards: [] });
+  for (const r of (rows.data ?? []) as unknown as { id: string; status: InterviewStatus; status_reason: string | null; rsvp?: "yes" | "no" | null; rsvp_note?: string | null }[]) {
+    out.set(r.id, { status: r.status, statusReason: r.status_reason, scorecards: [], rsvp: r.rsvp ?? null, rsvpNote: r.rsvp_note ?? null });
+  }
   for (const c of ((cards.error ? [] : cards.data) ?? []) as Record<string, unknown>[]) out.get(c.interview_id as string)?.scorecards.push(toScorecard(c));
   return out;
 }
@@ -342,6 +395,7 @@ export async function runInterviewJobs(client: SupabaseClient, orgId: string, de
       await stamp("escalated_at"); nudges += 1;
     }
   }
+  reminders += await whatsappReminders(client, orgId, deps, (data ?? []) as unknown as InterviewRow[], now);
   // Scorecard chasers: past interviews with cards still empty: 24 h, 48 h, then the HR Head at 72 h.
   const { data: cards } = await client.from(CARDS).select("id, interview_id, panel_user_id, panel_name, chased_24_at, chased_48_at, escalated_at").eq("organization_id", orgId).is("submitted_at", null);
   const pending = (cards ?? []) as { id: string; interview_id: string; panel_user_id: string | null; panel_name: string | null; chased_24_at: string | null; chased_48_at: string | null; escalated_at: string | null }[];
@@ -370,12 +424,68 @@ export async function runInterviewJobs(client: SupabaseClient, orgId: string, de
   return { reminders, nudges, chasers };
 }
 
+/** The interview page's token (migration 20261124000003), or null before it. */
+async function pageToken(client: SupabaseClient, id: string): Promise<string | null> {
+  const { data, error } = await client.from(INTERVIEWS).select("public_token").eq("id", id).maybeSingle();
+  return error ? null : ((data as { public_token?: string | null } | null)?.public_token ?? null);
+}
+
 async function remind(client: SupabaseClient, orgId: string, deps: FlowDeps, row: InterviewRow, when: string): Promise<void> {
   const ctx = await interviewContext(client, orgId, row);
   const link = row.join_path ? `${deps.appUrl}${row.join_path}` : null;
+  // Owner 2026-11-24: the guidelines, and the page where the candidate confirms they will attend.
+  const settings = (await loadRecruitmentConfig(client, orgId)).outreach;
+  const guidelines = row.mode === "online" ? settings.interview.guidelinesOnline : settings.interview.guidelinesInPerson;
+  const token = await pageToken(client, row.id);
+  const page = token ? `${deps.appUrl}/interview/${token}` : null;
   const rows: [string, string][] = [["When", istText(new Date(row.at))], ["Round", row.round ?? "—"], ["Role", ctx.role ?? "—"], ...(row.mode === "online" ? [] : [["Where", row.venue ?? "Our office"] as [string, string]])];
-  await send(deps, [ctx.candidate.email], `Reminder: your interview ${when} · ${ctx.role ?? ""}`, mail(`Hello ${firstName(ctx.candidate.name)}, a reminder of your interview ${when}.`, rows, link ? { href: link, label: "Join the video call" } : null, row.mode === "online" ? "Open the link a few minutes early; you will be let in when the interview starts." : null));
+  const forCandidate: [string, string][] = [...rows, ...(guidelines.length ? [["Please", guidelines.join(" · ")] as [string, string]] : []), ...(page ? [["Will you attend? Tell us here", page] as [string, string]] : [])];
+  await send(deps, [ctx.candidate.email], `Reminder: your interview ${when} · ${ctx.role ?? ""}`, mail(`Hello ${firstName(ctx.candidate.name)}, a reminder of your interview ${when}.`, forCandidate, link ? { href: link, label: "Join the video call" } : page ? { href: page, label: "Confirm you will attend" } : null, row.mode === "online" ? "Open the link a few minutes early; you will be let in when the interview starts." : null));
   await send(deps, ctx.panel.map((p) => p.email), `Reminder: interview with ${ctx.candidate.name} ${when}`, mail(`Interview with ${ctx.candidate.name} ${when}`, rows, link ? { href: link, label: "Join the video call" } : null, null));
+}
+
+/**
+ * Owner 2026-11-24: the WhatsApp reminder (HR's reminder template: the guidelines and the page with Yes / No), once, in
+ * the day before the interview and in working hours. Stamped before sending, so it never goes twice.
+ */
+async function whatsappReminders(client: SupabaseClient, orgId: string, deps: FlowDeps, rows: InterviewRow[], now: Date): Promise<number> {
+  if (!deps.sendWhatsApp || !withinSendingHours(now)) return 0;
+  const soon = rows.filter((r) => { const until = new Date(r.at).getTime() - now.getTime(); return until > HOUR && until <= DAY; });
+  if (!soon.length) return 0;
+  const settings = (await loadRecruitmentConfig(client, orgId)).outreach;
+  const t = settings.interview.reminderTemplateId ? settings.templates.find((x) => x.id === settings.interview.reminderTemplateId && x.channel === "whatsapp") : undefined;
+  if (!t) return 0;
+  const { data, error } = await client.from(INTERVIEWS).select("id, public_token, wa_reminded_at, rsvp").in("id", soon.map((r) => r.id));
+  if (error) return 0;
+  const extra = new Map(((data ?? []) as { id: string; public_token: string | null; wa_reminded_at: string | null; rsvp: string | null }[]).map((r) => [r.id, r]));
+  let sent = 0;
+  for (const row of soon) {
+    const x = extra.get(row.id);
+    // Not when they already said they cannot come.
+    if (!x?.public_token || x.wa_reminded_at || x.rsvp === "no") continue;
+    const { data: person } = await client.from("candidates").select("full_name, phone, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id).maybeSingle();
+    const p = person as { full_name?: string | null; phone?: string | null; blacklisted_at?: string | null } | null;
+    const phone = parsePhone(p?.phone ?? "").key;
+    if (!p || p.blacklisted_at || !phone) continue;
+    const { data: stamped } = await client.from(INTERVIEWS).update({ wa_reminded_at: now.toISOString() }).eq("id", row.id).is("wa_reminded_at", null).select("id");
+    if (!(stamped ?? []).length) continue;
+    const { data: pos } = row.position_id ? await client.from("candidate_positions").select("title, location").eq("id", row.position_id).maybeSingle() : { data: null };
+    const guidelines = row.mode === "online" ? settings.interview.guidelinesOnline : settings.interview.guidelinesInPerson;
+    const { params, gaps } = whatsappParams(t, {
+      first_name: firstName(p.full_name ?? ""), full_name: p.full_name ?? null, round: row.round, role: (pos as { title?: string } | null)?.title ?? null,
+      location: row.mode === "online" ? null : row.venue, company: settings.companyName, company_profile: settings.companyProfileUrl || null,
+      interview_time: istText(new Date(row.at)), interview_page: `${deps.appUrl}/interview/${x.public_token}`, guidelines: guidelinesLine(guidelines) || null,
+    });
+    if (gaps.length) continue;
+    try {
+      const r = await deps.sendWhatsApp({ phone: `91${phone}`, campaignName: t.campaign ?? "", templateParams: params, userName: p.full_name ?? undefined });
+      if (r.success) sent += 1;
+      else console.error("[candidates] interview WhatsApp reminder refused", r.error);
+    } catch (e) {
+      console.error("[candidates] interview WhatsApp reminder failed", e);
+    }
+  }
+  return sent;
 }
 
 /** Organisations with interviews or offers the hourly job looks at. */
@@ -405,6 +515,39 @@ Warm regards,
 
 const OFFER_COLUMNS = "id, candidate_id, application_id, position_id, requisition_id, proposed_ctc, band_min, band_max, breakup, joining_date, status, current_level, current_approver_id, level_entered_at, needs_director, letter, released_at, response_at, response_reason, joined_at, dropped_reason, last_contact_at, notices, selected_note, created_by, created_by_name, created_at";
 
+/** Owner 2026-11-24 (migration 20261124000004): the LOI page's token and who recorded the answer. Read when there. */
+const OFFER_EXTRA = ", public_token, responded_via";
+const extrasMissing = (error: { message?: string } | null | undefined) => /public_token|responded_via/.test(error?.message ?? "");
+async function withExtras<T extends { error: { code?: string; message?: string } | null }>(run: (columns: string) => PromiseLike<T>): Promise<T> {
+  const first = await run(OFFER_COLUMNS + OFFER_EXTRA);
+  return first.error && extrasMissing(first.error) ? run(OFFER_COLUMNS) : first;
+}
+export const offerPageUrl = (token: string, base = APP_URL) => `${base}/offer/${token}`;
+
+/** The breakup grouped by HR's rows (earnings and deductions per month, benefits per year); unknown rows under "other". */
+export function breakupGroups(breakup: Record<string, number>, cfg: Pick<OfferConfig, "earnings" | "deductions" | "benefits">) {
+  const pick = (labels: string[]) => labels.filter((l) => breakup[l] !== undefined && breakup[l] !== null).map((l) => [l, Number(breakup[l])] as [string, number]);
+  const known = new Set([...cfg.earnings, ...cfg.deductions, ...cfg.benefits]);
+  const earnings = pick(cfg.earnings);
+  const deductions = pick(cfg.deductions);
+  const benefits = pick(cfg.benefits);
+  const other = Object.entries(breakup).filter(([k]) => !known.has(k)).map(([k, v]) => [k, Number(v)] as [string, number]);
+  const sum = (rows: [string, number][]) => rows.reduce((t, [, v]) => t + (Number.isFinite(v) ? v : 0), 0);
+  const gross = sum(earnings);
+  const totalDeductions = sum(deductions);
+  return { earnings, deductions, benefits, other, gross, totalDeductions, net: gross - totalDeductions, benefitsTotal: sum(benefits) };
+}
+const inr = (v: number) => `₹${Math.round(v).toLocaleString("en-IN")}`;
+function breakupHtml(breakup: Record<string, number>, cfg: Pick<OfferConfig, "earnings" | "deductions" | "benefits">): string {
+  const g = breakupGroups(breakup, cfg);
+  if (!g.earnings.length && !g.deductions.length && !g.benefits.length && !g.other.length) return "";
+  const rows = (title: string, list: [string, number][], total: [string, number] | null) => list.length
+    ? `<tr><td colspan="2" style="padding:10px 0 4px;font-weight:bold">${esc(title)}</td></tr>${list.map(([k, v]) => `<tr><td style="padding:3px 16px 3px 0;color:#475569">${esc(k)}</td><td style="padding:3px 0;text-align:right">${inr(v)}</td></tr>`).join("")}${total ? `<tr><td style="padding:3px 16px 3px 0;font-weight:bold">${esc(total[0])}</td><td style="padding:3px 0;text-align:right;font-weight:bold">${inr(total[1])}</td></tr>` : ""}`
+    : "";
+  return `<table style="border-collapse:collapse;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;margin:12px 0">
+    ${rows("Earnings (per month)", g.earnings, ["Gross per month", g.gross])}${rows("Deductions (per month)", g.deductions, ["Net per month (estimated)", g.net])}${rows("Benefits (per year)", g.benefits, null)}${rows("Other", g.other, null)}</table>`;
+}
+
 /** Blanks left in a letter: placeholders not filled, and "{{…}}" HR typed. */
 export const letterGaps = (letter: string | null) => [...new Set((letter ?? "").match(/\{\{[^}]*\}\}/g) ?? [])];
 
@@ -431,7 +574,7 @@ async function toOffers(client: SupabaseClient, orgId: string, rows: Record<stri
     const ctc = Number(r.proposed_ctc);
     const max = num(r.band_max);
     const level = (r.current_level as Offer["currentLevel"]) ?? null;
-    const approvers = viewer && level ? (level === "hr_head" ? hrHeads(viewer.config) : directors(viewer.config)) : [];
+    const approvers = viewer && level ? (level === "hiring_manager" ? [r.current_approver_id as string].filter(Boolean) : level === "hr_head" ? hrHeads(viewer.config) : directors(viewer.config)) : [];
     return {
       id: r.id as string, candidateId: r.candidate_id as string, candidateName: nameOf.get(r.candidate_id as string) ?? "Candidate",
       applicationId: (r.application_id as string | null) ?? null, positionId: (r.position_id as string | null) ?? null,
@@ -444,24 +587,28 @@ async function toOffers(client: SupabaseClient, orgId: string, rows: Record<stri
       lastContactAt: iso(r.last_contact_at), selectedNote: (r.selected_note as string | null) ?? null, createdByName: (r.created_by_name as string | null) ?? null,
       createdAt: iso(r.created_at) ?? "", events: eventsOf.get(r.id as string) ?? [],
       canDecide: viewer ? r.status === "pending" && approvers.includes(viewer.userId) && r.created_by !== viewer.userId : undefined,
+      publicUrl: r.public_token ? offerPageUrl(r.public_token as string) : null,
+      respondedVia: (r.responded_via as Offer["respondedVia"]) ?? null,
     };
   });
 }
 
 export async function listOffers(client: SupabaseClient, orgId: string, viewer: { userId: string }, filter: { candidateId?: string } = {}): Promise<Offer[]> {
-  let q = client.from(OFFERS).select(OFFER_COLUMNS).eq("organization_id", orgId).order("created_at", { ascending: false }).limit(300);
-  if (filter.candidateId) q = q.eq("candidate_id", filter.candidateId);
-  const { data, error } = await q;
+  const { data, error } = await withExtras((columns) => {
+    let q = client.from(OFFERS).select(columns).eq("organization_id", orgId).order("created_at", { ascending: false }).limit(300);
+    if (filter.candidateId) q = q.eq("candidate_id", filter.candidateId);
+    return q;
+  });
   if (error) fail("load the offers", error);
-  return toOffers(client, orgId, (data ?? []) as Record<string, unknown>[], { userId: viewer.userId, config: await loadRecruitmentConfig(client, orgId) });
+  return toOffers(client, orgId, (data ?? []) as unknown as Record<string, unknown>[], { userId: viewer.userId, config: await loadRecruitmentConfig(client, orgId) });
 }
 
 async function loadOffer(client: SupabaseClient, orgId: string, id: unknown): Promise<Record<string, unknown>> {
   if (typeof id !== "string" || !UUID.test(id)) throw new CandidateActionError(404, "That offer is no longer there.");
-  const { data, error } = await client.from(OFFERS).select(OFFER_COLUMNS).eq("organization_id", orgId).eq("id", id).maybeSingle();
+  const { data, error } = await withExtras((columns) => client.from(OFFERS).select(columns).eq("organization_id", orgId).eq("id", id).maybeSingle());
   if (error) fail("load the offer", error);
   if (!data) throw new CandidateActionError(404, "That offer is no longer there.");
-  return data as Record<string, unknown>;
+  return data as unknown as Record<string, unknown>;
 }
 async function event(client: SupabaseClient, orgId: string, offerId: string, by: Actor | null, action: string, level: string | null, reason: string | null) {
   const { error } = await client.from(EVENTS).insert({ organization_id: orgId, offer_id: offerId, action, level, reason, by_user: by?.id ?? null, by_name: by?.name ?? null });
@@ -494,20 +641,18 @@ export async function createOffer(client: SupabaseClient, orgId: string, by: Act
   const candidateId = (app as { candidate_id: string }).candidate_id;
   const { data: member } = await client.from("candidate_position_members").select("id").eq("organization_id", orgId).eq("position_id", o.positionId).eq("candidate_id", candidateId).is("deleted_at", null).maybeSingle();
   if (!member) throw new CandidateActionError(400, "Add the person to the position first.");
-  const { data: req } = await client.from("recruitment_requisitions").select("id, budget_min_ctc, budget_max_ctc").eq("organization_id", orgId).eq("position_id", o.positionId).is("deleted_at", null).maybeSingle();
-  const r = req as { id: string; budget_min_ctc: number | null; budget_max_ctc: number | null } | null;
+  const { data: req } = await client.from("recruitment_requisitions").select("id, budget_min_ctc, budget_max_ctc, raised_by").eq("organization_id", orgId).eq("position_id", o.positionId).is("deleted_at", null).maybeSingle();
+  const r = req as { id: string; budget_min_ctc: number | null; budget_max_ctc: number | null; raised_by: string | null } | null;
   const bandMax = num(r?.budget_max_ctc);
-  const needsDirector = bandMax !== null && o.proposedCtc > bandMax;
   const config = await loadRecruitmentConfig(client, orgId);
-  const first = hrHeads(config).find((id) => id !== by.id) ?? null;
-  const director = directors(config).find((id) => id !== by.id) ?? null;
-  const level: "hr_head" | "director" | null = first ? "hr_head" : director ? "director" : null;
-  if (!level) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
+  const chain = firstApprover(config, by.id, r?.raised_by ?? null, o.proposedCtc, bandMax);
+  if (!chain) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
+  const { level, approverId, needsDirector } = chain;
   const now = (deps.now?.() ?? new Date()).toISOString();
   const { data, error } = await client.from(OFFERS).insert({
     organization_id: orgId, candidate_id: candidateId, application_id: o.applicationId, position_id: o.positionId, requisition_id: r?.id ?? null,
     proposed_ctc: o.proposedCtc, band_min: num(r?.budget_min_ctc), band_max: bandMax, breakup: o.breakup ?? {}, joining_date: o.joiningDate ?? null,
-    status: "pending", current_level: level, current_approver_id: level === "hr_head" ? first : director, level_entered_at: now, needs_director: needsDirector,
+    status: "pending", current_level: level, current_approver_id: approverId, level_entered_at: now, needs_director: needsDirector,
     selected_note: o.note || null, created_by: by.id, created_by_name: by.name, created_at: now, updated_at: now,
   }).select("id").single();
   if (error) {
@@ -518,17 +663,55 @@ export async function createOffer(client: SupabaseClient, orgId: string, by: Act
   await event(client, orgId, id, by, "proposed", null, o.note || null);
   await recordAction(client, orgId, by, { candidateId, applicationId: o.applicationId, positionId: o.positionId, action: "remark", toValue: `Selected: offer ${lpa(o.proposedCtc)} proposed`, remark: o.note || null, meta: { kind: "offer", offerId: id } });
   const offer = await one(client, orgId, id, by.id);
-  await tellApprover(client, deps, offer, level === "hr_head" ? first! : director!, level);
+  await tellApprover(client, orgId, deps, offer, approverId, level);
   return offer;
 }
 
-async function tellApprover(client: SupabaseClient, deps: FlowDeps, offer: Offer, approverId: string, level: "hr_head" | "director", reminder = false) {
+/**
+ * Owner 2026-11-24 (23 Nov meeting: "annexure approval by the hiring manager and directors before the candidate sees
+ * it"): the first approver. The hiring manager (who raised the request) when HR switched it on and they did not propose
+ * it; else the HR Head; else the Director. The Director also approves when the CTC is above the band, or always when HR
+ * set it so (and a Director is set). Nobody approves an offer they proposed.
+ */
+function firstApprover(config: RecruitmentConfig, proposerId: string | null, raiserId: string | null, ctc: number, bandMax: number | null): { level: OfferLevel; approverId: string; needsDirector: boolean } | null {
+  const cfg = config.outreach.offer;
+  const hm = cfg.hiringManagerApproves && raiserId && raiserId !== proposerId ? raiserId : null;
+  const hr = hrHeads(config).find((id) => id !== proposerId) ?? null;
+  const director = directors(config).find((id) => id !== proposerId) ?? null;
+  const needsDirector = (bandMax !== null && ctc > bandMax) || (cfg.directorAlways && Boolean(director));
+  if (hm) return { level: "hiring_manager", approverId: hm, needsDirector };
+  if (hr) return { level: "hr_head", approverId: hr, needsDirector };
+  if (director) return { level: "director", approverId: director, needsDirector };
+  return null;
+}
+
+/** The approver after this level, or null when every approval is in. */
+function nextApprover(level: OfferLevel, row: Record<string, unknown>, config: RecruitmentConfig): { level: OfferLevel; approverId: string } | null {
+  if (level === "hiring_manager") {
+    const hr = hrHeads(config).find((id) => id !== row.created_by);
+    if (hr) return { level: "hr_head", approverId: hr };
+  }
+  if (level !== "director" && row.needs_director) {
+    const d = directors(config).find((id) => id !== row.created_by);
+    if (!d) throw new CandidateActionError(409, "This offer needs the Director, and no Director is set in HR Configs.");
+    return { level: "director", approverId: d };
+  }
+  return null;
+}
+
+async function tellApprover(client: SupabaseClient, orgId: string, deps: FlowDeps, offer: Offer, approverId: string, level: OfferLevel, reminder = false) {
   const who = (await emailsOf(client, [approverId])).get(approverId);
-  await send(deps, [who?.email], `${reminder ? "Reminder: " : ""}Offer to approve: ${offer.candidateName} · ${offer.positionTitle ?? ""}`, mail(
-    `Hello ${firstName(who?.name)}, an offer needs your approval as ${APPROVAL_LEVEL_LABELS[level]}.`,
+  const config = await loadRecruitmentConfig(client, orgId);
+  const summary: OfferLinkSummary = { candidateName: offer.candidateName, role: offer.positionTitle, ctc: offer.proposedCtc, bandMin: offer.bandMin, bandMax: offer.bandMax, joiningDate: offer.joiningDate, proposedBy: offer.createdByName, note: offer.selectedNote, breakup: offer.breakup, groups: breakupGroups(offer.breakup, config.outreach.offer) };
+  let link: string | null = null;
+  try { link = (await deps.offerDecisionLink?.(orgId, offer.id, approverId, level, summary)) ?? null; } catch (error) { console.error("[candidates] offer decision link failed", error); }
+  const html = mail(
+    `Hello ${firstName(who?.name)}, an offer needs your approval as ${OFFER_LEVEL_LABELS[level]}. The candidate sees nothing until every approval is in.`,
     [["Candidate", offer.candidateName], ["Role", offer.positionTitle ?? "—"], ["Offer CTC", lpa(offer.proposedCtc)], ["Budget band", `${lpa(offer.bandMin)} to ${lpa(offer.bandMax)}`],
       ...(offer.variancePct ? [["Above the band by", `${offer.variancePct}%`] as [string, string]] : []), ["Joining", offer.joiningDate ?? "—"], ["Proposed by", offer.createdByName ?? "—"]],
-    { href: `${deps.appUrl}/hr-tickets`, label: "Open Recruitment → Offers" }, null));
+    link ? { href: link, label: "Approve or send back" } : { href: `${deps.appUrl}/hr-tickets`, label: "Open Recruitment → Offers" },
+    link ? "The button works once and needs no login." : null);
+  await send(deps, [who?.email], `${reminder ? "Reminder: " : ""}Offer to approve: ${offer.candidateName} · ${offer.positionTitle ?? ""}`, html.replace(/<\/table>/, `</table>${breakupHtml(offer.breakup, config.outreach.offer)}`));
 }
 
 const DecideInput = z.object({ decision: z.enum(["approve", "reject", "revise"]), reason: z.string().trim().max(2000).optional() });
@@ -542,9 +725,11 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
   const row = await loadOffer(client, orgId, id);
   if (row.status !== "pending") throw new CandidateActionError(409, "This offer is not waiting for approval.");
   const config = await loadRecruitmentConfig(client, orgId);
-  const level = row.current_level as "hr_head" | "director";
+  const level = row.current_level as OfferLevel;
   if (row.created_by === by.id) throw new CandidateActionError(403, "An offer cannot be approved by the person who proposed it.");
-  if (!(level === "hr_head" ? hrHeads(config) : directors(config)).includes(by.id)) throw new CandidateActionError(403, `Only the ${APPROVAL_LEVEL_LABELS[level]} (or their backup) can decide on this offer now.`);
+  const allowed = level === "hiring_manager" ? [row.current_approver_id as string] : level === "hr_head" ? hrHeads(config) : directors(config);
+  if (!allowed.includes(by.id)) throw new CandidateActionError(403, level === "hiring_manager" ? "Only the hiring manager who raised the request can decide on this offer now." : `Only the ${OFFER_LEVEL_LABELS[level]} (or their backup) can decide on this offer now.`);
+  await deps.revokeOfferLinks?.(row.id as string).catch((error) => console.error("[candidates] revoking offer links failed", error));
   if (decision !== "approve" && !reason) throw new CandidateActionError(400, decision === "reject" ? "Give the reason for rejecting." : "Say what to revise.");
   const now = (deps.now?.() ?? new Date()).toISOString();
   const update = (values: Record<string, unknown>) => client.from(OFFERS).update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
@@ -554,17 +739,17 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
     await event(client, orgId, row.id as string, by, decision === "reject" ? "rejected" : "revise", level, reason);
     const offer = await one(client, orgId, row.id as string, by.id);
     const proposer = (await emailsOf(client, [row.created_by as string])).get(row.created_by as string);
-    await send(deps, [proposer?.email], `Offer ${decision === "reject" ? "not approved" : "to revise"}: ${offer.candidateName}`, mail(`The offer for ${offer.candidateName} was ${decision === "reject" ? "not approved" : "sent back for a revision"} by ${by.name ?? APPROVAL_LEVEL_LABELS[level]}.`, [["Why", reason ?? "—"]], null, decision === "revise" ? "Make a new offer from the candidate's Interviews tab." : null));
+    await send(deps, [proposer?.email], `Offer ${decision === "reject" ? "not approved" : "to revise"}: ${offer.candidateName}`, mail(`The offer for ${offer.candidateName} was ${decision === "reject" ? "not approved" : "sent back for a revision"} by ${by.name ?? OFFER_LEVEL_LABELS[level]}.`, [["Why", reason ?? "—"]], null, decision === "revise" ? "Make a new offer from the candidate's Interviews tab." : null));
     return offer;
   }
-  if (level === "hr_head" && row.needs_director) {
-    const director = directors(config).find((d) => d !== row.created_by) ?? null;
-    if (!director) throw new CandidateActionError(409, "This offer is above the band and needs the Director, and no Director is set in HR Configs.");
-    const { error } = await update({ current_level: "director", current_approver_id: director, level_entered_at: now });
-    if (error) fail("pass the offer to the Director", error);
-    await event(client, orgId, row.id as string, by, "approved", level, reason ?? "Above the band: the Director approves too");
+  const next = nextApprover(level, row, config);
+  if (next) {
+    const { error } = await update({ current_level: next.level, current_approver_id: next.approverId, level_entered_at: now });
+    if (error) fail(`pass the offer to the ${OFFER_LEVEL_LABELS[next.level]}`, error);
+    const aboveBand = num(row.band_max) !== null && Number(row.proposed_ctc) > (num(row.band_max) as number);
+    await event(client, orgId, row.id as string, by, "approved", level, reason ?? (next.level === "director" ? (aboveBand ? "Above the band: the Director approves too" : "The Director approves every offer") : null));
     const offer = await one(client, orgId, row.id as string, by.id);
-    await tellApprover(client, deps, offer, director, "director");
+    await tellApprover(client, orgId, deps, offer, next.approverId, next.level);
     return offer;
   }
   // Every approval is in: the letter is drafted from HR's template, held for release by HR (A16).
@@ -612,13 +797,38 @@ export async function releaseOffer(client: SupabaseClient, orgId: string, by: Ac
   if (row.status !== "approved") throw new CandidateActionError(409, "Only an approved offer can be released.");
   const gaps = letterGaps(row.letter as string | null);
   if (gaps.length) throw new CandidateActionError(400, `Fill the blanks in the letter first: ${gaps.join(", ")}.`);
-  const { data: person } = await client.from("candidates").select("full_name, email, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id as string).maybeSingle();
+  const { data: person } = await client.from("candidates").select("full_name, email, phone, blacklisted_at").eq("organization_id", orgId).eq("id", row.candidate_id as string).maybeSingle();
   if ((person as { blacklisted_at?: string | null } | null)?.blacklisted_at) throw new CandidateActionError(409, "This person is blacklisted. No message goes to them, so the letter cannot be released.");
   const email = (person as { email?: string | null } | null)?.email;
   if (!email) throw new CandidateActionError(400, "The candidate has no email address. Add it to their record, then release.");
   const offer = (await toOffers(client, orgId, [row]))[0];
-  const html = `<div style="font-family:Georgia,serif;font-size:15px;line-height:1.6;color:#0f172a;white-space:pre-wrap">${esc(row.letter)}</div>`;
-  if (!(await send(deps, [email], `Offer letter: ${offer.positionTitle ?? "your new role"} at Autopilot Offices`, html))) throw new CandidateActionError(502, "The email could not be sent. Try again.");
+  const config = await loadRecruitmentConfig(client, orgId);
+  // Owner 2026-11-24: the letter of intent's own page, where the candidate accepts or declines (no login).
+  let token = (row.public_token as string | null | undefined) ?? null;
+  if (!token && "public_token" in row) {
+    token = randomBytes(24).toString("base64url");
+    const { error: tokenError } = await client.from(OFFERS).update({ public_token: token }).eq("organization_id", orgId).eq("id", row.id as string);
+    if (tokenError) { console.error("[candidates] offer page token not saved", tokenError); token = null; }
+  }
+  const pageUrl = token ? offerPageUrl(token, deps.appUrl || APP_URL) : null;
+  const html = `<div style="font-family:Georgia,serif;font-size:15px;line-height:1.6;color:#0f172a;white-space:pre-wrap">${esc(row.letter)}</div>${breakupHtml(offer.breakup, config.outreach.offer)}${pageUrl ? `<p style="margin-top:16px;font-family:system-ui,sans-serif"><a href="${esc(pageUrl)}" style="display:inline-block;background:#1e293b;color:#fff;padding:11px 22px;border-radius:10px;text-decoration:none;font-weight:bold">Accept or decline</a></p>` : ""}`;
+  const subject = `Letter of intent: ${offer.positionTitle ?? "your new role"} at ${config.outreach.companyName || "Autopilot Offices"}`;
+  const mailed = await send(deps, [email], subject, html);
+  await logMessage(client, orgId, { candidateId: row.candidate_id as string, channel: "email", kind: "offer_letter", recipient: email, subject, ok: mailed > 0, error: mailed ? null : "The email could not be sent", by: by.name });
+  if (!mailed) throw new CandidateActionError(502, "The email could not be sent. Try again.");
+  if (pageUrl && deps.sendWhatsApp) {
+    const t = config.outreach.templates.find((x) => x.id === config.outreach.offer.loiTemplateId && x.channel === "whatsapp");
+    const phoneKey = parsePhone((person as { phone?: string | null } | null)?.phone ?? "").key;
+    if (t && phoneKey) {
+      const { params, gaps } = whatsappParams(t, { first_name: firstName(offer.candidateName), full_name: offer.candidateName, role: offer.positionTitle, company: config.outreach.companyName, loi_link: pageUrl });
+      if (!gaps.length) {
+        let ok = false;
+        let why: string | null = null;
+        try { const r = await deps.sendWhatsApp({ phone: `91${phoneKey}`, campaignName: t.campaign ?? "", templateParams: params, userName: offer.candidateName }); ok = r.success; why = r.error ?? null; } catch (e) { why = e instanceof Error ? e.message : "WhatsApp failed"; }
+        await logMessage(client, orgId, { candidateId: row.candidate_id as string, channel: "whatsapp", kind: "offer_letter", ok, error: why, by: by.name });
+      }
+    }
+  }
   const now = (deps.now?.() ?? new Date()).toISOString();
   const { error } = await client.from(OFFERS).update({ status: "released", released_at: now, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
   if (error) fail("record the release", error);
@@ -644,21 +854,183 @@ async function moveTo(client: SupabaseClient, orgId: string, by: Actor, row: Rec
 const ResponseInput = z.object({ response: z.enum(["accepted", "declined"]), reason: z.string().trim().max(2000).optional(), joiningDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
 /** The candidate's answer, recorded by HR: accepted (with the joining date) or declined (with the reason). */
-export async function recordResponse(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown): Promise<Offer> {
+export async function recordResponse(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps?: FlowDeps): Promise<Offer> {
+  const row = await loadOffer(client, orgId, id);
+  await applyResponse(client, orgId, by, row, body, "hr", deps);
+  return one(client, orgId, row.id as string, by.id);
+}
+
+/** Records an answer once (a guarded update: a second answer at the same moment finds it answered); an acceptance is handed over. */
+async function applyResponse(client: SupabaseClient, orgId: string, by: Actor, row: Record<string, unknown>, body: unknown, via: "hr" | "candidate", deps?: FlowDeps): Promise<void> {
   const parsed = ResponseInput.safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, "Accepted or declined?");
-  const row = await loadOffer(client, orgId, id);
-  if (row.status !== "released") throw new CandidateActionError(409, "Only a released offer gets an answer.");
+  if (row.status !== "released") throw new CandidateActionError(409, row.status === "accepted" || row.status === "declined" ? "This offer was already answered." : "Only a released offer gets an answer.");
   const { response } = parsed.data;
-  if (response === "declined" && !parsed.data.reason) throw new CandidateActionError(400, "Give the reason the offer was declined.");
+  if (response === "declined" && !parsed.data.reason) throw new CandidateActionError(400, via === "candidate" ? "Please tell us why, in a line." : "Give the reason the offer was declined.");
   const joining = parsed.data.joiningDate ?? (iso(row.joining_date)?.slice(0, 10) ?? null);
   if (response === "accepted" && !joining) throw new CandidateActionError(400, "Give the joining date.");
   const now = new Date().toISOString();
-  const { error } = await client.from(OFFERS).update({ status: response, response_at: now, response_reason: parsed.data.reason || null, ...(response === "accepted" ? { joining_date: joining, last_contact_at: now } : {}), updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
-  if (error) fail("record the answer", error);
+  const values: Record<string, unknown> = { status: response, response_at: now, response_reason: parsed.data.reason || null, ...(response === "accepted" ? { joining_date: joining, last_contact_at: now } : {}), updated_at: now };
+  const write = (v: Record<string, unknown>) => client.from(OFFERS).update(v).eq("organization_id", orgId).eq("id", row.id as string).eq("status", "released").select("id");
+  let result = await write("responded_via" in row ? { ...values, responded_via: via } : values);
+  if (result.error && extrasMissing(result.error)) result = await write(values);
+  if (result.error) fail("record the answer", result.error);
+  if (!(result.data ?? []).length) throw new CandidateActionError(409, "This offer was already answered.");
   await event(client, orgId, row.id as string, by, response, null, parsed.data.reason || null);
-  await recordAction(client, orgId, by, { candidateId: row.candidate_id as string, applicationId: (row.application_id as string | null) ?? null, positionId: (row.position_id as string | null) ?? null, action: "remark", toValue: response === "accepted" ? `Offer accepted · joining ${joining}` : "Offer declined", remark: parsed.data.reason || null, meta: { kind: "offer_response", offerId: row.id, response } });
-  return one(client, orgId, row.id as string, by.id);
+  await recordAction(client, orgId, by, { candidateId: row.candidate_id as string, applicationId: (row.application_id as string | null) ?? null, positionId: (row.position_id as string | null) ?? null, action: "remark", toValue: `${response === "accepted" ? `Offer accepted · joining ${joining}` : "Offer declined"}${via === "candidate" ? " (on the letter-of-intent page)" : ""}`, remark: parsed.data.reason || null, meta: { kind: "offer_response", offerId: row.id, response, via } });
+  if (response === "accepted") await handOver(client, orgId, { ...row, joining_date: joining }, deps);
+  else if (via === "candidate" && deps) {
+    const people = await emailsOf(client, [row.created_by as string]);
+    await send(deps, [...people.values()].map((p) => p.email), `Offer declined: ${(await toOffers(client, orgId, [row]))[0].candidateName}`, mail("The candidate declined the letter of intent on its page.", [["Reason", parsed.data.reason ?? "—"]], null, null));
+  }
+}
+
+// The letter-of-intent page (owner 2026-11-24): /offer/<token>, no login -------------------------------------------------
+
+const PAGE_TOKEN = /^[A-Za-z0-9_-]{32}$/;
+
+export interface PublicOffer {
+  companyName: string; firstName: string; role: string | null; location: string | null; letter: string; ctc: string; joiningDate: string | null;
+  breakup: ReturnType<typeof breakupGroups>; status: "open" | "accepted" | "declined" | "closed"; answeredAt: string | null;
+}
+
+async function offerByToken(client: SupabaseClient, token: string): Promise<Record<string, unknown> | null> {
+  if (!PAGE_TOKEN.test(token)) return null;
+  const { data, error } = await client.from(OFFERS).select(`organization_id, ${OFFER_COLUMNS}${OFFER_EXTRA}`).eq("public_token", token).maybeSingle();
+  if (error) { if (!extrasMissing(error)) console.error("[candidates] offer page: read failed", error); return null; }
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+export async function publicOffer(client: SupabaseClient, token: string): Promise<PublicOffer | null> {
+  const row = await offerByToken(client, token);
+  if (!row || !["released", "accepted", "declined", "joined"].includes(row.status as string)) return null;
+  const orgId = row.organization_id as string;
+  const [config, offer, { data: pos }] = await Promise.all([
+    loadRecruitmentConfig(client, orgId),
+    toOffers(client, orgId, [row]).then((x) => x[0]),
+    row.position_id ? client.from("candidate_positions").select("location").eq("id", row.position_id as string).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  return {
+    companyName: config.outreach.companyName, firstName: firstName(offer.candidateName), role: offer.positionTitle, location: (pos as { location?: string | null } | null)?.location ?? null,
+    letter: (row.letter as string | null) ?? "", ctc: lpa(offer.proposedCtc), joiningDate: offer.joiningDate, breakup: breakupGroups(offer.breakup, config.outreach.offer),
+    status: row.status === "released" ? "open" : row.status === "declined" ? "declined" : row.status === "accepted" || row.status === "joined" ? "accepted" : "closed",
+    answeredAt: iso(row.response_at),
+  };
+}
+
+/** The candidate accepts (with the joining date shown) or declines (with a reason) on the page. Once. */
+export async function respondOnPage(client: SupabaseClient, token: string, body: unknown, deps?: FlowDeps): Promise<{ status: "accepted" | "declined" }> {
+  const row = await offerByToken(client, token);
+  if (!row) throw new CandidateActionError(404, "This letter is no longer open.");
+  const b = (body ?? {}) as { response?: unknown; reason?: unknown };
+  const response = b.response === "accepted" || b.response === "declined" ? b.response : null;
+  if (!response) throw new CandidateActionError(400, "Accept or decline?");
+  const reason = typeof b.reason === "string" ? b.reason.trim().slice(0, 1000) : "";
+  const { data: person } = await client.from("candidates").select("full_name").eq("id", row.candidate_id as string).maybeSingle();
+  const by: Actor = { id: null as unknown as string, name: `${(person as { full_name?: string | null } | null)?.full_name ?? "The candidate"} (letter-of-intent page)` };
+  await applyResponse(client, row.organization_id as string, by, row, { response, ...(reason ? { reason } : {}) }, "candidate", deps);
+  return { status: response };
+}
+
+// Handover to onboarding (owner 2026-11-24) -----------------------------------------------------------------------------
+
+/** An accepted offer is handed to onboarding (HRMS): everything collected, in one place; the HR team is told. Never throws. */
+async function handOver(client: SupabaseClient, orgId: string, row: Record<string, unknown>, deps?: FlowDeps): Promise<void> {
+  try {
+    const candidateId = row.candidate_id as string;
+    const [{ data: person }, { data: app }, { data: pos }, { data: docs }] = await Promise.all([
+      client.from("candidates").select("full_name, email, phone").eq("id", candidateId).maybeSingle(),
+      row.application_id ? client.from("candidate_applications").select("location, current_organization, current_designation").eq("id", row.application_id as string).maybeSingle() : Promise.resolve({ data: null }),
+      row.position_id ? client.from("candidate_positions").select("title, department, location").eq("id", row.position_id as string).maybeSingle() : Promise.resolve({ data: null }),
+      client.from("recruitment_documents").select("id, item, status, file_name").eq("organization_id", orgId).eq("candidate_id", candidateId),
+    ]);
+    const p = (person ?? {}) as { full_name?: string; email?: string | null; phone?: string | null };
+    const a = (app ?? {}) as { location?: string | null; current_organization?: string | null; current_designation?: string | null };
+    const q = (pos ?? {}) as { title?: string; department?: string | null; location?: string | null };
+    const snapshot = {
+      candidate: { name: p.full_name ?? null, email: p.email ?? null, phone: p.phone ?? null, currentLocation: a.location ?? null, currentOrganization: a.current_organization ?? null, currentDesignation: a.current_designation ?? null },
+      role: q.title ?? null, department: q.department ?? null, location: q.location ?? null,
+      ctc: Number(row.proposed_ctc), breakup: (row.breakup as Record<string, number>) ?? {}, joiningDate: iso(row.joining_date)?.slice(0, 10) ?? null,
+      letter: (row.letter as string | null) ?? null, documents: ((docs ?? []) as { id: string; item: string; status: string; file_name: string | null }[]).map((d) => ({ id: d.id, item: d.item, status: d.status, fileName: d.file_name })),
+      applicationId: (row.application_id as string | null) ?? null, positionId: (row.position_id as string | null) ?? null,
+    };
+    const { error } = await client.from("recruitment_handovers").upsert({
+      organization_id: orgId, offer_id: row.id as string, candidate_id: candidateId, position_id: (row.position_id as string | null) ?? null, joining_date: snapshot.joiningDate, snapshot,
+    }, { onConflict: "offer_id" });
+    if (error) { console.error("[candidates] handover not saved", error.message); return; }
+    if (!deps) return;
+    const config = await loadRecruitmentConfig(client, orgId);
+    const { roles } = await activeRoles(client, orgId).catch(() => ({ roles: [] as { userId: string; role: string }[] }));
+    const ids = [...new Set([...hrHeads(config), ...roles.filter((x) => HR_ROLES.includes(x.role.toLowerCase())).map((x) => x.userId)])];
+    const people = await emailsOf(client, ids);
+    await send(deps, [...people.values()].map((x) => x.email), `Offer accepted, ready for onboarding: ${p.full_name ?? "a candidate"}`, mail(
+      `${p.full_name ?? "The candidate"} accepted the offer for ${q.title ?? "the role"}. Their details are ready for onboarding under Recruitment → Offers → Handovers.`,
+      [["Joining", snapshot.joiningDate ?? "—"], ["Department", q.department ?? "—"], ["Documents", `${snapshot.documents.filter((d) => d.status === "verified").length} verified of ${snapshot.documents.length}`]], { href: `${deps.appUrl}/hr-tickets`, label: "Open Recruitment → Offers" }, null));
+    try {
+      await deps.notifyInApp?.(ids, { organizationId: orgId, title: `Ready for onboarding: ${p.full_name ?? "a candidate"}`, message: `Accepted the offer for ${q.title ?? "the role"}; joining ${snapshot.joiningDate ?? "date to confirm"}.` });
+    } catch (e) {
+      console.error("[candidates] handover in-app alert failed", e);
+    }
+  } catch (error) {
+    console.error("[candidates] handover failed", error);
+  }
+}
+
+export async function listHandovers(client: SupabaseClient, orgId: string): Promise<OfferHandover[]> {
+  const { data, error } = await client.from("recruitment_handovers").select("id, offer_id, candidate_id, joining_date, status, taken_by_name, taken_at, created_at, snapshot").eq("organization_id", orgId).order("created_at", { ascending: false }).limit(200);
+  if (error) return [];
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => {
+    const snap = (r.snapshot ?? {}) as { candidate?: { name?: string }; role?: string | null };
+    return {
+      id: r.id as string, offerId: r.offer_id as string, candidateName: snap.candidate?.name ?? "Candidate", positionTitle: snap.role ?? null,
+      joiningDate: iso(r.joining_date)?.slice(0, 10) ?? null, status: r.status as OfferHandover["status"], takenByName: (r.taken_by_name as string | null) ?? null,
+      takenAt: iso(r.taken_at), createdAt: iso(r.created_at) ?? "", snapshot: (r.snapshot as Record<string, unknown>) ?? {},
+    };
+  });
+}
+
+/** Onboarding took it (the HRMS has the person now). */
+export async function markHandoverTaken(client: SupabaseClient, orgId: string, by: Actor, id: string): Promise<void> {
+  if (!UUID.test(id)) throw new CandidateActionError(404, "Not found.");
+  const { data, error } = await client.from("recruitment_handovers").update({ status: "taken", taken_by_name: by.name, taken_at: new Date().toISOString() }).eq("organization_id", orgId).eq("id", id).eq("status", "pending").select("id");
+  if (error) fail("record the handover", error);
+  if (!(data ?? []).length) throw new CandidateActionError(409, "It was already taken.");
+}
+
+// The salary breakup (annexure) -----------------------------------------------------------------------------------------
+
+const BreakupInput = z.object({
+  breakup: z.record(z.string().trim().min(1).max(60), z.number().min(0).max(100_000_000)),
+  proposedCtc: z.number().positive("Give the offer CTC.").max(1_000_000_000).optional(),
+});
+
+/**
+ * HR edits the breakup (and the CTC) until release. Any change starts the approval again from the first approver, so
+ * nobody approves an annexure the candidate will not see. Logged in the audit log.
+ */
+export async function editBreakup(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps: FlowDeps): Promise<Offer> {
+  const parsed = BreakupInput.safeParse(body ?? {});
+  if (!parsed.success) throw new CandidateActionError(400, parsed.error.issues[0]?.message ?? "Check the breakup.");
+  if (Object.keys(parsed.data.breakup).length > 40) throw new CandidateActionError(400, "Too many rows in the breakup.");
+  const row = await loadOffer(client, orgId, id);
+  if (row.status !== "pending" && row.status !== "approved") throw new CandidateActionError(409, "The breakup can be changed only until the offer is released.");
+  const ctc = parsed.data.proposedCtc ?? Number(row.proposed_ctc);
+  const config = await loadRecruitmentConfig(client, orgId);
+  const { data: req } = row.requisition_id ? await client.from("recruitment_requisitions").select("raised_by").eq("id", row.requisition_id as string).maybeSingle() : { data: null };
+  const chain = firstApprover(config, row.created_by as string | null, (req as { raised_by?: string | null } | null)?.raised_by ?? null, ctc, num(row.band_max));
+  if (!chain) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
+  const now = (deps.now?.() ?? new Date()).toISOString();
+  const { error } = await client.from(OFFERS).update({
+    breakup: parsed.data.breakup, proposed_ctc: ctc, status: "pending", current_level: chain.level, current_approver_id: chain.approverId, level_entered_at: now,
+    needs_director: chain.needsDirector, letter: null, notices: {}, updated_at: now,
+  }).eq("organization_id", orgId).eq("id", row.id as string).in("status", ["pending", "approved"]);
+  if (error) fail("save the breakup", error);
+  await deps.revokeOfferLinks?.(row.id as string).catch((e) => console.error("[candidates] revoking offer links failed", e));
+  await event(client, orgId, row.id as string, by, "breakup_edited", null, "The breakup changed: approval starts again");
+  await audit(client, orgId, by, { action: Number(row.proposed_ctc) !== ctc ? "offer_edit" : "breakup_edit", entityType: "offer", entityId: row.id as string, before: { ctc: Number(row.proposed_ctc), breakup: row.breakup }, after: { ctc, breakup: parsed.data.breakup } });
+  const offer = await one(client, orgId, row.id as string, by.id);
+  await tellApprover(client, orgId, deps, offer, chain.approverId, chain.level);
+  return offer;
 }
 
 /** A contact with someone joining (A18: at least once a week until joining). */
@@ -717,9 +1089,9 @@ export async function recordJoining(client: SupabaseClient, orgId: string, by: A
 /** The offer chasers (A14-A18): approval reminder at 24 h and escalation at 48 h; the candidate chased at 24/48/72 h after
  *  release and the recruiter and HR Head on day 4; weekly contact while joining; HR told 7 days before joining. */
 export async function runOfferJobs(client: SupabaseClient, orgId: string, deps: FlowDeps, now = deps.now?.() ?? new Date()): Promise<number> {
-  const { data, error } = await client.from(OFFERS).select(OFFER_COLUMNS).eq("organization_id", orgId).in("status", ["pending", "released", "accepted"]);
+  const { data, error } = await withExtras((columns) => client.from(OFFERS).select(columns).eq("organization_id", orgId).in("status", ["pending", "released", "accepted"]));
   if (error) return 0;
-  const rows = (data ?? []) as Record<string, unknown>[];
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
   if (!rows.length) return 0;
   const config = await loadRecruitmentConfig(client, orgId);
   const offers = await toOffers(client, orgId, rows);
@@ -736,7 +1108,7 @@ export async function runOfferJobs(client: SupabaseClient, orgId: string, deps: 
         await send(deps, [...people.values()].map((p) => p.email), `Offer waiting 2 days for approval: ${offer.candidateName}`, mail(`The offer for ${offer.candidateName} (${lpa(offer.proposedCtc)}) has waited 48 hours for ${offer.currentApproverName ?? "the approver"}.`, [], null, null));
         await mark(`esc_${key}`);
       } else if (ageH(row.level_entered_at) >= 24 && !notices[`rem_${key}`] && row.current_approver_id) {
-        await tellApprover(client, deps, offer, row.current_approver_id as string, row.current_level as "hr_head" | "director", true);
+        await tellApprover(client, orgId, deps, offer, row.current_approver_id as string, row.current_level as OfferLevel, true);
         await mark(`rem_${key}`);
       }
     } else if (row.status === "released" && row.released_at) {
@@ -746,7 +1118,7 @@ export async function runOfferJobs(client: SupabaseClient, orgId: string, deps: 
       const candidateEmail = (person as { blacklisted_at?: string | null } | null)?.blacklisted_at ? null : (person as { email?: string | null } | null)?.email;
       for (const step of [72, 48, 24]) {
         if (h >= step && !notices[`chase_${step}`]) {
-          await send(deps, [candidateEmail],`Reminder: your offer for ${offer.positionTitle ?? "the role"} at Autopilot Offices`, mail(`Hello ${firstName(offer.candidateName)}, we are waiting to hear from you about the offer we sent on ${String(row.released_at).slice(0, 10)}.`, [], null, "Please reply to the offer email to accept, or to tell us if you have questions."));
+          await send(deps, [candidateEmail],`Reminder: your offer for ${offer.positionTitle ?? "the role"} at Autopilot Offices`, mail(`Hello ${firstName(offer.candidateName)}, we are waiting to hear from you about the offer we sent on ${String(row.released_at).slice(0, 10)}.`, [], null, row.public_token ? `Please accept or decline on your letter's page: ${offerPageUrl(row.public_token as string, deps.appUrl || APP_URL)}` : "Please reply to the offer email to accept, or to tell us if you have questions."));
           for (const s of [24, 48, 72]) if (s <= step) notices[`chase_${s}`] = notices[`chase_${s}`] ?? now.toISOString();
           await mark(`chase_${step}`);
           break;

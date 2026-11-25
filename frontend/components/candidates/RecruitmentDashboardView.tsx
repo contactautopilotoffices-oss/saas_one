@@ -5,7 +5,8 @@ import { Download, RefreshCw } from 'lucide-react';
 import { INTERVIEW_STATUS_LABELS, OFFER_STATUS_LABELS, type RecruitmentDashboard } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { downloadCsv } from './export-csv';
-import { BTN_GHOST, CARD, LABEL, NUM_SM, Spinner, Tag } from './ui';
+import { AuditLog } from './PrivacyControls';
+import { BTN_GHOST, CARD, LABEL, NUM_MD, NUM_SM, Spinner, Tag } from './ui';
 
 /*
  * The recruitment dashboard (owner 2026-11-21; spec "Dashboard views": Today for the recruiter; Roles for the HR Head
@@ -81,6 +82,8 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                 )}
             </section>
 
+            {data.metrics && <Metrics m={data.metrics} />}
+
             <section className={`${CARD} space-y-3 px-5 py-4`} aria-label="Funnel">
                 {head('Funnel', () => downloadCsv('recruitment-funnel.csv', csv([['Round', 'In the running', 'Rejected here'], ...data.funnel.map(f => [f.column, f.count, f.rejected])])))}
                 <p className="text-xs text-text-secondary">People in each round across the open positions, and how many were rejected there.</p>
@@ -98,7 +101,45 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                     })}
                 </ul>
             </section>
+
+            {/* Owner 2026-11-24 (product safety): exports, salary and offer changes, data removals. */}
+            <AuditLog orgId={orgId} />
         </div>
+    );
+}
+
+/** Owner 2026-11-24: the last 90 days at a glance. */
+function Metrics({ m }: { m: NonNullable<RecruitmentDashboard['metrics']> }) {
+    const tile = (label: string, value: string, note: string) => (
+        <div className="rounded-xl bg-surface-elevated px-3 py-2.5"><p className={LABEL}>{label}</p><p className={`${NUM_MD} text-text-primary`}>{value}</p><p className="text-xs text-text-tertiary">{note}</p></div>
+    );
+    const hours = (h: number | null) => (h === null ? '—' : h >= 48 ? `${Math.round(h / 24 * 10) / 10} days` : `${h} h`);
+    const exportMetrics = () => downloadCsv('recruitment-metrics.csv', csv([
+        ['Measure', 'Value', 'Note'],
+        ['Time to fill (days)', m.timeToFill.days, `${m.timeToFill.offers} offers`],
+        ['Offer acceptance (%)', m.offerAcceptance.ratePct, `${m.offerAcceptance.accepted} accepted, ${m.offerAcceptance.declined} declined, ${m.offerAcceptance.waiting} waiting`],
+        ['Hiring request approval (hours)', m.approvalTurnaround.requisitionHours, `${m.approvalTurnaround.requisitions} requests`],
+        ['Offer approval (hours)', m.approvalTurnaround.offerHours, `${m.approvalTurnaround.offers} offers`],
+        ...m.rejectionReasons.map(r => ['Rejection reason', r.count, r.reason]),
+        ...m.recruiterLoad.map(r => ['Recruiter load', r.inPipeline, `${r.recruiter}: ${r.openRoles} roles, ${r.ageing} ageing`]),
+    ]));
+    return (
+        <section className={`${CARD} space-y-3 px-5 py-4`} aria-label="Metrics">
+            <div className="flex items-center justify-between gap-2">
+                <h2 className="font-display text-base font-semibold text-text-primary">The last {m.periodDays} days</h2>
+                <button type="button" onClick={exportMetrics} className={`${BTN_GHOST} h-8`}><Download className="h-4 w-4" />Excel</button>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {tile('Time to fill', m.timeToFill.days === null ? '—' : `${m.timeToFill.days} days`, `opening to acceptance · ${m.timeToFill.offers} offers`)}
+                {tile('Offer acceptance', m.offerAcceptance.ratePct === null ? '—' : `${m.offerAcceptance.ratePct}%`, `${m.offerAcceptance.accepted} accepted · ${m.offerAcceptance.declined} declined · ${m.offerAcceptance.waiting} waiting`)}
+                {tile('Hiring request approval', hours(m.approvalTurnaround.requisitionHours), `submit to decision · ${m.approvalTurnaround.requisitions} requests`)}
+                {tile('Offer approval', hours(m.approvalTurnaround.offerHours), `proposal to final approval · ${m.approvalTurnaround.offers} offers`)}
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+                <List title="Rejection reasons" empty="No rejections in this time." items={m.rejectionReasons.map(r => [r.reason, `${r.count} · ${r.reason}`, ''])} />
+                <List title="Recruiter load (open roles)" empty="No open roles." items={m.recruiterLoad.map(r => [r.recruiter, `${r.recruiter} · ${r.inPipeline} in pipeline`, `${r.openRoles} roles${r.ageing ? ` · ${r.ageing} ageing` : ''}`])} />
+            </div>
+        </section>
     );
 }
 

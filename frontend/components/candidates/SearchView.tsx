@@ -9,6 +9,7 @@ import {
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import { RECORD_STATUSES, STATUS_LABELS, type CandidateRecord, type Position, type RecordStatus, type SearchResponse, type SearchResult } from '@/backend/lib/candidates/types';
 import Skeleton from '@/frontend/components/ui/Skeleton';
+import { SavedSearches } from './PrivacyControls';
 import { api, type ApiResult } from './api';
 import BulkOutreachDialog from './BulkOutreachDialog';
 import CandidateDetails from './CandidateDetails';
@@ -420,6 +421,8 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                 onSaved={p => { setPositionOpen(false); setPositionTitle(p.title); onDataChanged(); }}
             />
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
+            {/* Owner 2026-11-24: a recruiter's own named searches. */}
+            <SavedSearches orgId={orgId} filters={filters} onLoad={f => { setFilters(f); setPage(1); }} />
             <SearchFor orgId={orgId} dataVersion={dataVersion} onPosition={applyPosition} />
             {jobText && (
                 <JdStrip

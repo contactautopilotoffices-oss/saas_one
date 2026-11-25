@@ -6,13 +6,15 @@
  *   Roles  : open positions with age against the target, recruiter, people in the pipeline and the next action; ageing
  *            roles first (A21).
  *   Funnel : people per board column across the open positions, with how many were rejected in each.
+ *   Metrics (owner 2026-11-24, the last 90 days): time to fill, offer acceptance, rejection reasons, approval
+ *            turnaround (hiring requests and offers), and each recruiter's load.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listPositions } from "./positions";
 import { boardColumns, findStage } from "./stage-list";
 import { loadStages } from "./stages";
-import type { InterviewStatus, OfferStatus, RecruitmentDashboard } from "./types";
+import type { InterviewStatus, OfferStatus, RecruitmentDashboard, RecruitmentMetrics } from "./types";
 
 const DAY = 86_400_000;
 
@@ -57,12 +59,20 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
   const pastInterview = new Map(cardInterviews.filter((r) => r.status !== "cancelled" && r.status !== "no_show").map((r) => [r.id, r]));
 
   const inPipeline = (positionId: string) => memberRows.filter((m) => m.position_id === positionId && findStage(stages, m.stage)?.kind !== "rejected").length;
+  const isRejected = (stage: string) => findStage(stages, stage)?.kind === "rejected";
   const roles = positions.map((p) => {
     const n = inPipeline(p.id);
     const ageing = p.daysOpen > p.targetDays;
     const nextAction = !p.recruiterId ? "Assign a recruiter" : n === 0 ? "Source candidates (search the database first)" : offerRows.some((o) => o.position_id === p.id) ? "Follow up the offer" : "Move the pipeline on";
-    return { id: p.id, title: p.title, location: p.location, recruiterName: p.recruiterName, daysOpen: p.daysOpen, targetDays: p.targetDays, ageing, inPipeline: n, nextAction };
+    const mine = memberRows.filter((m) => m.position_id === p.id);
+    const inColumn = (rejected: boolean) => columns.map((_, i) => mine.filter((m) => columnOf.get(m.stage) === i && isRejected(m.stage) === rejected).length);
+    return { id: p.id, title: p.title, location: p.location, recruiterName: p.recruiterName, daysOpen: p.daysOpen, targetDays: p.targetDays, ageing, inPipeline: n, nextAction, byColumn: inColumn(false), rejectedByColumn: inColumn(true) };
   }).sort((a, b) => Number(b.ageing) - Number(a.ageing) || b.daysOpen - a.daysOpen);
+
+  const sources = await pipelineSources(client, orgId, [...new Set(memberRows.map((m) => m.candidate_id))]).catch((error) => {
+    console.error("[candidates] dashboard sources failed", error);
+    return [];
+  });
 
   const funnel = columns.map((c) => ({
     column: c.name,
@@ -70,7 +80,13 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
     rejected: memberRows.filter((m) => c.stages.some((s) => s.key === m.stage && s.kind === "rejected")).length,
   }));
 
+  const metrics = await recruitmentMetrics(client, orgId, now, roles, stages).catch((error) => {
+    console.error("[candidates] dashboard metrics failed", error);
+    return undefined;
+  });
+
   return {
+    metrics,
     today: {
       interviews: ivRows.map((r) => ({ id: r.id, candidateName: name(r.candidate_id), round: r.round, positionTitle: r.position_id ? titleOf.get(r.position_id) ?? null : null, at: r.at, mode: r.mode, status: r.status })),
       scorecardsPending: cardRows.filter((c) => pastInterview.has(c.interview_id)).map((c) => {
@@ -82,5 +98,92 @@ export async function recruitmentDashboard(client: SupabaseClient, orgId: string
     },
     roles,
     funnel,
+    sources,
+  };
+}
+
+/**
+ * Where these people came from (owner 2026-11-25): the source on each person's newest candidate record, counted once
+ * per person. A person can have several records (one per sheet); the newest one speaks for them.
+ */
+async function pipelineSources(client: SupabaseClient, orgId: string, candidateIds: string[]): Promise<RecruitmentDashboard["sources"]> {
+  const newest = new Map<string, { source: string; at: string }>();
+  for (let i = 0; i < candidateIds.length; i += 200) {
+    const { data, error } = await client.from("candidate_records").select("candidate_id, candidate_source, updated_at")
+      .eq("organization_id", orgId).in("candidate_id", candidateIds.slice(i, i + 200)).is("deleted_at", null);
+    if (error) throw error;
+    for (const r of (data ?? []) as { candidate_id: string; candidate_source: string | null; updated_at: string }[]) {
+      const seen = newest.get(r.candidate_id);
+      if (!seen || r.updated_at > seen.at) newest.set(r.candidate_id, { source: r.candidate_source?.trim() || "Not recorded", at: r.updated_at });
+    }
+  }
+  // People with no record left (deleted) still count, as not recorded.
+  const counts = new Map<string, number>();
+  for (const id of candidateIds) {
+    const source = newest.get(id)?.source ?? "Not recorded";
+    counts.set(source, (counts.get(source) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([source, count]) => ({ source, count })).sort((a, b) => b.count - a.count || a.source.localeCompare(b.source));
+}
+
+const PERIOD_DAYS = 90;
+const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
+
+async function recruitmentMetrics(
+  client: SupabaseClient, orgId: string, now: Date,
+  roles: RecruitmentDashboard["roles"], stages: Awaited<ReturnType<typeof loadStages>>["stages"],
+): Promise<RecruitmentMetrics> {
+  const since = new Date(now.getTime() - PERIOD_DAYS * DAY).toISOString();
+  const [offers, rejected, reqs, events] = await Promise.all([
+    client.from("recruitment_offers").select("id, position_id, status, released_at, response_at").eq("organization_id", orgId).gte("created_at", since).limit(2000),
+    client.from("candidate_position_members").select("stage, remark").eq("organization_id", orgId).gte("stage_changed_at", since).is("deleted_at", null).limit(5000),
+    client.from("recruitment_requisitions").select("submitted_at, decided_at, status").eq("organization_id", orgId).gte("decided_at", since).not("submitted_at", "is", null).limit(2000),
+    client.from("recruitment_offer_events").select("offer_id, action, created_at").eq("organization_id", orgId).gte("created_at", since).in("action", ["proposed", "approved", "breakup_edited"]).order("created_at").limit(5000),
+  ]);
+  const offerRows = (offers.error ? [] : offers.data ?? []) as { id: string; position_id: string | null; status: OfferStatus; released_at: string | null; response_at: string | null }[];
+
+  // Time to fill: the position's opening to the acceptance.
+  const accepted = offerRows.filter((o) => ["accepted", "joined", "dropped"].includes(o.status) && o.response_at && o.position_id);
+  const opened = accepted.length
+    ? new Map((((await client.from("candidate_positions").select("id, created_at").in("id", [...new Set(accepted.map((o) => o.position_id as string))])).data ?? []) as { id: string; created_at: string }[]).map((p) => [p.id, p.created_at]))
+    : new Map<string, string>();
+  const fill = accepted.flatMap((o) => { const at = opened.get(o.position_id as string); return at ? [(new Date(o.response_at as string).getTime() - new Date(at).getTime()) / DAY] : []; });
+
+  const released = offerRows.filter((o) => o.released_at);
+  const yes = released.filter((o) => ["accepted", "joined", "dropped"].includes(o.status)).length;
+  const no = released.filter((o) => o.status === "declined").length;
+
+  const reasons = new Map<string, number>();
+  for (const m of (rejected.error ? [] : rejected.data ?? []) as { stage: string; remark: string | null }[]) {
+    if (findStage(stages, m.stage)?.kind !== "rejected") continue;
+    const reason = (m.remark ?? "").trim() || "No reason given";
+    reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+  }
+
+  const reqHours = ((reqs.error ? [] : reqs.data ?? []) as { submitted_at: string; decided_at: string }[]).map((r) => (new Date(r.decided_at).getTime() - new Date(r.submitted_at).getTime()) / 3_600_000).filter((h) => h >= 0);
+  const firstAt = new Map<string, number>();
+  const lastApproved = new Map<string, number>();
+  for (const e of (events.error ? [] : events.data ?? []) as { offer_id: string; action: string; created_at: string }[]) {
+    const t = new Date(e.created_at).getTime();
+    if (e.action === "proposed" || e.action === "breakup_edited") { firstAt.set(e.offer_id, t); lastApproved.delete(e.offer_id); } else lastApproved.set(e.offer_id, t);
+  }
+  const approvedOffers = new Set(offerRows.filter((o) => !["pending", "rejected", "withdrawn"].includes(o.status)).map((o) => o.id));
+  const offerHours = [...lastApproved.entries()].filter(([id]) => approvedOffers.has(id) && firstAt.has(id)).map(([id, t]) => (t - (firstAt.get(id) as number)) / 3_600_000);
+
+  const load = new Map<string, { recruiter: string; openRoles: number; inPipeline: number; ageing: number }>();
+  for (const r of roles) {
+    const key = r.recruiterName ?? "No recruiter yet";
+    const row = load.get(key) ?? { recruiter: key, openRoles: 0, inPipeline: 0, ageing: 0 };
+    row.openRoles += 1; row.inPipeline += r.inPipeline; row.ageing += r.ageing ? 1 : 0;
+    load.set(key, row);
+  }
+
+  return {
+    periodDays: PERIOD_DAYS,
+    timeToFill: { days: avg(fill), offers: fill.length },
+    offerAcceptance: { released: released.length, accepted: yes, declined: no, waiting: released.filter((o) => o.status === "released").length, ratePct: yes + no ? Math.round((yes / (yes + no)) * 100) : null },
+    rejectionReasons: [...reasons.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 10),
+    approvalTurnaround: { requisitionHours: avg(reqHours), requisitions: reqHours.length, offerHours: avg(offerHours), offers: offerHours.length },
+    recruiterLoad: [...load.values()].sort((a, b) => b.inPipeline - a.inPipeline),
   };
 }

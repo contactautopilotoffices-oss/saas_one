@@ -5,6 +5,7 @@ import { runRequisitionReminders } from "@/backend/lib/candidates/requisition-no
 import { defaultFlowDeps, organisationsWithFlow, runInterviewJobs, runOfferJobs } from "@/backend/lib/candidates/hiring";
 import { organisationsWithWaiting } from "@/backend/lib/candidates/requisitions";
 import { defaultCampaignSenders, organisationsWithOpenCampaigns, processOpenCampaigns } from "@/backend/lib/candidates/outreach-campaigns";
+import { organisationsWithScreenings, runScreeningJobs } from "@/backend/lib/candidates/screening";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -52,6 +53,19 @@ export async function GET(request: NextRequest) {
       console.error(`[candidates] hiring follow-ups failed for ${orgId}`, error);
     }
   }
+  // Owner 2026-11-24: screening reminders at 24 h and 48 h, then "No response".
+  let screeningChased = 0;
+  let screeningNoResponse = 0;
+  for (const orgId of await organisationsWithScreenings(admin)) {
+    if (Date.now() - started > 52_000) break;
+    try {
+      const s = await runScreeningJobs(admin, orgId);
+      screeningChased += s.chased;
+      screeningNoResponse += s.noResponse;
+    } catch (error) {
+      console.error(`[candidates] screening follow-ups failed for ${orgId}`, error);
+    }
+  }
   // Owner 2026-11-24: bulk and automatic outreach still queued get their next batches (automatic ones in working hours).
   let outreachSent = 0;
   for (const orgId of await organisationsWithOpenCampaigns(admin)) {
@@ -62,5 +76,5 @@ export async function GET(request: NextRequest) {
       console.error(`[candidates] outreach batches failed for ${orgId}`, error);
     }
   }
-  return NextResponse.json({ ok: true, ...totals, outreachSent, ms: Date.now() - started });
+  return NextResponse.json({ ok: true, ...totals, screeningChased, screeningNoResponse, outreachSent, ms: Date.now() - started });
 }

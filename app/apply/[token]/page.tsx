@@ -17,6 +17,9 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
     const [loadError, setLoadError] = useState<string | null>(null);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [file, setFile] = useState<File | null>(null);
+    // Owner 2026-11-24: the assignment and documents pages take one file per question.
+    const [files, setFiles] = useState<Record<string, File>>({});
+    const multi = form?.kind === 'assignment' || form?.kind === 'documents';
     const [consent, setConsent] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<{ text: string; field: string | null } | null>(null);
@@ -42,7 +45,8 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
         const body = new FormData();
         body.set('answers', JSON.stringify(answers));
         body.set('consent', 'true');
-        if (file) body.set('resume', file);
+        if (multi) for (const [id, f] of Object.entries(files)) body.set(`file_${id}`, f);
+        else if (file) body.set('resume', file);
         try {
             const res = await fetch(`/api/public/apply/${encodeURIComponent(token)}`, { method: 'POST', body });
             const data = await res.json().catch(() => null);
@@ -74,7 +78,9 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
                 {(f.options ?? []).map(o => <option key={o} value={o}>{o}</option>)}
             </select>
         );
-        else if (f.type === 'file') input = <input {...common} type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={e => setFile(e.target.files?.[0] ?? null)} className={`${common.className} file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white`} />;
+        else if (f.type === 'file') input = <input {...common} type="file"
+            accept={form?.kind === 'documents' ? '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg' : form?.kind === 'assignment' ? '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.zip' : '.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+            onChange={e => { const picked = e.target.files?.[0] ?? null; if (multi) setFiles(all => { const next = { ...all }; if (picked) next[f.id] = picked; else delete next[f.id]; return next; }); else setFile(picked); }} className={`${common.className} file:mr-3 file:rounded-lg file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white`} />;
         else input = (
             <input {...common} value={value} onChange={e => set(e.target.value)}
                 type={f.type === 'number' ? 'number' : f.type === 'email' ? 'email' : f.type === 'phone' ? 'tel' : f.type === 'date' ? 'date' : 'text'}
@@ -103,7 +109,7 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
                 )}
                 {form && thanks && (
                     <div className="rounded-2xl bg-white p-6 text-center shadow-sm" role="status">
-                        <h1 className="text-xl font-bold">Application sent</h1>
+                        <h1 className="text-xl font-bold">{form.kind === 'assignment' ? 'Assignment submitted' : form.kind === 'documents' ? 'Documents received' : form.kind === 'screening' ? 'Answers sent' : 'Application sent'}</h1>
                         <p className="mt-2 text-[15px] text-slate-700">{thanks}</p>
                     </div>
                 )}
@@ -115,13 +121,23 @@ export default function ApplyPage({ params }: { params: Promise<{ token: string 
                             {form.location && <p className="text-sm text-slate-600">{form.location}</p>}
                             <p className="mt-3 text-[15px] text-slate-700">{form.firstName ? `Hello ${form.firstName}. ` : ''}{form.form.intro}</p>
                         </header>
+                        {form.assignment && (
+                            <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-[15px]">
+                                <h2 className="font-bold">{form.assignment.title}</h2>
+                                {form.assignment.due && <p className="text-sm font-semibold text-amber-800">Submit by {form.assignment.due}</p>}
+                                <p className="whitespace-pre-wrap text-slate-800">{form.assignment.brief}</p>
+                                {form.assignment.guidelines && <><h3 className="pt-1 text-sm font-semibold">Guidelines</h3><p className="whitespace-pre-wrap text-sm text-slate-700">{form.assignment.guidelines}</p></>}
+                                {form.assignment.driveLink && <p><a href={form.assignment.driveLink} target="_blank" rel="noopener noreferrer" className="font-semibold text-blue-700 underline">Open the assignment files</a></p>}
+                            </section>
+                        )}
+                        {form.companyProfileUrl && form.kind !== 'documents' && <p className="text-sm"><a href={form.companyProfileUrl} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">About {form.companyName}</a></p>}
                         {form.form.fields.map(field)}
                         <label className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${error?.field === 'consent' ? 'border-rose-500' : 'border-slate-200'}`}>
                             <input id="f-consent" type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} disabled={busy} className="mt-0.5 h-4 w-4 accent-slate-900" />
                             <span className="text-slate-700">{form.form.consentText}</span>
                         </label>
                         {error && !form.form.fields.some(f => f.id === error.field) && <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-800">{error.text}</p>}
-                        <button type="submit" disabled={busy} className="w-full rounded-xl bg-slate-900 px-4 py-3 text-[15px] font-bold text-white disabled:opacity-60">{busy ? 'Sending…' : 'Submit application'}</button>
+                        <button type="submit" disabled={busy} className="w-full rounded-xl bg-slate-900 px-4 py-3 text-[15px] font-bold text-white disabled:opacity-60">{busy ? 'Sending…' : form.kind === 'assignment' ? 'Submit assignment' : form.kind === 'documents' ? 'Upload documents' : form.kind === 'screening' ? 'Send answers' : 'Submit application'}</button>
                         <p className="text-center text-xs text-slate-400">Fields marked * are required.</p>
                     </form>
                 )}

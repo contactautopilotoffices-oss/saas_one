@@ -141,6 +141,8 @@ export interface SearchFilters {
   includeBlank: boolean;
   /** Owner 2026-11-15: blacklisted people are hidden from every search unless this is ticked. */
   showBlacklisted: boolean;
+  /** Owner 2026-11-24: leave out people the app contacted in the last N days (7, 30 or 90); null = no filter. */
+  notContactedDays?: number | null;
   sort: FilterSort;
 }
 
@@ -181,6 +183,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   hasResume: "",
   includeBlank: false,
   showBlacklisted: false,
+  notContactedDays: null,
   sort: "recent",
 };
 
@@ -310,6 +313,7 @@ export function filterChips(f: SearchFilters): FilterChip[] {
     add("defence", label, { defence: "" });
   }
   if (f.hasResume) add("resume", f.hasResume === "yes" ? "Has a resume" : "No resume yet", { hasResume: "" });
+  if (f.notContactedDays) add("contacted", `Not contacted in ${f.notContactedDays} days`, { notContactedDays: null });
   return chips;
 }
 

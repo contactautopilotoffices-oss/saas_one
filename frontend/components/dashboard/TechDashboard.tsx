@@ -84,7 +84,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
             { id: 'files', label: 'Files', icon: FolderOpen },
-            { id: 'candidates', label: 'Candidate Search', icon: UserSearch },
+            { id: 'candidates', label: 'Recruitment', icon: UserSearch },
             // Owner 2026-11-20: HR settings the Tech team owns (who can raise hiring requests)
             { id: 'hr_configs', label: 'HR Configs', icon: SlidersHorizontal },
         ],
@@ -204,7 +204,15 @@ export default function TechDashboard() {
         router.replace(`${window.location.pathname}?${next.toString()}`, { scroll: false });
     }, [router]);
 
-    const openTab = (tab: TechTab) => { setSidebarOpen(false); setQuery({ tab, view: null }); };
+    // Owner 2026-11-25: Recruitment (formerly Candidate Search) is its own workspace now; the tab and old links open it.
+    const openTab = (tab: TechTab) => {
+        setSidebarOpen(false);
+        if (tab === 'candidates') { router.push('/recruitment'); return; }
+        setQuery({ tab, view: null });
+    };
+    useEffect(() => {
+        if (tabParam === 'candidates') router.replace('/recruitment');
+    }, [tabParam, router]);
     const pickProperty = (id: string) => { setSelectorOpen(false); setQuery({ propertyId: id === 'all' ? null : id }); };
 
     const activeProperty = properties.find(p => p.id === selectedPropertyId) || null;

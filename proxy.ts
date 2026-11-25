@@ -57,6 +57,7 @@ const DASHBOARD_MODULES = new Set([
     'petty-cash',
     'procurement-management',
     'properties',
+    'recruitment',
     'rooms',
     'satej',
     'settings',
@@ -156,6 +157,10 @@ export async function proxy(request: NextRequest) {
         '/t/',         // Public proctored-test links (/t/<token>) — no sign-in by design
         '/apply/',     // Job application form links (/apply/<token>): candidates have no login (owner 2026-11-24).
                        // Keep the trailing slash. The token is the only key; the page can only submit an application.
+        '/interview/', // A candidate's interview page (/interview/<token>): the job, how to join, Yes / No (owner 2026-11-24).
+                       // Keep the trailing slash. The token is the only key; it shows only that interview.
+        '/offer/',     // A candidate's letter of intent (/offer/<token>): the letter, the breakup, Accept / Decline (owner 2026-11-24).
+                       // Keep the trailing slash. The token is the only key; it shows only that offer.
         '/guest/',     // Meeting Assistant guest links (/guest/<secret>) — people without a login ask to join an
                        // online meeting; staff let them in (stage 2, owner 2026-11-18). Keep the trailing slash.
         '/api',        // API routes handle their own auth

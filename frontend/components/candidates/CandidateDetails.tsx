@@ -10,6 +10,8 @@ import {
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CallsTab from './CallsTab';
+import AssignmentsTab from './AssignmentsTab';
+import { MessageLog, RemoveDataButton } from './PrivacyControls';
 import AssessmentSender from './AssessmentSender';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { InterviewsList } from './InterviewScheduler';
@@ -32,7 +34,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
-type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls';
+type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls' | 'work';
 /** The inline form open under the header, if any. */
 type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach' | 'assessment';
 /** The mockup's small header buttons (36 px, 13 px text). */
@@ -232,9 +234,11 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 {r.blacklist !== undefined && !r.blacklisted && (
                     <button type="button" onClick={toggleBlacklist} aria-expanded={blacklistOpen} className="ml-auto inline-flex h-9 items-center rounded-xl px-3 text-[13px] font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
                 )}
+                {/* Owner 2026-11-24: on the person's request, their details are wiped and nothing is sent to them again. */}
+                {r.fullName !== 'Removed on request' && <RemoveDataButton orgId={orgId} record={r} onRemoved={() => { setFull(null); setHistoryNonce(n => n + 1); onChanged?.(); }} />}
             </div>
             <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap">
-                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['interviews', 'Interviews', null], ['calls', 'Calls', null]] as const).map(([id, label, n]) => (
+                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['interviews', 'Interviews', null], ['calls', 'Calls', null], ['work', 'Assignment & documents', null]] as const).map(([id, label, n]) => (
                     <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => goTo(id)}
                         className={`-mb-px mr-5 h-10 border-b-2 px-0.5 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
                         {label}{n ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n}</span> : null}
@@ -374,10 +378,15 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 )}
 
                 {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} />}
+                {/* Owner 2026-11-24: the one message log */}
+                {tab === 'activity' && open && <MessageLog orgId={orgId} record={r} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
                 {/* Owner 2026-11-19: the interviews scheduled, their links and, after the call, the notes */}
                 {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} />}
+
+                {/* Owner 2026-11-24: the assignment (with the AI score, HR only) and the documents after selection */}
+                {tab === 'work' && open && <AssignmentsTab orgId={orgId} record={r} onChanged={() => setHistoryNonce(n => n + 1)} />}
 
                 {tab === 'calls' && open && (
                     <CallsTab orgId={orgId} record={r}
