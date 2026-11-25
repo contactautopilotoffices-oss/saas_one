@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { LayoutList } from 'lucide-react';
 import type { RoomDisplayState, AgendaRow } from '@/backend/lib/meetingRooms/roomDisplay';
 
 /**
@@ -45,13 +46,24 @@ const C = {
 
 const MAX_ROWS = 8;
 
+/**
+ * A panel left showing someone else's room is worse than one with no menu at all — everyone
+ * walking past reads the wrong schedule. So after this long on a room other than the one this
+ * panel is mounted outside, it returns home on its own. Set to 0 to disable.
+ */
+const AUTO_RETURN_SECONDS = 60;
+
 
 const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
     const [state, setState] = useState<RoomDisplayState>(initialState);
     const [online, setOnline] = useState(true);
     const [clock, setClock] = useState('');
 
-    const roomId = initialState.room.id;
+    /** The room this panel is mounted outside. The menu can wander; this never changes. */
+    const homeRoomId = initialState.room.id;
+    const [roomId, setRoomId] = useState(homeRoomId);
+    const [menuOpen, setMenuOpen] = useState(false);
+
     const pollMs = (state.poll_after_sec || 30) * 1000;
 
     // The panel's own clock ticks locally so the time never looks frozen between polls.
@@ -70,22 +82,46 @@ const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
         return () => clearInterval(id);
     }, []);
 
-    const refresh = useCallback(async () => {
-        try {
-            const res = await fetch(`/api/public/room-display/${roomId}`, { cache: 'no-store' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            setState((await res.json()) as RoomDisplayState);
-            setOnline(true);
-        } catch {
-            // Keep showing the last good schedule and flag it, rather than blanking the wall.
-            setOnline(false);
-        }
-    }, [roomId]);
+    const refresh = useCallback(
+        async (id: string = roomId) => {
+            try {
+                const res = await fetch(`/api/public/room-display/${id}`, { cache: 'no-store' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                setState((await res.json()) as RoomDisplayState);
+                setOnline(true);
+            } catch {
+                // Keep showing the last good schedule and flag it, rather than blanking the wall.
+                setOnline(false);
+            }
+        },
+        [roomId]
+    );
 
     useEffect(() => {
-        const id = setInterval(refresh, pollMs);
+        const id = setInterval(() => refresh(), pollMs);
         return () => clearInterval(id);
     }, [refresh, pollMs]);
+
+    const selectRoom = useCallback(
+        (id: string) => {
+            setMenuOpen(false);
+            if (id === roomId) return;
+            setRoomId(id);
+            refresh(id);
+        },
+        [roomId, refresh]
+    );
+
+    // Wander back to this panel's own room once nobody is looking.
+    useEffect(() => {
+        if (AUTO_RETURN_SECONDS <= 0) return;
+        if (roomId === homeRoomId || menuOpen) return;
+        const timer = setTimeout(() => {
+            setRoomId(homeRoomId);
+            refresh(homeRoomId);
+        }, AUTO_RETURN_SECONDS * 1000);
+        return () => clearTimeout(timer);
+    }, [roomId, homeRoomId, menuOpen, refresh]);
 
     const { room, current, agenda, free_for_min } = state;
     const isBusy = state.state === 'busy';
@@ -127,16 +163,86 @@ const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
                         </>
                     )}
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                    <span
-                        className="h-2 w-2 rounded-full"
-                        style={{ background: online ? C.free : C.busy }}
-                    />
-                    <span className="text-[13px]" style={{ color: C.faint }}>
-                        {online ? 'Live' : 'Reconnecting'}
-                    </span>
+                <div className="flex shrink-0 items-center gap-4">
+                    {/* Room menu. Only offered when the property actually has another room. */}
+                    {state.property_rooms.length > 1 && (
+                        <button
+                            onClick={() => setMenuOpen(o => !o)}
+                            className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-colors"
+                            style={{
+                                background: menuOpen ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.05)',
+                                color: C.dim,
+                            }}
+                        >
+                            <LayoutList size={15} />
+                            Rooms
+                        </button>
+                    )}
+                    <div className="flex items-center gap-2">
+                        <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ background: online ? C.free : C.busy }}
+                        />
+                        <span className="text-[13px]" style={{ color: C.faint }}>
+                            {online ? 'Live' : 'Reconnecting'}
+                        </span>
+                    </div>
                 </div>
             </header>
+
+            {/* Room picker. Sits over the screen so nothing below has to reflow. */}
+            {menuOpen && (
+                <>
+                    <div
+                        className="absolute inset-0 z-10"
+                        style={{ background: 'rgba(0,0,0,0.5)', top: TOPBAR_H }}
+                        onClick={() => setMenuOpen(false)}
+                    />
+                    <div
+                        className="absolute z-20 overflow-hidden rounded-xl"
+                        style={{
+                            top: TOPBAR_H + 8,
+                            right: 28,
+                            width: 320,
+                            maxHeight: 460,
+                            overflowY: 'auto',
+                            background: '#1A2026',
+                            border: '1px solid rgba(255,255,255,0.1)',
+                        }}
+                    >
+                        {state.property_rooms.map(r => {
+                            const isCurrent = r.id === roomId;
+                            const isHome = r.id === homeRoomId;
+                            return (
+                                <button
+                                    key={r.id}
+                                    onClick={() => selectRoom(r.id)}
+                                    className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors"
+                                    style={{
+                                        background: isCurrent ? 'rgba(255,255,255,0.08)' : 'transparent',
+                                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                                    }}
+                                >
+                                    <span
+                                        className="truncate text-[16px]"
+                                        style={{ color: isCurrent ? C.text : C.dim }}
+                                    >
+                                        {r.name}
+                                    </span>
+                                    {isHome && (
+                                        <span
+                                            className="ml-2 shrink-0 text-[11px] uppercase tracking-wider"
+                                            style={{ color: C.faint }}
+                                        >
+                                            This door
+                                        </span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </>
+            )}
 
             <div className="flex" style={{ height: PANEL_H - TOPBAR_H }}>
                 {/* ---------------- Left: this room, right now ---------------- */}
@@ -144,6 +250,16 @@ const RoomDisplayScreen: React.FC<Props> = ({ initialState }) => {
                     className="flex flex-col px-6 py-6"
                     style={{ width: LEFT_W, background: C.bgLeft, borderRight: `1px solid ${C.hairline}` }}
                 >
+                    {/* Says plainly that this is not the room the panel is mounted outside. */}
+                    {roomId !== homeRoomId && (
+                        <button
+                            onClick={() => selectRoom(homeRoomId)}
+                            className="mb-2 flex w-full items-center justify-center rounded-lg py-1.5 text-[12px] font-semibold uppercase tracking-wider"
+                            style={{ background: 'rgba(59,130,246,0.15)', color: C.next }}
+                        >
+                            Viewing another room — tap to return
+                        </button>
+                    )}
                     <h1 className="truncate text-[30px] font-bold leading-tight">{room.name}</h1>
                     {room.meta_line && (
                         <p className="mt-1 truncate text-[13px]" style={{ color: C.faint }}>

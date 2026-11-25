@@ -88,6 +88,14 @@ export interface RoomDisplayState {
         /** "Floor 3 · Seats 12 · Display + VC", already joined for the panel. */
         meta_line: string;
     };
+    /**
+     * The other active rooms in the same property, for the header's room menu.
+     *
+     * Carried in this payload on purpose rather than served from a listing endpoint: you already
+     * need a valid room id to get here, so this never lets anyone enumerate the estate from
+     * nothing. Names and ids only.
+     */
+    property_rooms: { id: string; name: string }[];
     day: { start_hour: number; end_hour: number };
     /** 'busy' while a booking is running, otherwise 'free'. */
     state: 'free' | 'busy';
@@ -275,6 +283,17 @@ export async function getRoomDisplayState(roomId: string): Promise<RoomDisplaySt
         console.error('[room-display] booking lookup failed:', bookingError);
     }
 
+    // Siblings for the header's room menu. Active rooms only — a panel should not offer to show
+    // a room that has been taken out of service.
+    const { data: siblingRows } = await supabaseAdmin
+        .from('meeting_rooms')
+        .select('id, name')
+        .eq('property_id', room.property_id)
+        .eq('status', 'active')
+        .order('name', { ascending: true });
+
+    const propertyRooms = (siblingRows || []).map(r => ({ id: r.id, name: r.name }));
+
     const bookingRows = rows || [];
 
     // Resolve who booked each slot and which company they belong to.
@@ -366,6 +385,7 @@ export async function getRoomDisplayState(roomId: string): Promise<RoomDisplaySt
             property_name: (property as { name?: string } | null)?.name ?? null,
             meta_line: buildMetaLine(room.location ?? null, room.capacity ?? null, amenities),
         },
+        property_rooms: propertyRooms,
         day: { start_hour: DISPLAY_DAY_START_HOUR, end_hour: DISPLAY_DAY_END_HOUR },
         state: current ? 'busy' : 'free',
         current,
