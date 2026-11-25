@@ -892,7 +892,11 @@ const OrgAdminDashboard = () => {
             params.set('tab', activeTab);
         }
         
-        router.replace(`${window.location.pathname}?${params.toString()}`, { scroll: false });
+        const qs = params.toString();
+        const href = `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`;
+        if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+            window.history.replaceState(null, '', href);
+        }
     };
 
     const handleTabChange = (tab: Tab, filter: string = 'all', dateFrom?: string, dateTo?: string, procurementTab?: string) => {
@@ -1636,7 +1640,7 @@ const OrgAdminDashboard = () => {
                         {activeTab === 'roster' && selectedPropertyId !== 'all' && (
                             <>
                                 <AgentPulse orgId={org?.id} module={AGENT_PULSE_BY_TAB.roster} consoleTab="agent_console" className="mb-3" />
-                                <RosterDashboard propertyId={selectedPropertyId} />
+                                <RosterDashboard key={selectedPropertyId} propertyId={selectedPropertyId} />
                             </>
                         )}
                         {activeTab === 'water_logger' && selectedPropertyId === 'all' && (

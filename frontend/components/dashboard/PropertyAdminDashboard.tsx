@@ -1,6 +1,7 @@
 'use client';
 
 import { useDashboardContent } from '@/frontend/components/layout/DashboardContentSlot';
+import { pushDashboardNavigation } from '@/frontend/lib/dashboard/orgTabs';
 import PettyCashNavLink from '@/frontend/components/pettyCash/PettyCashNavLink';
 import HiringRequestsNavLink from '@/frontend/components/recruitment/HiringRequestsNavLink';
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
@@ -350,17 +351,17 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
     const urlPropertyId = params?.propertyId as string;
     const searchParams = useSearchParams();
 
-    // Resolved active property id: prop -> url param -> searchParam
+    // Resolved active property id: prop -> searchParam -> url param
     const [activePropId, setActivePropId] = useState<string | undefined>(
-        propPropertyId || urlPropertyId || searchParams.get('propertyId') || dashboardPropertyId
+        propPropertyId || searchParams.get('propertyId') || urlPropertyId || dashboardPropertyId
     );
 
     useEffect(() => {
-        const nextId = propPropertyId || urlPropertyId || searchParams.get('propertyId');
-        if (nextId && nextId !== activePropId) {
-            setActivePropId(nextId);
+        const nextId = propPropertyId || searchParams.get('propertyId') || urlPropertyId || dashboardPropertyId || (['ops_super_admin', 'org_super_admin', 'master_admin', 'org_admin'].includes((membership?.org_role || '').toLowerCase()) ? 'all' : undefined);
+        if (nextId) {
+            setActivePropId(prev => (prev === nextId ? prev : nextId));
         }
-    }, [propPropertyId, urlPropertyId, searchParams]);
+    }, [propPropertyId, urlPropertyId, searchParams, dashboardPropertyId, membership?.org_role]);
 
     const propertyId = activePropId || (params?.propertyId as string) || '';
 
@@ -473,20 +474,16 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
 
         fetchedPropertyId.current = null;
 
+        // Keep the current /property/[id] or /dashboard route mounted and persist the active
+        // property in ?propertyId= so switching never triggers a full layout/app refresh.
         const currentUrl = new URL(window.location.href);
         const currentTab = openTab || currentUrl.searchParams.get('tab');
         if (currentTab) {
             currentUrl.searchParams.set('tab', currentTab);
         }
-
-        if (currentUrl.pathname.includes('/property/')) {
-            const newPath = currentUrl.pathname.replace(/\/property\/[^\/]+/, `/property/${id}`);
-            router.push(`${newPath}?${currentUrl.searchParams.toString()}`);
-        } else {
-            currentUrl.searchParams.set('propertyId', id);
-            router.push(`${currentUrl.pathname}?${currentUrl.searchParams.toString()}`);
-        }
-    }, [orgProperties, membership, router, openTab]);
+        currentUrl.searchParams.set('propertyId', id);
+        pushDashboardNavigation(`${currentUrl.pathname}?${currentUrl.searchParams.toString()}${currentUrl.hash}`);
+    }, [orgProperties, membership, openTab]);
 
     useEffect(() => {
         if (propertyId && fetchedPropertyId.current !== propertyId) {
@@ -1175,7 +1172,19 @@ const PropertyAdminDashboard = ({ propertyId: propPropertyId }: PropertyAdminDas
                                 __triggerModal: () => setShowAddMemberModal(true)
                             })}
                         />}
-                        {openTab === 'roster' && property && <RosterDashboard propertyId={property.id} />}
+                        {openTab === 'roster' && property && (
+                            property.id === 'all' ? (
+                                <div className="flex flex-col items-center justify-center py-16 text-center">
+                                    <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                                        <span className="text-3xl">📋</span>
+                                    </div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-2">Select a Property</h3>
+                                    <p className="text-sm text-gray-500 max-w-xs">Please select a specific property from the dropdown above to view the roster.</p>
+                                </div>
+                            ) : (
+                                <RosterDashboard key={property.id} propertyId={property.id} />
+                            )
+                        )}
                         {openTab === 'water' && property && <WaterDashboard propertyId={property.id} />}
                         {openTab === 'petty-cash' && (
                             <div className="w-full">
