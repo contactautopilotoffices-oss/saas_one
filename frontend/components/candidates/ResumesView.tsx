@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Search, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
+import { Archive, CircleAlert, CircleCheck, Download, FileCheck, FileText, Folder, FolderDown, FolderOpen, Link2, ScanText, Square, SquareCheck, Trash2, Upload, X } from 'lucide-react';
 import {
     MATCH_REASON_LABELS, SOURCE_KIND_LABELS, SOURCE_KINDS, TEXT_STATUS_LABELS,
     type CandidateRecord, type PreparedUpload, type ResumeConfirmResponse, type ResumeFile, type ResumeFilesResponse, type ResumeLinksResponse, type ResumeManifestResponse, type ResumeRepeat, type ResumeSummary, type SourceKind, type UploadSource,
@@ -14,7 +14,11 @@ import CandidatePicker from './CandidatePicker';
 import ResumeMail from './ResumeMail';
 import { canRememberFolder, ensureReadable, folderAllowed, forgetFolder, isBrave, listFolderFiles, loadFolder, pickFolder } from './folder-store';
 import { formatCount, formatDate } from './format';
-import { Avatar, BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Dialog, EmptyState, FIELD, INPUT, LABEL, NUM_MD, NUM_SM, Spinner, Tag, Toggle, useUi, WELL } from './ui';
+import { Avatar, Dialog, Spinner, Toggle, useUi } from './ui';
+import {
+    EmptyBlock, K_BTN, K_BTN_DANGER, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN_PRIMARY, K_CARD, K_FIELD, K_LABEL, K_TABLE, K_TD, K_TH, K_TR, K_WELL,
+    KpiTile, PageHeader, SearchBox, Segmented, SelectPill, StatusPill,
+} from './page-kit';
 import { uniqueZipName, ZIP_MAX_BYTES, ZIP_MAX_ENTRIES, ZipWriter } from './zip-store';
 
 /**
@@ -77,7 +81,7 @@ function ResumeSourceFields({ value, onChange, label, disabled, automatic = fals
 }) {
     const choice = value === null ? 'auto' : value.kind === 'portal' && value.name?.toLowerCase() === 'linkedin' ? 'linkedin' : value.kind ?? 'unknown';
     return <div className="flex flex-wrap items-center gap-2">
-        <select aria-label={label} value={choice} disabled={disabled} className={`${FIELD} max-w-full`} onChange={e => {
+        <select aria-label={label} value={choice} disabled={disabled} className={`${K_FIELD} max-w-full`} onChange={e => {
             const kind = e.target.value;
             onChange(kind === 'auto' ? null : kind === 'unknown' ? { kind: null, name: null } : kind === 'linkedin' ? { kind: 'portal', name: 'LinkedIn' } : { kind: kind as SourceKind, name: null });
         }}>
@@ -87,7 +91,7 @@ function ResumeSourceFields({ value, onChange, label, disabled, automatic = fals
             {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
         </select>
         {(choice === 'portal' || choice === 'vendor') && <input aria-label={`${label} name`} placeholder={choice === 'vendor' ? 'Vendor name' : 'Portal name'}
-            maxLength={120} disabled={disabled} value={value?.name ?? ''} onChange={e => onChange({ kind: choice, name: e.target.value })} className={`${FIELD} w-40 max-w-full`} />}
+            maxLength={120} disabled={disabled} value={value?.name ?? ''} onChange={e => onChange({ kind: choice, name: e.target.value })} className={`${K_FIELD} w-40 max-w-full`} />}
     </div>;
 }
 
@@ -136,11 +140,11 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
         onChanged();
     };
     return (
-        <section className={`${CARD} px-4 py-4`} aria-labelledby="resume-dupes-heading">
+        <section className={`${K_CARD} px-4 py-4`} aria-labelledby="resume-dupes-heading">
             <div className="flex items-center justify-between gap-x-2">
-                <h2 id="resume-dupes-heading" className="flex items-center gap-x-2 text-sm font-semibold text-text-primary">
+                <h2 id="resume-dupes-heading" className="flex items-center gap-x-2 text-[15px] font-semibold text-text-primary">
                     Already in the database
-                    {state && count > 0 && <span className="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-amber-800">{formatCount(count)}</span>}
+                    {state && count > 0 && <StatusPill tone="amber"><span className="tabular-nums">{formatCount(count)}</span></StatusPill>}
                 </h2>
             </div>
             {!state ? (
@@ -148,7 +152,7 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
             ) : state.files.length === 0 && repeats.repeats.length === 0 ? (
                 <p className="mt-2 text-sm text-text-secondary">Nothing here. When someone uploads a CV for a person who already has one, or a CV a teammate already uploaded, it shows here.</p>
             ) : state.files.length === 0 ? null : (
-                <ul className="mt-2 max-h-[420px] divide-y divide-border-subtle overflow-y-auto">
+                <ul className="mt-2 max-h-[420px] divide-y divide-border overflow-y-auto">
                     {state.files.map(f => {
                         const k = f.alreadyKnown;
                         return (
@@ -172,13 +176,13 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                                     {confirm === f.id ? (
                                         <>
                                             <span className="text-xs text-text-secondary">Delete this copy?</span>
-                                            <button type="button" onClick={() => void act(f, 'delete')} disabled={busy === f.id} className={`${BTN_DANGER_GHOST} h-8 px-2`}>{busy === f.id ? <Spinner /> : 'Delete'}</button>
-                                            <button type="button" onClick={() => setConfirm(null)} className={`${BTN_GHOST} h-8 px-2`}>Keep</button>
+                                            <button type="button" onClick={() => void act(f, 'delete')} disabled={busy === f.id} className={K_BTN_GHOST_DANGER}>{busy === f.id ? <Spinner /> : 'Delete'}</button>
+                                            <button type="button" onClick={() => setConfirm(null)} className={K_BTN_GHOST}>Keep</button>
                                         </>
                                     ) : (
                                         <>
-                                            <button type="button" onClick={() => void act(f, 'update')} disabled={busy === f.id} className={`${BTN_SECONDARY} h-8 px-3 text-xs`} title="Use this file as the CV from now on; the earlier one stays as an older version">{busy === f.id ? <Spinner /> : 'Update the CV'}</button>
-                                            <button type="button" onClick={() => setConfirm(f.id)} disabled={busy === f.id} className={`${BTN_DANGER_GHOST} h-8 px-2 text-xs`}>Delete this copy</button>
+                                            <button type="button" onClick={() => void act(f, 'update')} disabled={busy === f.id} className={K_BTN} title="Use this file as the CV from now on; the earlier one stays as an older version">{busy === f.id ? <Spinner /> : 'Update the CV'}</button>
+                                            <button type="button" onClick={() => setConfirm(f.id)} disabled={busy === f.id} className={K_BTN_GHOST_DANGER}>Delete this copy</button>
                                         </>
                                     )}
                                 </div>
@@ -189,9 +193,9 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
             )}
             {state && state.total > state.files.length && <p className="mt-2 text-xs text-text-tertiary">Showing {formatCount(state.files.length)} of {formatCount(state.total)}. Deal with these and the rest move up.</p>}
             {state && repeats.repeats.length > 0 && (
-                <div className={state.files.length ? 'mt-3 border-t border-border-subtle pt-3' : 'mt-2'}>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-text-tertiary">Same CV uploaded again</h3>
-                    <ul className="mt-1 max-h-[320px] divide-y divide-border-subtle overflow-y-auto">
+                <div className={state.files.length ? 'mt-3 border-t border-border pt-3' : 'mt-2'}>
+                    <h3 className={K_LABEL}>Same CV uploaded again</h3>
+                    <ul className="mt-1 max-h-[320px] divide-y divide-border overflow-y-auto">
                         {repeats.repeats.map(r => (
                             <li key={r.id} className="py-3">
                                 {/* Owner 2026-11-17: who uploaded it again and who first, each on its own row. */}
@@ -201,7 +205,7 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
                                         <span className="block truncate text-sm font-semibold text-text-primary" title={r.candidateName ?? r.fileName}>{r.candidateName ?? 'Not linked to a candidate'}</span>
                                         <button type="button" onClick={() => open(r.fileId)} title={`Open ${r.fileName}`} className="block max-w-full truncate text-left text-xs font-medium text-primary-dark underline-offset-2 hover:underline">{r.fileName}</button>
                                     </span>
-                                    <button type="button" onClick={() => void dismiss(r)} disabled={busy === r.id} className={`${BTN_GHOST} h-8 shrink-0 px-2 text-xs`} title="Seen: take it off this list (the note in the person's history stays)">{busy === r.id ? <Spinner /> : 'Dismiss'}</button>
+                                    <button type="button" onClick={() => void dismiss(r)} disabled={busy === r.id} className={K_BTN_GHOST} title="Seen: take it off this list (the note in the person's history stays)">{busy === r.id ? <Spinner /> : 'Dismiss'}</button>
                                 </div>
                                 <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 text-xs">
                                     <dt className="text-text-secondary">Uploaded again</dt>
@@ -226,19 +230,23 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
  * browser will read it without asking. `unsupported`: this browser cannot keep a folder (Firefox, Safari, Brave as shipped).
  */
 type Source = { state: 'unknown' | 'none' | 'unsupported' } | { state: 'remembered'; name: string; allowed: boolean };
-type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate';
+type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate' | 'reading';
 type Loaded = { key: string; data: ResumeFilesResponse | null; error: string };
 
 /** Phase 2 / 4: has the file's text been read, and have its details been read into the candidate. Reasons sit in the tooltip. */
+const awaitingRead = (f: ResumeFile) => !f.removed && !f.other && (['pending', 'working', 'scan', 'scanning'].includes(f.textStatus) || (f.textStatus === 'ready' && ['pending', 'working'].includes(f.extractStatus)));
+
 function TextStatus({ f }: { f: ResumeFile }) {
-    if (f.removed) return <span className="text-warning" title={f.textError ?? undefined}>Removed: not a resume</span>;
+    if (f.extractError === 'Reading cancelled by recruiter') return <span className="text-text-secondary">Reading cancelled</span>;
+    if (awaitingRead(f) && Date.now() - new Date(f.createdAt).getTime() > 86400000) return <span className="text-amber-700" title={f.extractError || f.textError || undefined}>Reading delayed · open or cancel</span>;
+    if (f.removed) return <span className="text-amber-700 dark:text-amber-400" title={f.textError ?? undefined}>Removed: not a resume</span>;
     if (f.other) return <span className="text-text-secondary" title={f.textError ?? undefined}>Other document (kept)</span>;
     const bad = f.textStatus === 'unreadable' || f.textStatus === 'failed';
     if (bad || f.textStatus !== 'ready') {
-        return <span className={bad ? 'text-warning' : 'text-text-tertiary'} title={f.textError ?? undefined}>{TEXT_STATUS_LABELS[f.textStatus]}</span>;
+        return <span className={bad ? 'text-amber-700 dark:text-amber-400' : 'text-text-tertiary'} title={f.textError ?? undefined}>{TEXT_STATUS_LABELS[f.textStatus]}</span>;
     }
     if (f.extractStatus === 'done') return <span className="text-text-secondary">Details read</span>;
-    if (f.extractStatus === 'failed') return <span className="text-warning" title={f.extractError ?? undefined}>Read · details failed</span>;
+    if (f.extractStatus === 'failed') return <span className="text-amber-700 dark:text-amber-400" title={f.extractError ?? undefined}>Read · details failed</span>;
     if (f.extractStatus === 'skipped') return <span className="text-text-secondary">Read</span>;
     return <span className="text-text-tertiary" title={f.extractError ?? undefined}>Read · details soon</span>;
 }
@@ -246,10 +254,10 @@ type Zip = { done: number; total: number; part: number; skipped: number; phase: 
 
 const VERDICT_TONE: Record<PickVerdict, string> = {
     ok: 'text-text-tertiary',
-    name: 'text-warning',
+    name: 'text-amber-700 dark:text-amber-400',
     date: 'text-text-tertiary',
     type: 'text-text-tertiary',
-    size: 'text-error',
+    size: 'text-red-700 dark:text-red-400',
 };
 
 function fmtSize(bytes: number): string {
@@ -349,8 +357,8 @@ function ProgressBar({ fraction, label }: { fraction: number; label: string }) {
 function Stage({ label, value, of, hint }: { label: string; value: number; of: number; hint?: React.ReactNode }) {
     return (
         <div className="min-w-0">
-            <dt className={LABEL}>{label}</dt>
-            <dd className={`${NUM_MD} mt-0.5 text-text-primary`}>{formatCount(Math.max(0, value))}</dd>
+            <dt className={K_LABEL}>{label}</dt>
+            <dd className="mt-0.5 text-base font-semibold tabular-nums text-text-primary">{formatCount(Math.max(0, value))}</dd>
             <dd className="mt-1.5"><ProgressBar fraction={of ? Math.max(0, value) / of : 0} label={label} /></dd>
             {hint && <dd className="mt-1.5 truncate text-xs text-text-tertiary">{hint}</dd>}
         </div>
@@ -371,7 +379,8 @@ function attentionOf(f: ResumeFile): { kind: string; why: string } {
     return { kind: 'Could not be read', why: f.textError ?? 'The text of this file could not be read.' };
 }
 
-export default function ResumesView({ orgId }: { orgId: string }) {
+export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: string; readingRequest?: number }) {
+    const [workspace, setWorkspace] = useState<'library' | 'import' | 'attention'>('library');
     const { notify, reportError } = useUi();
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -778,7 +787,23 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const attnAll = attnRows.length > 0 && attnMarked.length === attnRows.length;
     const toggleAttn = (id: string) => setAttnMarkedIds(ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]));
     const listRef = useRef<HTMLElement | null>(null);
-    const showInList = (link: LinkFilter) => { setPreset('all'); setLinkFilter(link); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const showInList = (link: LinkFilter) => { setWorkspace('library'); setPreset('all'); setLinkFilter(link); if (link === 'reading') { setQ(''); setDeviceFilter(''); setSourceFilter(''); setRoleFilter(''); } requestAnimationFrame(() => listRef.current?.scrollIntoView({ block: 'start' })); };
+
+    useEffect(() => {
+        if (readingRequest) showInList('reading');
+        // A new request opens the queue even when the Resumes screen is already mounted.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [readingRequest]);
+    const [cancelling, setCancelling] = useState<string | null>(null);
+    const cancelReading = async (f: ResumeFile) => {
+        if (cancelling) return;
+        setCancelling(f.id);
+        const res = await api(`/api/candidates/resumes/${encodeURIComponent(f.id)}`, { method: 'PATCH', json: { orgId, cancelReading: true } });
+        setCancelling(null);
+        if (!res.ok) { reportError(res); return; }
+        notify(`Reading cancelled for ${f.fileName}. The original file is kept.`, 'success');
+        reloadLibrary();
+    };
 
     /** Open reads the file (a PDF in the browser's viewer, a .docx as a page); download saves the original. */
     const openFile = (f: ResumeFile, inline = true) => { window.open(`/api/candidates/resumes/${encodeURIComponent(f.id)}${qs({ orgId, inline })}`, '_blank', 'noopener'); };
@@ -937,14 +962,30 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const pageTo = Math.min(total, page * PAGE_SIZE);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-5">
+            <PageHeader title="Resumes"
+                sub={summary ? `${formatCount(summary.total)} ${summary.total === 1 ? 'file' : 'files'} stored · ${formatCount(summary.linked)} linked to a candidate${team.length ? ` · from ${formatCount(team.length)} ${team.length === 1 ? 'person' : 'people'}` : ''}` : 'Loading'}
+                actions={<>
+                    <a href={`/api/candidates/resumes/export${qs(listParams)}`} className={K_BTN} download><Download className="h-4 w-4" aria-hidden />Download Excel</a>
+                    <button type="button" onClick={() => { setWorkspace('import'); void uploadNew(); }} disabled={uploading || scanning} className={K_BTN_PRIMARY}>{scanning ? <Spinner className="h-4 w-4 text-white" /> : <Upload className="h-4 w-4" aria-hidden />}Upload resumes</button>
+                </>} />
+            {summary && (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="group" aria-label="Resumes at a glance">
+                    <KpiTile icon={FileText} label="Resumes stored" value={formatCount(summary.total)} note={fmtSize(summary.totalBytes)} />
+                    <KpiTile icon={Link2} label="Linked to a candidate" value={formatCount(summary.linked)} note={summary.unlinked > 0 ? `${formatCount(summary.unlinked)} not linked yet` : undefined} />
+                    <button type="button" className="text-left" onClick={() => showInList('reading')}><KpiTile icon={ScanText} label="Reading queue" value={formatCount(stillToDo)} note="View files · open, cancel or delete" /></button>
+                    <KpiTile icon={CircleAlert} label="Need attention" value={formatCount(attentionCount)} />
+                </div>
+            )}
+            <Segmented label="Resume workspace" value={workspace} onChange={setWorkspace} options={[{ value: 'library', label: 'Resume library' }, { value: 'import', label: 'Import & sources' }, { value: 'attention', label: `Needs attention${attentionCount ? ` · ${attentionCount}` : ''}` }]} />
+            <div hidden={workspace !== 'import'} className="space-y-5">
             <ResumeMail orgId={orgId} onImported={reloadLibrary} />
             <div className="grid items-start gap-x-4 gap-y-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             {/* Add resumes */}
-            <section className={`${CARD} px-4 py-4 sm:px-6 sm:py-5`} aria-labelledby="resume-add-heading">
+            <section className={`${K_CARD} px-4 py-4 sm:px-5 sm:py-5`} aria-labelledby="resume-add-heading">
                 <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                     <div className="min-w-0 basis-full sm:basis-0 sm:flex-1">
-                        <h2 id="resume-add-heading" className="font-display text-base font-semibold text-text-primary">Add resumes</h2>
+                        <h2 id="resume-add-heading" className="text-[15px] font-semibold text-text-primary">Add resumes</h2>
                         <p className="mt-0.5 text-sm text-text-secondary">
                             {mine?.lastUploadedAt
                                 ? <>You last uploaded on <span className="font-semibold text-text-primary">{formatDate(mine.lastUploadedAt)}</span> ({formatCount(mine.count)} {mine.count === 1 ? 'file' : 'files'} in all), so files downloaded since {formatDate(new Date(startOfDay(pickRange.from) ?? 0).toISOString())} are picked. </>
@@ -953,7 +994,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         </p>
                     </div>
                     {uploader && (
-                        <p className="inline-flex h-10 max-w-full shrink-0 items-center gap-x-2 rounded-full bg-surface-elevated pl-1 pr-3.5 text-sm text-text-secondary ring-1 ring-inset ring-border-subtle" title="Your uploads are filed under your name, taken from your login">
+                        <p className="inline-flex h-10 max-w-full shrink-0 items-center gap-x-2 rounded-full bg-surface-elevated pl-1 pr-3.5 text-sm text-text-secondary ring-1 ring-inset ring-border" title="Your uploads are filed under your name, taken from your login">
                             <Avatar name={uploader} size="sm" />
                             <span className="truncate">Uploading as <span className="font-semibold text-text-primary">{uploader}</span></span>
                         </p>
@@ -961,17 +1002,17 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 </div>
 
                 {/* Source folder (owner 2026-11-11): chosen once, shown here, read on every "Upload new resumes". */}
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-xl bg-surface-elevated px-4 py-3 ring-1 ring-inset ring-border-subtle">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-lg bg-surface-elevated px-4 py-3 ring-1 ring-inset ring-border">
                     <div className="flex min-w-0 flex-1 basis-72 items-start gap-x-3">
-                        <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-primary-dark shadow-[var(--w-shadow)]"><Folder className="h-4 w-4" aria-hidden /></span>
+                        <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Folder className="h-4 w-4" aria-hidden /></span>
                         <div className="min-w-0">
-                            <p className={LABEL}>Source folder (optional)</p>
+                            <p className={K_LABEL}>Source folder (optional)</p>
                             {source.state === 'remembered' ? (
                                 <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                                     <span className="truncate font-semibold text-text-primary" title={source.name}>{source.name}</span>
-                                    <Tag tone={source.allowed ? 'success' : 'neutral'} title={source.allowed ? 'The browser reads this folder without asking' : 'On the next upload the browser asks once whether this page may read the folder'}>
+                                    <StatusPill tone={source.allowed ? 'green' : 'grey'} title={source.allowed ? 'The browser reads this folder without asking' : 'On the next upload the browser asks once whether this page may read the folder'}>
                                         {source.allowed ? 'Ready' : 'Browser will ask to allow'}
-                                    </Tag>
+                                    </StatusPill>
                                 </p>
                             ) : source.state === 'none' ? (
                                 <p className="mt-0.5 text-sm font-semibold text-text-primary">Not set: the folder is asked for on each upload</p>
@@ -1000,10 +1041,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </div>
                     {(source.state === 'remembered' || source.state === 'none') && (
                         <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2">
-                            <button type="button" onClick={() => void chooseSource()} disabled={uploading || scanning} className={BTN_SECONDARY}>
+                            <button type="button" onClick={() => void chooseSource()} disabled={uploading || scanning} className={K_BTN}>
                                 <FolderOpen className="h-4 w-4" />{source.state === 'remembered' ? 'Change' : 'Choose folder'}
                             </button>
-                            {source.state === 'remembered' && <button type="button" onClick={() => void forgetThisFolder()} disabled={uploading || scanning} className={BTN_GHOST}>Forget</button>}
+                            {source.state === 'remembered' && <button type="button" onClick={() => void forgetThisFolder()} disabled={uploading || scanning} className={K_BTN_GHOST}>Forget</button>}
                         </div>
                     )}
                 </div>
@@ -1012,10 +1053,10 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     onDragOver={e => { e.preventDefault(); if (!uploading && !scanning) setDropping(true); }}
                     onDragLeave={() => setDropping(false)}
                     onDrop={onDrop}
-                    className={`mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-xl border-2 border-dashed px-4 py-4 transition-colors ${dropping ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface-elevated'}`}
+                    className={`mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-xl border-2 border-dashed px-4 py-4 transition-colors ${dropping ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface'}`}
                 >
                     <div className="flex min-w-0 flex-1 basis-64 items-center gap-x-3">
-                        <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface text-primary-dark shadow-[var(--w-shadow)]"><Upload className="h-5 w-5" aria-hidden /></span>
+                        <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Upload className="h-5 w-5" aria-hidden /></span>
                         <div className="min-w-0">
                             <p className="text-sm font-semibold text-text-primary">{dropping ? 'Drop the files to review them' : 'Drop PDF or Word files here'}</p>
                             <p className="mt-0.5 text-xs leading-relaxed text-text-secondary">
@@ -1027,20 +1068,20 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        <button type="button" onClick={() => void uploadNew()} disabled={uploading || scanning} className={BTN_PRIMARY}>
+                        <button type="button" onClick={() => void uploadNew()} disabled={uploading || scanning} className={K_BTN_PRIMARY}>
                             {scanning ? <Spinner className="h-4 w-4 text-white" /> : <FolderDown className="h-4 w-4" />}{scanning ? 'Reading the folder' : 'Upload new resumes'}
                         </button>
-                        <button type="button" onClick={() => filesInput.current?.click()} disabled={uploading || scanning} className={BTN_GHOST}><FileText className="h-4 w-4" />Choose files</button>
+                        <button type="button" onClick={() => filesInput.current?.click()} disabled={uploading || scanning} className={K_BTN_GHOST}><FileText className="h-4 w-4" />Choose files</button>
                     </div>
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
                     <label htmlFor="resume-pick-from">Pick files downloaded from</label>
-                    <input id="resume-pick-from" type="date" value={pickRange.from} max={pickRange.to} onChange={e => setPickRange(r => ({ ...r, from: e.target.value }))} className={FIELD} disabled={uploading} />
+                    <input id="resume-pick-from" type="date" value={pickRange.from} max={pickRange.to} onChange={e => setPickRange(r => ({ ...r, from: e.target.value }))} className={K_FIELD} disabled={uploading} />
                     <label htmlFor="resume-pick-to">to</label>
-                    <input id="resume-pick-to" type="date" value={pickRange.to} min={pickRange.from} onChange={e => setPickRange(r => ({ ...r, to: e.target.value }))} className={FIELD} disabled={uploading} />
+                    <input id="resume-pick-to" type="date" value={pickRange.to} min={pickRange.from} onChange={e => setPickRange(r => ({ ...r, to: e.target.value }))} className={K_FIELD} disabled={uploading} />
                     {raw && !uploading && (
-                        <button type="button" onClick={() => { setRaw(null); setOverrides({}); setRun(null); }} className={BTN_GHOST}><X className="h-4 w-4" />Clear the list</button>
+                        <button type="button" onClick={() => { setRaw(null); setOverrides({}); setRun(null); }} className={K_BTN_GHOST}><X className="h-4 w-4" />Clear the list</button>
                     )}
                     {/* webkitdirectory (folder picking) is not in React's typings, so it is set on the element itself. */}
                     <input ref={el => { folderInput.current = el; el?.setAttribute('webkitdirectory', ''); }} type="file" multiple className="sr-only" tabIndex={-1} aria-hidden
@@ -1049,12 +1090,12 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-end gap-4">
-                    <div><p className={`${LABEL} mb-1`}>Batch source</p>
+                    <div><p className={`${K_LABEL} mb-1`}>Batch source</p>
                         <ResumeSourceFields value={uploadSource} onChange={setUploadSource} label="Batch source" disabled={uploading} automatic />
                     </div>
-                    <label className={LABEL}>Designation / role sourced for
+                    <label className={K_LABEL}>Designation / role sourced for
                         <input list="resume-role-titles" value={batchRole} onChange={e => setBatchRole(e.target.value)} disabled={uploading} maxLength={200}
-                            placeholder="Choose or type a role" className={`${INPUT} mt-1 block sm:w-64`} />
+                            placeholder="Choose or type a role" className={`${K_FIELD} mt-1 block w-full sm:w-64`} />
                     </label>
                 </div>
                 <datalist id="resume-role-titles">{roleTitles.map(title => <option key={title} value={title} />)}</datalist>
@@ -1077,17 +1118,17 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             </p>
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                                 <Toggle checked={showAll} onChange={setShowAll} label="Show unticked" />
-                                <button type="button" onClick={tickResumes} disabled={uploading} className={BTN_GHOST}>Tick resumes</button>
-                                <button type="button" onClick={() => tickAll(true)} disabled={uploading} className={BTN_GHOST}>Tick all</button>
-                                <button type="button" onClick={() => tickAll(false)} disabled={uploading} className={BTN_GHOST}>Untick all</button>
+                                <button type="button" onClick={tickResumes} disabled={uploading} className={K_BTN_GHOST}>Tick resumes</button>
+                                <button type="button" onClick={() => tickAll(true)} disabled={uploading} className={K_BTN_GHOST}>Tick all</button>
+                                <button type="button" onClick={() => tickAll(false)} disabled={uploading} className={K_BTN_GHOST}>Untick all</button>
                             </div>
                         </div>
 
-                        <div className={`${WELL} max-h-80 overflow-y-auto`}>
+                        <div className={`${K_WELL} max-h-80 overflow-y-auto`}>
                             {visibleRows.length === 0 ? (
                                 <p className="px-4 py-6 text-center text-sm text-text-secondary">{picked.length ? 'Nothing ticked. Tick the files to upload, or widen the dates.' : 'No files in that folder.'}</p>
                             ) : (
-                                <ul className="divide-y divide-border-subtle">
+                                <ul className="divide-y divide-border">
                                     {visibleRows.slice(pickPage * PICK_ROWS, (pickPage + 1) * PICK_ROWS).map(p => (
                                         <li key={p.key} className="flex flex-wrap items-center gap-x-3 gap-y-3 px-3 py-2 text-sm">
                                             <button type="button" role="checkbox" aria-checked={p.ticked} aria-label={`${p.ticked ? 'Untick' : 'Tick'} ${p.file.name}`} onClick={() => tick(p.key, !p.ticked)} disabled={uploading || p.verdict === 'type' || p.verdict === 'size'}
@@ -1104,7 +1145,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                 <input aria-label={`Designation for ${p.file.name}`} list="resume-role-titles" maxLength={200} disabled={uploading}
                                                     value={detailsFor(p).sourcedRole ?? ''} placeholder="Designation / role"
                                                     onChange={e => setFileDetails(d => ({ ...d, [p.key]: { ...d[p.key], sourcedRole: e.target.value || null } }))}
-                                                    className={`${FIELD} w-48 max-w-full`} />
+                                                    className={`${K_FIELD} w-48 max-w-full`} />
                                             </div>
                                             <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-text-tertiary sm:block">{fmtSize(p.file.size)}</span>
                                             <span className="hidden w-24 shrink-0 text-right text-xs tabular-nums text-text-tertiary sm:block">{formatDate(new Date(p.file.lastModified).toISOString())}</span>
@@ -1114,33 +1155,33 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 </ul>
                             )}
                             {visibleRows.length > PICK_ROWS && (
-                                <div className="flex items-center justify-between gap-2 border-t border-border-subtle px-4 py-2 text-xs text-text-secondary">
+                                <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-xs text-text-secondary">
                                     <span>Preview {pickPage + 1} of {Math.ceil(visibleRows.length / PICK_ROWS)} ? all ticked files will upload</span>
-                                    <div><button type="button" disabled={pickPage === 0} onClick={() => setPreviewPage(pickPage - 1)} className={BTN_GHOST}>Previous</button>
-                                        <button type="button" disabled={(pickPage + 1) * PICK_ROWS >= visibleRows.length} onClick={() => setPreviewPage(pickPage + 1)} className={BTN_GHOST}>Next</button></div>
+                                    <div><button type="button" disabled={pickPage === 0} onClick={() => setPreviewPage(pickPage - 1)} className={K_BTN_GHOST}>Previous</button>
+                                        <button type="button" disabled={(pickPage + 1) * PICK_ROWS >= visibleRows.length} onClick={() => setPreviewPage(pickPage + 1)} className={K_BTN_GHOST}>Next</button></div>
                                 </div>
                             )}
                         </div>
 
                         {run ? (
-                            <div className={`${WELL} space-y-3 px-4 py-4`} aria-live="polite">
+                            <div className={`${K_WELL} space-y-3 px-4 py-4`} aria-live="polite">
                                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                                     <p className="text-sm font-semibold text-text-primary">
                                         {run.phase === 'running' ? <span className="inline-flex items-center gap-x-2 gap-y-2"><Spinner />Uploading</span>
-                                            : run.phase === 'stopped' ? 'Stopped' : <span className="inline-flex items-center gap-x-2 gap-y-2"><CircleCheck className="h-4 w-4 text-success" />Finished</span>}
+                                            : run.phase === 'stopped' ? 'Stopped' : <span className="inline-flex items-center gap-x-2 gap-y-2"><CircleCheck className="h-4 w-4 text-green-600 dark:text-green-400" />Finished</span>}
                                         <span className="ml-2 tabular-nums text-text-secondary">{formatCount(run.done)} / {formatCount(run.total)} files</span>
                                     </p>
                                     {run.phase === 'running' ? (
-                                        <button type="button" onClick={stopUpload} className={BTN_GHOST}>Stop</button>
+                                        <button type="button" onClick={stopUpload} className={K_BTN_GHOST}>Stop</button>
                                     ) : run.failed.length > 0 ? (
-                                        <button type="button" onClick={retryFailed} className={BTN_SECONDARY}><Upload className="h-4 w-4" />Retry {formatCount(run.failed.length)} failed</button>
+                                        <button type="button" onClick={retryFailed} className={K_BTN}><Upload className="h-4 w-4" />Retry {formatCount(run.failed.length)} failed</button>
                                     ) : null}
                                 </div>
                                 <ProgressBar fraction={run.bytesTotal ? run.bytesDone / run.bytesTotal : 1} label="Upload progress" />
                                 <dl className="grid grid-cols-3 gap-x-3 gap-y-3">
-                                    <div><dt className={LABEL}>Uploaded</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(run.uploaded)}</dd></div>
-                                    <div><dt className={LABEL}>Already there</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(run.duplicates)}</dd></div>
-                                    <div><dt className={LABEL}>Failed</dt><dd className={`${NUM_SM} ${run.failed.length ? 'text-error' : 'text-text-primary'}`}>{formatCount(run.failed.length)}</dd></div>
+                                    <div><dt className={K_LABEL}>Uploaded</dt><dd className="text-sm font-semibold tabular-nums text-text-primary">{formatCount(run.uploaded)}</dd></div>
+                                    <div><dt className={K_LABEL}>Already there</dt><dd className="text-sm font-semibold tabular-nums text-text-primary">{formatCount(run.duplicates)}</dd></div>
+                                    <div><dt className={K_LABEL}>Failed</dt><dd className={`text-sm font-semibold tabular-nums ${run.failed.length ? 'text-red-700 dark:text-red-400' : 'text-text-primary'}`}>{formatCount(run.failed.length)}</dd></div>
                                 </dl>
                                 {run.known.length > 0 && (
                                     <p className="text-xs text-text-secondary">
@@ -1165,7 +1206,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         ) : (
                             selected.length > 0 && (
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
-                                    <button type="button" onClick={() => void startUpload(selected)} className={BTN_PRIMARY}>
+                                    <button type="button" onClick={() => void startUpload(selected)} className={K_BTN_PRIMARY}>
                                         <Upload className="h-4 w-4" />Upload {formatCount(selected.length)} {selected.length === 1 ? 'file' : 'files'}
                                     </button>
                                     <span className="text-xs text-text-tertiary">{fmtSize(selectedBytes)} · keep this tab open until it finishes</span>
@@ -1173,7 +1214,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                             )
                         )}
                         {run && run.phase !== 'running' && selected.length > 0 && (
-                            <button type="button" onClick={() => void startUpload(selected)} className={BTN_GHOST}><Upload className="h-4 w-4" />Upload the ticked files again</button>
+                            <button type="button" onClick={() => void startUpload(selected)} className={K_BTN_GHOST}><Upload className="h-4 w-4" />Upload the ticked files again</button>
                         )}
                     </div>
                 )}
@@ -1181,14 +1222,14 @@ export default function ResumesView({ orgId }: { orgId: string }) {
 
             <div className="space-y-4">
             {/* Who uploaded last */}
-            <section className={`${CARD} px-4 py-4`} aria-labelledby="resume-team-heading">
-                <h2 id="resume-team-heading" className="text-sm font-semibold text-text-primary">Team uploads</h2>
+            <section className={`${K_CARD} px-4 py-4`} aria-labelledby="resume-team-heading">
+                <h2 id="resume-team-heading" className="text-[15px] font-semibold text-text-primary">Team uploads</h2>
                 {!summary ? (
                     <div className="mt-3 space-y-2">{[0, 1, 2].map(i => <Skeleton key={i} className="h-9 w-full rounded-lg" />)}</div>
                 ) : team.length === 0 ? (
                     <p className="mt-2 text-sm text-text-secondary">No one has uploaded yet. Each person&rsquo;s last upload will show here.</p>
                 ) : (
-                    <ul className="mt-2 divide-y divide-border-subtle">
+                    <ul className="mt-2 divide-y divide-border">
                         {team.map(d => {
                             const late = d.lastUploadedAt ? daysSince(d.lastUploadedAt) >= RESUME_REMIND_AFTER_DAYS : false;
                             return (
@@ -1198,7 +1239,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         <span className="block truncate text-sm font-semibold text-text-primary">{d.label}{d.label === uploader && <span className="font-normal text-text-tertiary"> · you</span>}</span>
                                         <span className="block text-xs tabular-nums text-text-tertiary">{formatCount(d.count)} {d.count === 1 ? 'file' : 'files'}</span>
                                     </span>
-                                    <Tag tone={late ? 'warn' : 'neutral'} title={d.lastUploadedAt ? `Last upload on ${formatDate(d.lastUploadedAt)}` : undefined}>{ago(d.lastUploadedAt)}</Tag>
+                                    <StatusPill tone={late ? 'amber' : 'grey'} title={d.lastUploadedAt ? `Last upload on ${formatDate(d.lastUploadedAt)}` : undefined}>{ago(d.lastUploadedAt)}</StatusPill>
                                 </li>
                             );
                         })}
@@ -1211,8 +1252,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             </div>
 
             {/* How far the background reading is */}
+            </div>
+            <div hidden={workspace !== 'attention'} className="space-y-4">
+            {attentionCount === 0 && <div className="recruitment-hero"><h2 className="text-lg font-semibold">Your library is up to date</h2><p className="mt-2 text-sm text-text-secondary">No files currently need attention. Reading progress and files to review will appear here.</p></div>}
             {summary && summary.total > 0 && (
-                <section className={`${CARD} px-4 py-4 sm:px-6`} aria-label="Reading progress">
+                <section className={`${K_CARD} px-4 py-4 sm:px-5`} aria-label="Reading progress">
                     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-text-primary" aria-live="polite">
                         {stillToDo > 0 ? (
                             <>
@@ -1221,7 +1265,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 <span className="font-normal text-text-secondary">· it runs in the background, you can leave this page</span>
                             </>
                         ) : (
-                            <><CircleCheck className="h-4 w-4 text-success" aria-hidden />Every stored resume has been read</>
+                            <><CircleCheck className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden />Every stored resume has been read</>
                         )}
                     </p>
                     <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-4">
@@ -1234,7 +1278,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         <Stage label="Details read" value={detailsRead} of={summary.total} hint={summary.extractPending > 0 ? <>{formatCount(summary.extractPending)} to go</> : 'education, skills, employers'} />
                     </dl>
                     {(summary.rejected > 0 || summary.other > 0) && (
-                        <p className="mt-3 border-t border-border-subtle pt-2.5 text-xs text-text-secondary">
+                        <p className="mt-3 border-t border-border pt-2.5 text-xs text-text-secondary">
                             Not counted above:
                             {summary.rejected > 0 && <> <button type="button" onClick={() => showInList('rejected')} className="font-semibold text-primary-dark underline-offset-2 hover:underline">{formatCount(summary.rejected)} removed as not resumes</button></>}
                             {summary.rejected > 0 && summary.other > 0 && ' ·'}
@@ -1246,40 +1290,40 @@ export default function ResumesView({ orgId }: { orgId: string }) {
 
             {/* The few files that need a person */}
             {attention && attentionCount > 0 && (
-                <section className={`${CARD} overflow-hidden`} aria-labelledby="resume-attention-heading">
-                    <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border-subtle px-4 py-2 sm:px-6">
+                <section className={`${K_CARD} overflow-hidden`} aria-labelledby="resume-attention-heading">
+                    <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-2 sm:px-5">
                         <div className="flex items-center gap-x-3">
                             <input type="checkbox" checked={attnAll} onChange={e => setAttnMarkedIds(e.target.checked ? attnRows.map(f => f.id) : [])} aria-label="Select every file that needs attention" title="Select all" className="h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
-                            <h2 id="resume-attention-heading" className="flex items-center gap-x-2 font-display text-base font-semibold text-text-primary">
-                                <CircleAlert className="h-4 w-4 text-warning" aria-hidden />Needs attention
-                                <span className="rounded-full bg-surface-elevated px-2 py-0.5 font-body text-xs font-semibold tabular-nums text-text-secondary ring-1 ring-inset ring-border">{formatCount(attentionCount)}</span>
+                            <h2 id="resume-attention-heading" className="flex items-center gap-x-2 text-[15px] font-semibold text-text-primary">
+                                <CircleAlert className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden />Needs attention
+                                <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs font-semibold tabular-nums text-text-secondary ring-1 ring-inset ring-border">{formatCount(attentionCount)}</span>
                             </h2>
                         </div>
                         {attnMarked.length > 0 ? (
                             <div className="flex items-center gap-x-1" aria-live="polite">
                                 <span className="mr-1 text-sm font-semibold tabular-nums text-text-primary">{formatCount(attnMarked.length)} selected</span>
-                                <button type="button" onClick={() => setAttnMarkedIds([])} className={BTN_GHOST}><X className="h-4 w-4" />Clear</button>
+                                <button type="button" onClick={() => setAttnMarkedIds([])} className={K_BTN_GHOST}><X className="h-4 w-4" />Clear</button>
                                 {attnMarked.some(f => f.other) && (
-                                    <button type="button" onClick={() => void markResume(attnMarked)} disabled={markBusy} className={BTN_SECONDARY}>
+                                    <button type="button" onClick={() => void markResume(attnMarked)} disabled={markBusy} className={K_BTN}>
                                         {markBusy ? <Spinner /> : <FileCheck className="h-4 w-4" />}This is a resume ({formatCount(attnMarked.filter(f => f.other).length)})
                                     </button>
                                 )}
-                                <button type="button" onClick={() => askDelete(attnMarked)} className={BTN_DANGER_GHOST}><Trash2 className="h-4 w-4" />Delete selected</button>
+                                <button type="button" onClick={() => askDelete(attnMarked)} className={K_BTN_GHOST_DANGER}><Trash2 className="h-4 w-4" />Delete selected</button>
                             </div>
                         ) : (
                             <p className="text-xs text-text-secondary">Everything else was read, matched and filed by itself.</p>
                         )}
                     </div>
                     {/* To the mockup (owner 2026-11-15): kind · file and why · what to do (a note, or the attach box) · the actions. */}
-                    <ul className="max-h-[420px] divide-y divide-border-subtle overflow-y-auto overscroll-contain">
+                    <ul className="max-h-[420px] divide-y divide-border overflow-y-auto overscroll-contain">
                         {attnRows.map(f => {
                             const { kind, why } = attentionOf(f);
                             const on = attnMarkedIds.includes(f.id);
                             const unread = !f.other && !f.removed;
                             return (
-                                <li key={f.id} className={`grid grid-cols-[auto_170px_minmax(0,1.3fr)_minmax(260px,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-3 max-lg:grid-cols-[auto_minmax(0,1fr)] sm:px-6 ${on ? 'bg-primary/[.04]' : ''}`}>
+                                <li key={f.id} className={`grid grid-cols-[auto_170px_minmax(0,1.3fr)_minmax(260px,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-3 max-lg:grid-cols-[auto_minmax(0,1fr)] sm:px-5 ${on ? 'bg-primary/[.04]' : ''}`}>
                                     <input type="checkbox" checked={on} onChange={() => toggleAttn(f.id)} aria-label={`Select ${f.fileName}`} className="h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
-                                    <span><Tag tone={f.removed ? 'warn' : f.other ? 'neutral' : 'warn'}>{f.removed ? 'Removed as not a resume' : kind}</Tag></span>
+                                    <span><StatusPill tone={f.removed ? 'amber' : f.other ? 'grey' : 'amber'}>{f.removed ? 'Removed as not a resume' : kind}</StatusPill></span>
                                     <div className="min-w-0 max-lg:col-start-2">
                                         <p className="truncate text-sm font-semibold text-text-primary" title={f.fileName}>{f.fileName}</p>
                                         <p className="truncate text-xs text-text-secondary" title={why}>{f.removed ? `${why} · file removed, name kept so it is not uploaded twice` : why}</p>
@@ -1295,18 +1339,18 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         )}
                                     </div>
                                     <div className="flex shrink-0 items-center justify-end gap-x-0.5 max-lg:col-start-2">
-                                        {f.other && <button type="button" onClick={() => void markResume([f])} disabled={markBusy} className={`${BTN_PRIMARY} h-9 px-3`} title="Keep this file as a resume: it is matched by email or phone and its details are read">This is a resume</button>}
-                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_SECONDARY} h-9 px-3`}>Allow re-upload</button>}
-                                        {f.removed && <button type="button" onClick={() => dismiss(f.id)} className={BTN_GHOST}>It was a JD, fine</button>}
-                                        {!f.removed && <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}>Open</button>}
-                                        {!f.removed && <button type="button" onClick={() => askDelete([f])} className={BTN_DANGER_GHOST}>Delete</button>}
+                                        {f.other && <button type="button" onClick={() => void markResume([f])} disabled={markBusy} className={K_BTN_PRIMARY} title="Keep this file as a resume: it is matched by email or phone and its details are read">This is a resume</button>}
+                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={K_BTN}>Allow re-upload</button>}
+                                        {f.removed && <button type="button" onClick={() => dismiss(f.id)} className={K_BTN_GHOST}>It was a JD, fine</button>}
+                                        {!f.removed && <button type="button" onClick={() => openFile(f)} className={K_BTN_GHOST}>Open</button>}
+                                        {!f.removed && <button type="button" onClick={() => askDelete([f])} className={K_BTN_GHOST_DANGER}>Delete</button>}
                                     </div>
                                 </li>
                             );
                         })}
                     </ul>
                     {(attention.total > attention.files.length || attention.otherTotal > attention.others.length) && (
-                        <p className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border-subtle px-4 py-2.5 text-xs sm:px-6">
+                        <p className="flex flex-wrap gap-x-4 gap-y-1 border-t border-border px-4 py-2.5 text-xs sm:px-5">
                             {attention.total > attention.files.length && <button type="button" onClick={() => showInList('attention')} className="font-semibold text-primary-dark underline-offset-2 hover:underline">Show all {formatCount(attention.total)} unread files in the list</button>}
                             {attention.otherTotal > attention.others.length && <button type="button" onClick={() => showInList('other')} className="font-semibold text-primary-dark underline-offset-2 hover:underline">Show all {formatCount(attention.otherTotal)} other documents in the list</button>}
                         </p>
@@ -1315,12 +1359,14 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             )}
 
             {/* The library */}
+            </div>
+            <div hidden={workspace !== 'library'}>
             <section ref={listRef} className="scroll-mt-4 space-y-3" aria-labelledby="resume-list-heading">
                 <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-3">
                     <div>
-                        <h2 id="resume-list-heading" className="font-display text-base font-semibold text-text-primary">Resumes in the database</h2>
+                        <h2 id="resume-list-heading" className="text-[15px] font-semibold text-text-primary">Resumes in the database</h2>
                         {summary && (
-                            <p className="mt-0.5 text-sm text-text-secondary">
+                            <p className="mt-0.5 text-sm text-text-tertiary">
                                 <span className="font-semibold tabular-nums text-text-primary">{formatCount(summary.total)}</span> {summary.total === 1 ? 'file' : 'files'}
                                 {summary.newest && <> · newest download {formatDate(summary.newest)}</>}
                                 {' '}· the Excel and the ZIP follow the filters below
@@ -1329,73 +1375,64 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
                         {marked.length > 0 && (
-                            <button type="button" onClick={() => askDelete(files.filter(f => marked.includes(f.id)))} className={BTN_DANGER_GHOST}>
+                            <button type="button" onClick={() => askDelete(files.filter(f => marked.includes(f.id)))} className={K_BTN_GHOST_DANGER}>
                                 <Trash2 className="h-4 w-4" />Delete selected ({formatCount(marked.length)})
                             </button>
                         )}
-                        <a href={`/api/candidates/resumes/export${qs(listParams)}`} className={BTN_SECONDARY} download><Download className="h-4 w-4" />Download Excel</a>
-                        <button type="button" onClick={() => void downloadZip()} disabled={Boolean(zip && zip.phase !== 'done') || total === 0} className={BTN_SECONDARY}>
+                                                <button type="button" onClick={() => void downloadZip()} disabled={Boolean(zip && zip.phase !== 'done') || total === 0} className={K_BTN}>
                             {zip && zip.phase !== 'done' ? <Spinner /> : <Archive className="h-4 w-4" />}
                             {zip && zip.phase === 'saving' ? `Saving ${formatCount(zip.done)} / ${formatCount(zip.total)}${zip.part > 1 ? ` (part ${zip.part})` : ''}` : zip?.phase === 'listing' ? 'Listing…' : 'Download all (ZIP)'}
                         </button>
-                        {zip && zip.phase !== 'done' && <button type="button" onClick={() => { zipStop.current = true; }} className={BTN_GHOST}>Stop</button>}
+                        {zip && zip.phase !== 'done' && <button type="button" onClick={() => { zipStop.current = true; }} className={K_BTN_GHOST}>Stop</button>}
                     </div>
                 </div>
 
-                <div className={`${CARD} flex flex-wrap items-center gap-x-2 gap-y-2 px-3 py-3`}>
-                    <span className="relative min-w-[240px] flex-1">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" aria-hidden />
-                        <input value={q} onChange={e => setQ(e.target.value)} placeholder="File name, candidate, phone" aria-label="Search file names" className={`${INPUT} pl-9`} />
-                    </span>
-                    <select aria-label="Linked to a candidate" value={linkFilter} onChange={e => setLinkFilter(e.target.value as LinkFilter)} className={FIELD}>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="toolbar" aria-label="Filter the resumes">
+                    <SearchBox value={q} onChange={setQ} placeholder="File name, candidate, phone" label="Search file names" className="min-w-[240px] flex-1" />
+                    <SelectPill label="Linked to a candidate" value={linkFilter} onChange={v => setLinkFilter(v as LinkFilter)}>
                         <option value="">All</option>
                         <option value="linked">Linked</option>
                         <option value="unlinked">Not linked</option>
+                        <option value="reading">Reading queue</option>
                         <option value="attention">Could not be read</option>
                         <option value="other">Other documents</option>
                         <option value="rejected">Removed</option>
-                    </select>
-                    <select aria-label="Resume source" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} className={FIELD}>
+                    </SelectPill>
+                    <SelectPill label="Resume source" value={sourceFilter} onChange={setSourceFilter}>
                         <option value="">All sources</option><option value="naukri">Naukri</option><option value="linkedin">LinkedIn</option>
                         <option value="own">Our own search</option><option value="portal">Other job portals</option><option value="vendor">Vendor</option><option value="unknown">Unknown</option>
-                    </select>
-                    <input aria-label="Filter by designation" placeholder="Filter by designation" list="resume-role-titles" value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className={`${FIELD} w-48`} maxLength={200} />
-                    <select aria-label="Uploaded by" value={deviceFilter} onChange={e => setDeviceFilter(e.target.value)} className={FIELD}>
+                    </SelectPill>
+                    <input aria-label="Filter by designation" placeholder="Filter by designation" list="resume-role-titles" value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className={`${K_FIELD} w-48`} maxLength={200} />
+                    <SelectPill label="Uploaded by" value={deviceFilter} onChange={setDeviceFilter}>
                         <option value="">All users</option>
                         {deviceOptions.map(d => <option key={d.label ?? 'none'} value={d.label ?? 'none'}>{d.label ?? 'Unknown user'} ({formatCount(d.count)})</option>)}
-                    </select>
-                    <div role="group" aria-label="Download date" className="inline-grid grid-cols-3 gap-x-1 gap-y-1 rounded-xl bg-surface-elevated px-1 py-1 ring-1 ring-inset ring-border-subtle">
-                        {([['year', 'This year'], ['all', 'All dates'], ['custom', 'Custom']] as const).map(([id, label]) => (
-                            <button key={id} type="button" onClick={() => setPreset(id)} aria-pressed={preset === id}
-                                className={`h-8 rounded-lg px-3 text-sm font-semibold transition-colors ${preset === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>
-                                {label}
-                            </button>
-                        ))}
-                    </div>
+                    </SelectPill>
+                    <Segmented label="Download date" value={preset} onChange={setPreset}
+                        options={[{ value: 'year', label: 'This year' }, { value: 'all', label: 'All dates' }, { value: 'custom', label: 'Custom' }]} />
                     {preset === 'custom' && (
                         <>
-                            <input type="date" aria-label="From" value={custom.from} onChange={e => setCustom(c => ({ ...c, from: e.target.value }))} className={FIELD} />
-                            <input type="date" aria-label="To" value={custom.to} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))} className={FIELD} />
+                            <input type="date" aria-label="From" value={custom.from} onChange={e => setCustom(c => ({ ...c, from: e.target.value }))} className={K_FIELD} />
+                            <input type="date" aria-label="To" value={custom.to} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))} className={K_FIELD} />
                         </>
                     )}
                 </div>
 
-                <div className={`${CARD} overflow-hidden`}>
+                <div className={`${K_CARD} overflow-hidden`}>
                     {loaded?.error && !loading ? (
                         <div role="alert" className="flex flex-col items-center px-4 py-12 text-center">
                             <CircleAlert className="mb-3 h-8 w-8 text-error" aria-hidden />
                             <p className="max-w-md text-sm text-text-primary">{loaded.error}</p>
-                            <button type="button" onClick={reloadLibrary} className={`${BTN_SECONDARY} mt-4`}>Try again</button>
+                            <button type="button" onClick={reloadLibrary} className={`${K_BTN} mt-4`}>Try again</button>
                         </div>
                     ) : !loaded?.data && loading ? (
                         <div className="space-y-3 px-4 py-4 sm:p-6">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                     ) : files.length === 0 ? (
-                        <EmptyState icon={FileText} title={total === 0 && preset === 'year' && !qDebounced && !deviceFilter && !sourceFilter && !roleDebounced && summary && summary.total > 0 ? 'No resumes downloaded this year' : 'No resumes yet'}>
+                        <EmptyBlock icon={FileText} title={total === 0 && preset === 'year' && !qDebounced && !deviceFilter && !sourceFilter && !roleDebounced && summary && summary.total > 0 ? 'No resumes downloaded this year' : 'No resumes yet'}>
                             {summary && summary.total > 0 ? 'Change the dates or the other filters above.' : 'Upload the first ones from the panel above.'}
-                        </EmptyState>
+                        </EmptyBlock>
                     ) : (
                         <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
-                            <ul className="divide-y divide-border-subtle md:hidden">
+                            <ul className="divide-y divide-border md:hidden">
                                 {files.map(f => (
                                     <li key={f.id} className="space-y-1 px-4 py-3">
                                         <div className="flex items-start gap-x-2 gap-y-2">
@@ -1413,73 +1450,75 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         <p className="text-xs text-text-tertiary">Uploaded by {f.deviceLabel ?? f.uploadedByEmail ?? 'someone'} · <span className="tabular-nums">{formatDate(f.createdAt)}</span></p>
                                         <p className="text-xs text-text-secondary">Source: {resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })} ? Role: {f.sourcedRole || 'Not assigned'}</p>
                                         <div className="flex justify-end gap-x-1 gap-y-1">
-                                            {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={BTN_GHOST}>Edit details</button>}
-                                            {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`}><FileCheck className="h-4 w-4" />Allow re-upload</button>}
+                                            {awaitingRead(f) && <button type="button" disabled={!!cancelling} onClick={() => void cancelReading(f)} className={K_BTN_GHOST}>Cancel reading</button>}
+                                                        {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={K_BTN_GHOST}>Edit details</button>}
+                                            {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={K_BTN_GHOST}><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                             {!f.removed && (
                                                 <>
-                                                    <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}><FileText className="h-4 w-4" />Open</button>
-                                                    <button type="button" onClick={() => openFile(f, false)} className={BTN_GHOST} aria-label={`Download ${f.fileName}`}><Download className="h-4 w-4" /></button>
+                                                    <button type="button" onClick={() => openFile(f)} className={K_BTN_GHOST}><FileText className="h-4 w-4" />Open</button>
+                                                    <button type="button" onClick={() => openFile(f, false)} className={K_BTN_GHOST} aria-label={`Download ${f.fileName}`}><Download className="h-4 w-4" /></button>
                                                 </>
                                             )}
-                                            <button type="button" onClick={() => askDelete([f])} className={BTN_DANGER_GHOST}><Trash2 className="h-4 w-4" />Delete</button>
+                                            <button type="button" onClick={() => askDelete([f])} className={K_BTN_GHOST_DANGER}><Trash2 className="h-4 w-4" />Delete</button>
                                         </div>
                                     </li>
                                 ))}
                             </ul>
                             <div className="hidden overflow-x-auto md:block">
-                                <table className="w-full min-w-[1040px] border-collapse text-sm">
-                                    <thead className="bg-surface-elevated">
-                                        <tr className={`${LABEL} text-left`}>
-                                            <th scope="col" className="w-10 py-3 pl-4">
+                                <table className={`${K_TABLE} min-w-[1040px]`}>
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" className="h-10 w-10 bg-surface-elevated pl-4 text-left">
                                                 <input type="checkbox" checked={allOnPage} onChange={e => setMarked(e.target.checked ? files.map(f => f.id) : [])} aria-label="Select every file on this page" className="h-4 w-4 accent-[var(--primary-dark)]" />
                                             </th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">File</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Candidate</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Source</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Designation / role sourced for</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Details</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Uploaded</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">User</th>
-                                            <th scope="col" className="sticky right-0 bg-surface-elevated px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
+                                            <th scope="col" className={K_TH}>File</th>
+                                            <th scope="col" className={K_TH}>Candidate</th>
+                                            <th scope="col" className={K_TH}>Source</th>
+                                            <th scope="col" className={K_TH}>Designation / role sourced for</th>
+                                            <th scope="col" className={K_TH}>Details</th>
+                                            <th scope="col" className={K_TH}>Uploaded</th>
+                                            <th scope="col" className={K_TH}>User</th>
+                                            <th scope="col" className={`${K_TH} sticky right-0 shadow-[-1px_0_0_var(--border)]`}><span className="sr-only">Actions</span></th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-border-subtle">
+                                    <tbody>
                                         {files.map(f => (
-                                            <tr key={f.id} className={`group align-middle hover:bg-surface-elevated ${marked.includes(f.id) ? 'bg-primary/[.04]' : ''}`}>
-                                                <td className="py-3 pl-4">
+                                            <tr key={f.id} className={`${K_TR} group ${marked.includes(f.id) ? 'bg-primary/[.04]' : ''}`}>
+                                                <td className="h-[52px] py-2 pl-4">
                                                     <input type="checkbox" checked={marked.includes(f.id)} onChange={() => toggleMarked(f.id)} aria-label={`Select ${f.fileName}`} className="h-4 w-4 accent-[var(--primary-dark)]" />
                                                 </td>
-                                                <td className="max-w-[380px] px-3 py-3">
+                                                <td className={`${K_TD} max-w-[380px]`}>
                                                     {f.removed
                                                         ? <span className="block truncate font-semibold text-text-secondary" title={f.fileName}>{f.fileName}</span>
                                                         : <button type="button" onClick={() => openFile(f)} className="block w-full truncate text-left font-semibold text-text-primary hover:underline" title={f.fileName}>{f.fileName}</button>}
                                                     <p className="truncate text-xs text-text-secondary" title={f.folderPath ?? undefined}>{fmtSize(f.fileSize)}{f.downloadedAt ? ` · downloaded ${formatDate(f.downloadedAt)}` : ''}{f.folderPath ? ` · ${f.folderPath}` : ''}</p>
                                                 </td>
-                                                <td className="max-w-[260px] px-3 py-3">
+                                                <td className={`${K_TD} max-w-[260px]`}>
                                                     {f.candidateName
                                                         ? <span className="flex items-center gap-x-2"><Avatar name={f.candidateName} size="sm" /><span className="truncate font-semibold text-text-primary underline-offset-2" title={f.matchReason ? `Matched by ${MATCH_REASON_LABELS[f.matchReason].toLowerCase()}` : undefined}>{f.candidateName}</span></span>
                                                         : f.removed || f.other ? <span className="text-text-tertiary">—</span>
                                                         : <span className="block text-xs leading-snug text-text-secondary">Not linked · no record with this email or phone</span>}
                                                 </td>
-                                                <td className="px-3 py-3 text-text-secondary">{resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })}</td>
-                                                <td className="max-w-[220px] truncate px-3 py-3 text-text-secondary" title={f.sourcedRole ?? ''}>{f.sourcedRole || 'Not assigned'}</td>
-                                                <td className="whitespace-nowrap px-3 py-3 text-xs"><TextStatus f={f} /></td>
-                                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-secondary">{formatDate(f.createdAt)}</td>
-                                                <td className="max-w-[200px] truncate px-3 py-3 text-text-secondary" title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
-                                                <td className="sticky right-0 whitespace-nowrap bg-surface px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated">
+                                                <td className={`${K_TD} text-text-secondary`}>{resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })}</td>
+                                                <td className={`${K_TD} max-w-[220px] truncate text-text-secondary`} title={f.sourcedRole ?? ''}>{f.sourcedRole || 'Not assigned'}</td>
+                                                <td className={`${K_TD} whitespace-nowrap text-xs`}><TextStatus f={f} />{awaitingRead(f) && (f.extractError || f.textError) && <p className="mt-1 max-w-xs whitespace-normal text-xs text-text-secondary">{f.extractError || f.textError}</p>}</td>
+                                                <td className={`${K_TD} whitespace-nowrap tabular-nums text-text-secondary`}>{formatDate(f.createdAt)}</td>
+                                                <td className={`${K_TD} max-w-[200px] truncate text-text-secondary`} title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
+                                                <td className={`${K_TD} sticky right-0 whitespace-nowrap bg-surface shadow-[-1px_0_0_var(--border)] group-hover:bg-surface-elevated`}>
                                                     <div className="flex justify-end gap-0.5">
-                                                        {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={BTN_GHOST} aria-label={`Edit source and designation for ${f.fileName}`}>Edit details</button>}
-                                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={`${BTN_GHOST} text-primary-dark`} title="Upload this file again and it will be kept as a resume"><FileCheck className="h-4 w-4" />Allow re-upload</button>}
+                                                        {awaitingRead(f) && <button type="button" disabled={!!cancelling} onClick={() => void cancelReading(f)} className={K_BTN_GHOST}>Cancel reading</button>}
+                                                        {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={K_BTN_GHOST} aria-label={`Edit source and designation for ${f.fileName}`}>Edit details</button>}
+                                                        {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={K_BTN_GHOST} title="Upload this file again and it will be kept as a resume"><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                                         {!f.removed && !f.other && !f.candidateName && f.textStatus === 'ready' && (
-                                                            <button type="button" onClick={() => void createCandidateFor(f)} disabled={markBusy} className={`${BTN_SECONDARY} h-9 px-3`} title="Make a new candidate record and attach this resume to it">Create candidate</button>
+                                                            <button type="button" onClick={() => void createCandidateFor(f)} disabled={markBusy} className={K_BTN} title="Make a new candidate record and attach this resume to it">Create candidate</button>
                                                         )}
                                                         {!f.removed && (
                                                             <>
-                                                                <button type="button" onClick={() => openFile(f)} className={BTN_GHOST}>Open</button>
-                                                                <button type="button" onClick={() => openFile(f, false)} className={BTN_GHOST} aria-label={`Download ${f.fileName}`} title="Download"><Download className="h-4 w-4" /></button>
+                                                                <button type="button" onClick={() => openFile(f)} className={K_BTN_GHOST}>Open</button>
+                                                                <button type="button" onClick={() => openFile(f, false)} className={K_BTN_GHOST} aria-label={`Download ${f.fileName}`} title="Download"><Download className="h-4 w-4" /></button>
                                                             </>
                                                         )}
-                                                        <button type="button" onClick={() => askDelete([f])} className={BTN_DANGER_GHOST} aria-label={`Delete ${f.fileName}`}><Trash2 className="h-4 w-4" /></button>
+                                                        <button type="button" onClick={() => askDelete([f])} className={K_BTN_GHOST_DANGER} aria-label={`Delete ${f.fileName}`}><Trash2 className="h-4 w-4" /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -1487,11 +1526,11 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                     </tbody>
                                 </table>
                             </div>
-                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 border-t border-border-subtle px-4 py-3 text-sm text-text-secondary">
+                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2 border-t border-border px-4 py-3 text-sm text-text-tertiary">
                                 <span className="tabular-nums">Showing {formatCount(pageFrom)}–{formatCount(pageTo)} of {formatCount(total)}</span>
                                 <div className="flex gap-x-1 gap-y-1">
-                                    <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className={BTN_GHOST}>Previous</button>
-                                    <button type="button" onClick={() => setPage(p => p + 1)} disabled={pageTo >= total} className={BTN_GHOST}>Next</button>
+                                    <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className={K_BTN_GHOST}>Previous</button>
+                                    <button type="button" onClick={() => setPage(p => p + 1)} disabled={pageTo >= total} className={K_BTN_GHOST}>Next</button>
                                 </div>
                             </div>
                         </div>
@@ -1506,16 +1545,17 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </p>
                 )}
             </section>
+            </div>
 
             <Dialog open={editing !== null} onClose={() => { if (!savingDetails) setEditing(null); }} labelId="resume-details-title" title="Edit resume details" size="sm"
                 description={editing?.file.fileName} footer={<>
-                    <button type="button" disabled={savingDetails} onClick={() => setEditing(null)} className={BTN_SECONDARY}>Cancel</button>
-                    <button type="button" disabled={savingDetails} onClick={() => void saveDetails()} className={BTN_PRIMARY}>{savingDetails && <Spinner />}Save</button>
+                    <button type="button" disabled={savingDetails} onClick={() => setEditing(null)} className={K_BTN}>Cancel</button>
+                    <button type="button" disabled={savingDetails} onClick={() => void saveDetails()} className={K_BTN_PRIMARY}>{savingDetails && <Spinner />}Save</button>
                 </>}>
                 {editing && <div className="space-y-4">
                     <ResumeSourceFields value={editing.source} label="Resume source" onChange={source => setEditing({ ...editing, source: source ?? { kind: null, name: null } })} disabled={savingDetails} />
-                    <label className={`block ${LABEL}`}>Designation / role sourced for<input list="resume-role-titles" value={editing.sourcedRole} maxLength={200} disabled={savingDetails}
-                        onChange={e => setEditing({ ...editing, sourcedRole: e.target.value })} className={`${INPUT} mt-1 w-full`} /></label>
+                    <label className={`block ${K_LABEL}`}>Designation / role sourced for<input list="resume-role-titles" value={editing.sourcedRole} maxLength={200} disabled={savingDetails}
+                        onChange={e => setEditing({ ...editing, sourcedRole: e.target.value })} className={`${K_FIELD} mt-1 w-full`} /></label>
                     <p className="text-xs text-text-secondary">The candidate&rsquo;s current job title and original sourcing history stay unchanged.</p>
                 </div>}
             </Dialog>
@@ -1529,8 +1569,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 description={deleteTargets.length === 1 ? <span className="break-words">{deleteTargets[0].fileName}</span> : `${deleteTargets.slice(0, 3).map(f => f.fileName).join(', ')}${deleteTargets.length > 3 ? ` and ${formatCount(deleteTargets.length - 3)} more` : ''}`}
                 footer={
                     <>
-                        <button type="button" onClick={() => setDeleteOpen(false)} disabled={deleteBusy} className={BTN_SECONDARY}>Cancel</button>
-                        <button type="button" onClick={() => void doDelete()} disabled={deleteBusy} className={`${BTN_PRIMARY} bg-error hover:bg-error`}>{deleteBusy ? <Spinner /> : <Trash2 className="h-4 w-4" />}Delete</button>
+                        <button type="button" onClick={() => setDeleteOpen(false)} disabled={deleteBusy} className={K_BTN}>Cancel</button>
+                        <button type="button" onClick={() => void doDelete()} disabled={deleteBusy} className={K_BTN_DANGER}>{deleteBusy ? <Spinner /> : <Trash2 className="h-4 w-4" />}Delete</button>
                     </>
                 }
             >

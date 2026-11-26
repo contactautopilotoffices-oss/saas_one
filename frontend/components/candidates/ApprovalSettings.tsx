@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Check, Lock, RotateCcw } from 'lucide-react';
+import { DEFAULT_OUTREACH } from '@/backend/lib/candidates/outreach-settings';
 import type { RecruitmentConfig } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { BTN_GHOST, BTN_PRIMARY, CARD, FIELD, LABEL, Spinner, WELL } from './ui';
@@ -22,7 +23,7 @@ const SLOTS: { id: Slot; label: string; hint: string; pool: keyof Pools; from: s
     { id: 'hrHead', label: 'HR Head', hint: 'Reviews every request first and ticks whether the role is in the approved plan.', pool: 'hr', from: 'the HR team' },
     { id: 'director', label: 'Director', hint: 'Approves roles out of plan or above the CTC level; told about in-plan approvals.', pool: 'directors', from: 'the org super admins' },
 ];
-const EMPTY: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: 21, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [], offerLetter: "" };
+const EMPTY: RecruitmentConfig = { hrHead: { userId: null, backupUserId: null }, director: { userId: null, backupUserId: null }, directorCtcLevel: null, targetDays: 21, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [], offerLetter: "", hierarchy: [], outreach: DEFAULT_OUTREACH };
 
 const lpaOf = (c: RecruitmentConfig) => (c.directorCtcLevel === null ? '' : String(c.directorCtcLevel / 100_000));
 
@@ -111,7 +112,7 @@ export default function ApprovalSettings({ orgId }: { orgId: string }) {
                 </div>
                 {canConfigure ? (
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        {dirty ? <span className="text-xs font-semibold text-amber-800">Unsaved changes</span> : savedNote ? <span className="inline-flex items-center gap-x-1 text-xs font-semibold text-emerald-800"><Check className="h-3.5 w-3.5" aria-hidden />Approvers saved</span> : <span className="text-xs text-text-tertiary">All changes saved</span>}
+                        {dirty ? <span className="text-xs font-semibold text-amber-800">Unsaved changes</span> : savedNote ? <span className="inline-flex items-center gap-x-1 text-xs font-semibold text-green-800"><Check className="h-3.5 w-3.5" aria-hidden />Approvers saved</span> : <span className="text-xs text-text-tertiary">All changes saved</span>}
                         <button type="button" onClick={discard} disabled={!dirty || busy} className={BTN_GHOST}><RotateCcw className="h-4 w-4" />Discard</button>
                         <button type="button" onClick={() => void save()} disabled={!dirty || busy || badLpa || badDays} className={BTN_PRIMARY}>{busy && <Spinner />}Save approvers</button>
                     </div>

@@ -26,10 +26,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 import { assertInPosition, listActions, loadBlacklist, recordAction, REMARK_MAX, type Actor } from "./actions";
+import { markContacted } from "./audit";
 import { parsePhone } from "./normalize";
 import { campaignFor, maskPhone, withinSendingHours } from "./outreach";
 import { moveMember } from "./positions";
 import { defaultFlowDeps, fileInterview, interviewExtras, scorecardLinks, type FlowDeps } from "./hiring";
+import { interviewPageUrl, newInterviewToken } from "./interview-page";
+import { guidelinesLine, whatsappParams } from "./outreach-settings";
+import { loadRecruitmentConfig } from "./requisitions";
 import { CandidateActionError, getRecord } from "./records";
 import { INTERVIEW_MODES, type Interview, type InterviewMode, type InterviewSend } from "./types";
 
@@ -48,6 +52,11 @@ export interface InterviewDeps {
   now?: () => Date;
   /** Owner 2026-11-21: each interviewer's one-time scorecard link (hiring.ts); none when absent. */
   scorecardLink?: FlowDeps["scorecardLink"];
+  /**
+   * Owner 2026-11-24 (23 Nov meeting): "the hiring manager, HOD, director … should be updated when an interview is
+   * scheduled". Email and in-app; none in tests.
+   */
+  alertStakeholders?: (orgId: string, positionId: string, alert: { title: string; message: string; exceptUserIds: string[] }) => Promise<void>;
 }
 
 export function defaultInterviewDeps(appUrl: string): InterviewDeps {
@@ -75,6 +84,10 @@ export function defaultInterviewDeps(appUrl: string): InterviewDeps {
     },
     appUrl: (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || appUrl).replace(/\/$/, ""),
     scorecardLink: defaultFlowDeps().scorecardLink,
+    async alertStakeholders(orgId, positionId, alert) {
+      const { alertPositionStakeholders } = await import("./stakeholders");
+      await alertPositionStakeholders(orgId, positionId, alert);
+    },
   };
 }
 
@@ -162,6 +175,8 @@ export async function scheduleInterview(client: SupabaseClient, orgId: string, b
   const joinUrl = meeting?.joinPath ? `${deps.appUrl}${meeting.joinPath}` : null;
   const interviewId = randomUUID();
   const names = interviewers.map((p) => p.name).join(", ") || null;
+  // Owner 2026-11-24: the interview's own page (the job, the company, the guidelines, how to join, Yes / No).
+  const publicToken = newInterviewToken();
 
   await recordAction(client, orgId, by, {
     candidateId: record.candidateId, applicationId: record.id, positionId, action: "remark",
@@ -174,8 +189,13 @@ export async function scheduleInterview(client: SupabaseClient, orgId: string, b
   // Owner 2026-11-21 (migration 20261121000003): the interview is filed for its follow-up, with a scorecard per interviewer.
   const cards = await fileInterview(client, orgId, by, {
     id: interviewId, candidateId: record.candidateId, applicationId: record.id, positionId, round: input.round, atLocal: input.at, mode: input.mode, venue,
-    interviewers: interviewers.map((p) => ({ id: p.id, name: p.name })), joinPath: meeting?.joinPath ?? null,
+    interviewers: interviewers.map((p) => ({ id: p.id, name: p.name })), joinPath: meeting?.joinPath ?? null, publicToken,
   });
+  // The page exists only once the interview was filed with its token (migration 20261124000003).
+  const { data: filed } = await client.from("recruitment_interviews").select("public_token").eq("id", interviewId).maybeSingle();
+  const pageUrl = (filed as { public_token?: string | null } | null)?.public_token ? interviewPageUrl(publicToken, deps.appUrl) : null;
+  const settings = (await loadRecruitmentConfig(client, orgId)).outreach;
+  const guidelines = online ? settings.interview.guidelinesOnline : settings.interview.guidelinesInPerson;
   const cardLinks = cards.size && deps.scorecardLink
     ? await scorecardLinks(client, orgId, { sendEmail: deps.sendEmail, scorecardLink: deps.scorecardLink, appUrl: deps.appUrl }, interviewId, cards,
       { candidate: record.fullName, role, round: input.round, when: istLabel(input.at), designation: record.currentDesignation ?? null }, new Map(interviewers.map((p) => [p.id, p.name])), when)
@@ -189,16 +209,42 @@ export async function scheduleInterview(client: SupabaseClient, orgId: string, b
   const where = online ? `Join the video call here: ${joinUrl}` : `Please come to: ${venue ?? "our office"}`;
 
   if (input.notify.whatsapp) {
-    sent.push(await inviteOnWhatsApp(client, orgId, by, deps, { record, positionId, role, interviewId, round: input.round, label, where, blacklisted, now }));
+    // Owner 2026-11-24: HR's invite template (Outreach → Templates), pointing to the interview page; the older fixed
+    // template when there is no page yet or no template set.
+    const t = settings.interview.inviteTemplateId ? settings.templates.find((x) => x.id === settings.interview.inviteTemplateId && x.channel === "whatsapp") : undefined;
+    const configured = t && pageUrl ? whatsappParams(t, {
+      first_name: firstName(record.fullName), full_name: record.fullName, round: input.round, role, company: settings.companyName, interview_time: label,
+      interview_page: pageUrl, location: venue, company_profile: settings.companyProfileUrl || null, guidelines: guidelinesLine(guidelines), recruiter_name: by.name,
+    }) : null;
+    const message = configured && !configured.gaps.length && t
+      ? { campaign: t.campaign ?? "", params: configured.params }
+      : { campaign: campaignFor("interview_invite"), params: [firstName(record.fullName), param(input.round), param(role), param(label), param(where)] };
+    sent.push(await inviteOnWhatsApp(client, orgId, by, deps, { record, positionId, role, interviewId, round: input.round, where, blacklisted, now, ...message }));
   }
   if (input.notify.email) {
     if (blacklisted) sent.push({ to: "candidate", channel: "email", name: record.fullName, ok: false, note: "This person is blacklisted. No message goes to them." });
     else if (!record.email) sent.push({ to: "candidate", channel: "email", name: record.fullName, ok: false, note: "No email address on record." });
     else {
-      const html = emailHtml(`Hello ${firstName(record.fullName)}, your ${input.round} interview for the ${role} role at Autopilot Offices`,
-        [["When", label], ["How", online ? "Video call" : "In person"], ...(venue && !online ? [["Where", venue] as [string, string]] : [])],
+      const html = emailHtml(`Hello ${firstName(record.fullName)}, your ${input.round} interview for the ${role} role at ${settings.companyName}`,
+        [["When", label], ["How", online ? "Video call" : "In person"], ...(venue && !online ? [["Where", venue] as [string, string]] : []),
+          ...(guidelines.length ? [["Please", guidelines.join(" · ")] as [string, string]] : []),
+          ...(settings.companyProfileUrl ? [["About us", settings.companyProfileUrl] as [string, string]] : []),
+          ...(pageUrl ? [["The job, and confirm you will attend", pageUrl] as [string, string]] : [])],
         joinUrl, online ? "Open the link a few minutes early. You will be let in when the interview starts. This call will be recorded." : "If this time does not suit you, please tell the recruiter who called you.");
-      sent.push(await tryEmail(deps, record.email, `Interview for ${role} at Autopilot Offices · ${label}`, html, { to: "candidate", name: record.fullName }));
+      sent.push(await tryEmail(deps, record.email, `Interview for ${role} at ${settings.companyName} · ${label}`, html, { to: "candidate", name: record.fullName }));
+    }
+  }
+  // Owner 2026-11-24: the hiring manager, the department head and the Director hear of it (not the people on the panel,
+  // who have their own invite, nor the person who booked it).
+  if (deps.alertStakeholders) {
+    try {
+      await deps.alertStakeholders(orgId, positionId, {
+        title: `Interview booked: ${record.fullName} · ${role}`,
+        message: `${input.round} interview with ${record.fullName} for ${role} on ${label}${online ? " (video call)" : venue ? ` at ${venue}` : ""}${names ? `, with ${names}` : ""}. Booked by ${by.name ?? "HR"}.`,
+        exceptUserIds: [by.id, ...interviewers.map((p) => p.id)],
+      });
+    } catch (e) {
+      console.error("[candidates] interview: stakeholders not told", e);
     }
   }
   if (input.notify.interviewers && interviewers.length) {
@@ -239,7 +285,9 @@ async function tryEmail(deps: InterviewDeps, to: string, subject: string, html: 
 
 /** The candidate's WhatsApp invite: the same checks and record as the other candidate messages (outreach.ts). */
 async function inviteOnWhatsApp(client: SupabaseClient, orgId: string, by: Actor, deps: InterviewDeps, a: {
-  record: { id: string; candidateId: string; fullName: string; phone: string | null }; positionId: string; role: string; interviewId: string; round: string; label: string; where: string; blacklisted: boolean; now: Date;
+  record: { id: string; candidateId: string; fullName: string; phone: string | null }; positionId: string; role: string; interviewId: string; round: string; where: string; blacklisted: boolean; now: Date;
+  /** The template and its parameters (HR's invite template, or the older fixed one). */
+  campaign: string; params: string[];
 }): Promise<InterviewSend> {
   const out = (ok: boolean, note: string | null): InterviewSend => ({ to: "candidate", channel: "whatsapp", name: a.record.fullName, ok, note });
   if (a.blacklisted) return out(false, "This person is blacklisted. No message goes to them.");
@@ -249,25 +297,41 @@ async function inviteOnWhatsApp(client: SupabaseClient, orgId: string, by: Actor
   const probe = await client.from("candidate_outreach").select("interview_id").limit(1);
   if (probe.error) return out(false, INTERVIEWS_MIGRATION_MESSAGE);
 
-  const campaign = campaignFor("interview_invite");
+  const campaign = a.campaign;
   const destination = `91${phone}`;
-  const result = await deps.sendWhatsApp({
-    phone: destination, campaignName: campaign, userName: a.record.fullName,
-    templateParams: [firstName(a.record.fullName), param(a.round), param(a.role), param(a.label), param(a.where)],
-  });
-  const { data: saved, error } = await client.from("candidate_outreach").insert({
+  // Claim before sending (as outreach.ts does): the row goes in first, so the unique index stops a second invite for
+  // the same interview before it leaves, and no invite is ever sent without its record.
+  const { data: saved, error: claimError } = await client.from("candidate_outreach").insert({
     organization_id: orgId, candidate_id: a.record.candidateId, application_id: a.record.id, position_id: a.positionId,
     kind: "interview_invite", channel: "whatsapp", phone: destination, campaign, role_title: a.role, interview_id: a.interviewId,
-    message: param(a.where), status: result.success ? "sent" : "failed",
-    error: result.success ? null : (result.error ?? "WhatsApp did not accept the message").slice(0, 500),
-    provider_message_id: result.providerReference ?? null, created_by: by.id, created_by_name: by.name,
+    message: param(a.where), status: "sent", error: null, provider_message_id: null, created_by: by.id, created_by_name: by.name,
   }).select("id").single();
-  if (error) console.error("[candidates] interview invite: the send was not recorded", error);
+  if (claimError) {
+    if ((claimError as { code?: string }).code === "23505") return out(false, "The WhatsApp invite for this interview was already sent.");
+    console.error("[candidates] interview invite: could not record it, so it was not sent", claimError);
+    return out(false, "The invite could not be recorded, so it was not sent. Try again.");
+  }
+  const outreachId = (saved as { id: string }).id;
+
+  let result: { success: boolean; error?: string; providerReference?: string };
+  try {
+    result = await deps.sendWhatsApp({
+      phone: destination, campaignName: campaign, userName: a.record.fullName, templateParams: a.params,
+    });
+  } catch (sendError) {
+    result = { success: false, error: sendError instanceof Error ? sendError.message : "WhatsApp send failed" };
+  }
+  const { error } = await client.from("candidate_outreach").update(result.success
+    ? { provider_message_id: result.providerReference ?? null }
+    : { status: "failed", error: (result.error ?? "WhatsApp did not accept the message").slice(0, 500) },
+  ).eq("organization_id", orgId).eq("id", outreachId);
+  if (error) console.error("[candidates] interview invite: the send result was not recorded", error);
   if (!result.success) return out(false, `WhatsApp did not accept the message: ${(result.error ?? "unknown error").slice(0, 200)}`);
+  await markContacted(client, orgId, a.record.candidateId);
   await recordAction(client, orgId, by, {
     candidateId: a.record.candidateId, applicationId: a.record.id, positionId: a.positionId, action: "outreach_sent",
     toValue: `Interview invite: ${a.round}`,
-    meta: { kind: "interview_invite", channel: "whatsapp", campaign, position: a.role, phone: maskPhone(phone), outreachId: (saved as { id: string } | null)?.id ?? null, interviewId: a.interviewId },
+    meta: { kind: "interview_invite", channel: "whatsapp", campaign, position: a.role, phone: maskPhone(phone), outreachId, interviewId: a.interviewId },
   });
   return out(true, withinSendingHours(a.now) ? null : "Sent outside 9 am – 7 pm IST.");
 }
@@ -313,6 +377,8 @@ export async function listInterviews(client: SupabaseClient, orgId: string, cand
       status: extra?.status ?? "scheduled",
       statusReason: extra?.statusReason ?? null,
       scorecards: extra?.scorecards ?? [],
+      rsvp: extra?.rsvp ?? null,
+      rsvpNote: extra?.rsvpNote ?? null,
       mode: text(a.meta.mode),
       venue: text(a.meta.venue),
       interviewers: text(a.meta.interviewer),

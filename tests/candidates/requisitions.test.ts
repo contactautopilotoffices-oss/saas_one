@@ -18,9 +18,11 @@ import {
   aboveCtcLevel, canDecide, createRequisition, decideRequisition, firstLevelFor, getRequisition, listRequisitions, loadRecruitmentConfig,
   approverPools, canRaiseRequisitions, mayConfigureApprovals, mayConfigureRaisers, requisitionAccess, roleChoices, saveRaisers, saveRecruitmentConfig, submitRequisition, updateRequisition, withdrawRequisition, workingDaysBetween, type RequisitionEvent,
   canEndorse, confirmStillNeeded, endorseRequisition, hasEndorsed, saveDepartmentHeads, saveRejectionReasons, unassignedRoles,
+  checkAgainstHierarchy, hierarchyFromEmployees, resolveHierarchy, saveHierarchy,
 } from "../../backend/lib/candidates/requisitions";
 
 import { DEFAULT_REJECTION_REASONS } from "../../backend/lib/candidates/stage-list";
+import { DEFAULT_OUTREACH } from "../../backend/lib/candidates/outreach-settings";
 
 import { freshDb, REQUISITIONS_MIGRATION } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -31,7 +33,7 @@ const HR_HEAD = "00000000-0000-0000-0000-000000000012";
 const DIRECTOR = "00000000-0000-0000-0000-000000000013";
 const HR_BACKUP = "00000000-0000-0000-0000-000000000014";
 const by = (id: string, name: string) => ({ id, name });
-const FORM = { roleTitle: "Senior Technical Executive", department: "Facilities", location: "Bengaluru", positions: 2, budgetMinCtc: 400_000, budgetMaxCtc: 600_000, requiredSkills: ["MEP", "BMS"], minExperienceYears: 5, qualification: "B.E. Electrical", targetJoiningDate: "2026-12-15", justification: "Two sites opening in January.", reportingManager: "Priya" };
+const FORM = { roleTitle: "Senior Technical Executive", department: "Facilities", location: "Bengaluru", positions: 2, budgetMinCtc: 400_000, budgetMaxCtc: 600_000, requiredSkills: ["MEP", "BMS"], minExperienceYears: 5, qualification: "B.E. Electrical", targetJoiningDate: "2026-12-15", justification: "Two sites opening in January.", reportingManager: "Priya", structureNote: "Reports to the Facilities Lead, Bengaluru.", internalMobility: false };
 
 describe("manpower requisitions", () => {
   let db: PGlite;
@@ -80,7 +82,7 @@ describe("manpower requisitions", () => {
 
     await assert.rejects(saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_HEAD } }), /different person/);
     const saved = await saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR }, directorCtcLevel: 1_000_000, targetDays: 30 });
-    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "" });
+    assert.deepEqual(saved, { hrHead: { userId: HR_HEAD, backupUserId: HR_BACKUP }, director: { userId: DIRECTOR, backupUserId: null }, directorCtcLevel: 1_000_000, targetDays: 30, raisers: { roles: [], userIds: [] }, departmentHeads: [], rejectionReasons: [...DEFAULT_REJECTION_REASONS], offerLetter: "", hierarchy: [], outreach: DEFAULT_OUTREACH });
     const access = await requisitionAccess(client, HR_HEAD, ORG);
     assert.deepEqual([access.seesAll, access.approverLevels, access.configured], [true, ["hr_head"], true]);
     assert.deepEqual((await requisitionAccess(client, MANAGER, ORG)).approverLevels, []);
@@ -162,10 +164,13 @@ describe("manpower requisitions", () => {
     const first = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, submit: true }, { notify });
     assert.match(first.requisitionNo ?? "", /^REQ-\d{4}-0001$/);
     assert.deepEqual([first.status, first.currentLevel, first.currentApproverId, first.currentApproverName], ["submitted", "hr_head", HR_HEAD, "Anita Verma"]);
-    assert.deepEqual(events.map((e) => e.kind), ["awaiting"]);
-    // The HR Head is emailed (with the one-time link) and messaged; the matrix's extra inbox is emailed too.
-    assert.deepEqual(sent.map((s) => [s.channel, s.to]), [["email", "anita@example.com"], ["email", "hr-inbox@example.com"]].concat(process.env.AISENSY_REQUISITION_AWAITING_CAMPAIGN ? [["whatsapp", "919876543211"]] : []));
-    assert.equal((await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_notices where requisition_id = $1 and kind = 'awaiting' and ok", [first.id]))[0].n, sent.length);
+    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "raised"]);
+    // The HR Head is emailed (with the one-time link) and messaged; the matrix's extra inbox is emailed too. Owner
+    // 2026-11-24: the Director hears of the new request ("raised"); the HR Head already has it, the raiser raised it.
+    const awaitingSent = [["email", "anita@example.com"], ["email", "hr-inbox@example.com"]].concat(process.env.AISENSY_REQUISITION_AWAITING_CAMPAIGN ? [["whatsapp", "919876543211"]] : []);
+    assert.deepEqual(sent.map((s) => [s.channel, s.to]), [...awaitingSent, ["email", "sunil@example.com"]]);
+    assert.equal((await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_notices where requisition_id = $1 and kind = 'awaiting' and ok", [first.id]))[0].n, awaitingSent.length);
+    assert.equal((await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_notices where requisition_id = $1 and kind = 'raised' and ok", [first.id]))[0].n, 1);
 
     const { approvals } = await getRequisition(client, ORG, first.id);
     assert.deepEqual(approvals.map((a) => [a.action, a.level, a.byName]), [["submitted", "hr_head", "Ravi Kumar"]]);
@@ -208,7 +213,7 @@ describe("manpower requisitions", () => {
     const outOfPlan = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Facility Manager", submit: true }, { notify });
     const toDirector = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), outOfPlan.id, { decision: "approve", inPlan: false }, { notify });
     assert.deepEqual([toDirector.status, toDirector.inPlan, toDirector.needsDirector, toDirector.currentLevel, toDirector.currentApproverId], ["submitted", false, true, "director", DIRECTOR]);
-    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "awaiting"]);
+    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "raised", "awaiting"]);
     assert.ok(sent.some((s) => s.to === "sunil@example.com" && /awaits your approval/.test(s.subject)));
     await assert.rejects(decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), outOfPlan.id, { decision: "approve", inPlan: false }), /Only the Director/);
     const approved = await decideRequisition(client, ORG, by(DIRECTOR, "Sunil Mehta"), outOfPlan.id, { decision: "approve" }, { notify });
@@ -311,22 +316,66 @@ describe("manpower requisitions", () => {
     const draft = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Electrician" });
     const other = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Accountant", department: "Finance", submit: true });
     events.length = 0; sent.length = 0;
+    // Owner 2026-11-24: the department head decides first.
     const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Plumber", department: "FACILITIES", submit: true }, { notify });
-    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "department_head"]);
-    assert.ok(sent.some((s) => s.to === "meena@example.com" && /for your department/.test(s.subject)), "the head is told");
+    assert.deepEqual([r.currentLevel, r.currentApproverId], ["hod", HEAD]);
+    assert.deepEqual(events.map((e) => e.kind), ["awaiting", "raised"], "the head is the approver now, so no separate endorse notice");
+    assert.ok(sent.some((s) => s.to === "meena@example.com" && /awaits your approval/.test(s.subject)), "the head is asked");
+    assert.ok(sent.some((s) => s.to === "anita@example.com" && /^New hiring request/.test(s.subject)), "the HR Head hears of it");
+    assert.ok(sent.some((s) => s.to === "sunil@example.com" && /^New hiring request/.test(s.subject)), "the Director hears of it");
+    assert.ok(!sent.some((s) => s.to === "meena@example.com" && /^New hiring request/.test(s.subject)), "the head is not told twice");
 
     const seen = await listRequisitions(client, ORG, { userId: HEAD, seesAll: false, headOf: access.headOf });
     assert.deepEqual([seen.some((x) => x.id === r.id), seen.some((x) => x.id === draft.id), seen.some((x) => x.id === other.id)], [true, false, false], "their department's submitted requests only");
-    assert.equal(canEndorse(r, HEAD, access, false), true);
-    assert.equal(canEndorse(r, HEAD, access, true), false);
-    await assert.rejects(endorseRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, null), /Only the head/);
-    const endorsed = await endorseRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, "Needed for the new tower.");
-    assert.deepEqual([endorsed.status, endorsed.currentLevel, endorsed.endorsedBy], ["submitted", "hr_head", ["Meena Iyer"]], "endorsing approves nothing");
-    assert.equal(await hasEndorsed(client, ORG, r.id, HEAD), true);
+    assert.equal(canDecide(r, HEAD, access), true);
+    assert.equal(canEndorse(r, HEAD, access, false), false, "at their own level the head approves, not endorses");
+    const hrAccess = await requisitionAccess(client, HR_HEAD, ORG);
+    assert.equal(canDecide(r, HR_HEAD, hrAccess), false, "the HR Head waits for the head");
+    await assert.rejects(decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: true }), /Only the department head/);
+    await assert.rejects(decideRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, { decision: "hold" }), /reason for putting it on hold/);
+    const passed = await decideRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, { decision: "approve", reason: "Needed for the new tower." }, { notify });
+    assert.deepEqual([passed.status, passed.currentLevel, passed.currentApproverId, passed.inPlan], ["submitted", "hr_head", HR_HEAD, null], "on to the HR Head");
+    assert.equal(await hasEndorsed(client, ORG, r.id, HEAD), true, "approving counts: nothing left to endorse");
     await assert.rejects(endorseRequisition(client, ORG, by(HEAD, "Meena Iyer"), r.id, null), /already endorsed/);
     const { approvals } = await getRequisition(client, ORG, r.id);
-    assert.deepEqual([approvals[0].action, approvals[0].byName, approvals[0].reason], ["endorsed", "Meena Iyer", "Needed for the new tower."]);
-    for (const x of [draft, other, r]) await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), x.id, null);
+    assert.deepEqual([approvals[0].action, approvals[0].level, approvals[0].byName, approvals[0].reason], ["approved", "hod", "Meena Iyer", "Needed for the new tower."]);
+
+    // 48 h without the head: it passes to the HR Head on its own; the head may still endorse it there.
+    const quiet = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Carpenter", submit: true });
+    const t0 = new Date(quiet.levelEnteredAt!).getTime();
+    sent.length = 0;
+    const job = async (hours: number) => runRequisitionReminders(client, ORG, deps, new Date(t0 + hours * 3_600_000));
+    assert.equal((await job(25)).reminders >= 1, true, "the head is reminded at 24 h");
+    assert.ok(sent.some((s) => s.to === "meena@example.com" && /^Reminder:/.test(s.subject)));
+    sent.length = 0;
+    await job(49);
+    const moved = (await getRequisition(client, ORG, quiet.id)).requisition;
+    assert.deepEqual([moved.currentLevel, moved.currentApproverId], ["hr_head", HR_HEAD], "passed to the HR Head");
+    assert.ok(sent.some((s) => s.to === "anita@example.com" && /awaits your approval/.test(s.subject)), "the HR Head is asked");
+    assert.equal((await getRequisition(client, ORG, quiet.id)).approvals[0].action, "escalated");
+    assert.equal(canEndorse(moved, HEAD, access, await hasEndorsed(client, ORG, quiet.id, HEAD)), true);
+    const endorsed = await endorseRequisition(client, ORG, by(HEAD, "Meena Iyer"), quiet.id, null);
+    assert.deepEqual([endorsed.status, endorsed.currentLevel, endorsed.endorsedBy], ["submitted", "hr_head", ["Meena Iyer"]], "endorsing approves nothing");
+    await assert.rejects(endorseRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), quiet.id, null), /Only the head/);
+
+    // On hold at the head for over 48 h: the HR Head may decide in the head's place, as the HR Head.
+    const held = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Mason", submit: true });
+    await decideRequisition(client, ORG, by(HEAD, "Meena Iyer"), held.id, { decision: "hold", reason: "Waiting for the site plan." });
+    const later = () => new Date(new Date(held.levelEnteredAt!).getTime() + 50 * 3_600_000);
+    assert.equal(canDecide((await getRequisition(client, ORG, held.id)).requisition, HR_HEAD, hrAccess, later()), true);
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), held.id, { decision: "resume" }, { now: later });
+    const steppedIn = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), held.id, { decision: "approve", inPlan: true }, { now: () => new Date(later().getTime() + 60_000) }).catch((e: Error) => e);
+    // The resume restarted the head's 48 h, so the HR Head must wait again.
+    assert.match(String(steppedIn), /Only the department head/);
+    const afterWait = () => new Date(later().getTime() + 49 * 3_600_000);
+    const done = await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), held.id, { decision: "approve", inPlan: true }, { now: afterWait });
+    assert.deepEqual([done.status, done.inPlan], ["approved", true]);
+    const step = (await getRequisition(client, ORG, held.id)).approvals.find((a) => a.action === "approved")!;
+    assert.deepEqual([step.level, /in place of the department head/.test(step.reason ?? "")], ["hr_head", true]);
+
+    for (const x of [draft, other, r, quiet]) await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), x.id, null);
+    // The tests below route through the HR Head directly.
+    await saveDepartmentHeads(client, ORG, { heads: [] });
   });
 
   it("an approved request opens a role with no recruiter: HR is told, and the HR Head after 48 h without one", async () => {
@@ -379,6 +428,113 @@ describe("manpower requisitions", () => {
     assert.equal(await holds(27), 0);
     assert.equal((await getRequisition(client, ORG, r.id)).approvals[0].action, "still_needed");
     await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, null);
+  });
+
+  // Bug fix 2026-11-24: two approvers clicking at once could both approve (two approval rows, two positions).
+  it("lets only one of two approvers deciding at the same moment win, and opens one position", async () => {
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Race Test Role", submit: true });
+    const results = await Promise.allSettled([
+      decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: true }),
+      decideRequisition(client, ORG, by(HR_BACKUP, "Deepa Rao"), r.id, { decision: "approve", inPlan: true }),
+    ]);
+    assert.equal(results.filter((x) => x.status === "fulfilled").length, 1, "exactly one approval goes through");
+    const lost = results.find((x) => x.status === "rejected") as PromiseRejectedResult;
+    assert.equal(lost.reason.status, 409);
+    const [{ n }] = await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'approved'", [r.id]);
+    assert.equal(n, 1, "one approval in the history");
+    const [{ p }] = await q<{ p: number }>("select count(*)::int as p from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'position_opened'", [r.id]);
+    assert.equal(p, 1, "one position opened");
+    assert.equal((await getRequisition(client, ORG, r.id)).requisition.status, "approved");
+  });
+
+  it("submits a double-clicked request once", async () => {
+    const draft = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Double Submit Role" });
+    const results = await Promise.allSettled([
+      submitRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id),
+      submitRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id),
+    ]);
+    assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
+    const after = (await getRequisition(client, ORG, draft.id)).requisition;
+    assert.equal(after.status, "submitted");
+    assert.match(after.requisitionNo ?? "", /^REQ-\d{4}-\d{4}$/);
+    const [{ n }] = await q<{ n: number }>("select count(*)::int as n from public.recruitment_requisition_approvals where requisition_id = $1 and action = 'submitted'", [draft.id]);
+    assert.equal(n, 1);
+    await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), draft.id, null);
+  });
+
+  // Bug fix 2026-11-24: old one-time links stay usable after the request moves on, and the HR Head's link decision
+  // revoked the Director's fresh link. Links are now revoked before new ones are issued, and kept on a resume.
+  it("revokes earlier decision links whenever the request moves on, but not on a resume", async () => {
+    const revoked: string[] = [];
+    const linkDeps: NotifyDeps = { ...deps, async revokeLinks(id) { revoked.push(id); } };
+    const linkNotify = (event: RequisitionEvent) => requisitionNotifier(client, ORG, linkDeps)(event);
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Link Test Role", submit: true }, { notify: linkNotify });
+    assert.deepEqual(revoked, [r.id], "submitted: links from before are revoked, then the HR Head's goes out");
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "hold", reason: "Budget review." }, { notify: linkNotify });
+    assert.equal(revoked.length, 2, "on hold");
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "resume" }, { notify: linkNotify });
+    assert.equal(revoked.length, 2, "a resume keeps the links");
+    sent.length = 0;
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "approve", inPlan: false }, { notify: linkNotify });
+    assert.equal(revoked.length, 3, "on to the Director: the HR Head's links go before the Director's is issued");
+    assert.ok(sent.some((s) => s.to === "sunil@example.com"), "the Director is asked, with the link issued after the revoke");
+    await decideRequisition(client, ORG, by(DIRECTOR, "Sunil Mehta"), r.id, { decision: "send_back", reason: "Lower the band." }, { notify: linkNotify });
+    assert.equal(revoked.length, 4, "sent back: no old link can decide the edited request");
+  });
+
+  // Owner 2026-11-24 (23 Nov meeting): place in the structure and internal mobility are required; department and role
+  // come from the company hierarchy, a new role under "Others"; everyone involved hears of it in the app too.
+  it("requires the structure note and internal mobility, and keeps the role to the hierarchy unless raised under Others", async () => {
+    await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, structureNote: "", submit: true }), /where the role sits/);
+    await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, internalMobility: null, submit: true }), /internal mobility/);
+
+    const master = hierarchyFromEmployees([
+      { department: "Facilities", designation: "Technician" }, { department: " facilities ", designation: "Senior Technical Executive" },
+      { department: "Facilities", designation: "technician" }, { department: "Finance", designation: null }, { department: null, designation: "Driver" },
+    ]);
+    assert.deepEqual(master, [{ department: "Facilities", designations: ["Senior Technical Executive", "Technician"] }, { department: "Finance", designations: [] }]);
+    const fromMaster = resolveHierarchy(await loadRecruitmentConfig(client, ORG), master);
+    assert.equal(fromMaster.source, "employee_master");
+    assert.equal(checkAgainstHierarchy(fromMaster, { department: "Facilities", role_title: "senior technical executive", role_is_new: false }), null);
+    assert.match(checkAgainstHierarchy(fromMaster, { department: "Facilities", role_title: "Pilot", role_is_new: false }) ?? "", /Others/);
+    assert.equal(checkAgainstHierarchy(fromMaster, { department: "Facilities", role_title: "Pilot", role_is_new: true }), null, "a new designation under Others");
+    assert.match(checkAgainstHierarchy(fromMaster, { department: "Marketing", role_title: "Designer", role_is_new: true }) ?? "", /department from the list/);
+    assert.equal(checkAgainstHierarchy(fromMaster, { department: "Finance", role_title: "Accountant", role_is_new: false }), null, "no designations listed: any role");
+    assert.equal(checkAgainstHierarchy({ departments: [], source: "employee_master" }, { department: "x", role_title: "y", role_is_new: false }), null, "no list: nothing checked");
+
+    await assert.rejects(createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Pilot", submit: true }, { hierarchy: fromMaster }), /Others/);
+    const fresh = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "Pilot", roleIsNew: true, internalMobility: true, submit: true }, { hierarchy: fromMaster });
+    assert.deepEqual([fresh.status, fresh.roleIsNew, fresh.internalMobility, fresh.structureNote], ["submitted", true, true, FORM.structureNote]);
+    await withdrawRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), fresh.id, null);
+
+    // HR's own list (HR Configs) wins over the employee master; empty goes back to it.
+    await assert.rejects(saveHierarchy(client, ORG, { departments: [{ department: "Ops", designations: [] }, { department: "ops", designations: [] }] }), /listed twice/);
+    const TECH = "00000000-0000-0000-0000-000000000016";
+    assert.deepEqual(await saveHierarchy(client, ORG, { departments: [{ department: " Operations ", designations: ["Community Manager", "community manager", "Cluster Head"] }] }, by(TECH, "Tech Person")),
+      [{ department: "Operations", designations: ["Cluster Head", "Community Manager"] }]);
+    const config = await loadRecruitmentConfig(client, ORG);
+    assert.deepEqual(resolveHierarchy(config, master), { departments: [{ department: "Operations", designations: ["Cluster Head", "Community Manager"] }], source: "configured" });
+    await saveRecruitmentConfig(client, ORG, { targetDays: 30 });
+    assert.equal((await loadRecruitmentConfig(client, ORG)).hierarchy.length, 1, "an approvals save keeps it");
+    assert.deepEqual(await saveHierarchy(client, ORG, { departments: [] }), []);
+  });
+
+  it("tells everyone involved in the app as well: the approver, and the raiser, HR Head and Director of each decision", async () => {
+    const inApp: { userIds: string[]; title: string }[] = [];
+    const appDeps: NotifyDeps = { ...deps, async notifyInApp(_orgId, userIds, n) { inApp.push({ userIds: [...userIds].sort(), title: n.title }); } };
+    const appNotify = (event: RequisitionEvent) => requisitionNotifier(client, ORG, appDeps)(event);
+    const r = await createRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), { ...FORM, roleTitle: "In-app Role", submit: true }, { notify: appNotify });
+    assert.deepEqual(inApp.map((n) => [n.userIds, n.title.split(":")[0]]), [[[HR_HEAD], "Your decision"], [[DIRECTOR], "New hiring request"]]);
+    inApp.length = 0;
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "send_back", reason: "Lower the band." }, { notify: appNotify });
+    assert.deepEqual(inApp.map((n) => n.userIds), [[MANAGER, DIRECTOR].sort()], "the raiser and the Director, not the HR Head who decided");
+    sent.length = 0;
+    inApp.length = 0;
+    const back = await updateRequisition(client, ORG, by(MANAGER, "Ravi Kumar"), r.id, { submit: true }, { notify: appNotify });
+    assert.equal(back.status, "submitted");
+    await decideRequisition(client, ORG, by(HR_HEAD, "Anita Verma"), r.id, { decision: "reject", reason: "Not this quarter." }, { notify: appNotify });
+    assert.ok(sent.some((s) => s.to === "sunil@example.com" && /For your information: hiring request .* rejected/.test(s.subject)), "the Director is emailed the decision");
+    assert.ok(!sent.some((s) => s.to === "anita@example.com" && /For your information/.test(s.subject)), "not the one who decided");
   });
 
   it("counts the SLA in working days, Monday to Saturday", () => {

@@ -64,10 +64,10 @@ test('recruitment email previews before sending and creates reviewed hiring draf
       assert.equal(await page.evaluate(() => window.requests.find(r => r.body?.action === 'send').body.reviewedAt), '2026-11-22T06:00:00.000Z');
       await page.getByRole('button', { name: 'Clear candidate' }).click();
       await page.getByRole('button', { name: 'Check emails', exact: true }).click();
-      await page.getByRole('button', { name: /Need two supervisors.*From manager/ }).click();
+      await page.getByRole('list', { name: 'Emails', exact: true }).getByRole('button').filter({ hasText: 'Need two supervisors' }).click();
       dialog = page.getByRole('dialog');
       assert.equal(await page.evaluate(() => window.untrusted), undefined);
-      await dialog.getByRole('button', { name: 'Create hiring request draft' }).click();
+      await page.getByRole('button', { name: 'Create hiring request draft' }).click();
       dialog = page.getByRole('dialog');
       await dialog.getByLabel('Designation / role', { exact: true }).fill('Supervisor');
       await dialog.getByLabel('Number of openings').fill('2');

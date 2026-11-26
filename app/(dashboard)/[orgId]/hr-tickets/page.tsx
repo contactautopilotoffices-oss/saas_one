@@ -12,8 +12,14 @@ export default function HRTicketsPage({ params }: { params: Promise<{ orgId: str
     const { user, membership } = useAuth();
 
     const isOrgSuperAdmin = membership?.org_role === 'org_super_admin' || user?.user_metadata?.role === 'org_super_admin';
+    // Owner 2026-11-25: the old Recruitment tab moved to its own workspace; old links and bookmarks land there.
+    const toRecruitment = (searchParams.get('subtab') || searchParams.get('tab')) === 'candidates';
 
     useEffect(() => {
+        if (toRecruitment) {
+            router.replace('/recruitment');
+            return;
+        }
         if (isOrgSuperAdmin) {
             const subtab = searchParams.get('subtab') || searchParams.get('tab');
             const action = searchParams.get('action');
@@ -27,7 +33,8 @@ export default function HRTicketsPage({ params }: { params: Promise<{ orgId: str
             }
             router.replace(`/${orgId}/dashboard?${targetParams.toString()}`);
         }
-    }, [isOrgSuperAdmin, orgId, router, searchParams]);
+    }, [toRecruitment, isOrgSuperAdmin, orgId, router, searchParams]);
 
+    if (toRecruitment) return null;
     return <HRTicketsContent orgId={orgId} />;
 }

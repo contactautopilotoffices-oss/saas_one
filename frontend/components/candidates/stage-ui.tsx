@@ -83,17 +83,17 @@ export function useStages(orgId: string): StageList | null {
 /** Light tint, dark text of the same family (as the module's other tags). */
 export const TONE_CHIP: Record<StageTone, string> = {
     amber: 'bg-amber-100 text-amber-900',
-    green: 'bg-emerald-100 text-emerald-900',
+    green: 'bg-green-100 text-green-900',
     red: 'bg-red-100 text-red-900',
-    blue: 'bg-blue-100 text-blue-900',
-    violet: 'bg-violet-100 text-violet-900',
-    teal: 'bg-teal-100 text-teal-900',
+    blue: 'bg-stone-100 text-stone-900',
+    violet: 'bg-neutral-100 text-neutral-900',
+    teal: 'bg-amber-50 text-amber-900',
     grey: 'bg-muted text-text-secondary',
 };
 export const TONE_DOT: Record<StageTone, string> = {
-    amber: 'bg-amber-500', green: 'bg-emerald-500', red: 'bg-red-500', blue: 'bg-blue-500', violet: 'bg-violet-500', teal: 'bg-teal-500', grey: 'bg-slate-400',
+    amber: 'bg-amber-500', green: 'bg-green-500', red: 'bg-red-500', blue: 'bg-stone-500', violet: 'bg-neutral-500', teal: 'bg-amber-300', grey: 'bg-neutral-400',
 };
-export const TONE_LABELS: Record<StageTone, string> = { amber: 'Amber', green: 'Green', red: 'Red', blue: 'Blue', violet: 'Violet', teal: 'Teal', grey: 'Grey' };
+export const TONE_LABELS: Record<StageTone, string> = { amber: 'Amber', green: 'Green', red: 'Red', blue: 'Stone', violet: 'Neutral', teal: 'Sand', grey: 'Grey' };
 
 /** A stage as a coloured chip (the board, the cards, the panel). */
 export function StageChip({ stage, title }: { stage: Pick<StageDef, 'name' | 'tone'>; title?: string }) {

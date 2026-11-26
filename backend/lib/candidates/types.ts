@@ -10,6 +10,7 @@
 
 import type { SearchFilters } from "./filters";
 import type { InferableField } from "./infer";
+import type { OutreachSettings } from "./outreach-settings";
 import type { Preferences } from "./query-spec";
 import type { SnippetPart } from "./snippet";
 import type { Stage } from "./stage-list";
@@ -76,6 +77,8 @@ export interface Position {
   counts: Record<Stage, number>;
   /** The library JD it was opened from (owner 2026-11-17); null when none, absent before migration 20261117000002. */
   jd?: PositionJd | null;
+  /** Interviews held for it (status 'done'; owner 2026-11-25). Listed positions only; absent before the hiring-flow migration. */
+  interviewsDone?: number;
 }
 
 /**
@@ -170,6 +173,18 @@ export interface PositionMember {
   addedAt: string;
   /** The person's record, when the record they were added from still exists. */
   record: CandidateRecord | null;
+  /**
+   * Owner 2026-11-25: the panel's ratings for this person in this position, from the submitted scorecards (overall,
+   * 1 to 5) of their interviews for it. Null when no scorecard is in yet; absent where the list does not load them.
+   */
+  score?: MemberScore | null;
+}
+
+/** The average overall rating (1 to 5, one decimal), across all rounds and per round, and how many scorecards it is from. */
+export interface MemberScore {
+  overall: number;
+  scorecards: number;
+  rounds: { round: string; overall: number; scorecards: number }[];
 }
 
 export const RECORD_STATUSES = [
@@ -1051,6 +1066,9 @@ export interface Interview {
   statusReason?: string | null;
   /** The panel's scorecards (HR sees all of them). */
   scorecards?: Scorecard[];
+  /** Owner 2026-11-24: the candidate's answer on the interview page (will they attend), and why not. */
+  rsvp?: "yes" | "no" | null;
+  rsvpNote?: string | null;
 }
 
 /** What scheduling sent, for the form to say. */
@@ -1076,9 +1094,18 @@ export const REQUISITION_STATUS_LABELS: Record<RequisitionStatus, string> = {
   rejected: "Rejected",
   withdrawn: "Withdrawn",
 };
+/** The configured approver slots (HR Head, Director), used by requisitions and offers alike. */
 export const APPROVAL_LEVELS = ["hr_head", "director"] as const;
 export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
-export const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = { hr_head: "HR Head", director: "Director" };
+/**
+ * Owner 2026-11-24: a hiring request goes to its department head first ("hod"), then the HR Head, then (out of plan or
+ * above the CTC level) the Director. Offers keep HR Head → Director only.
+ */
+export const REQUISITION_LEVELS = ["hod", ...APPROVAL_LEVELS] as const;
+export type RequisitionLevel = (typeof REQUISITION_LEVELS)[number];
+export const APPROVAL_LEVEL_LABELS: Record<RequisitionLevel, string> = { hod: "Department head", hr_head: "HR Head", director: "Director" };
+/** Owner 2026-11-24: hours the department head has before the request passes to the HR Head on its own. */
+export const HOD_DECISION_HOURS = 48;
 export const REQUEST_TYPES = ["new", "replacement"] as const;
 export type RequestType = (typeof REQUEST_TYPES)[number];
 /** Stage 2: Approve, Reject with reason, Send back for change, Put on hold (and Resume from hold). */
@@ -1109,13 +1136,27 @@ export interface RecruitmentConfig {
   rejectionReasons: string[];
   /** Owner 2026-11-21: the offer letter template ({{candidate_name}}, {{role}}, {{ctc}}, {{joining_date}}, …). Empty: the default. */
   offerLetter: string;
+  /**
+   * Owner 2026-11-24: the company hierarchy for the request form's dropdowns: each department and its designations, kept
+   * in the Tech dashboard → HR Configs. Empty: the form uses the employee master (departments and designations of the
+   * active employees). A role not in the list is raised under "Others".
+   */
+  hierarchy: { department: string; designations: string[] }[];
+  /** Owner 2026-11-24: the job application form, the outreach templates and automatic outreach (outreach-settings.ts). */
+  outreach: OutreachSettings;
+}
+
+/** The request form's dropdowns, and where they came from. */
+export interface RequisitionHierarchy {
+  departments: { department: string; designations: string[] }[];
+  source: "configured" | "employee_master";
 }
 
 export interface Requisition {
   id: string;
   requisitionNo: string | null;
   status: RequisitionStatus;
-  currentLevel: ApprovalLevel | null;
+  currentLevel: RequisitionLevel | null;
   currentApproverId: string | null;
   currentApproverName: string | null;
   levelEnteredAt: string | null;
@@ -1134,6 +1175,12 @@ export interface Requisition {
   targetJoiningDate: string | null;
   justification: string | null;
   reportingManager: string | null;
+  /** Owner 2026-11-24: can someone already in the company fill it (null: not answered yet). */
+  internalMobility: boolean | null;
+  /** Owner 2026-11-24: where the role sits in the current structure. */
+  structureNote: string | null;
+  /** Owner 2026-11-24: the role title was typed under "Others", not picked from the department's designations. */
+  roleIsNew: boolean;
   inPlan: boolean | null;
   needsDirector: boolean;
   holdSince: string | null;
@@ -1158,9 +1205,12 @@ export interface Requisition {
 
 export interface RequisitionApproval {
   id: string;
-  level: ApprovalLevel | null;
-  /** "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001. */
-  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed";
+  level: RequisitionLevel | null;
+  /**
+   * "endorsed" by a department head and "still_needed" (the raiser, while on hold) need migration 20261121000001;
+   * "escalated" (the department head did not decide in 48 h, so it passed to the HR Head) needs 20261124000001.
+   */
+  action: "submitted" | "approved" | "rejected" | "sent_back" | "on_hold" | "resumed" | "withdrawn" | "position_opened" | "endorsed" | "still_needed" | "escalated";
   inPlan: boolean | null;
   reason: string | null;
   byName: string | null;
@@ -1172,14 +1222,16 @@ export interface RequisitionApproval {
 export interface RequisitionAccess {
   /** HR roles and admins: see every request. */
   seesAll: boolean;
-  /** The levels this person approves at (primary or backup). */
-  approverLevels: ApprovalLevel[];
+  /** The levels this person approves at (primary or backup; "hod" when they head a department). */
+  approverLevels: RequisitionLevel[];
   /** The approvers are set in Recruitment -> Configurations (a request cannot be submitted until they are). */
   configured: boolean;
   /** Owner 2026-11-20: this person may raise a hiring request (set in the Tech dashboard). */
   canRaise?: boolean;
   /** Owner 2026-11-21: the departments this person heads (lower case): they see those requests and may endorse them. */
   headOf?: string[];
+  /** The signed-in person (a department head's "Your decision" is the requests waiting on them by name). */
+  userId?: string;
 }
 
 export interface RequisitionListResponse {
@@ -1187,6 +1239,8 @@ export interface RequisitionListResponse {
   access: RequisitionAccess;
   /** Owner 2026-11-21: the departments that have a head (the form suggests them, so the head sees the request). */
   departments?: string[];
+  /** Owner 2026-11-24: the form's department and role dropdowns. */
+  hierarchy?: RequisitionHierarchy;
 }
 export interface RequisitionResponse {
   requisition: Requisition;
@@ -1360,7 +1414,8 @@ export interface Offer {
   breakup: Record<string, number>;
   joiningDate: string | null;
   status: OfferStatus;
-  currentLevel: "hr_head" | "director" | null;
+  /** Owner 2026-11-24: the hiring manager (who raised the request) approves the annexure first. */
+  currentLevel: "hiring_manager" | "hr_head" | "director" | null;
   currentApproverName: string | null;
   needsDirector: boolean;
   letter: string | null;
@@ -1378,6 +1433,16 @@ export interface Offer {
   events: { action: string; level: string | null; reason: string | null; byName: string | null; at: string }[];
   /** What the signed-in person may do with it now. */
   canDecide?: boolean;
+  /** Owner 2026-11-24: the candidate's letter-of-intent page, once released (HR only). */
+  publicUrl?: string | null;
+  /** Who recorded the answer: HR, or the candidate on the page. */
+  respondedVia?: "hr" | "candidate" | null;
+}
+
+/** Owner 2026-11-24: an accepted offer handed to onboarding (HRMS). */
+export interface OfferHandover {
+  id: string; offerId: string; candidateName: string; positionTitle: string | null; joiningDate: string | null; status: "pending" | "taken";
+  takenByName: string | null; takenAt: string | null; createdAt: string; snapshot: Record<string, unknown>;
 }
 
 /** The dashboard (spec: Today, Roles, Funnel). */
@@ -1388,6 +1453,46 @@ export interface RecruitmentDashboard {
     waiting: { candidateName: string; positionTitle: string; stageName: string; days: number }[];
     offersAwaiting: { id: string; candidateName: string; positionTitle: string | null; status: OfferStatus; days: number }[];
   };
-  roles: { id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string }[];
+  roles: {
+    id: string; title: string; location: string | null; recruiterName: string | null; daysOpen: number; targetDays: number; ageing: boolean; inPipeline: number; nextAction: string;
+    /** Owner 2026-11-25 (Recruitment workspace, Pipeline tab): people in the running per board column, in `funnel` order. */
+    byColumn: number[];
+    /** And how many were rejected in each column, in the same order. */
+    rejectedByColumn: number[];
+  }[];
   funnel: { column: string; count: number; rejected: number }[];
+  /**
+   * Owner 2026-11-25 (Insights tab): where the people in the open roles' pipelines came from, by the source on their
+   * candidate record ("Not recorded" when it is empty), most first.
+   */
+  sources: { source: string; count: number }[];
+  /** Owner 2026-11-24: the last 90 days, for the HR Head and the Director. */
+  metrics?: RecruitmentMetrics;
+}
+
+/** Owner 2026-11-25 (Hub → Interviews): one interview on the calendar, across all candidates. */
+export interface CalendarInterview {
+  id: string;
+  candidateId: string;
+  candidateName: string;
+  positionTitle: string | null;
+  round: string | null;
+  /** The instant (ISO). */
+  at: string;
+  mode: string | null;
+  venue: string | null;
+  status: InterviewStatus;
+  /** The panel, from its scorecards (one per interviewer). */
+  panel: string[];
+}
+
+export interface RecruitmentMetrics {
+  periodDays: number;
+  /** Days from the position opening to the offer's acceptance (average, and how many offers it covers). */
+  timeToFill: { days: number | null; offers: number };
+  offerAcceptance: { released: number; accepted: number; declined: number; waiting: number; ratePct: number | null };
+  rejectionReasons: { reason: string; count: number }[];
+  /** Hours from submitting to the final decision. */
+  approvalTurnaround: { requisitionHours: number | null; requisitions: number; offerHours: number | null; offers: number };
+  recruiterLoad: { recruiter: string; openRoles: number; inPipeline: number; ageing: number }[];
 }

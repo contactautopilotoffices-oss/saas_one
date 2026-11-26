@@ -1,15 +1,17 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Ban, Download, ExternalLink, FileText, Paperclip, PencilLine, ScanText, Search, Unlink } from 'lucide-react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Ban, BookOpen, Briefcase, Building2, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Clock, Download, ExternalLink, FileText, GraduationCap, History, LayoutGrid, Mail, MapPin, MoreHorizontal, Paperclip, PencilLine, Phone, PhoneCall, ScanText, School, Search, Star, Unlink } from 'lucide-react';
 import { DEFENCE_OPTIONS, EDUCATION_TYPES, NO_QUALIFICATION } from '@/backend/lib/candidates/filters';
 import { markKeywords } from '@/backend/lib/candidates/snippet';
 import {
     BLACKLIST_REASON_LABELS, BLACKLIST_REASONS, MATCH_REASON_LABELS, originLabel, RECORD_STATUSES, STATUS_LABELS, TEXT_STATUS_LABELS,
-    type BlacklistReason, type CandidateRecord, type Position, type RecordStatus, type ResumeFile, type ResumeFilesResponse, type Stage,
+    type BlacklistReason, type CandidateRecord, type MemberScore, type Position, type RecordStatus, type ResumeFile, type ResumeFilesResponse, type Stage,
 } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import CallsTab from './CallsTab';
+import AssignmentsTab from './AssignmentsTab';
+import { MessageLog, RemoveDataButton } from './PrivacyControls';
 import AssessmentSender from './AssessmentSender';
 import { formatDate, formatInr, formatMonths, formatNotice, STATUS_DOT } from './format';
 import { InterviewsList } from './InterviewScheduler';
@@ -20,27 +22,40 @@ import { PipelineStrip, PositionFitCard, type PipelineContext } from './Pipeline
 import { ActivityTimeline, BlacklistedTag, BTN_DANGER_FILLED, REMARK_MAX, statusNeedsRemark } from './Remarks';
 import { WorkedOut } from './ResultCard';
 import ResumeDocument, { hasProfile } from './ResumeDocument';
-import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, Drawer, EmptyState, INPUT, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+import { Avatar, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, CopyButton, Drawer, EmptyState, INPUT, LABEL, OVERLAY, Spinner, Tag, useUi, WELL } from './ui';
 
+/** A small grey label over a bold value; nothing at all when the value is not on record (reference layout). */
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
+    if (!value) return null;
     return (
         <div className="min-w-0">
-            <dt className="text-xs font-medium text-text-secondary">{label}</dt>
-            <dd className="mt-0.5 break-words text-sm font-medium text-text-primary">{value || <span className="font-normal text-text-tertiary">Not on record</span>}</dd>
+            <dt className="text-xs text-text-tertiary">{label}</dt>
+            <dd className="mt-0.5 break-words text-[13px] font-semibold text-text-primary">{value}</dd>
         </div>
     );
 }
 
 type Files = { candidateId: string; files: ResumeFile[]; error: string };
-type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls';
+type Tab = 'overview' | 'resume' | 'activity' | 'positions' | 'interviews' | 'calls' | 'work';
+export type CandidateTab = Tab;
 /** The inline form open under the header, if any. */
 type Panel = null | 'status' | 'positions' | 'blacklist' | 'outreach' | 'assessment';
 /** The mockup's small header buttons (36 px, 13 px text). */
 const BTN_SM = 'h-9 rounded-xl px-3 text-[13px]';
+/** Reference layout (owner 2026-11-25): small square outline buttons in the header, and the "‹ ›" walkers. */
+const BTN_OUTLINE = 'inline-flex h-9 shrink-0 items-center justify-center gap-x-1.5 rounded-lg border border-border bg-surface px-3 text-[13px] font-semibold text-text-primary transition-colors hover:bg-surface-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50';
+const NAV_BTN = 'inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40';
+/** The status pill's tint: green while the person is in play, red when rejected, amber on hold, grey otherwise. */
+const statusPill = (s: RecordStatus) => (
+    s === 'rejected' ? 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'
+        : s === 'on_hold' ? 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
+        : s === 'not_responding' || s === 'others' ? 'bg-muted text-text-primary'
+        : 'bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200'
+);
+/** The contact pills on the right panel: light green with teal text. */
+const CONTACT_PILL = 'inline-flex max-w-full items-center rounded-full bg-primary/10 pl-2.5 text-[13px] font-medium text-primary-dark dark:text-primary-light';
 
 /** Email and phone with the middle hidden, as the panel's meta line shows them. */
-const maskEmail = (email: string) => { const [user, domain] = email.split('@'); return domain && user.length > 3 ? `${user.slice(0, 3)}•••@${domain}` : email; };
-const maskPhone = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 2)}•••• ${phone.slice(-4)}` : phone);
 
 /**
  * One candidate's panel (owner 2026-11-15, to the mockup): the person at the top with the actions that matter
@@ -48,7 +63,7 @@ const maskPhone = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 2)}�
  * A status change opens "Change status" inline: "Others" needs a remark. Nothing here changes by accident: every
  * action is a click on a named button, and every one of them is in the history.
  */
-export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [], pipeline = null }: {
+export default function CandidateDetails({ record, open, onClose, onEdit, orgId, onChanged, keywords = [], pipeline = null, showTab = null }: {
     record: CandidateRecord; open: boolean; onClose: () => void; onEdit: () => void;
     orgId: string;
     /**
@@ -60,6 +75,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     onChanged?: () => void;
     /** The search's keywords, marked in the resume's text. */
     keywords?: string[];
+    /** Owner 2026-11-25: open on this tab (a new nonce asks again, e.g. "Send assessment" from a pipeline card). */
+    showTab?: { tab: Tab; nonce: number } | null;
 }) {
     const { notify, reportError } = useUi();
 
@@ -95,6 +112,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
     const [picking, setPicking] = useState(false);
     const closeForms = () => { setPanel(null); setPicking(false); };
     const goTo = (next: Tab) => { closeForms(); setTab(next); };
+    const [seenShowTab, setSeenShowTab] = useState<number | null>(null);
+    if (showTab && showTab.nonce !== seenShowTab) { setSeenShowTab(showTab.nonce); closeForms(); setTab(showTab.tab); }
     const [seenFor, setSeenFor] = useState(`${record.id}:${open}`);
     if (seenFor !== `${record.id}:${open}`) { setSeenFor(`${record.id}:${open}`); closeForms(); }
 
@@ -195,49 +214,102 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         ['Defence background', DEFENCE_OPTIONS.find(d => d.id === x.defenceBackground)?.label],
         ['Serving notice', x.servingNotice === null ? null : x.servingNotice ? 'Yes' : 'No'],
     ].filter(([, value]) => !!value) as [string, React.ReactNode][] : [];
-    const headline = [[r.currentDesignation, r.currentOrganization].filter(Boolean).join(' @ '), r.location, [r.totalExpMonths !== null && `${formatMonths(r.totalExpMonths)} total`, r.relevantExpMonths !== null && `${formatMonths(r.relevantExpMonths)} relevant`].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
-    const meta = [r.email && maskEmail(r.email), r.phone && maskPhone(r.phone), r.sourcingDate && `sourced ${formatDate(r.sourcingDate)}${r.candidateSource ? ` via ${r.candidateSource}` : ''}`].filter(Boolean).join(' · ');
+    const headline = [[r.currentDesignation, r.currentOrganization].filter(Boolean).join(' @ '), [r.totalExpMonths !== null && `${formatMonths(r.totalExpMonths)} total`, r.relevantExpMonths !== null && `${formatMonths(r.relevantExpMonths)} relevant`].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
     const hits = r.keywordHits ?? [];
+    const score = pipeline?.member.score ?? null;
+    // Owner 2026-11-25 (reference layout): the small label/value pairs under the name, only the ones on record.
+    const facts: [string, string][] = [
+        ['Origin', r.candidateSource || originLabel(r)],
+        r.sourcingDate ? ['Sourced on', formatDate(r.sourcingDate)] : ['Added on', formatDate(r.createdAt)],
+        ...(pipeline ? [['Position', pipeline.position.title] as [string, string]] : r.role ? [['Sourced for', r.role] as [string, string]] : []),
+    ];
+    const addRemark = () => { goTo('activity'); setFocusRemark(n => n + 1); };
+    const education = ([
+        ['Qualification', qualifications.join(', ')],
+        ['Institute', x?.institute],
+        ['Year of degree', x?.degreeYear ? String(x.degreeYear) : null],
+        ['Education type', EDUCATION_TYPES.find(t => t.id === x?.educationType)?.label],
+    ] as [string, string | null | undefined][]).filter(([, value]) => !!value);
+    const MENU_ITEM = 'flex h-9 w-full items-center rounded-lg px-3 text-left text-[13px] font-semibold text-text-primary hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 
     const header = (
-        <div className="px-5 pb-0 pt-5 sm:px-6 sm:pt-6">
-            <div className="flex items-start gap-x-3.5 pr-10">
-                <Avatar name={r.fullName} size="lg" />
-                <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-display text-xl font-bold leading-tight text-text-primary">{r.fullName}</span>
+        <div className="px-5 pb-0 pt-4 sm:px-6 sm:pt-4">
+            {/* Previous / next among the people the panel was opened among (from the Pipeline tab): "‹ ›  1 out of 56". */}
+            {pipeline && (
+                <div className="mb-3 flex min-h-8 items-center gap-x-1.5 pr-10">
+                    <button type="button" onClick={() => pipeline.onPrev?.()} disabled={!pipeline.onPrev} aria-label="Previous candidate" title="Previous candidate" className={NAV_BTN}><ChevronLeft className="h-4 w-4" /></button>
+                    <button type="button" onClick={() => pipeline.onNext?.()} disabled={!pipeline.onNext} aria-label="Next candidate" title="Next candidate" className={NAV_BTN}><ChevronRight className="h-4 w-4" /></button>
+                    <span className="ml-1.5 text-xs tabular-nums text-text-secondary" aria-live="polite">
+                        <span className="font-semibold text-text-primary">{pipeline.index}</span> out of {pipeline.total}<span className="text-text-tertiary"> · {pipeline.scopeLabel}</span>
+                    </span>
+                </div>
+            )}
+            <div className={`flex flex-wrap items-start gap-x-4 gap-y-3 ${pipeline ? '' : 'pr-10'}`}>
+                {/* The shared Avatar, drawn large (72 px) and round for the profile (reference layout). */}
+                <span className="shrink-0 [&>span]:h-[72px] [&>span]:w-[72px] [&>span]:rounded-full [&>span]:text-2xl"><Avatar name={r.fullName} size="lg" /></span>
+                <div className="min-w-[14rem] flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+                        <span className="font-display text-2xl font-semibold leading-tight tracking-[-0.2px] text-text-primary">{r.fullName}</span>
+                        {score && (
+                            <span title={`Average of ${score.scorecards} ${score.scorecards === 1 ? 'scorecard' : 'scorecards'}, out of 5`}
+                                className="inline-flex h-7 items-center gap-x-1 rounded-full bg-amber-50 px-2.5 text-xs font-semibold text-text-primary ring-1 ring-inset ring-amber-200 dark:bg-amber-900/30 dark:text-amber-50 dark:ring-amber-800/60">
+                                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-hidden /><span className="tabular-nums">{score.overall.toFixed(1)}</span><span className="font-medium text-text-secondary dark:text-amber-100/80">Overall</span>
+                            </span>
+                        )}
+                        <button type="button" onClick={openStatus} aria-expanded={statusOpen} aria-label={`Status: ${STATUS_LABELS[r.status]}. Change status`} title="Change status"
+                            className={`inline-flex h-7 items-center gap-x-1.5 rounded-full px-2.5 text-xs font-semibold transition-[filter] hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1 ${statusPill(r.status)}`}>
+                            <span className={`h-2 w-2 rounded-full ${STATUS_DOT[r.status]}`} aria-hidden />{STATUS_LABELS[r.status]}<ChevronDown className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                        </button>
                         {r.hasResume === true && <Tag tone="success" icon={FileText}>Resume{files.length > 1 ? ` · ${files.length}` : ''}</Tag>}
                         {r.hasResume === false && <Tag>No resume</Tag>}
                         <MembershipCount orgId={orgId} record={r} nonce={membershipNonce} />
                         {r.blacklisted && <BlacklistedTag entry={r.blacklist} />}
                     </div>
-                    {headline && <p className="mt-0.5 text-sm text-text-primary">{headline}</p>}
-                    {meta && <p className="mt-0.5 text-xs text-text-secondary">{meta}</p>}
+                    {headline && <p className="mt-1 text-sm text-text-secondary">{headline}</p>}
+                    {/* Small grey labels over bold values, side by side (reference layout). */}
+                    <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+                        {facts.map(([label, value]) => (
+                            <div key={label} className="min-w-0 max-w-[16rem]">
+                                <dt className="text-xs text-text-tertiary">{label}</dt>
+                                <dd className="mt-0.5 truncate text-[13px] font-semibold text-text-primary" title={value}>{value}</dd>
+                            </div>
+                        ))}
+                    </dl>
                 </div>
-                <button type="button" onClick={() => { closeForms(); onEdit(); }} className={`${BTN_GHOST} -mt-1 shrink-0`} title="Edit details"><PencilLine className="h-4 w-4" />Edit</button>
+                <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                    <button type="button" onClick={() => { closeForms(); onEdit(); }} className={BTN_OUTLINE} title="Edit details"><PencilLine className="h-4 w-4" />Edit</button>
+                    {/* Owner 2026-11-25: the less frequent actions in a "…" menu, each still one named button. */}
+                    <OverflowMenu label="More actions">
+                        {close => (
+                            <>
+                                <button type="button" onClick={() => { close(); addRemark(); }} className={MENU_ITEM}>Add remark</button>
+                                <button type="button" onClick={() => { close(); goTo('resume'); setPicking(true); }} className={MENU_ITEM}>Attach a resume</button>
+                                {!r.blacklisted && <button type="button" onClick={() => { close(); setPicking(false); setPanel(panel === 'assessment' ? null : 'assessment'); }} aria-expanded={panel === 'assessment'} className={MENU_ITEM}>Send assessment</button>}
+                                {r.blacklist !== undefined && !r.blacklisted && (
+                                    <button type="button" onClick={() => { close(); toggleBlacklist(); }} aria-expanded={blacklistOpen} className={`${MENU_ITEM} text-error hover:bg-error/[.08]`}>Blacklist…</button>
+                                )}
+                                {/* Owner 2026-11-24: on the person's request, their details are wiped and nothing is sent to them again. */}
+                                {r.fullName !== 'Removed on request' && (
+                                    <div className="[&>button]:w-full [&>button]:justify-start [&>button]:rounded-lg" onClickCapture={close}>
+                                        <RemoveDataButton orgId={orgId} record={r} onRemoved={() => { setFull(null); setHistoryNonce(n => n + 1); onChanged?.(); }} />
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </OverflowMenu>
+                    {!r.blacklisted && (
+                        <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'outreach' ? null : 'outreach'); }} aria-expanded={panel === 'outreach'} className={BTN_OUTLINE} title="Tell the candidate on WhatsApp">Send update</button>
+                    )}
+                    <button type="button" onClick={togglePositions} aria-expanded={positionsOpen} className={`${BTN_PRIMARY} ${BTN_SM} rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2`}>Add to position</button>
+                </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button type="button" onClick={openStatus} aria-expanded={statusOpen} className={`${BTN_SECONDARY} ${BTN_SM} gap-x-2 ring-[1.5px] ring-inset ring-primary`}>
-                    <span className={`h-2 w-2 rounded-full ${STATUS_DOT[r.status]}`} aria-hidden />{STATUS_LABELS[r.status]}<span className="text-text-tertiary" aria-hidden>▾</span>
-                </button>
-                <button type="button" onClick={togglePositions} aria-expanded={positionsOpen} className={`${BTN_PRIMARY} ${BTN_SM}`}>Add to position</button>
-                <button type="button" onClick={() => { goTo('activity'); setFocusRemark(n => n + 1); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Add remark</button>
-                <button type="button" onClick={() => { goTo('resume'); setPicking(true); }} className={`${BTN_SECONDARY} ${BTN_SM}`}>Attach a resume</button>
-                {!r.blacklisted && (
-                    <>
-                    <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'outreach' ? null : 'outreach'); }} aria-expanded={panel === 'outreach'} className={`${BTN_SECONDARY} ${BTN_SM}`} title="Tell the candidate on WhatsApp">Send update</button>
-                    <button type="button" onClick={() => { setPicking(false); setPanel(panel === 'assessment' ? null : 'assessment'); }} aria-expanded={panel === 'assessment'} className={`${BTN_SECONDARY} ${BTN_SM}`}>Send assessment</button>
-                    </>
-                )}
-                {r.blacklist !== undefined && !r.blacklisted && (
-                    <button type="button" onClick={toggleBlacklist} aria-expanded={blacklistOpen} className="ml-auto inline-flex h-9 items-center rounded-xl px-3 text-[13px] font-semibold text-error hover:bg-error/[.08]">Blacklist…</button>
-                )}
-            </div>
-            <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap">
-                {([['overview', 'Overview', null], ['resume', 'Resume', files.length || null], ['activity', 'Activity', null], ['positions', 'Positions', null], ['interviews', 'Interviews', null], ['calls', 'Calls', null]] as const).map(([id, label, n]) => (
-                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => goTo(id)}
-                        className={`-mb-px mr-5 h-10 border-b-2 px-0.5 text-sm font-semibold transition-colors ${tab === id ? 'border-primary text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}>
-                        {label}{n ? <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n}</span> : null}
+            {/* Section tabs as pills with an icon: the selected one dark (reference layout). */}
+            <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap gap-2 pb-3.5">
+                {([['overview', 'Overview', null, LayoutGrid], ['resume', 'Resume', files.length || null, FileText], ['activity', 'Activity', null, History], ['positions', 'Positions', null, Briefcase], ['interviews', 'Interviews', null, CalendarDays], ['calls', 'Calls', null, PhoneCall], ['work', 'Assignment & documents', null, ClipboardList]] as const).map(([id, label, n, Icon]) => (
+                    <button key={id} type="button" role="tab" aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} onKeyDown={event => { const tabs = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('[role="tab"]')); const index = tabs.indexOf(event.currentTarget); const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1; if (next >= 0) { event.preventDefault(); tabs[next].focus(); tabs[next].click(); } }} onClick={() => goTo(id)}
+                        className={`inline-flex h-8 items-center gap-x-1.5 rounded-full px-3.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1 ${tab === id ? 'bg-[#292929] text-white dark:bg-[#f5f5f4] dark:text-[#171717]' : 'bg-surface text-text-secondary ring-1 ring-inset ring-border hover:bg-surface-elevated hover:text-text-primary'}`}>
+                        <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        {label}{n ? <span className="ml-0.5 text-xs font-medium opacity-70">{n}</span> : null}
                         {id === 'activity' && <ActivityCount orgId={orgId} record={r} nonce={historyNonce} />}
                         {id === 'calls' && <CallsCount orgId={orgId} record={r} nonce={callsNonce} />}
                     </button>
@@ -245,13 +317,15 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
             </div>
         </div>
     );
-
     return (
         <Drawer open={open} onClose={onClose} labelId="candidate-details-title" title={r.fullName} header={header}
-            resize={{ storeKey: 'candidate-details-width', initial: 640, min: 520 }}
+            resize={{ storeKey: 'candidate-details-width', initial: 980, min: 520 }}
         >
-            <div className="@container space-y-4">
-                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} tab={tab} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
+            {/* Owner 2026-11-25 (reference layout): the section on the left, the person on the right; one column below ~770 px. */}
+            <div className="@container">
+            <div className="grid items-start gap-x-5 gap-y-5 @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
+            {/* The left column sits on a very light grey panel, its cards white (reference layout). */}
+            <div className="@container min-w-0 space-y-3.5 rounded-2xl bg-surface-elevated p-3 sm:p-3.5">                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} tab={tab} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
 
                 {/* Change status */}
                 {statusOpen && (
@@ -316,51 +390,56 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
                 {tab === 'overview' && (
                     <>
+                        {score && <CandidateScore score={score} />}
                         {pipeline && <PositionFitCard record={r} position={pipeline.position} />}
-                        {/* Owner 2026-11-16: the cards sit side by side only when the panel is wide enough for one-line values. */}
-                        <div className="grid gap-3 @4xl:grid-cols-2">
-                            {(hits.length > 0 || r.resumeSnippet) && (
-                                <section className={`${CARD} px-4 py-3`} aria-label="Match">
-                                    <p className={LABEL}>Match to the search</p>
-                                    <ul className="mt-2 space-y-1.5">
-                                        {hits.map(h => <li key={h.text}><Tag tone={h.required ? 'success' : 'neutral'}>✓ {h.text} · {h.where === 'both' ? 'record + resume' : h.where}</Tag></li>)}
-                                        {hits.length === 0 && <li className="text-sm text-text-tertiary">No keyword matched on record.</li>}
-                                    </ul>
-                                </section>
-                            )}
-                            <section className={`${CARD} @container px-4 py-3 ${hits.length > 0 || r.resumeSnippet ? '' : '@4xl:col-span-2'}`} aria-label="Essentials">
-                                <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-sm @2xl:grid-cols-[110px_minmax(0,1fr)_110px_minmax(0,1fr)] @2xl:gap-x-5">
-                                    <dt className="text-text-secondary">Notice</dt><dd className="font-semibold text-text-primary">{r.noticePeriodDays !== null ? `${formatNotice(r.noticePeriodDays)}${x?.servingNotice ? ' · serving' : ''}` : '—'}</dd>
-                                    <dt className="text-text-secondary">In-hand</dt><dd className="font-semibold text-text-primary">{r.currentInhand !== null || r.expectedInhand !== null ? `${r.currentInhand !== null ? formatInr(r.currentInhand) : '—'} → ${r.expectedInhand !== null ? formatInr(r.expectedInhand) : '—'} / month` : '—'}</dd>
-                                    <dt className="text-text-secondary">Relocate</dt><dd className="font-semibold text-text-primary">{x?.preferredLocations?.length ? x.preferredLocations.join(', ') : r.location ? `${r.location} only` : '—'}</dd>
-                                    <dt className="text-text-secondary">Education</dt><dd className="font-semibold text-text-primary">{[qualifications.join(', '), x?.degreeYear].filter(Boolean).join(' · ') || '—'}</dd>
-                                    <dt className="text-text-secondary">Sourced for</dt><dd className="font-semibold text-text-primary">{r.role ?? '—'}</dd>
-                                </dl>
+                        {(hits.length > 0 || r.resumeSnippet) && (
+                            <section className={`${CARD} px-4 py-3`} aria-label="Match">
+                                <p className={LABEL}>Match to the search</p>
+                                <ul className="mt-2 space-y-1.5">
+                                    {hits.map(h => <li key={h.text}><Tag tone={h.required ? 'success' : 'neutral'}>✓ {h.text} · {h.where === 'both' ? 'record + resume' : h.where}</Tag></li>)}
+                                    {hits.length === 0 && <li className="text-sm text-text-tertiary">No keyword matched on record.</li>}
+                                </ul>
                             </section>
-                        </div>
-                        {r.trackerValues && <details className={`${WELL} p-4`}>
+                        )}
+                        {/* The record's job details as label / value pairs (owner 2026-11-25, reference layout). */}
+                        <section className={`${CARD} @container px-4 py-4`} aria-labelledby="cand-job-title">
+                            <div className="flex items-center justify-between gap-x-3">
+                                <h3 id="cand-job-title" className="text-sm font-semibold text-text-primary">Job details</h3>
+                                <button type="button" onClick={() => goTo('positions')} className="inline-flex h-8 items-center gap-x-0.5 rounded-md px-1.5 text-[13px] font-semibold text-primary-dark hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-green-300">
+                                    View positions<ChevronRight className="h-4 w-4" aria-hidden />
+                                </button>
+                            </div>
+                            {/* The current job, bold, with a meta line; then the rest as a grid under a hairline. */}
+                            {(r.currentDesignation || r.currentOrganization || r.location || r.totalExpMonths !== null) && (
+                                <div className="mt-2">
+                                    {r.currentDesignation && <p className="text-[15px] font-semibold text-text-primary">{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</p>}
+                                    <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-secondary">
+                                        {r.currentOrganization && <span className="inline-flex min-w-0 items-center gap-x-1.5"><Building2 className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden /><span className="sr-only">Current employer: </span>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</span>}
+                                        {r.location && <span className="inline-flex items-center gap-x-1.5"><MapPin className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden /><span className="sr-only">Location: </span>{r.location}</span>}
+                                        {r.totalExpMonths !== null && <span className="inline-flex items-center gap-x-1.5"><Clock className="h-3.5 w-3.5 shrink-0 text-text-tertiary" aria-hidden />{formatMonths(r.totalExpMonths)} total{r.inferred?.includes('totalExpMonths') && <WorkedOut />}</span>}
+                                    </p>
+                                </div>
+                            )}
+                            <dl className="mt-3.5 grid grid-cols-2 gap-x-4 gap-y-3.5 border-t border-border-subtle pt-3.5 @xl:grid-cols-3">
+                                <Row label="Relevant experience" value={r.relevantExpMonths !== null && formatMonths(r.relevantExpMonths)} />
+                                <Row label="Current in-hand" value={r.currentInhand !== null && `${formatInr(r.currentInhand)} / month`} />
+                                <Row label="Expected in-hand" value={r.expectedInhand !== null && `${formatInr(r.expectedInhand)} / month`} />
+                                <Row label="Notice period" value={r.noticePeriodDays !== null && `${formatNotice(r.noticePeriodDays)}${x?.servingNotice ? ' · serving' : ''}`} />
+                                <Row label="Would relocate to" value={x?.preferredLocations?.length ? x.preferredLocations.join(', ') : r.location ? `${r.location} only` : null} />
+                                <Row label="Source" value={r.candidateSource} />
+                                <Row label="Sourced for" value={r.role} />
+                                <Row label="Came from" value={`${originLabel(r)}${r.sourceRow ? `, row ${r.sourceRow}` : ''}`} />
+                                <Row label="Updated" value={formatDate(r.updatedAt)} />
+                                {resumeRows.filter(([label]) => !['Education', 'Institute', 'Degree completed', 'Education type', 'Would move to', 'Serving notice'].includes(label)).map(([label, value]) => <Row key={label} label={label} value={value} />)}
+                            </dl>
+                        </section>
+                        {r.trackerValues && <details className={`${CARD} p-4`}>
                             <summary className="cursor-pointer text-sm font-semibold">Tracker values</summary>
                             <p className="mt-2 text-xs text-text-secondary">Saved at the last import of this record, including extra columns. Changes here in HRMS do not change these source values.</p>
                             <dl className="mt-3 grid grid-cols-1 gap-3 @2xl:grid-cols-2">{Object.entries(r.trackerValues).map(([label, value]) => <Row key={label} label={label} value={value} />)}</dl>
                         </details>}
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-3.5 @2xl:grid-cols-3 @5xl:grid-cols-4">
-                            <Row label="Current designation" value={r.currentDesignation && <>{r.currentDesignation}{r.inferred?.includes('currentDesignation') && <WorkedOut what="the latest employer" />}</>} />
-                            <Row label="Current company" value={r.currentOrganization && <>{r.currentOrganization}{r.inferred?.includes('currentOrganization') && <WorkedOut what="the latest employer" />}</>} />
-                            <Row label="Location" value={r.location} />
-                            <Row label="Total experience" value={r.totalExpMonths !== null && <>{formatMonths(r.totalExpMonths)}{r.inferred?.includes('totalExpMonths') && <WorkedOut />}</>} />
-                            <Row label="Relevant experience" value={r.relevantExpMonths !== null && formatMonths(r.relevantExpMonths)} />
-                            <Row label="Source" value={r.candidateSource} />
-                            <Row label="Came from" value={`${originLabel(r)}${r.sourceRow ? `, row ${r.sourceRow}` : ''}`} />
-                            <Row label="Updated" value={formatDate(r.updatedAt)} />
-                            {resumeRows.filter(([label]) => label !== 'Education' && label !== 'Would move to' && label !== 'Serving notice').map(([label, value]) => <Row key={label} label={label} value={value} />)}
-                        </dl>
-                        <div>
-                            <p className="text-xs font-medium text-text-secondary">Remark on the record</p>
-                            <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-text-primary">{r.remark || <span className="text-text-tertiary">No remark</span>}</p>
-                        </div>
                     </>
                 )}
-
                 {tab === 'resume' && (
                     <>
                         <ResumeSection
@@ -374,10 +453,15 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                 )}
 
                 {tab === 'activity' && open && <ActivityTimeline orgId={orgId} record={r} nonce={historyNonce} focusNonce={focusRemark} position={pipeline ? { id: pipeline.position.id, title: pipeline.position.title } : null} />}
+                {/* Owner 2026-11-24: the one message log */}
+                {tab === 'activity' && open && <MessageLog orgId={orgId} record={r} />}
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
                 {/* Owner 2026-11-19: the interviews scheduled, their links and, after the call, the notes */}
                 {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} />}
+
+                {/* Owner 2026-11-24: the assignment (with the AI score, HR only) and the documents after selection */}
+                {tab === 'work' && open && <AssignmentsTab orgId={orgId} record={r} onChanged={() => setHistoryNonce(n => n + 1)} />}
 
                 {tab === 'calls' && open && (
                     <CallsTab orgId={orgId} record={r}
@@ -385,7 +469,125 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         onRecord={saved => replace(saved)} />
                 )}
             </div>
+
+            {/* The person, on every tab (owner 2026-11-25, the reference layout's right panel). */}
+            <aside aria-label={`About ${r.fullName}`} className="min-w-0 divide-y divide-border-subtle rounded-2xl bg-surface px-4 ring-1 ring-inset ring-border @3xl:sticky @3xl:top-0">
+                <section aria-labelledby="cand-personal-title" className="py-4">
+                    <h3 id="cand-personal-title" className="text-sm font-semibold text-text-primary">Personal Information</h3>
+                    {r.email || r.phone || r.location ? (
+                        <dl className="mt-3 space-y-3">
+                            {r.email && (
+                                <InfoRow icon={Mail} label="Email">
+                                    <span className={CONTACT_PILL}><span className="truncate">{r.email}</span><CopyButton value={r.email} label="email address" /></span>
+                                </InfoRow>
+                            )}
+                            {r.phone && (
+                                <InfoRow icon={Phone} label="Phone">
+                                    <span className={`${CONTACT_PILL} tabular-nums`}><span className="truncate">{r.phone}</span><CopyButton value={r.phone} label="phone number" /></span>
+                                </InfoRow>
+                            )}
+                            {r.location && <InfoRow icon={MapPin} label="Location">{r.location}</InfoRow>}
+                        </dl>
+                    ) : <p className="mt-2 text-sm text-text-tertiary">No contact details on record.</p>}
+                </section>
+                {education.length > 0 && (
+                    <section aria-labelledby="cand-education-title" className="py-4">
+                        <h3 id="cand-education-title" className="text-sm font-semibold text-text-primary">Education Information</h3>
+                        <dl className="mt-3 space-y-3">
+                            {education.map(([label, value]) => <InfoRow key={label} icon={EDUCATION_ICON[label] ?? GraduationCap} label={label}>{value}</InfoRow>)}
+                        </dl>
+                    </section>
+                )}
+                {/* Notes: the record's remark; a new remark is written in Activity, where remarks are kept. */}
+                <section aria-labelledby="cand-notes-title" className="py-4">
+                    <h3 id="cand-notes-title" className="text-sm font-semibold text-text-primary">Notes</h3>
+                    {r.remark && <p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-surface-elevated px-3 py-2 text-[13px] text-text-primary"><span className="sr-only">Remark on the record: </span>{r.remark}</p>}
+                    <button type="button" onClick={addRemark} aria-label="Write a remark (opens Activity)"
+                        className="mt-2.5 flex h-10 w-full cursor-text items-center gap-x-2 rounded-lg border border-border bg-surface px-3 text-left text-[13px] text-text-tertiary transition-colors hover:border-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                        <span className="min-w-0 flex-1 truncate">Write note…</span>
+                        <PencilLine className="h-4 w-4 shrink-0" aria-hidden />
+                    </button>
+                    <p className="mt-1.5 text-xs text-text-tertiary">Remarks and interview feedback are kept in Activity.</p>
+                </section>
+            </aside>
+            </div>
+            </div>
         </Drawer>
+    );
+}
+
+const EDUCATION_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+    Qualification: GraduationCap, Institute: School, 'Year of degree': CalendarDays, 'Education type': BookOpen,
+};
+
+/** One line of the right-hand panel (reference layout): a small grey icon and label on the left, the value on the right. */
+function InfoRow({ icon: Icon, label, children }: { icon: React.ComponentType<{ className?: string }>; label: string; children: React.ReactNode }) {
+    return (
+        <div className="flex min-h-7 items-center justify-between gap-x-3">
+            <dt className="flex shrink-0 items-center gap-x-2 text-[13px] text-text-secondary">
+                <Icon className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden />{label}
+            </dt>
+            <dd className="min-w-0 break-words text-right text-[13px] font-semibold text-text-primary">{children}</dd>
+        </div>
+    );
+}
+
+/**
+ * The header's "…" menu: a disclosure (button + panel), closed by a click outside, Escape or picking an item. The panel
+ * stays mounted while hidden, so an item that opens its own dialog (Remove data) keeps it open.
+ */
+function OverflowMenu({ label, children }: { label: string; children: (close: () => void) => React.ReactNode }) {
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLDivElement>(null);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const id = useId();
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: MouseEvent) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', onDown);
+        return () => document.removeEventListener('mousedown', onDown);
+    }, [open]);
+    const close = () => setOpen(false);
+    return (
+        <div ref={wrap} className="relative" onKeyDown={e => { if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); trigger.current?.focus(); } }}>
+            <button ref={trigger} type="button" onClick={() => setOpen(o => !o)} aria-label={label} title={label} aria-expanded={open} aria-controls={id}
+                className={`${BTN_OUTLINE} w-9 px-0`}><MoreHorizontal className="h-4 w-4" /></button>
+            <div id={id} className={`${open ? '' : 'hidden'} absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl p-1.5 ${OVERLAY}`}>{children(close)}</div>
+        </div>
+    );
+}
+
+/** The panel's ratings for this position (owner 2026-11-25, reference layout): the overall, and a bar per round. */
+function CandidateScore({ score }: { score: MemberScore }) {
+    const stars = Math.round(score.overall);
+    return (
+        <section className={`${CARD} @container px-4 py-4`} aria-labelledby="cand-score-title">
+            <h3 id="cand-score-title" className="text-sm font-semibold text-text-primary">Candidate Score</h3>
+            {/* The overall on the left; a vertical hairline; a thin amber bar per round on the right (reference layout). */}
+            <div className="mt-3 grid gap-x-6 gap-y-4 @md:grid-cols-[auto_minmax(0,1fr)]">
+                <div className="@md:pr-6 @md:shadow-[1px_0_0_var(--border)]">
+                    <p className="font-display text-[40px] font-bold leading-none tracking-[-0.5px] tabular-nums text-text-primary">{score.overall.toFixed(1)}</p>
+                    <p className="mt-1.5 flex gap-x-0.5" aria-hidden>
+                        {[1, 2, 3, 4, 5].map(n => <Star key={n} className={`h-3.5 w-3.5 ${n <= stars ? 'fill-amber-400 text-amber-500' : 'text-border'}`} />)}
+                    </p>
+                    <p className="mt-1.5 text-xs text-text-secondary">Overall score<span className="text-text-tertiary"> · out of 5, {score.scorecards} {score.scorecards === 1 ? 'scorecard' : 'scorecards'}</span></p>
+                </div>
+                {score.rounds.length > 0 && (
+                    <ul className="space-y-3 self-center">
+                        {score.rounds.map(rd => (
+                            <li key={rd.round} className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)_auto] items-center gap-x-3 text-xs">
+                                <span className="truncate font-medium text-text-secondary" title={rd.round}>{rd.round}</span>
+                                <span aria-hidden className="block h-1.5 overflow-hidden rounded-full bg-muted"><span className="block h-full rounded-full bg-amber-400" style={{ width: `${Math.max(0, Math.min(100, (rd.overall / 5) * 100))}%` }} /></span>
+                                <span className="inline-flex items-center gap-x-1 font-semibold tabular-nums text-text-primary">
+                                    <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" aria-hidden />{rd.overall.toFixed(1)}
+                                    <span className="sr-only"> of 5, from {rd.scorecards} {rd.scorecards === 1 ? 'scorecard' : 'scorecards'}</span>
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        </section>
     );
 }
 
@@ -398,7 +600,7 @@ function CallsCount({ orgId, record, nonce }: { orgId: string; record: Candidate
         return () => ctrl.abort();
     }, [orgId, record.id, record.candidateId, nonce]);
     if (!n || n.id !== record.id || n.n === 0) return null;
-    return <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n.n}</span>;
+    return <span className="ml-1.5 text-xs font-medium opacity-70">{n.n}</span>;
 }
 
 /** The "In N positions" tag in the header. */
@@ -422,7 +624,7 @@ function ActivityCount({ orgId, record, nonce }: { orgId: string; record: Candid
         return () => ctrl.abort();
     }, [orgId, record.id, nonce]);
     if (!n || n.id !== record.id || n.n === 0) return null;
-    return <span className="ml-1.5 text-xs font-medium text-text-tertiary">{n.n}</span>;
+    return <span className="ml-1.5 text-xs font-medium opacity-70">{n.n}</span>;
 }
 
 /** The positions this person is in, with the stage in each. */

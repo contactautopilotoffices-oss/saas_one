@@ -25,7 +25,7 @@ import {
 import { firstSourcing, flagKnownPeople, sourceColumnsMissing } from "./known";
 import { parsePhone } from "./normalize";
 import { CandidateActionError } from "./records";
-import { resumeStorage, type ResumeStorage } from "./resumes";
+import { resumeReadingStopped, resumeStorage, type ResumeStorage } from "./resumes";
 import type { ResumeMatchReason } from "./types";
 
 const TABLE = "candidate_resume_files";
@@ -277,7 +277,7 @@ export async function processResumeText(
           continue;
         }
         const outcome = await readOne(client, storage, orgId, row, read, now);
-        if (outcome !== "retry") result[outcome] += 1;
+        if (outcome !== "retry" && outcome !== "cancelled") result[outcome] += 1;
       }
     };
     await Promise.all(Array.from({ length: Math.min(RESUME_TEXT_PARALLEL, rows.length) }, lane));
@@ -302,7 +302,8 @@ export async function saveResumeText(
   rawText: string,
   now: () => number,
   extra: Record<string, unknown> = {},
-): Promise<"read" | "rejected" | "other"> {
+): Promise<"read" | "rejected" | "other" | "cancelled"> {
+  if (await resumeReadingStopped(client, orgId, row.id)) return "cancelled";
   const update = (values: Record<string, unknown>) =>
     client.from(TABLE).update({ ...values, ...extra, updated_at: new Date(now()).toISOString() }).eq("id", row.id).eq("organization_id", orgId);
   // Postgres refuses a NUL in text or JSON ("unsupported Unicode escape sequence"); some PDFs carry one.
@@ -342,15 +343,16 @@ async function readOne(
   row: ClaimedRow,
   read: TextReader,
   now: () => number,
-): Promise<"read" | "unreadable" | "scans" | "failed" | "rejected" | "other" | "retry"> {
+): Promise<"read" | "unreadable" | "scans" | "failed" | "rejected" | "other" | "retry" | "cancelled"> {
   const at = new Date(now()).toISOString();
-  const update = (values: Record<string, unknown>) => client.from(TABLE).update({ ...values, updated_at: at }).eq("id", row.id).eq("organization_id", orgId);
+  const update = (values: Record<string, unknown>) => client.from(TABLE).update({ ...values, updated_at: at }).eq("id", row.id).eq("organization_id", orgId).eq("text_status", "working");
   try {
     const { data, error } = await storage.download(row.storage_path);
     if (error || !data) throw new Error(`download failed: ${error?.message ?? "no data"}`);
     const text = await read(new Uint8Array(await data.arrayBuffer()), row.file_name);
     return await saveResumeText(client, storage, orgId, row, text, now);
   } catch (error) {
+    if (await resumeReadingStopped(client, orgId, row.id)) return "cancelled";
     if (error instanceof DocumentError) {
       // Owner 2026-11-11: a PDF with no text layer is a scan -> the scan reader types it out (resume-scan.ts). Before
       // migration 20261111000003 the database refuses the new status and the file is marked unreadable, as it was.
@@ -632,7 +634,7 @@ export async function processResumeTextAll(
 ): Promise<{ organisations: number; read: number; linked: number }> {
   const now = options.now ?? Date.now;
   const deadline = now() + (options.budgetMs ?? RESUME_TEXT_BUDGET_MS.cron);
-  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").eq("text_status", "pending").limit(500);
+  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").in("text_status", ["pending", "working"]).limit(500);
   if (error) {
     if (linksMigrationMissing(error)) warnMissing(error);
     else console.error("[candidates] resume text: listing organisations failed", message(error));

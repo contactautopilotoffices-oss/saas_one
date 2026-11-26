@@ -596,7 +596,7 @@ export interface ResumeListQuery {
    * Linked to a candidate or not (phase 2); "rejected" lists the files removed as not resumes, "other" the kept
    * documents; "duplicate" (owner 2026-11-16) the files that matched a person already in the database.
    */
-  link: "" | "linked" | "unlinked" | "rejected" | "other" | "attention" | "duplicate";
+  link: "" | "linked" | "unlinked" | "rejected" | "other" | "attention" | "duplicate" | "reading";
   page: number;
   pageSize: number;
 }
@@ -616,7 +616,7 @@ export function parseResumeQuery(params: URLSearchParams): ResumeListQuery {
     source: ["naukri", "linkedin", "own", "portal", "vendor", "unknown"].includes(params.get("source") ?? "") ? params.get("source")! : "",
     sourcedRole: (params.get("sourcedRole") ?? "").trim().slice(0, 200),
     candidateId: candidateId && UUID.test(candidateId) ? candidateId.toLowerCase() : null,
-    link: link === "linked" || link === "unlinked" || link === "rejected" || link === "other" || link === "attention" || link === "duplicate" ? link : "",
+    link: link === "linked" || link === "unlinked" || link === "rejected" || link === "other" || link === "attention" || link === "duplicate" || link === "reading" ? link : "",
     page,
     pageSize,
   };
@@ -654,6 +654,7 @@ function applyQuery<Q extends Filterable<Q>>(query: Q, q: ResumeListQuery): Q {
   else if (q.link === "attention") query = query.or("text_status.eq.unreadable,text_status.eq.failed,extract_status.eq.failed");
   // Owner 2026-11-16: a second CV for a person who already had one, waiting for HR (Update the CV or delete it).
   else if (q.link === "duplicate") query = query.eq("duplicate_state", "pending");
+  else if (q.link === "reading") query = query.or("text_status.in.(pending,working,scan,scanning),and(text_status.eq.ready,extract_status.in.(pending,working))");
   return query;
 }
 
@@ -713,7 +714,7 @@ export async function resumeSummary(client: SupabaseClient, orgId: string): Prom
     byStatus("rejected"),
     byStatus("other"),
     // Details still to be read: every file whose text is read or still being read (a file given up on never gets there).
-    base().in("text_status", ["pending", "working", "scan", "scanning", "ready"]).in("extract_status", ["pending", "working"]),
+    base().eq("text_status", "ready").in("extract_status", ["pending", "working"]),
     ready().in("text_status", ["scan", "scanning"]),
   ]);
   if (error) fail("count the resumes", error);
@@ -889,6 +890,26 @@ export async function resumeLinks(client: SupabaseClient, storage: ResumeStorage
       return url ? [{ id: r.id, url, fileName: r.file_name }] : [];
     }),
   };
+}
+
+export const READING_CANCELLED = "Reading cancelled by recruiter";
+
+/** Stop queued work without deleting the original file or changing the candidate. */
+export async function cancelResumeReading(client: SupabaseClient, orgId: string, id: unknown): Promise<void> {
+  const row = await getRow(client, orgId, id);
+  const text = await client.from(TABLE).update({ text_status: "failed", text_error: READING_CANCELLED, extract_status: "skipped", extract_error: READING_CANCELLED })
+    .eq("organization_id", orgId).eq("id", row.id).eq("status", "ready").in("text_status", ["pending", "working", "scan", "scanning"]);
+  if (text.error) fail("cancel reading", text.error);
+  const details = await client.from(TABLE).update({ extract_status: "skipped", extract_error: READING_CANCELLED })
+    .eq("organization_id", orgId).eq("id", row.id).eq("status", "ready").eq("text_status", "ready").in("extract_status", ["pending", "working"]);
+  if (details.error) fail("cancel reading", details.error);
+}
+
+/** Readers must discard results when HR cancelled or deleted a file during the external read. */
+export async function resumeReadingStopped(client: SupabaseClient, orgId: string, id: string): Promise<boolean> {
+  const { data, error } = await client.from(TABLE).select("status, extract_error").eq("organization_id", orgId).eq("id", id).maybeSingle();
+  if (error) fail("check resume reading", error);
+  return !data || data.status !== "ready" || data.extract_error === READING_CANCELLED;
 }
 
 /** Removes the stored file and its row (a file uploaded by mistake). Not undoable; the file can be uploaded again. */

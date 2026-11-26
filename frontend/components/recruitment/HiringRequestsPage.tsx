@@ -5,6 +5,7 @@ import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import { Toast } from '@/frontend/components/ui/Toast';
 import type { ApiFailure } from '@/frontend/components/candidates/api';
 import { UiProvider } from '@/frontend/components/candidates/ui';
+import HiringManagerCandidates from './HiringManagerCandidates';
 import RequisitionsView from './RequisitionsView';
 
 /*
@@ -30,7 +31,7 @@ export default function HiringRequestsPage({ orgId }: { orgId: string }) {
         <UiProvider value={ui}>
             <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:py-8">
                 <h1 className="mb-4 font-display text-xl font-black tracking-tight text-text-primary">Hiring requests</h1>
-                {orgId ? <RequisitionsView orgId={orgId} mode="manager" /> : <p className="text-sm text-text-secondary">Open this page from your organisation.</p>}
+                {orgId ? <><RequisitionsView orgId={orgId} mode="manager" /><HiringManagerCandidates orgId={orgId} /></> : <p className="text-sm text-text-secondary">Open this page from your organisation.</p>}
             </div>
             <ModalPortal>
                 <Toast key={toast?.id} visible={visible && !!toast} message={toast?.message ?? ''} type={toast?.type ?? 'info'}

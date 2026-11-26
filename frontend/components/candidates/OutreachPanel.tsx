@@ -21,7 +21,7 @@ import { BTN_GHOST, BTN_PRIMARY, Dialog, INPUT, LABEL, Spinner, useUi, WELL } fr
 function CheckLine({ ok, label, soft = false }: { ok: boolean; label: string; soft?: boolean }) {
     return (
         <li className="flex items-center gap-x-2 text-sm text-text-primary">
-            <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${ok ? 'bg-success/15 text-emerald-800' : soft ? 'bg-warning/15 text-amber-800' : 'bg-error/10 text-red-800'}`} aria-hidden>
+            <span className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${ok ? 'bg-success/15 text-green-800' : soft ? 'bg-warning/15 text-amber-800' : 'bg-error/10 text-red-800'}`} aria-hidden>
                 {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
             </span>
             <span className="sr-only">{ok ? 'Yes: ' : soft ? 'Warning: ' : 'No: '}</span>{label}

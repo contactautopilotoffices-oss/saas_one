@@ -20,11 +20,13 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { APPROVAL_LEVEL_LABELS, REQUISITION_STATUS_LABELS, type ApprovalLevel, type Requisition } from "./types";
-import { activeRoles, heldRequisitions, HR_ROLES, loadRecruitmentConfig, unassignedRoles, waitingRequisitions, type RequisitionEvent } from "./requisitions";
+import { APPROVAL_LEVEL_LABELS, HOD_DECISION_HOURS, REQUISITION_STATUS_LABELS, type Requisition, type RequisitionLevel } from "./types";
+import { activeRoles, headOfDepartment, heldRequisitions, HR_ROLES, loadRecruitmentConfig, passFromDepartmentHead, unassignedRoles, waitingRequisitions, type RequisitionEvent } from "./requisitions";
 
 const NOTICES = "recruitment_requisition_notices";
 const TOKEN_ENTITY = "recruitment_requisition";
+/** The in-app notification's type (the bell; also the Omnichannel matrix key that may switch its push off). */
+const IN_APP_TYPE = "requisition_update";
 /** Stage 2's clock: reminders at 24 h and 48 h, escalation at 72 h, at each level. */
 export const REMINDER_HOURS = [24, 48] as const;
 export const ESCALATION_HOURS = 72;
@@ -49,6 +51,8 @@ const CAMPAIGNS = {
   decided: process.env.AISENSY_REQUISITION_DECIDED_CAMPAIGN ?? "",
   reminder: process.env.AISENSY_REQUISITION_REMINDER_CAMPAIGN ?? "",
   escalation: process.env.AISENSY_REQUISITION_ESCALATED_CAMPAIGN ?? "",
+  /** Owner 2026-11-24: "for your information" to the department head, HR Head and Director (requisition_update_v1). */
+  update: process.env.AISENSY_REQUISITION_UPDATE_CAMPAIGN ?? "",
 };
 
 export interface Person { id: string; name: string | null; email: string | null; phone: string | null }
@@ -56,7 +60,16 @@ export interface NotifyDeps {
   sendEmail: (to: string, subject: string, html: string) => Promise<void>;
   sendWhatsApp: (phone: string, campaign: string, params: string[], userName?: string) => Promise<void>;
   /** The one-time decision link for this approver, or null when links are not available. */
-  decisionLink: (orgId: string, requisition: Requisition, approverId: string, level: ApprovalLevel) => Promise<string | null>;
+  decisionLink: (orgId: string, requisition: Requisition, approverId: string, level: RequisitionLevel) => Promise<string | null>;
+  /** Stops every unused decision link for this request (before new ones are issued). Optional: tests leave it out. */
+  revokeLinks?: (requisitionId: string) => Promise<void>;
+  /**
+   * Owner 2026-11-24: an approved request opened a role: match the database and queue the job opening to the matches
+   * (when HR switched automatic outreach on). Optional: tests leave it out.
+   */
+  autoOutreach?: (orgId: string, requisition: Requisition) => Promise<void>;
+  /** Owner 2026-11-24: the in-app notification (the bell, and a push where the person allowed it). Optional: tests record it. */
+  notifyInApp?: (orgId: string, userIds: string[], note: { title: string; message: string; deepLink: string }) => Promise<void>;
   /** Extra recipients from the Omnichannel matrix for an event key. */
   matrixRecipients: (orgId: string, eventKey: string, contextual: { approverId?: string | null; requesterId?: string | null }) => Promise<{ emails: string[]; users: Person[] }>;
   appUrl: string;
@@ -66,12 +79,21 @@ export interface NotifyDeps {
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "").replace(/\/$/, "");
 
 /** What the one-time decision page shows (kept on the token, so the page needs no id to render). */
-export interface LinkSummary { requisitionNo: string | null; roleTitle: string; department: string | null; location: string | null; positions: number; requestType: string; replacingName: string | null; budgetMinCtc: number | null; budgetMaxCtc: number | null; minExperienceYears: number | null; qualification: string | null; targetJoiningDate: string | null; justification: string | null; raisedByName: string | null }
+export interface LinkSummary {
+  requisitionNo: string | null; roleTitle: string; department: string | null; location: string | null; positions: number; requestType: string; replacingName: string | null;
+  budgetMinCtc: number | null; budgetMaxCtc: number | null; minExperienceYears: number | null; qualification: string | null; targetJoiningDate: string | null; justification: string | null;
+  raisedByName: string | null;
+  /** Owner 2026-11-24 (absent on links issued before). */
+  structureNote?: string | null; internalMobility?: boolean | null; roleIsNew?: boolean;
+}
 export const linkSummary = (r: Requisition): LinkSummary => ({
   requisitionNo: r.requisitionNo, roleTitle: r.roleTitle, department: r.department, location: r.location, positions: r.positions, requestType: r.requestType, replacingName: r.replacingName,
   budgetMinCtc: r.budgetMinCtc, budgetMaxCtc: r.budgetMaxCtc, minExperienceYears: r.minExperienceYears, qualification: r.qualification, targetJoiningDate: r.targetJoiningDate,
   justification: r.justification ? r.justification.slice(0, 1500) : null, raisedByName: r.raisedByName,
+  structureNote: r.structureNote ? r.structureNote.slice(0, 1000) : null, internalMobility: r.internalMobility, roleIsNew: r.roleIsNew,
 });
+/** "Yes", "No" or "—" for the internal mobility answer. */
+export const mobilityText = (v: boolean | null | undefined) => (v === true ? "Yes: someone in the company may fill it" : v === false ? "No" : "—");
 
 /** The real senders (the routes and the cron). */
 export function defaultNotifyDeps(): NotifyDeps {
@@ -94,6 +116,29 @@ export function defaultNotifyDeps(): NotifyDeps {
         payload: { level, summary: linkSummary(requisition) },
       });
       return raw ? `${APP_URL}/api/recruitment/requisitions/act/${raw}` : null;
+    },
+    async revokeLinks(requisitionId) {
+      const { revokeTokensForEntity } = await import("@/backend/lib/emailActions/tokens");
+      await revokeTokensForEntity(TOKEN_ENTITY, requisitionId);
+    },
+    async autoOutreach(orgId, requisition) {
+      const [{ getCandidatesAdmin }, campaigns] = await Promise.all([import("./access"), import("./outreach-campaigns")]);
+      const admin = getCandidatesAdmin();
+      const campaign = await campaigns.createAutoCampaign(admin, orgId, requisition);
+      if (!campaign) return;
+      // The first batch goes after the approver's page has its answer; the hourly job sends the rest.
+      const run = () => campaigns.processCampaign(admin, orgId, campaign.id, campaigns.defaultCampaignSenders(admin, orgId)).then(() => undefined, (e) => console.error("[candidates] auto outreach first batch failed", e));
+      try {
+        const { after } = await import("next/server");
+        after(run);
+      } catch {
+        await run();
+      }
+    },
+    async notifyInApp(orgId, userIds, note) {
+      if (!userIds.length) return;
+      const { NotificationService } = await import("@/backend/services/NotificationService");
+      await NotificationService.sendToMany(userIds, { organizationId: orgId, type: IN_APP_TYPE, title: note.title, message: note.message, deepLink: note.deepLink });
     },
     async matrixRecipients(orgId, eventKey, contextual) {
       const [{ EmailRecipientResolver }, { WhatsAppRecipientResolver }] = await Promise.all([
@@ -145,16 +190,19 @@ function summaryHtml(r: Requisition): string {
     ["Target joining", r.targetJoiningDate ?? "—"],
     ["Raised by", r.raisedByName ?? "—"],
     ["Justification", r.justification ?? "—"],
+    ["Place in the structure", r.structureNote ?? "—"],
+    ["Internal mobility", mobilityText(r.internalMobility)],
+    ...(r.roleIsNew ? [["New designation", "Raised under “Others”: not in the department's list yet"] as [string, string]] : []),
   ];
   return `<table style="border-collapse:collapse;font-size:14px">${rows.map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#64748b;vertical-align:top">${esc(k)}</td><td style="padding:4px 0">${esc(v)}</td></tr>`).join("")}</table>`;
 }
 
-async function note(client: SupabaseClient, orgId: string, requisitionId: string, kind: string, level: ApprovalLevel | null, channel: "email" | "whatsapp", recipient: string, ok: boolean, error: string | null): Promise<void> {
+async function note(client: SupabaseClient, orgId: string, requisitionId: string, kind: string, level: RequisitionLevel | null, channel: "email" | "whatsapp", recipient: string, ok: boolean, error: string | null): Promise<void> {
   await client.from(NOTICES).insert({ organization_id: orgId, requisition_id: requisitionId, kind, level, channel, recipient, ok, error: error?.slice(0, 500) ?? null, created_at: new Date().toISOString() });
 }
 
 /** Sends one message each way it can, writing a notice per attempt. Never throws. */
-async function deliver(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, kind: string, level: ApprovalLevel | null, to: { emails: string[]; whatsapp: { person: Person; campaign: string; params: string[] }[] }, subject: string, html: string): Promise<void> {
+async function deliver(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, kind: string, level: RequisitionLevel | null, to: { emails: string[]; whatsapp: { person: Person; campaign: string; params: string[] }[] }, subject: string, html: string): Promise<void> {
   for (const email of [...new Set(to.emails.map((e) => e.trim().toLowerCase()).filter(Boolean))]) {
     try {
       await deps.sendEmail(email, subject, html);
@@ -178,7 +226,7 @@ async function deliver(client: SupabaseClient, orgId: string, deps: NotifyDeps, 
 }
 
 /** The approver is told a request waits on them (on submission, and when it moves to the Director). */
-async function notifyAwaiting(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, approverId: string, level: ApprovalLevel, kind: "awaiting" | "reminder_24" | "reminder_48"): Promise<void> {
+async function notifyAwaiting(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, approverId: string, level: RequisitionLevel, kind: "awaiting" | "reminder_24" | "reminder_48"): Promise<void> {
   const [who, extra] = await Promise.all([people(client, [approverId, r.raisedBy]), deps.matrixRecipients(orgId, kind === "awaiting" ? REQUISITION_EVENT_KEYS.awaiting : REQUISITION_EVENT_KEYS.reminder, { approverId, requesterId: r.raisedBy })]);
   const approver = who.get(approverId);
   const link = await deps.decisionLink(orgId, r, approverId, level);
@@ -230,7 +278,7 @@ async function notifyDirectorInformed(client: SupabaseClient, orgId: string, dep
 }
 
 /** 72 h without a decision: the Director (at the HR Head's level) or the matrix's escalation recipients are told. */
-async function notifyEscalated(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, level: ApprovalLevel): Promise<void> {
+async function notifyEscalated(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, level: RequisitionLevel): Promise<void> {
   const config = await loadRecruitmentConfig(client, orgId);
   // At the HR Head's level the Director is the escalation; at the Director's level, the Director's backup (and whoever the matrix names).
   const escalateTo = level === "hr_head" ? [config.director.userId, config.director.backupUserId] : [config.director.backupUserId, config.hrHead.userId];
@@ -302,20 +350,114 @@ export async function notifyRecruiterAssigned(client: SupabaseClient, position: 
   }
 }
 
+async function revokeLinks(deps: NotifyDeps, requisitionId: string): Promise<void> {
+  try {
+    await deps.revokeLinks?.(requisitionId);
+  } catch (error) {
+    console.error("[candidates] revoking old decision links failed", error);
+  }
+}
+
+// Everyone involved hears of it (owner 2026-11-24, 23 Nov meeting: "hiring manager, HOD, HR and directors, by mail,
+// WhatsApp and in the system") ------------------------------------------------------------------------------------------
+
+const DECISION_WORDS: Record<string, string> = { approved: "approved", rejected: "rejected", sent_back: "sent back for changes", on_hold: "put on hold", resumed: "taken off hold" };
+
+/** The department head, the HR Head and the Director of a request (the primaries), without the people in `except`. */
+async function stakeholders(client: SupabaseClient, orgId: string, r: Requisition, except: (string | null | undefined)[]): Promise<string[]> {
+  const config = await loadRecruitmentConfig(client, orgId);
+  const skip = new Set(except.filter(Boolean));
+  return [...new Set([headOfDepartment(config, r.department), config.hrHead.userId, config.director.userId].filter((id): id is string => Boolean(id) && !skip.has(id as string)))];
+}
+
+/** The in-app notification. Never throws. */
+async function inApp(deps: NotifyDeps, orgId: string, userIds: (string | null | undefined)[], title: string, message: string): Promise<void> {
+  const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+  if (!ids.length || !deps.notifyInApp) return;
+  try {
+    await deps.notifyInApp(orgId, ids, { title, message: message.slice(0, 500), deepLink: `/${orgId}/hiring-requests` });
+  } catch (error) {
+    console.error("[candidates] requisition in-app notice failed", error);
+  }
+}
+
+/** A request was submitted: the HR Head and the Director (and the department head when not deciding it) hear of it. */
+async function notifyRaised(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, approverId: string): Promise<void> {
+  const config = await loadRecruitmentConfig(client, orgId);
+  // The approver has the "awaiting" message; the head who is not deciding has the department_head one.
+  const ids = await stakeholders(client, orgId, r, [approverId, r.raisedBy, headOfDepartment(config, r.department)]);
+  const who = await people(client, [...ids, approverId]);
+  const waitingOn = who.get(approverId)?.name ?? (r.currentLevel ? APPROVAL_LEVEL_LABELS[r.currentLevel] : "the approvers");
+  const subject = `New hiring request ${r.requisitionNo ?? ""} · ${r.roleTitle}${r.department ? ` · ${r.department}` : ""}`;
+  const html = `<p>Hello,</p>
+    <p>${esc(r.raisedByName ?? "A manager")} raised a hiring request. It is with ${esc(waitingOn)}${r.currentLevel ? ` (${esc(APPROVAL_LEVEL_LABELS[r.currentLevel])})` : ""} now. No action is needed from you yet.</p>
+    ${summaryHtml(r)}
+    ${deps.appUrl ? button(hiringRequestsUrl(deps, orgId), "Open Hiring requests") : ""}`;
+  const targets = ids.map((id) => who.get(id)).filter((p): p is Person => Boolean(p));
+  const params = [r.requisitionNo ?? "", r.roleTitle, r.department ?? "-", `raised by ${r.raisedByName ?? "a manager"}, now with ${waitingOn}`];
+  await deliver(client, orgId, deps, r, "raised", null, {
+    emails: targets.map((p) => p.email ?? "").filter(Boolean),
+    whatsapp: targets.map((person) => ({ person, campaign: CAMPAIGNS.update, params })),
+  }, subject, html);
+  await inApp(deps, orgId, ids, `New hiring request: ${r.roleTitle}`, `${r.requisitionNo ?? ""} raised by ${r.raisedByName ?? "a manager"}${r.department ? ` for ${r.department}` : ""}. With ${waitingOn} now.`);
+}
+
+/** A decision: besides the manager (notifyDecided), the department head, HR Head and Director hear of it, not the one who decided. */
+async function notifyDecidedOthers(client: SupabaseClient, orgId: string, deps: NotifyDeps, r: Requisition, decision: string, reason: string | null, byName: string | null, byId: string | null): Promise<void> {
+  const what = DECISION_WORDS[decision] ?? decision;
+  // Resuming is a small step: in-app only.
+  const ids = await stakeholders(client, orgId, r, [byId, r.raisedBy]);
+  const line = `${r.requisitionNo ?? ""} for ${r.roleTitle} was ${what}${byName ? ` by ${byName}` : ""}.${reason ? ` ${reason}` : ""}`;
+  await inApp(deps, orgId, [r.raisedBy, ...ids], `Hiring request ${what}: ${r.roleTitle}`, line);
+  if (decision === "resumed") return;
+  const who = await people(client, ids);
+  const targets = ids.map((id) => who.get(id)).filter((p): p is Person => Boolean(p));
+  const subject = `For your information: hiring request ${r.requisitionNo ?? ""} ${what} · ${r.roleTitle}`;
+  const html = `<p>Hello,</p>
+    <p>Hiring request <strong>${esc(r.requisitionNo)}</strong> for <strong>${esc(r.roleTitle)}</strong>, raised by ${esc(r.raisedByName ?? "a manager")}, was <strong>${esc(what)}</strong>${byName ? ` by ${esc(byName)}` : ""}.</p>
+    ${reason ? `<p style="border-left:3px solid #cbd5e1;padding-left:10px;color:#334155">${esc(reason)}</p>` : ""}
+    ${r.status === "submitted" && r.currentLevel ? `<p>It is now with the ${esc(APPROVAL_LEVEL_LABELS[r.currentLevel])}.</p>` : ""}
+    ${deps.appUrl ? button(hiringRequestsUrl(deps, orgId), "Open Hiring requests") : ""}`;
+  const params = [r.requisitionNo ?? "", r.roleTitle, r.department ?? "-", `${what}${byName ? ` by ${byName}` : ""}`];
+  await deliver(client, orgId, deps, r, "decided_fyi", null, {
+    emails: targets.map((p) => p.email ?? "").filter(Boolean),
+    whatsapp: targets.map((person) => ({ person, campaign: CAMPAIGNS.update, params })),
+  }, subject, html);
+}
+
 /** The routes' notifier: one event from requisitions.ts -> the messages for it. */
 export function requisitionNotifier(client: SupabaseClient, orgId: string, deps: NotifyDeps = defaultNotifyDeps()): (event: RequisitionEvent) => Promise<void> {
   return async (event) => {
-    if (event.kind === "awaiting") await notifyAwaiting(client, orgId, deps, event.requisition, event.approverId, event.level, "awaiting");
-    else if (event.kind === "decided") await notifyDecided(client, orgId, deps, event.requisition, event.decision, event.reason, event.byName);
+    // The request moved on (a new level, or a decision): earlier one-time links must stop working before new ones go out,
+    // so an old link cannot decide a resubmitted request with its old details, and the link just issued is not revoked.
+    // A resume keeps the links (the request returns to the same level and approver).
+    if (event.kind === "awaiting" || (event.kind === "decided" && event.decision !== "resumed")) await revokeLinks(deps, event.requisition.id);
+    if (event.kind === "awaiting") {
+      await notifyAwaiting(client, orgId, deps, event.requisition, event.approverId, event.level, "awaiting");
+      await inApp(deps, orgId, [event.approverId], `Your decision: hiring request ${event.requisition.roleTitle}`, `${event.requisition.requisitionNo ?? ""} raised by ${event.requisition.raisedByName ?? "a manager"} waits on you as ${APPROVAL_LEVEL_LABELS[event.level]}.`);
+    } else if (event.kind === "raised") await notifyRaised(client, orgId, deps, event.requisition, event.approverId);
+    else if (event.kind === "decided") {
+      await notifyDecided(client, orgId, deps, event.requisition, event.decision, event.reason, event.byName);
+      await notifyDecidedOthers(client, orgId, deps, event.requisition, event.decision, event.reason, event.byName, event.byId ?? null);
+    }
     else if (event.kind === "director_informed") await notifyDirectorInformed(client, orgId, deps, event.requisition, event.directorId);
     else if (event.kind === "department_head") await notifyDepartmentHead(client, orgId, deps, event.requisition, event.headId);
-    else if (event.kind === "role_opened") await notifyRoleOpened(client, orgId, deps, event.requisition);
+    else if (event.kind === "role_opened") {
+      await notifyRoleOpened(client, orgId, deps, event.requisition);
+      if (deps.autoOutreach) {
+        try {
+          await deps.autoOutreach(orgId, event.requisition);
+        } catch (error) {
+          console.error("[candidates] automatic outreach failed", error);
+        }
+      }
+    }
     else if (event.kind === "still_needed") await notifyStillNeeded(client, orgId, deps, event.requisition, event.approverId, event.note);
   };
 }
 
 /** Which of these notices this request already had at this level. */
-async function sentKinds(client: SupabaseClient, orgId: string, requisitionId: string, level: ApprovalLevel): Promise<Set<string>> {
+async function sentKinds(client: SupabaseClient, orgId: string, requisitionId: string, level: RequisitionLevel): Promise<Set<string>> {
   const { data } = await client.from(NOTICES).select("kind").eq("organization_id", orgId).eq("requisition_id", requisitionId).eq("level", level).eq("ok", true);
   return new Set(((data ?? []) as { kind: string }[]).map((n) => n.kind));
 }
@@ -373,6 +515,12 @@ export async function runRequisitionReminders(client: SupabaseClient, orgId: str
   for (const { requisition: r, hoursAtLevel } of await waitingRequisitions(client, orgId, now)) {
     const level = r.currentLevel;
     if (!level || !r.currentApproverId) continue;
+    // Owner 2026-11-24: the department head gets the 24 h reminder; at 48 h the request passes to the HR Head on its own
+    // (who is then asked, and reminded and escalated on their own clock).
+    if (level === "hod" && hoursAtLevel >= HOD_DECISION_HOURS) {
+      if (await passFromDepartmentHead(client, orgId, r.id, { notify: requisitionNotifier(client, orgId, deps), now: () => now })) escalations += 1;
+      continue;
+    }
     const had = await sentKinds(client, orgId, r.id, level);
     if (hoursAtLevel >= ESCALATION_HOURS) {
       if (!had.has("escalation_72")) { await notifyEscalated(client, orgId, deps, r, level); escalations += 1; }

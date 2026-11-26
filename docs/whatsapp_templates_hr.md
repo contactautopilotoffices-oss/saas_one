@@ -8,6 +8,8 @@ This document contains the official **Meta WhatsApp Business Manager / AiSensy**
 
 Submit these exact template specifications to **Meta WhatsApp Business Manager / AiSensy** for approval.
 
+> **Naming rule (owner 2026-11-24):** every new HRMS template name starts with `hr_` (e.g. `hr_candidate_screening_v1`), so HRMS templates are easy to tell apart in AiSensy. Templates approved before this rule keep their names.
+
 ### Template 1: Ticket Submitted (To Submitter)
 * **Template Name**: `hr_ticket_created_submitter_v2`
 * **Category**: UTILITY
@@ -351,11 +353,122 @@ Sent from `backend/lib/candidates/requisition-notify.ts` to internal people only
   ```
 * `{{1}}` manager's first name · `{{2}}` request number · `{{3}}` role title · `{{4}}` approved / rejected / sent back for changes / put on hold / taken off hold / approved in plan by the HR Head · `{{5}}` the reason, or "-"
 
+#### Template: Job opening, with the application form — owner 2026-11-24
+The default WhatsApp template for bulk and automatic outreach (Recruitment → Outreach → Templates). HR can add others there: each names its AiSensy campaign and the order of its variables.
+* **Template Name**: `hr_candidate_job_opening_v1`
+* **Category**: MARKETING (it invites someone to apply) · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  We at Autopilot Offices found your profile a good fit for the {{2}} role in {{3}}.
+
+  If you are interested, please apply here: {{4}}
+
+  Autopilot Offices Recruitment Team
+  ```
+* `{{1}}` first name · `{{2}}` role · `{{3}}` location · `{{4}}` the candidate's own application form link
+
+#### Template: Screening questions — owner 2026-11-24
+Sent when HR moves someone to the screening stage (Recruitment → Outreach → Screening & interviews); again as the 24 h and 48 h reminders.
+* **Template Name**: `hr_candidate_screening_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  This is {{2}} from the {{3}} HR team. We have considered your profile for the {{4}} role in {{5}}.
+
+  If you are interested, please answer a few quick questions here: {{6}}
+
+  We will also call you shortly.
+  ```
+* `{{1}}` first name · `{{2}}` the HR person · `{{3}}` company · `{{4}}` role · `{{5}}` location · `{{6}}` their own link to the questions
+
+#### Template: Interview invite (with the interview page) — owner 2026-11-24
+Replaces `candidate_interview_invite_v1` in the app once approved (the app falls back to v1 when no page or template is set).
+* **Template Name**: `hr_candidate_interview_invite_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Your {{2}} interview for the {{3}} role at {{4}} is on {{5}}.
+
+  The job description, our company profile, the interview guidelines and how to join are here: {{6}}
+
+  Please confirm on the same page that you will attend.
+  ```
+* `{{1}}` first name · `{{2}}` round · `{{3}}` role · `{{4}}` company · `{{5}}` when · `{{6}}` the interview page link
+
+#### Template: Interview reminder (guidelines and Yes / No) — owner 2026-11-24
+Sent the day before, in working hours, unless the candidate already said they cannot attend.
+* **Template Name**: `hr_candidate_interview_reminder_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  A reminder of your {{2}} interview on {{3}}.
+
+  {{4}}
+
+  Please confirm you will attend: {{5}}
+  ```
+* `{{1}}` first name · `{{2}}` round · `{{3}}` when · `{{4}}` the guidelines on one line (e.g. "Use earphones. Sit in a quiet place. Dress formally.") · `{{5}}` the interview page link
+
+#### Template: Hiring request update (for your information) — owner 2026-11-24
+Sent to the department head, the HR Head and the Director when a request is raised and when it is decided (not to the person who decided, and not to the approver it now waits on: they get the "awaiting" message). Campaign: `AISENSY_REQUISITION_UPDATE_CAMPAIGN`; unset, these go by email and in-app only.
+* **Template Name**: `requisition_update_v1`
+* **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hiring request *{{1}}* for *{{2}}* ({{3}}): {{4}}.
+  No action is needed from you. Open the app under Hiring requests for the details.
+  ```
+* `{{1}}` request number · `{{2}}` role title · `{{3}}` department, or "-" · `{{4}}` what happened, e.g. "raised by Ravi Kumar, now with Dipti Shah" or "approved by Anita Verma"
+
+#### Template: Assignment — owner 2026-11-24
+Sent when HR sends an assignment (Candidate → Assignment & documents). The link opens the candidate's own page: the brief, the Drive link, the deadline, and where to submit.
+* **Template Name**: `hr_candidate_assignment_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Thank you for your time so far on the {{2}} role at {{3}}. The next step is an assignment: {{4}}.
+
+  Please submit it by {{5}}. The brief, the files and where to submit are here: {{6}}
+  ```
+* `{{1}}` first name · `{{2}}` role · `{{3}}` company · `{{4}}` assignment title · `{{5}}` deadline (e.g. "Thu, 27 Nov 2026 at 6:00 pm (IST)") · `{{6}}` the assignment page link
+
+#### Template: Documents to upload — owner 2026-11-24
+Sent when HR presses "Ask for documents" after selection. The link opens the upload page (salary slips and the rest HR lists).
+* **Template Name**: `hr_candidate_documents_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Congratulations on being selected for the {{2}} role at {{3}}.
+
+  To prepare your offer, please upload your documents (such as your latest salary slips) here: {{4}}
+  ```
+* `{{1}}` first name · `{{2}}` role · `{{3}}` company · `{{4}}` the documents page link
+
+#### Template: Letter of intent — owner 2026-11-24
+Sent with the email when HR releases an approved offer. The link opens the letter with the salary breakup, where the candidate accepts or declines.
+* **Template Name**: `hr_candidate_loi_v1` · **Category**: UTILITY · **Language**: `en`
+* **Body Text**:
+  ```text
+  Hello {{1}},
+
+  Your letter of intent for the {{2}} role at {{3}}, with your salary breakup, is ready.
+
+  Please read it and accept or decline here: {{4}}
+  ```
+* `{{1}}` first name · `{{2}}` role · `{{3}}` company · `{{4}}` the letter page link
+
 ---
 
 ### Candidate assessment invite (22 Nov 2026)
 
-Template and default AiSensy API campaign: `candidate_assessment_invite_v1`.
+Template and default AiSensy API campaign: `candidate_assessment_invite_v2` (owner 2026-11-24; `_v1` is no longer used).
 Submit this body for Meta approval, then activate the API campaign before enabling live sends. This is a manual Recruitment send, not an Omnichannel Matrix event.
 
 ```text

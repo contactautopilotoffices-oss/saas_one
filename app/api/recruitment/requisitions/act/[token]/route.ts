@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
-import { defaultNotifyDeps, requisitionNotifier, type LinkSummary } from "@/backend/lib/candidates/requisition-notify";
+import { defaultNotifyDeps, mobilityText, requisitionNotifier, type LinkSummary } from "@/backend/lib/candidates/requisition-notify";
 import { decideRequisition } from "@/backend/lib/candidates/requisitions";
-import { APPROVAL_LEVEL_LABELS, type ApprovalLevel } from "@/backend/lib/candidates/types";
+import { APPROVAL_LEVEL_LABELS, type RequisitionLevel as ApprovalLevel } from "@/backend/lib/candidates/types";
 import { actionPage } from "@/backend/lib/emailActions/page";
-import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult, revokeTokensForEntity } from "@/backend/lib/emailActions/tokens";
+import { consumeEmailActionToken, peekEmailActionToken, recordTokenResult } from "@/backend/lib/emailActions/tokens";
 
 /**
  * The approver's one-time link (owner 2026-11-17; Stage 2: "Managers and Directors approve from a phone, without a
@@ -30,6 +30,8 @@ function decisionPage(summary: LinkSummary, level: ApprovalLevel, error: string 
     ["Qualification", summary.qualification ?? "—"],
     ["Target joining", summary.targetJoiningDate ?? "—"],
     ["Raised by", summary.raisedByName ?? "—"],
+    ...(summary.internalMobility !== undefined ? [["Internal mobility", mobilityText(summary.internalMobility)] as [string, string]] : []),
+    ...(summary.roleIsNew ? [["New designation", "Raised under “Others”"] as [string, string]] : []),
   ];
   const choice = (value: string, label: string, hint: string) =>
     `<label class="opt"><input type="radio" name="decision" value="${value}" ${chosen === value ? "checked" : ""} required><span><b>${label}</b><small>${hint}</small></span></label>`;
@@ -53,14 +55,15 @@ textarea{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius
 ${error ? `<p class="err">${esc(error)}</p>` : ""}
 <table>${rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table>
 <p class="muted">Justification</p><div class="just">${esc(summary.justification ?? "—")}</div>
+${summary.structureNote ? `<p class="muted">Place in the current structure</p><div class="just">${esc(summary.structureNote)}</div>` : ""}
 <form method="POST" action="">
-${choice("approve", "Approve", level === "hr_head" ? "In plan: the role opens. Out of plan or above the CTC level: it goes to the Director." : "The role opens.")}
+${choice("approve", "Approve", level === "hod" ? "It goes on to the HR Head." : level === "hr_head" ? "In plan: the role opens. Out of plan or above the CTC level: it goes to the Director." : "The role opens.")}
 ${choice("send_back", "Send back for change", "The manager changes the request and submits it again. Say what needs to change.")}
-${choice("hold", "Put on hold", "It waits until an approver resumes it.")}
+${choice("hold", "Put on hold", "It waits until an approver resumes it. Give the reason.")}
 ${choice("reject", "Reject", "Final. Give the reason.")}
 ${level === "hr_head" ? `<div class="plan"><input type="checkbox" name="in_plan" value="1" id="in_plan"><label for="in_plan"><b>This role is in the approved headcount plan</b><br><small class="muted">Tick it before approving. Unticked, the request goes to the Director.</small></label></div>` : ""}
 <label class="muted" for="reason">Reason or note</label>
-<textarea id="reason" name="reason" maxlength="2000" placeholder="Required for Reject and Send back">${esc(reason)}</textarea>
+<textarea id="reason" name="reason" maxlength="2000" placeholder="Required for Reject, Send back and Hold">${esc(reason)}</textarea>
 <button class="btn" type="submit">Record my decision</button>
 </form>
 <p class="muted">This link works once. To change your mind afterwards, use the app under Hiring requests.</p>
@@ -98,7 +101,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     inPlan = form.get("in_plan") === "1";
   } catch { /* an empty form reads as no decision */ }
   if (!["approve", "reject", "send_back", "hold"].includes(decision)) return html(decisionPage(summary, level, "Choose one of the four.", decision, reason), 400);
-  if ((decision === "reject" || decision === "send_back") && !reason) return html(decisionPage(summary, level, decision === "reject" ? "Give the reason for rejecting." : "Say what needs to change.", decision, reason), 400);
+  if ((decision === "reject" || decision === "send_back" || decision === "hold") && !reason) {
+    return html(decisionPage(summary, level, decision === "reject" ? "Give the reason for rejecting." : decision === "hold" ? "Give the reason for putting it on hold." : "Say what needs to change.", decision, reason), 400);
+  }
 
   const claim = await consumeEmailActionToken(token);
   if (!claim.ok) {
@@ -111,9 +116,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { data: user } = await admin.from("users").select("full_name").eq("id", t.user_id).maybeSingle();
     const by = { id: t.user_id, name: ((user as { full_name?: string | null } | null)?.full_name ?? "").trim() || null };
     const requisition = await decideRequisition(admin, t.organization_id, by, t.entity_id, { decision, reason: reason || undefined, ...(level === "hr_head" ? { inPlan } : {}) }, { notify: requisitionNotifier(admin, t.organization_id, defaultNotifyDeps()), via: "link" });
-    await revokeTokensForEntity(ENTITY, t.entity_id, t.id);
+    // The other links for this request were revoked by the notifier before it issued the next level's link (revoking
+    // here, after the decision, would also kill the Director's fresh link).
     await recordTokenResult(t.id, "ok", ip);
-    const what = { approved: requisition.currentLevel === "director" ? "passed to the Director" : "approved", rejected: "rejected", sent_back: "sent back for changes", on_hold: "put on hold", submitted: "passed to the Director" }[requisition.status as string] ?? requisition.status;
+    const what = { approved: "approved", rejected: "rejected", sent_back: "sent back for changes", on_hold: "put on hold", submitted: `passed to the ${requisition.currentLevel ? APPROVAL_LEVEL_LABELS[requisition.currentLevel] : "next approver"}` }[requisition.status as string] ?? requisition.status;
     return html(actionPage({ kind: "success", title: `Request ${summary.requisitionNo ?? ""} ${what}`, message: requisition.status === "approved" ? "The role is now open in Recruitment → Positions." : "The manager has been told. Thank you." }));
   } catch (error) {
     const message = error instanceof CandidateActionError ? error.message : "Something went wrong. Open the app under Hiring requests and decide there.";

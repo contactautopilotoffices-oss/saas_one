@@ -73,8 +73,8 @@ export default function DepartmentHeadSettings({ organizationId }: { organizatio
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5" aria-label="Department heads">
             <h3 className="text-sm font-bold text-slate-900 md:text-base">Department heads</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-                A department head gets <span className="font-semibold">Hiring requests</span> in their sidebar, sees the requests raised for their department, and can <span className="font-semibold">endorse</span> them.
-                Endorsing tells the HR Head and Director they support the request; it does not approve it. The department on a request must match the name here (the form suggests these names).
+                A department head gets <span className="font-semibold">Hiring requests</span> in their sidebar and <span className="font-semibold">approves first</span> on the requests raised for their department: approve, send back, hold or reject.
+                Approved, a request goes on to the HR Head. If the head does not decide within 48 hours, it passes to the HR Head on its own. The department on a request must match the name here.
             </p>
             {!saved ? <p className="mt-3 flex items-center gap-2 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading</p> : (
                 <>

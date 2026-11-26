@@ -10,9 +10,13 @@ import {
 } from '@/backend/lib/candidates/filters';
 import { STATUS_DOT } from './format';
 import { NumberInput, OptionInput, TokenField } from './FieldPickers';
-import { BTN_GHOST, Dropdown, Reveal, type DropdownOption } from './ui';
+import { Dropdown, Reveal, type DropdownOption } from './ui';
 
 const FIELD_LABEL = 'text-[13px] font-semibold text-text-primary';
+/** Workspace skin (owner 2026-11-25): a visible teal focus ring on every control in the panel. */
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
+/** A small teal text button ("Change preferred location", "+ Add PPG/Doctorate"). */
+const LINK = `rounded text-xs font-semibold text-primary hover:underline ${FOCUS}`;
 /** Owner 2026-11-07: shown greyed out until records hold this data (migration 20261107000001, then resumes). */
 const RESUME_NOTE = 'Available once resumes are added';
 /** Owner 2026-11-07: gender, age and disability stay greyed out, with no data stored, until HR and legal sign off. */
@@ -33,7 +37,7 @@ const DISABILITY_OPTIONS: DropdownOption<''>[] = [{ value: '', label: 'All candi
 function Pill({ on, onClick, children, disabled }: { on: boolean; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
     return (
         <button type="button" aria-pressed={on} onClick={onClick} disabled={disabled}
-            className={`h-8 rounded-full border px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed ${on ? 'border-primary-dark bg-primary-dark text-white' : 'border-border bg-surface text-text-secondary enabled:hover:border-primary'}`}>
+            className={`h-8 rounded-full border px-3 text-[13px] font-medium transition-colors disabled:cursor-not-allowed ${FOCUS} ${on ? 'border-primary bg-primary text-white' : 'border-border bg-surface text-text-secondary enabled:hover:border-text-tertiary enabled:hover:text-text-primary'}`}>
             {children}
         </button>
     );
@@ -41,10 +45,10 @@ function Pill({ on, onClick, children, disabled }: { on: boolean; onClick: () =>
 
 function Segment<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: [T, string][]; onChange: (value: T) => void }) {
     return (
-        <div role="group" aria-label={label} className="inline-flex gap-0.5 rounded-lg bg-muted p-0.5">
+        <div role="group" aria-label={label} className="inline-flex gap-0.5 rounded-lg border border-border bg-surface-elevated p-0.5">
             {options.map(([id, text]) => (
                 <button key={id} type="button" aria-pressed={value === id} onClick={() => onChange(id)}
-                    className={`h-6 rounded-md px-2 text-xs font-semibold transition-colors ${value === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary'}`}>
+                    className={`h-6 rounded-md px-2 text-xs font-semibold transition-colors ${FOCUS} ${value === id ? 'bg-surface text-text-primary shadow-[var(--w-shadow)]' : 'text-text-secondary hover:text-text-primary'}`}>
                     {text}
                 </button>
             ))}
@@ -75,12 +79,15 @@ function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; 
 function Section({ title, count, open, onToggle, children }: { title: string; count: number; open: boolean; onToggle: () => void; children: React.ReactNode }) {
     return (
         <div>
-            <button type="button" onClick={onToggle} aria-expanded={open} className="flex h-9 w-full items-center justify-between rounded-lg px-2 text-sm font-semibold text-text-primary hover:bg-muted">
-                {count ? `${title} (${count})` : title}
-                <ChevronDown className={`h-4 w-4 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} aria-hidden />
+            <button type="button" onClick={onToggle} aria-expanded={open} className={`flex h-10 w-full items-center justify-between rounded-lg text-[13px] font-semibold text-text-primary hover:text-primary ${FOCUS}`}>
+                <span className="flex items-center gap-2">
+                    {title}
+                    {count > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-white">{count}</span>}
+                </span>
+                <ChevronDown className={`h-4 w-4 text-text-tertiary transition-transform duration-300 ${open ? 'rotate-180' : ''}`} aria-hidden />
             </button>
             <Reveal open={open}>
-                <div className="space-y-3.5 px-0.5 pb-2.5 pt-2.5">{children}</div>
+                <div className="space-y-3.5 px-0.5 pb-3 pt-1">{children}</div>
             </Reveal>
         </div>
     );
@@ -125,16 +132,16 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
 
     return (
         <div>
-            <div className="flex items-center justify-between gap-x-2 gap-y-2">
-                <h2 className="font-display text-[15px] font-semibold text-text-primary">Filters</h2>
+            <div className="-mx-4 -mt-4 flex items-center justify-between gap-x-2 gap-y-2 border-b border-border px-4 py-3">
+                <h2 className="text-[15px] font-semibold text-text-primary">Filters</h2>
                 <div className="flex items-center gap-x-1 gap-y-1">
-                    <button type="button" onClick={onClear} disabled={!canClear} className={`${BTN_GHOST} h-8 px-2 text-[13px]`}>Clear all</button>
+                    <button type="button" onClick={onClear} disabled={!canClear} className={`h-8 rounded-lg px-2 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/[.08] disabled:cursor-not-allowed disabled:text-text-tertiary disabled:hover:bg-transparent ${FOCUS}`}>Clear all</button>
                     {/* The same collapse button as the sidebar of the console this is shown in (owner 2026-11-09) */}
                     <PanelToggle variant={collapseStyle} collapsed={false} onToggle={onCollapse} label={collapseLabel} />
                 </div>
             </div>
 
-            <div className="mt-3.5 space-y-[18px]">
+            <div className="divide-y divide-border [&>*]:py-4 [&>*:last-child]:pb-0">
                 <div className="space-y-1.5">
                     <label htmlFor="cand-location" className={FIELD_LABEL}>Location</label>
                     <TokenField
@@ -149,10 +156,10 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                     />
                     <Gate open={has('preferredLocations')} note={RESUME_NOTE}>
                         <label className="flex cursor-pointer items-start gap-x-2 gap-y-2 text-xs font-medium leading-snug text-text-secondary">
-                            <input type="checkbox" checked={f.relocate} onChange={e => update({ relocate: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
+                            <input type="checkbox" checked={f.relocate} onChange={e => update({ relocate: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-primary" />
                             Include candidates who prefer to relocate to above locations
                         </label>
-                        <button type="button" onClick={() => setPreferredOpen(o => !o)} aria-expanded={preferredOpen} className="ml-6 text-xs font-semibold text-primary-dark hover:underline">
+                        <button type="button" onClick={() => setPreferredOpen(o => !o)} aria-expanded={preferredOpen} className={`ml-6 ${LINK}`}>
                             {preferredOpen ? 'Close preferred location' : f.preferredLocations.length ? `Change preferred location (${f.preferredLocations.length})` : 'Change preferred location'}
                         </button>
                         <Reveal open={preferredOpen}>
@@ -212,12 +219,13 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                     </div>
                     {inverted(f.salaryMin, f.salaryMax) && <BadRange />}
                     <label className="flex cursor-pointer items-start gap-x-2 gap-y-2 text-xs font-medium leading-snug text-text-secondary">
-                        <input type="checkbox" checked={f.includeNoSalary} onChange={e => update({ includeNoSalary: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-[var(--primary-dark)]" />
+                        <input type="checkbox" checked={f.includeNoSalary} onChange={e => update({ includeNoSalary: e.target.checked })} className="mt-px h-4 w-4 shrink-0 accent-primary" />
                         Include candidates who did not mention their salary
                     </label>
                 </div>
 
                 {/* Phase 2 (owner 2026-11-10): a stored resume linked to the candidate. Greyed out until the resume update is applied. */}
+                <div className="space-y-4">
                 <Gate open={!!availability?.applied} note="Available once the resume update is applied">
                     <div className="space-y-1.5">
                         <span className={FIELD_LABEL}>Resume on file</span>
@@ -227,14 +235,23 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                             <Pill on={f.hasResume === 'no'} onClick={() => update({ hasResume: 'no' })}>No resume</Pill>
                         </div>
                     </div>
+                    {/* Owner 2026-11-24: leave out people messaged recently, so nobody is contacted twice in a short time. */}
+                    <div className="space-y-1.5">
+                        <span className={FIELD_LABEL}>Last contacted</span>
+                        <div role="group" aria-label="Last contacted" className="flex flex-wrap gap-1.5">
+                            <Pill on={!f.notContactedDays} onClick={() => update({ notContactedDays: null })}>Any</Pill>
+                            {([7, 30, 90] as const).map(d => <Pill key={d} on={f.notContactedDays === d} onClick={() => update({ notContactedDays: d })}>{`Not in ${d} days`}</Pill>)}
+                        </div>
+                    </div>
                     {/* Owner 2026-11-15: blacklisted people are left out of every search unless asked for. */}
                     <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
                         <input type="checkbox" checked={f.showBlacklisted} onChange={e => update({ showBlacklisted: e.target.checked })} className="h-4 w-4 accent-primary" />
                         Show blacklisted
                     </label>
                 </Gate>
+                </div>
 
-                <div className="space-y-1 border-t border-border-subtle pt-2.5">
+                <div className="divide-y divide-border-subtle">
                     <Section title="Employment details" count={employmentCount} open={section === 'employment'} onToggle={() => toggle('employment')}>
                         <Field label="Role sourced for" htmlFor="cand-role">
                             <OptionInput id="cand-role" orgId={orgId} field="role" value={f.role} onChange={role => update({ role })} placeholder="e.g. Leasing Manager" />
@@ -273,7 +290,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                                             ))}
                                         </div>
                                         <Reveal open={e.mode === 'specific'}>
-                                            <div role="group" aria-label={`Choose ${level.label} qualifications`} className="mt-1.5 flex flex-wrap gap-1.5 rounded-xl bg-surface-elevated px-2 py-2">
+                                            <div role="group" aria-label={`Choose ${level.label} qualifications`} className="mt-1.5 flex flex-wrap gap-1.5 rounded-lg border border-border-subtle bg-surface-elevated px-2 py-2">
                                                 {level.options.map(option => (
                                                     <Pill key={option} on={e.picks.includes(option)} onClick={() => setEducation(level.id, { picks: toggleIn(e.picks, option) })}>{option}</Pill>
                                                 ))}
@@ -284,7 +301,7 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
                             );
                         })}
                         {!showPpg && f.education.ppg.mode === 'any' && (
-                            <button type="button" onClick={() => setShowPpg(true)} className="text-xs font-semibold text-primary-dark hover:underline">+ Add PPG/Doctorate</button>
+                            <button type="button" onClick={() => setShowPpg(true)} className={LINK}>+ Add PPG/Doctorate</button>
                         )}
                         <Gate open={has('institute')} note={RESUME_NOTE}>
                             <Field label="Institute" htmlFor="cand-institute">
@@ -360,10 +377,10 @@ export default function FilterRail({ orgId, filters, update, availability, canCl
 export function FilterStrip({ activeCount, onExpand, collapseStyle = 'panel' }: { activeCount: number; onExpand: () => void; collapseStyle?: PanelToggleVariant }) {
     return (
         <button type="button" onClick={onExpand} aria-label={activeCount ? `Show filters. ${activeCount} in use.` : 'Show filters'} title="Show filters"
-            className="flex w-full flex-col items-center gap-2.5 rounded-xl py-2 text-[13px] font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary">
+            className={`flex w-full flex-col items-center gap-2.5 rounded-lg py-2 text-[13px] font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary ${FOCUS}`}>
             {/* Looks like PanelToggle (the strip itself is the button, so it cannot hold another one) */}
             <span className={`flex ${PANEL_TOGGLE_LOOK[collapseStyle]}`}><PanelToggleIcon variant={collapseStyle} collapsed /></span>
-            {activeCount > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-dark px-1.5 text-xs font-bold text-white">{activeCount}</span>}
+            {activeCount > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-bold text-white">{activeCount}</span>}
             <span className="rotate-180 [writing-mode:vertical-rl]">Filters</span>
         </button>
     );

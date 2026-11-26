@@ -62,7 +62,7 @@ export default function AssessmentSender({ orgId, record, onSent, onClose }: { o
                     <button type="button" className={BTN_PRIMARY} disabled={!canSend('email') || !record.email || !connectionId} onClick={() => void send('email')}>{busy && <Spinner />}Send by email</button>
                     <button type="button" className={BTN_SECONDARY} disabled={!canSend('whatsapp') || !record.phone} onClick={() => void send('whatsapp')}>Send on WhatsApp</button>
                 </div>
-                {(['email', 'whatsapp'] as const).map(channel => { const r = receipt(channel); return r && <p key={channel} role="status" className={`text-sm ${r.status === 'sent' ? 'text-emerald-800' : 'text-amber-800'}`}>
+                {(['email', 'whatsapp'] as const).map(channel => { const r = receipt(channel); return r && <p key={channel} role="status" className={`text-sm ${r.status === 'sent' ? 'text-green-800' : 'text-amber-800'}`}>
                     {channel === 'email' ? 'Email' : 'WhatsApp'}: {r.status === 'sent' ? `sent to ${r.recipient}` : r.status === 'failed' ? `not sent. ${r.error ?? ''} You can retry.` : 'delivery not confirmed; check Zoho Sent or AiSensy before sending again.'}
                 </p>; })}
             </>}

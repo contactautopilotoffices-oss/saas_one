@@ -26,12 +26,6 @@ import { createClient } from '@/frontend/utils/supabase/client';
 import DepartmentTasksTab from '@/frontend/components/task-manager/DepartmentTasksTab';
 import MeetingsTab from '@/frontend/components/task-manager/meetings/MeetingsTab';
 import ProctorHub from '@/frontend/components/proctor/ProctorHub';
-import dynamic from 'next/dynamic';
-
-// Owner 2026-11-07: Candidate Search for the HR logins (beta), the same module the Tech console hosts. Loaded on demand.
-const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), {
-    loading: () => <div className="py-12 text-center text-sm text-slate-500">Loading Candidate Search…</div>,
-});
 
 export function HRTicketsContent({ orgId }: { orgId: string }) {
     const { user, membership } = useAuth();
@@ -50,15 +44,15 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         );
     }, [orgId, membership, user]);
 
-    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments' | 'candidates'>(() => {
+    const [activeTab, setActiveTab] = useState<'tickets' | 'notes' | 'tree' | 'directory' | 'reconciliation' | 'config' | 'analytics' | 'tasks' | 'meeting_assistant' | 'assessments'>(() => {
         const tabParam = searchParams?.get('subtab') || searchParams?.get('tab');
-        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates', 'meeting_assistant'];
+        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'meeting_assistant'];
         if (tabParam && allowed.includes(tabParam)) return tabParam as any;
         return 'tickets';
     });
     const [visitedTabs, setVisitedTabs] = useState<Set<string>>(() => {
         const tabParam = searchParams?.get('subtab') || searchParams?.get('tab');
-        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates', 'meeting_assistant'];
+        const allowed = ['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'meeting_assistant'];
         const initial = (tabParam && allowed.includes(tabParam)) ? tabParam : 'tickets';
         return new Set([initial]);
     });
@@ -349,7 +343,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         const filterParam = searchParams.get('filter');
         const ticketIdParam = searchParams.get('ticketId');
 
-        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments', 'candidates'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
+        if (tabParam && (['tickets', 'notes', 'tree', 'directory', 'reconciliation', 'config', 'analytics', 'tasks', 'assessments'].includes(tabParam) || (tabParam === 'meeting_assistant' && canUseMeetingAssistant))) {
             setActiveTab(tabParam as any);
         }
         if (actionParam === 'create') {
@@ -1376,8 +1370,7 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
         // overflow-x-clip, not -hidden (owner 2026-11-09): "hidden" makes this box a scroll container that never
         // scrolls, which stops anything inside (Candidate Search's filters) from sticking while the page scrolls.
         <div className="w-full max-w-full space-y-5 pb-12 overflow-x-clip">
-            {/* Header Action Toolbar. Owner 2026-11-15: not on the Recruitment tab, whose own tab row is its header. */}
-            {activeTab !== 'candidates' && (
+            {/* Header Action Toolbar. (Owner 2026-11-25: Recruitment moved to its own workspace, /recruitment.) */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-1">
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2">
@@ -1401,11 +1394,9 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
                     </button>
                 </div>
             </div>
-            )}
 
-            {/* HR Console Navigation Tabs (Visible for Org Super Admin and HR Team). Owner 2026-11-15: hidden on the
-                Recruitment tab to give it the room; the sidebar leads back to the other HR screens. */}
-            {canViewOrgWide && activeTab !== 'candidates' && (
+            {/* HR Console Navigation Tabs (Visible for Org Super Admin and HR Team). */}
+            {canViewOrgWide && (
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none border-b border-slate-200 dark:border-slate-800">
                     <button
                         type="button"
@@ -2700,12 +2691,6 @@ export function HRTicketsContent({ orgId }: { orgId: string }) {
             {visitedTabs.has('assessments') && (
                 <div className={activeTab === 'assessments' ? 'block' : 'hidden'}>
                     <ProctorHub orgId={orgId} embedded />
-                </div>
-            )}
-            {/* Owner 2026-11-07: Candidate Search (beta) for the HR logins. Kept mounted so a resume upload in progress survives a tab switch. */}
-            {visitedTabs.has('candidates') && (
-                <div className={activeTab === 'candidates' ? 'block' : 'hidden'}>
-                    <CandidateSearchTab orgId={resolvedOrgId} collapseStyle="chevron" />
                 </div>
             )}
 

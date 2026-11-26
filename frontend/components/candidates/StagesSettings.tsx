@@ -9,7 +9,8 @@ import {
 import { api, qs } from './api';
 import { formatCount, formatDate } from './format';
 import { setStageList, StageChip, TONE_DOT, TONE_LABELS } from './stage-ui';
-import { BTN_DANGER_GHOST, BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, FIELD, LABEL, Spinner, useUi, WELL } from './ui';
+import { Spinner, useUi } from './ui';
+import { K_BTN, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN_PRIMARY, K_AREA, K_CARD, K_FIELD, K_ICON_BTN, K_LABEL, K_WELL, Loading } from './page-kit';
 
 /*
  * Recruitment -> Configurations (owner 2026-11-19: "add a configurations tab … where you can configure the stages like
@@ -124,8 +125,8 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
         notify('Stages saved. Every position now uses this list.', 'success');
     };
 
-    if (loadError) return <div className={`${CARD} px-5 py-6`}><p role="alert" className="text-sm text-error">{loadError}</p><button type="button" onClick={() => setNonce(n => n + 1)} className={`${BTN_GHOST} mt-2`}>Try again</button></div>;
-    if (!list) return <p className="flex items-center gap-x-2 text-sm text-text-tertiary"><Spinner className="h-3.5 w-3.5" />Loading the stages</p>;
+    if (loadError) return <div className={`${K_CARD} px-5 py-5`}><p role="alert" className="text-sm text-error">{loadError}</p><button type="button" onClick={() => setNonce(n => n + 1)} className={`${K_BTN} mt-3`}>Try again</button></div>;
+    if (!list) return <Loading>Loading the stages</Loading>;
 
     const group = (g: Group) => rows.filter(r => groupOf(r) === g);
     const renderRow = (r: Row, i: number, all: Row[]) => {
@@ -144,7 +145,7 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
                     if (over?.uid !== r.uid || over.after !== after) setOver({ uid: r.uid, after });
                 }}
                 onDrop={e => { e.preventDefault(); if (dragUid && over) moveNextTo(dragUid, over.uid, over.after); endDrag(); }}
-                className={`${CARD} relative px-3 py-2.5 ${r.hidden ? 'opacity-70' : ''} ${dragUid === r.uid ? 'opacity-40' : ''}`}>
+                className={`${K_CARD} relative px-3 py-3 ${r.hidden ? 'opacity-70' : ''} ${dragUid === r.uid ? 'opacity-40' : ''}`}>
                 {over?.uid === r.uid && dragUid !== r.uid && (
                     <span aria-hidden className={`pointer-events-none absolute inset-x-3 h-1 rounded-full bg-primary ${over.after ? '-bottom-[5px]' : '-top-[5px]'}`} />
                 )}
@@ -160,19 +161,19 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
                                 if (row) e.dataTransfer.setDragImage(row, 24, 24);
                             }}
                             onDragEnd={endDrag}
-                            className="flex h-9 w-7 cursor-grab items-center justify-center rounded text-text-tertiary hover:bg-muted hover:text-text-primary active:cursor-grabbing" title="Drag to reorder (or use the arrows)" aria-hidden><GripVertical className="h-5 w-5" /></span>
-                        <button type="button" onClick={() => step(r.uid, -1)} disabled={legacy || i === 0} aria-label={`Move ${r.name} up`} className={`${BTN_GHOST} h-9 w-9 px-0`}><ArrowUp className="h-[18px] w-[18px]" /></button>
-                        <button type="button" onClick={() => step(r.uid, 1)} disabled={legacy || i === all.length - 1} aria-label={`Move ${r.name} down`} className={`${BTN_GHOST} h-9 w-9 px-0`}><ArrowDown className="h-[18px] w-[18px]" /></button>
+                            className="flex h-9 w-7 cursor-grab items-center justify-center rounded-md text-text-tertiary hover:bg-surface-elevated hover:text-text-primary active:cursor-grabbing" title="Drag to reorder (or use the arrows)" aria-hidden><GripVertical className="h-5 w-5" /></span>
+                        <button type="button" onClick={() => step(r.uid, -1)} disabled={legacy || i === 0} aria-label={`Move ${r.name} up`} className={K_ICON_BTN}><ArrowUp className="h-[18px] w-[18px]" /></button>
+                        <button type="button" onClick={() => step(r.uid, 1)} disabled={legacy || i === all.length - 1} aria-label={`Move ${r.name} down`} className={K_ICON_BTN}><ArrowDown className="h-[18px] w-[18px]" /></button>
                     </span>
                     <label htmlFor={nameId} className="sr-only">Stage name</label>
                     <input id={nameId} value={r.name} onChange={e => patch(r.uid, { name: e.target.value })} maxLength={STAGE_NAME_MAX} disabled={legacy}
-                        className={`${FIELD} h-9 min-w-[180px] flex-[2_1_200px] font-semibold`} />
+                        className={`${K_FIELD} min-w-[180px] flex-[2_1_200px] font-semibold`} />
                     <label htmlFor={`stage-col-${r.uid}`} className="sr-only">Board column (round)</label>
                     <input id={`stage-col-${r.uid}`} list={`stage-columns-${orgId}`} value={r.kind === 'out' ? '' : r.column ?? ''} onChange={e => patch(r.uid, { column: e.target.value })} maxLength={STAGE_COLUMN_MAX}
                         disabled={legacy || r.kind === 'out'} placeholder={r.kind === 'out' ? 'Under the board' : 'Round, e.g. L1 · Hiring Manager'} title="The board column (round) this status sits in"
-                        className={`${FIELD} h-9 min-w-[150px] flex-[1.5_1_170px]`} />
+                        className={`${K_FIELD} min-w-[150px] flex-[1.5_1_170px]`} />
                     <label htmlFor={`stage-kind-${r.uid}`} className="sr-only">Type</label>
-                    <select id={`stage-kind-${r.uid}`} value={r.kind} onChange={e => patch(r.uid, { kind: e.target.value as StageKind })} disabled={legacy} title={STAGE_KIND_HINTS[r.kind]} aria-describedby={`stage-kind-hint-${r.uid}`} className={`${FIELD} h-9 w-[140px]`}>
+                    <select id={`stage-kind-${r.uid}`} value={r.kind} onChange={e => patch(r.uid, { kind: e.target.value as StageKind })} disabled={legacy} title={STAGE_KIND_HINTS[r.kind]} aria-describedby={`stage-kind-hint-${r.uid}`} className={`${K_FIELD} w-[140px]`}>
                         {STAGE_KINDS.map(k => <option key={k} value={k}>{STAGE_KIND_LABELS[k]}</option>)}
                     </select>
                     <div role="radiogroup" aria-label={`Colour of ${r.name}`} className="flex items-center gap-x-1">
@@ -184,9 +185,9 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
                     <span className="ml-auto flex items-center gap-x-1">
                         <span className={`min-w-[64px] text-right text-xs tabular-nums ${n ? 'font-semibold text-text-primary' : 'text-text-tertiary'}`} title="People in this stage, across every position">{formatCount(n)} {n === 1 ? 'person' : 'people'}</span>
                         {r.hidden
-                            ? <button type="button" onClick={() => patch(r.uid, { hidden: false })} disabled={legacy} className={`${BTN_GHOST} h-8`} title="Offer this stage again when moving people"><Eye className="h-3.5 w-3.5" />Show</button>
-                            : <button type="button" onClick={() => patch(r.uid, { hidden: true })} disabled={legacy} className={`${BTN_GHOST} h-8`} title="Keep its history, stop offering it when moving people"><EyeOff className="h-3.5 w-3.5" />Hide</button>}
-                        <button type="button" onClick={() => remove(r.uid)} disabled={legacy || !canDelete} className={`${BTN_DANGER_GHOST} h-8`}
+                            ? <button type="button" onClick={() => patch(r.uid, { hidden: false })} disabled={legacy} className={K_BTN_GHOST} title="Offer this stage again when moving people"><Eye className="h-3.5 w-3.5" />Show</button>
+                            : <button type="button" onClick={() => patch(r.uid, { hidden: true })} disabled={legacy} className={K_BTN_GHOST} title="Keep its history, stop offering it when moving people"><EyeOff className="h-3.5 w-3.5" />Hide</button>}
+                        <button type="button" onClick={() => remove(r.uid)} disabled={legacy || !canDelete} className={K_BTN_GHOST_DANGER}
                             title={canDelete ? 'Delete this stage' : `${n} ${n === 1 ? 'person is' : 'people are'} in this stage. Move them first, or hide it.`}><Trash2 className="h-3.5 w-3.5" />Delete</button>
                     </span>
                 </div>
@@ -205,11 +206,11 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
                 </div>
                 {r.whatsapp && (
                     <div className="mt-2 pl-[112px] max-sm:pl-0">
-                        <label htmlFor={`stage-msg-${r.uid}`} className={LABEL}>Default WhatsApp text (HR can edit it before each send)</label>
+                        <label htmlFor={`stage-msg-${r.uid}`} className={K_LABEL}>Default WhatsApp text (HR can edit it before each send)</label>
                         <textarea id={`stage-msg-${r.uid}`} rows={2} value={r.message ?? ''} onChange={e => patch(r.uid, { message: e.target.value })} disabled={legacy}
                             placeholder="e.g. You have been shortlisted for the first interview round. Our recruiter will call you shortly."
-                            className={`${FIELD} mt-1 h-auto w-full resize-y py-2 leading-relaxed`} />
-                        <p className={`mt-0.5 text-right text-xs tabular-nums ${oneLine(r.message).length > STAGE_MESSAGE_MAX ? 'font-medium text-red-800' : 'text-text-tertiary'}`}>{oneLine(r.message).length}/{STAGE_MESSAGE_MAX}</p>
+                            className={`${K_AREA} mt-1`} />
+                        <p className={`mt-0.5 text-right text-xs tabular-nums ${oneLine(r.message).length > STAGE_MESSAGE_MAX ? 'font-medium text-red-700 dark:text-red-400' : 'text-text-tertiary'}`}>{oneLine(r.message).length}/{STAGE_MESSAGE_MAX}</p>
                     </div>
                 )}
             </li>
@@ -220,7 +221,7 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
         if (!items.length && g !== 'flow') return null;
         return (
             <section className="space-y-2" aria-label={title}>
-                <p className={LABEL}>{title} <span className="font-normal text-text-tertiary">· {hint}</span></p>
+                <p className={K_LABEL}>{title} <span className="font-normal text-text-tertiary">· {hint}</span></p>
                 <ul className="space-y-2">{items.map((r, i, all) => renderRow(r, i, all))}</ul>
             </section>
         );
@@ -228,37 +229,37 @@ export default function StagesSettings({ orgId }: { orgId: string }) {
 
     return (
         <div className="space-y-4">
-            <section className={`${CARD} px-5 py-4`}>
+            <section className={`${K_CARD} px-5 py-5`}>
                 <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
                     <div className="min-w-0 flex-1">
-                        <h2 className="font-display text-lg font-semibold text-text-primary">Pipeline stages</h2>
-                        <p className="mt-1 max-w-[70ch] text-sm text-text-secondary">One list for every position; anyone in HR can change it. The board shows one column per round in the order below, with each status as an area inside its column. New people start at the first stage.</p>
+                        <h2 className="text-base font-semibold text-text-primary">Pipeline stages</h2>
+                        <p className="mt-1 max-w-[70ch] text-sm text-text-tertiary">One list for every position; anyone in HR can change it. The board shows one column per round in the order below, with each status as an area inside its column. New people start at the first stage.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        {dirty ? <span className="text-xs font-semibold text-amber-800">Unsaved changes</span> : <span className="text-xs text-text-tertiary">{list.source === 'default' ? 'The built-in list (not changed yet)' : 'All changes saved'}</span>}
-                        <button type="button" onClick={() => { setRows(saved); setError(''); }} disabled={!dirty || busy} className={BTN_GHOST}><RotateCcw className="h-4 w-4" />Discard</button>
-                        <button type="button" onClick={() => void save()} disabled={!dirty || busy || legacy} className={BTN_PRIMARY}>{busy && <Spinner />}Save changes</button>
+                        {dirty ? <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-amber-50 px-2.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />Unsaved changes</span> : <span className="text-xs text-text-tertiary">{list.source === 'default' ? 'The built-in list (not changed yet)' : 'All changes saved'}</span>}
+                        <button type="button" onClick={() => { setRows(saved); setError(''); }} disabled={!dirty || busy} className={K_BTN}><RotateCcw className="h-4 w-4" />Discard</button>
+                        <button type="button" onClick={() => void save()} disabled={!dirty || busy || legacy} className={K_BTN_PRIMARY}>{busy && <Spinner />}Save changes</button>
                     </div>
                 </div>
-                {legacy && <p role="status" className="mt-3 rounded-lg bg-warning/15 px-3 py-2 text-sm text-amber-900">Editing the stages needs a database update first: run <span className="font-mono text-xs">20261119000001_recruitment_stages.sql</span> in Supabase. Until then the pipeline keeps the earlier ten stages.</p>}
+                {legacy && <p role="status" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-200 dark:ring-amber-500/30">Editing the stages needs a database update first: run <span className="font-mono text-xs">20261119000001_recruitment_stages.sql</span> in Supabase. Until then the pipeline keeps the earlier ten stages.</p>}
                 {error && <p role="alert" className="mt-3 text-sm font-medium text-error">{error}</p>}
             </section>
 
             <datalist id={`stage-columns-${orgId}`}>{columns.map(c => <option key={c} value={c} />)}</datalist>
 
             {/* What the board will look like: the rounds in order */}
-            <div className={`${WELL} flex flex-wrap items-center gap-x-1.5 gap-y-1.5 px-3 py-2.5`} aria-label="Board columns, in order">
-                <span className="mr-1 text-xs text-text-secondary">Board:</span>
+            <div className={`${K_WELL} flex flex-wrap items-center gap-x-1.5 gap-y-1.5 px-3 py-2.5`} aria-label="Board columns, in order">
+                <span className="mr-1 text-xs font-semibold text-text-secondary">Board:</span>
                 {columns.map((c, i) => <span key={c} className="text-xs font-semibold text-text-primary">{c}{i < columns.length - 1 ? <span className="px-1 font-normal text-text-tertiary">→</span> : null}</span>)}
             </div>
 
             {section('flow', 'In the flow', 'the board, left to right; a round with several statuses shows them in this order')}
-            <div><button type="button" onClick={add} disabled={legacy || busy} className={BTN_SECONDARY}><Plus className="h-4 w-4" />Add stage</button></div>
+            <div><button type="button" onClick={add} disabled={legacy || busy} className={K_BTN}><Plus className="h-4 w-4" />Add stage</button></div>
             {section('out', 'Out of the flow', 'the strip under the board')}
             {section('hidden', 'Hidden', 'kept for history, not offered when moving people')}
 
-            <section className={`${CARD} px-5 py-4`} aria-label="Changes to the stages">
-                <p className={LABEL}>Recent changes <span className="font-normal text-text-tertiary">· the stages, and the hiring request settings made in the Tech dashboard</span></p>
+            <section className={`${K_CARD} px-5 py-5`} aria-label="Changes to the stages">
+                <p className={K_LABEL}>Recent changes <span className="font-normal text-text-tertiary">· the stages, and the hiring request settings made in the Tech dashboard</span></p>
                 {list.changes?.length ? (
                     <ul className="mt-2 space-y-1.5">
                         {list.changes.map((c, i) => <li key={i} className="text-sm text-text-primary"><span className="text-text-secondary">{formatDate(c.at)}{c.byName ? ` · ${c.byName}` : ''}:</span> {c.summary}</li>)}

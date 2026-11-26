@@ -122,7 +122,8 @@ async function run() {
     // 2026-11-15: the newest migration restates the whole list (every earlier job plus the rest of the application's)
     // 2026-11-16: the Recruitment calls' two jobs (call_transcribe, call_analyse) make the newest list this one
     // 2026-11-19: ticket_rules_draft, then ticket_photo, then ticket_category_suggest make the newest list this one
-    const sqlJobs = read('supabase/migrations/20261119000007_ai_models_ticket_category_job.sql');
+    // 2026-11-24: candidate_assignment_score (scoring a candidate's assignment) makes the newest list this one
+    const sqlJobs = read('supabase/migrations/20261125000002_ai_models_screening_questions_job.sql');
     check('every job in the catalog is allowed by the newest job list (which replaces the earlier ones)', C.AI_JOBS.every(j => sqlJobs.includes(`'${j.key}'`)));
     const earlier = [...read('supabase/migrations/20261114000001_unified_brain_ai_model_job.sql').matchAll(/'([a-z_]+)'/g)].map(m => m[1]).filter(j => /^(wa_|voice_|import_|superuser_|learning_|duplicate_|candidate_|brain_)/.test(j));
     check('and every job that could be saved before can still be saved', earlier.length >= 16 && earlier.every(j => sqlJobs.includes(`'${j}'`)), earlier.filter(j => !sqlJobs.includes(`'${j}'`)));
@@ -270,6 +271,8 @@ async function run() {
         ['backend/lib/whatsapp/assistant/runtime.ts', /modelFor\('assistant_interpret', ''\)/],
         // 2026-11-16: the Recruitment Calls tab reads its two chains (the candidates' chain caller for the LLM, chainFor for speech)
         ['backend/lib/callInsights/analyse.ts', /jobCaller\("call_analyse"\)/],
+    ['backend/lib/candidates/assignment-score.ts', /jobCaller\("candidate_assignment_score"\)/],
+    ['backend/lib/candidates/screening-questions.ts', /jobCaller\("candidate_screening_questions"\)/],
         ['backend/lib/callInsights/transcribe.ts', /chainFor\("call_transcribe"\)[\s\S]*return CALL_TRANSCRIBE_MODELS/],
     ];
     for (const [file, re] of SITES) check(file, re.test(read(file)));

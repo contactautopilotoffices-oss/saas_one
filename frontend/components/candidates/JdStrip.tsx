@@ -40,7 +40,7 @@ export default function JdStrip({ filters, update, title, fileName, withoutCount
                 <FileText className="h-4 w-4 shrink-0 text-primary-dark" aria-hidden />
                 <p className="min-w-0 flex-1 text-sm font-semibold text-text-primary">
                     From the JD <span className="font-normal text-text-secondary">· {title}{fileName && fileName !== title ? ` · ${fileName}` : ''}</span>
-                    {savedAsPosition && <span className="ml-2 rounded-full bg-info/10 px-2 py-0.5 text-xs font-semibold text-blue-800">Position</span>}
+                    {savedAsPosition && <span className="ml-2 rounded-full bg-info/10 px-2 py-0.5 text-xs font-semibold text-stone-800">Position</span>}
                 </p>
                 {!savedAsPosition && <button type="button" onClick={onSavePosition} className={`${BTN_GHOST} text-primary-dark`}><FolderPlus className="h-4 w-4" />Save as a position</button>}
                 <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} className={BTN_GHOST}>{open ? 'Hide' : 'Show'}<ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} /></button>

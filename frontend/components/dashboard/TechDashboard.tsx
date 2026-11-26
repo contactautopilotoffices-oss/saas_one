@@ -41,8 +41,6 @@ const EscalationHierarchyBuilder = dynamic(() => import('@/frontend/components/e
 const PPMModule = dynamic(() => import('@/frontend/components/ppm/PPMModule'), { loading: TabLoading });
 // Owner 2026-10-29: the drive Tech shares with the Design team (the Design console has the same tab)
 const FilesTab = dynamic(() => import('@/frontend/components/files/FilesTab'), { loading: TabLoading });
-// Owner 2026-11-02: Candidate Search (HR candidate sheets, CRUD, AI search with a chosen top N); here for now
-const CandidateSearchTab = dynamic(() => import('@/frontend/components/candidates/CandidateSearchTab'), { loading: TabLoading });
 // Owner 2026-11-02: the Super Admin console's "New" ticket quick action
 const TicketCreateModal = dynamic(() => import('@/frontend/components/tickets/TicketCreateModal'), { loading: () => null });
 // Owner 2026-11-03: Requests = the Super Admin console's Requests tab (one shared component: List / Board / Flow Map,
@@ -57,6 +55,8 @@ const RecruitmentRaiserSettings = dynamic(() => import('@/frontend/components/ad
 // Owner 2026-11-20: "move this Hiring request approvals section to the tech login in HR configs tab"
 const ApprovalSettings = dynamic(() => import('@/frontend/components/candidates/ApprovalSettings'), { loading: TabLoading });
 const DepartmentHeadSettings = dynamic(() => import('@/frontend/components/admin/DepartmentHeadSettings'), { loading: TabLoading });
+// Owner 2026-11-24: the hiring request form's department → designations list
+const HierarchySettings = dynamic(() => import('@/frontend/components/admin/HierarchySettings'), { loading: TabLoading });
 
 type TechTab =
     | 'requests'
@@ -83,7 +83,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
             { id: 'meeting_room', label: 'Meeting Room', icon: DoorOpen },
             { id: 'vms_face', label: 'VMS Face (Testing)', icon: ScanFace },
             { id: 'files', label: 'Files', icon: FolderOpen },
-            { id: 'candidates', label: 'Candidate Search', icon: UserSearch },
+            { id: 'candidates', label: 'Recruitment', icon: UserSearch },
             // Owner 2026-11-20: HR settings the Tech team owns (who can raise hiring requests)
             { id: 'hr_configs', label: 'HR Configs', icon: SlidersHorizontal },
         ],
@@ -204,7 +204,15 @@ export default function TechDashboard() {
         router.replace(`${window.location.pathname}?${next.toString()}`, { scroll: false });
     }, [router]);
 
-    const openTab = (tab: TechTab) => { setSidebarOpen(false); setQuery({ tab, view: null }); };
+    // Owner 2026-11-25: Recruitment (formerly Candidate Search) is its own workspace now; the tab and old links open it.
+    const openTab = (tab: TechTab) => {
+        setSidebarOpen(false);
+        if (tab === 'candidates') { router.push('/recruitment'); return; }
+        setQuery({ tab, view: null });
+    };
+    useEffect(() => {
+        if (tabParam === 'candidates') router.replace('/recruitment');
+    }, [tabParam, router]);
     const pickProperty = (id: string) => { setSelectorOpen(false); setQuery({ propertyId: id === 'all' ? null : id }); };
 
     const activeProperty = properties.find(p => p.id === selectedPropertyId) || null;
@@ -389,11 +397,10 @@ export default function TechDashboard() {
                             {activeTab === 'tasks' && <TaskManagerSuperuserDashboard orgId={org?.id || ''} />}
                             {activeTab === 'control_centre' && <TaskManagerTestingDashboard orgId={org?.id || ''} />}
                             {activeTab === 'brain' && org && <BrainConsole orgId={org.id} />}
-                            {activeTab === 'hr_configs' && org && <div className="mx-auto max-w-5xl space-y-6"><RecruitmentRaiserSettings organizationId={org.id} /><DepartmentHeadSettings organizationId={org.id} /><ApprovalSettings orgId={org.id} /></div>}
+                            {activeTab === 'hr_configs' && org && <div className="mx-auto max-w-5xl space-y-6"><RecruitmentRaiserSettings organizationId={org.id} /><DepartmentHeadSettings organizationId={org.id} /><HierarchySettings organizationId={org.id} /><ApprovalSettings orgId={org.id} /></div>}
                             {assistantOpened && <div className={activeTab === 'meetings' ? '' : 'hidden'}><MeetingsTab space="tech" /></div>}
                             {activeTab === 'meeting_room' && <BookMeetingRoom />}
                             {activeTab === 'files' && org && <FilesTab orgId={org.id} team="tech" />}
-                            {activeTab === 'candidates' && org && <CandidateSearchTab orgId={org.id} />}
                             {activeTab === 'vms_face' && propertyFilter && org && <VMSFaceDashboard key={propertyFilter} orgId={org.id} propertyId={propertyFilter} propertyName={activeProperty?.name || ''} />}
                             {activeTab === 'water_logger' && propertyFilter && <WaterDashboard propertyId={propertyFilter} />}
                             {activeTab === 'water' && <WaterAnalyticsDashboard key="water-analytics-tab" propertyId={propertyFilter} orgId={org?.id} properties={properties} />}

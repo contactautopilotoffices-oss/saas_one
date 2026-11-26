@@ -29,7 +29,7 @@ const ME = { id: USER, name: "Roohi" };
 const NOW = () => new Date("2026-11-19T05:30:00Z");
 
 function fakes() {
-  const log = { meetings: [] as unknown[], whatsapp: [] as { phone: string; campaignName: string; templateParams: string[] }[], emails: [] as { to: string; subject: string; html: string }[] };
+  const log = { meetings: [] as unknown[], whatsapp: [] as { phone: string; campaignName: string; templateParams: string[]; userName?: string }[], emails: [] as { to: string; subject: string; html: string }[] };
   const deps: InterviewDeps = {
     async createMeeting(userId, input) {
       log.meetings.push({ userId, ...input });
@@ -86,11 +86,13 @@ describe("schedule interview", () => {
       ["L1", "2026-11-21T11:00", "online", MEETING, "https://app.example.com/guest/secret-link", "Priya Shah, Kunal Rao", "Check Tally and GST returns"]);
     assert.equal((await listMembers(client, ORG, positionId))[0].stage, "l1_pending");
 
-    // WhatsApp: the template's five one-line parameters, recorded with the interview.
-    assert.deepEqual(log.whatsapp, [{
-      phone: "919876500002", campaignName: "candidate_interview_invite_v1", userName: "Farah Naik",
-      templateParams: ["Farah", "L1", "Assistant Manager – Accounts", "Sat, 21 Nov 2026 at 11:00 am (IST)", "Join the video call here: https://app.example.com/guest/secret-link"],
-    }]);
+    // WhatsApp (owner 2026-11-24): HR's invite template, its last parameter the interview's own page (the job, the
+    // company profile, the guidelines, the video link and Yes / No), recorded with the interview.
+    assert.equal(log.whatsapp.length, 1);
+    const [wa] = log.whatsapp;
+    assert.deepEqual([wa.phone, wa.campaignName, wa.userName], ["919876500002", "hr_candidate_interview_invite_v1", "Farah Naik"]);
+    assert.deepEqual(wa.templateParams.slice(0, 5), ["Farah", "L1", "Assistant Manager – Accounts", "Autopilot Offices", "Sat, 21 Nov 2026 at 11:00 am (IST)"]);
+    assert.match(wa.templateParams[5], /^https:\/\/app\.example\.com\/interview\/[A-Za-z0-9_-]{32}$/);
     const [row] = (await db.query<{ kind: string; status: string; interview_id: string | null }>("select kind, status, interview_id from public.candidate_outreach")).rows;
     assert.deepEqual([row.kind, row.status, typeof row.interview_id], ["interview_invite", "sent", "string"]);
 

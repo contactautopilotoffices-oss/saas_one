@@ -26,7 +26,7 @@ import {
 import { jobCaller, type JsonCaller, type JsonReply } from "./models";
 import { modelBusy } from "./resume-extract";
 import { linkUnmatched, linksMigrationMissing, saveResumeText } from "./resume-text";
-import { resumeStorage, type ResumeStorage } from "./resumes";
+import { resumeReadingStopped, resumeStorage, type ResumeStorage } from "./resumes";
 
 const TABLE = "candidate_resume_files";
 const SAFETY_MS = 2_000;
@@ -252,7 +252,7 @@ async function scanOne(
   result: ResumeScanResult,
 ): Promise<void> {
   const update = (values: Record<string, unknown>) =>
-    client.from(TABLE).update({ ...values, updated_at: new Date(now()).toISOString() }).eq("id", row.id).eq("organization_id", orgId);
+    client.from(TABLE).update({ ...values, updated_at: new Date(now()).toISOString() }).eq("id", row.id).eq("organization_id", orgId).eq("text_status", "scanning");
   try {
     const { data, error } = await storage.download(row.storage_path);
     if (error || !data) throw new Error(`download failed: ${error?.message ?? "no data"}`);
@@ -271,6 +271,7 @@ async function scanOne(
     }
 
     const reply = await scanResume(bytes, caller, deadline - now() - SAFETY_MS);
+    if (await resumeReadingStopped(client, orgId, row.id)) return;
     const cost = { scan_model: reply.model, scan_tokens_in: reply.usage?.input ?? null, scan_tokens_out: reply.usage?.output ?? null };
     if (reply.text.replace(/\s+/g, "").length < RESUME_SCAN_MIN_CHARS) {
       await update({ text_status: "unreadable", extract_status: "skipped", text_error: "Scanned file: nothing readable on its pages; attach it to a candidate by hand", ...cost });
@@ -278,7 +279,7 @@ async function scanOne(
       return;
     }
     const outcome = await saveResumeText(client, storage, orgId, row, reply.text, now, cost);
-    result[outcome] += 1;
+    if (outcome !== "cancelled") result[outcome] += 1;
     console.info(`[candidates] resume scans: ${row.file_name} -> ${outcome} (${reply.model}, ${count ?? "?"} pages, ${reply.usage?.input ?? "?"} in / ${reply.usage?.output ?? "?"} out)`);
   } catch (error) {
     const why = message(error);
@@ -307,7 +308,7 @@ export async function processResumeScansAll(client: SupabaseClient, options: Res
   const deadline = now() + (options.budgetMs ?? RESUME_SCAN_BUDGET_MS.cron);
   const out = { organisations: 0, read: 0, linked: 0 };
   if (deadline - now() < RESUME_SCAN_MIN_START_MS) return out;
-  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").eq("text_status", "scan").limit(500);
+  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").in("text_status", ["scan", "scanning"]).limit(500);
   if (error) {
     if (!linksMigrationMissing(error)) console.error("[candidates] resume scans: listing organisations failed", message(error));
     return out;

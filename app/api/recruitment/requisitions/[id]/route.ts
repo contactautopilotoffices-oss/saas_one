@@ -8,6 +8,7 @@ import {
 import type { RequisitionResponse } from "@/backend/lib/candidates/types";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireOrgMember, UUID } from "../../_lib/auth";
+import { formHierarchy } from "../../_lib/people";
 
 export const runtime = "nodejs";
 
@@ -62,7 +63,9 @@ export async function PATCH(request: Request, { params }: Params) {
   delete fields.orgId;
   try {
     const by = await actorFor(auth.admin, auth.user);
-    const deps = { notify: requisitionNotifier(auth.admin, auth.orgId) };
+    // Owner 2026-11-24: a submitted role must come from the form's list (or "Others").
+    const submitting = fields.action === "submit" || (fields.action === undefined && fields.submit === true);
+    const deps = { notify: requisitionNotifier(auth.admin, auth.orgId), hierarchy: submitting ? await formHierarchy(auth.admin, auth.orgId, auth.access.config) : undefined };
     if (fields.action === "submit") return NextResponse.json({ requisition: await submitRequisition(auth.admin, auth.orgId, by, id, deps) });
     if (fields.action === "withdraw") return NextResponse.json({ requisition: await withdrawRequisition(auth.admin, auth.orgId, by, id, fields.reason) });
     if (fields.action === "still_needed") return NextResponse.json({ requisition: await confirmStillNeeded(auth.admin, auth.orgId, by, id, fields.note, deps) });

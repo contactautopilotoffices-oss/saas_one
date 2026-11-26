@@ -39,7 +39,11 @@ export type AiJob =
     // Owner 2026-11-19: the AI reads a ticket's photo (backend/lib/ticketing/ticketPhoto.ts)
     | 'ticket_photo'
     // Owner 2026-11-19: categories to add / merge / rename, suggested on the button (backend/lib/ticketing/categoryConfig.ts)
-    | 'ticket_category_suggest';
+    | 'ticket_category_suggest'
+    // Owner 2026-11-24: a candidate's assignment scored against the JD, for HR only (backend/lib/candidates/assignment-score.ts)
+    | 'candidate_assignment_score'
+    // Owner 2026-11-25: a position's own screening questions drafted from its JD; HR edits and saves (backend/lib/candidates/screening-questions.ts)
+    | 'candidate_screening_questions';
 
 export type Capability = 'chat' | 'vision' | 'speech';
 export type Provider = 'anthropic' | 'engy' | 'groq' | 'gemini' | 'groq_speech' | 'openai' | 'sarvam';
@@ -125,6 +129,10 @@ const CANDIDATE_FIX_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:claude-s
 const CANDIDATE_SUGGEST_DEFAULT = ['anthropic:claude-haiku-5-5'] as const;
 // Owner 2026-11-11: fills only empty fields and HR reviews everything, so the fast tier first (doctrine L10)
 const CANDIDATE_EXTRACT_DEFAULT = ['anthropic:claude-haiku-5-5', 'anthropic:claude-sonnet-5-5'] as const;
+/** Owner 2026-11-24: an assignment is judged on its substance, so a stronger model first. */
+const CANDIDATE_ASSIGNMENT_DEFAULT = ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5'] as const;
+/** Owner 2026-11-25: a draft HR reads and edits, so the mid tier first. */
+const CANDIDATE_SCREENING_DEFAULT = ['anthropic:claude-sonnet-5-5', 'anthropic:claude-haiku-5-5'] as const;
 /**
  * Owner 2026-11-14: the Unified Brain starts on Claude Opus 5.5 and steps down on a failure; the tier is meant to be
  * re-chosen here from the eval (doctrine L2, L10). It needs tool calling, so only providers with a tool adapter.
@@ -155,6 +163,8 @@ export const AI_JOBS: readonly JobInfo[] = [
     { key: 'candidate_fix', label: 'Fixing flagged rows', hint: 'Suggests corrected values for sheet rows with problems; HR approves each change', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_FIX_DEFAULT },
     { key: 'candidate_suggest', label: 'Suggesting keywords', hint: 'Offers related search terms under the keyword box as soon as it answers; the number of candidates who have each term is filled in beside it afterwards', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SUGGEST_DEFAULT },
     { key: 'brain_turn', label: 'The brain turn', hint: 'Reads the message, looks things up with its skills, and answers or proposes an action (tickets, rooms, readings, wiki, memory). The first model that answers is used; the rest are backups', group: 'Unified brain', needs: 'chat', providers: ['anthropic', 'engy', 'groq'], defaults: BRAIN_TURN_DEFAULT },
+    { key: 'candidate_assignment_score', label: 'Scoring assignments', hint: 'Scores a candidate\'s submitted assignment (its text, notes and a PDF) against the job description, with strengths and gaps. Only HR sees it; the hiring manager does not, and it decides nothing. A PDF is read by the Claude models in this list only', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_ASSIGNMENT_DEFAULT },
+    { key: 'candidate_screening_questions', label: 'Drafting screening questions', hint: 'Drafts a position\'s own screening questions from its job description, when HR presses the button. HR edits and saves them; nothing reaches a candidate before that. The standard questions (experience, city, notice, salary) are not drafted: they are always asked', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_SCREENING_DEFAULT },
     { key: 'candidate_extract', label: 'Reading resumes', hint: 'Reads education, industry, skills and employers out of each uploaded resume into the candidate\'s empty fields; one call per resume. A scanned PDF is typed out first by the Claude model in this list', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CANDIDATE_EXTRACT_DEFAULT },
     { key: 'call_transcribe', label: 'Calls: speech to text', hint: 'Turns an uploaded screening-call recording into a transcript with time stamps. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'speech', providers: ['sarvam', 'groq_speech'], defaults: CALL_TRANSCRIBE_DEFAULT },
     { key: 'call_analyse', label: 'Calls: reading the call', hint: 'Reads a screening call\'s transcript for sentiment, interest, the concerns raised and the facts heard (pay, notice, location), each with a quote. Advisory only: a person applies each fact. The first model that answers is used; the rest are backups', group: 'Candidate Search', needs: 'chat', providers: CHAT_PROVIDERS, defaults: CALL_ANALYSE_DEFAULT },

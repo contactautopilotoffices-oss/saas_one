@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, ChevronDown, Copy, LoaderCircle, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, LoaderCircle, Star, X } from 'lucide-react';
 import ModalPortal from '@/frontend/components/ui/ModalPortal';
 import { STATUS_LABELS, RECORD_STATUSES, type RecordStatus } from '@/backend/lib/candidates/types';
 import { STATUS_DOT } from './format';
@@ -40,7 +40,7 @@ import type { ApiFailure } from './api';
 
 export const EASE_PATIENT = [0.19, 1, 0.22, 1] as const;
 
-export const CARD = 'rounded-2xl bg-surface shadow-[var(--w-shadow)]';
+export const CARD = 'recruitment-card rounded-2xl bg-surface shadow-[var(--w-shadow)]';
 export const CARD_HOVER = 'transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)]';
 export const OVERLAY = 'bg-surface shadow-[0_0_0_1px_rgba(0,0,0,0.08),var(--w-shadow-drag)]';
 export const WELL = 'rounded-xl bg-surface-elevated';
@@ -52,9 +52,9 @@ export const NUM_MD = 'font-display text-base font-medium leading-[1.4] tabular-
 export const NUM_SM = 'font-display text-sm font-medium leading-[1.4] tabular-nums';
 
 export const BTN_PRIMARY =
-    'inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50';
+    'recruitment-primary inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-primary px-4 text-sm font-bold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_SECONDARY =
-    'inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-surface px-4 text-sm font-bold text-text-primary shadow-[var(--w-shadow)] transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)] disabled:cursor-not-allowed disabled:opacity-50';
+    'recruitment-secondary inline-flex h-10 shrink-0 items-center justify-center gap-x-2 gap-y-2 rounded-xl bg-surface px-4 text-sm font-bold text-text-primary shadow-[var(--w-shadow)] transition-shadow duration-[360ms] ease-[var(--w-ease-patient)] hover:shadow-[var(--w-shadow-hover)] disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_GHOST =
     'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-semibold text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50';
 export const BTN_DANGER_GHOST =
@@ -64,7 +64,7 @@ export const BTN_DANGER_GHOST =
  * own width, for a select or a date that sits beside others (adding `w-auto` to INPUT does not win over its `w-full`).
  */
 export const FIELD =
-    'h-10 min-w-0 rounded-xl border border-border bg-surface px-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
+    'recruitment-field h-10 min-w-0 rounded-xl border border-border bg-surface px-3 text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
 export const INPUT = `w-full ${FIELD}`;
 
 /* ------------------------------------------------------------------------------------------------------------------ */
@@ -176,8 +176,8 @@ export function Avatar({ name, size = 'md' }: { name: string; size?: keyof typeo
  * (never the status colours as a fill, never amber as a text colour).
  */
 const TAG_TONE = {
-    success: 'bg-success/15 text-emerald-800',
-    info: 'bg-info/10 text-blue-800',
+    success: 'bg-success/15 text-green-800',
+    info: 'bg-info/10 text-stone-800',
     warn: 'bg-warning/15 text-amber-800',
     neutral: 'bg-muted text-text-secondary',
 } as const;
@@ -190,6 +190,19 @@ export function Tag({ tone = 'neutral', icon: Icon, title, children }: {
             {Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden />}
             <span className="truncate">{children}</span>
         </span>
+    );
+}
+
+/**
+ * Owner 2026-11-25: the panel's average rating for a person (1 to 5, from the submitted scorecards). Nothing when no
+ * scorecard is in yet, so an unrated person never reads as a zero.
+ */
+export function ScoreTag({ score }: { score: { overall: number; scorecards: number } | null | undefined }) {
+    if (!score) return null;
+    return (
+        <Tag tone="warn" icon={Star} title={`Average of ${score.scorecards} ${score.scorecards === 1 ? 'scorecard' : 'scorecards'}, out of 5`}>
+            <span className="tabular-nums">{score.overall.toFixed(1)}</span> overall
+        </Tag>
     );
 }
 
@@ -558,7 +571,7 @@ export function Stat({ label, value, hint }: { label: string; value: React.React
 
 export function EmptyState({ icon: Icon, title, children }: { icon: React.ComponentType<{ className?: string }>; title: string; children?: React.ReactNode }) {
     return (
-        <div className="flex flex-col items-center px-4 py-14 text-center">
+        <div className="recruitment-empty flex flex-col items-center px-4 py-14 text-center">
             <span className={`${WELL} mb-4 inline-flex h-12 w-12 items-center justify-center`}>
                 <Icon className="h-6 w-6 text-text-tertiary" />
             </span>

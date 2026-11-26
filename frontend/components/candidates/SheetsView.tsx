@@ -15,9 +15,11 @@ import { formatCount, formatDate } from './format';
 import IssuesModal, { IssueJobChip } from './IssuesModal';
 import TrackerConnections from './TrackerConnections';
 import UploadConflictModal from './UploadConflictModal';
+import { EASE_PATIENT, Spinner, useUi } from './ui';
 import {
-    BTN_DANGER_GHOST, BTN_GHOST, BTN_SECONDARY, CARD, EASE_PATIENT, EmptyState, FIELD, LABEL, NUM_LG, NUM_SM, Spinner, Toggle, useUi, WELL,
-} from './ui';
+    EmptyBlock, K_BTN, K_BTN_DANGER_OUTLINE, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN_PRIMARY, K_CARD, K_CARD_BASE, K_FIELD, K_ICON_BTN, K_LABEL, K_TABLE, K_TD, K_TH, K_TH_R, K_TR, K_WELL,
+    PageHeader, Segmented, SelectPill, StatusPill,
+} from './page-kit';
 
 const MAX_BYTES = 4 * 1024 * 1024;
 /** Must match CLEAR_ALL_CONFIRMATION in backend/lib/candidates/config.ts (the server checks it too). */
@@ -76,12 +78,12 @@ function summaryTiles(s: ImportSummary): [string, number][] {
 /** `inlineError={false}`: the caller shows the failure text itself (phone cards put it on its own line). */
 function SheetStatus({ sheet, inlineError = true, preparing = false }: { sheet: CandidateSheet; inlineError?: boolean; preparing?: boolean }) {
     if (sheet.status === 'importing') {
-        return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-text-secondary"><Spinner className="h-3 w-3" />Importing</span>;
+        return <span className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full bg-stone-50 px-2.5 text-xs font-semibold text-stone-800 ring-1 ring-inset ring-stone-200 dark:bg-stone-500/15 dark:text-stone-300 dark:ring-stone-500/30"><Spinner className="h-3 w-3" />Importing</span>;
     }
     if (sheet.status === 'failed') {
         return (
             <span className="inline-flex min-w-0 flex-col">
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-error"><span className="h-1.5 w-1.5 rounded-full bg-error" aria-hidden />Failed</span>
+                <span><StatusPill tone="red">Failed</StatusPill></span>
                 {inlineError && sheet.error && <span className="mt-0.5 max-w-[240px] break-words text-xs text-text-secondary">{sheet.error}</span>}
             </span>
         );
@@ -98,7 +100,7 @@ function SheetStatus({ sheet, inlineError = true, preparing = false }: { sheet: 
             </span>
         );
     }
-    return <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-text-primary"><span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden />Ready</span>;
+    return <StatusPill tone="green">Ready</StatusPill>;
 }
 
 function Uploads({ n }: { n: number }) {
@@ -108,6 +110,7 @@ function Uploads({ n }: { n: number }) {
 export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
     const { notify, reportError } = useUi();
     const [deleted, setDeleted] = useState(false);
+    const [workspace, setWorkspace] = useState<'library' | 'import' | 'connections' | 'maintenance'>('library');
     const [nonce, setNonce] = useState(0);
     const [loaded, setLoaded] = useState<Loaded | null>(null);
 
@@ -284,10 +287,10 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
 
     const actions = (s: CandidateSheet, compact = false) => deleted ? (
         <>
-            <button type="button" onClick={() => void doRestore(s)} disabled={busyId === s.id} className={BTN_GHOST}>
+            <button type="button" onClick={() => void doRestore(s)} disabled={busyId === s.id} className={K_BTN_GHOST}>
                 {busyId === s.id ? <Spinner /> : <RotateCcw className="h-4 w-4" />}Restore
             </button>
-            <button type="button" onClick={() => askDelete(s)} disabled={busyId === s.id || s.status === 'importing'} className={BTN_DANGER_GHOST} aria-label={`Delete ${s.name} permanently`}>
+            <button type="button" onClick={() => askDelete(s)} disabled={busyId === s.id || s.status === 'importing'} className={K_BTN_GHOST_DANGER} aria-label={`Delete ${s.name} permanently`}>
                 <Trash2 className="h-4 w-4" />{compact ? 'Delete' : <span className="sr-only">Delete permanently</span>}
             </button>
         </>
@@ -296,28 +299,39 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             {/* A job on this sheet's flagged rows goes on after the box is closed (owner 2026-11-12); its progress shows here. */}
             <IssueJobChip sheet={s} />
             <button type="button" onClick={() => { setIssues(x => ({ sheet: s, key: (x?.key ?? 0) + 1 })); setIssuesOpen(true); }} disabled={s.status !== 'ready'}
-                className={BTN_GHOST} title={s.flaggedCount ? `${formatCount(s.flaggedCount)} rows need review` : 'Rows fixed automatically or skipped'}>
+                className={K_BTN_GHOST} title={s.flaggedCount ? `${formatCount(s.flaggedCount)} rows need review` : 'Rows fixed automatically or skipped'}>
                 <ListChecks className="h-4 w-4" />{compact ? 'Issues' : 'View issues'}
             </button>
-            <button type="button" onClick={() => askDelete(s)} disabled={busyId === s.id || s.status === 'importing'} className={BTN_DANGER_GHOST} aria-label={`Delete ${s.name}`}>
+            <button type="button" onClick={() => askDelete(s)} disabled={busyId === s.id || s.status === 'importing'} className={K_BTN_GHOST_DANGER} aria-label={`Delete ${s.name}`}>
                 <Trash2 className="h-4 w-4" />{compact ? 'Delete' : <span className="sr-only">Delete</span>}
             </button>
         </>
     );
 
+    const liveTotal = sheets.reduce((n, x) => n + x.liveRecordCount, 0);
+    const flaggedTotal = sheets.reduce((n, x) => n + x.flaggedCount, 0);
     return (
-        <div className="space-y-6">
+        <div className="space-y-5">
+            <PageHeader title="Sheets"
+                sub={loaded?.data ? (deleted
+                    ? `${formatCount(sheets.length)} deleted ${sheets.length === 1 ? 'sheet' : 'sheets'}`
+                    : `${formatCount(sheets.length)} ${sheets.length === 1 ? 'sheet' : 'sheets'} · ${formatCount(liveTotal)} live records${flaggedTotal ? ` · ${formatCount(flaggedTotal)} flagged` : ''}`) : 'Sourcing sheets and trackers'}
+                actions={<button type="button" onClick={() => { setWorkspace('import'); inputRef.current?.click(); }} disabled={uploading} className={K_BTN_PRIMARY}><Upload className="h-4 w-4" aria-hidden />Upload sheet</button>} />
+
+            <Segmented label="Sheet workspace" value={workspace} onChange={setWorkspace} options={[{value:'library',label:'Source library'}, {value:'import',label:'Import a sheet'}, {value:'connections',label:'Connected trackers'}, {value:'maintenance',label:'Data maintenance'}]} />
+            <div hidden={workspace !== 'import'} className="space-y-4">
+            <div className="recruitment-hero"><h2 className="text-lg font-semibold">Bring your sourcing data together</h2><p className="mt-2 text-sm text-text-secondary">Upload a sheet, review the import result, then resolve flagged rows before using them in recruitment.</p></div>
             {/* Upload */}
             <div
                 onDragOver={e => { e.preventDefault(); if (!dragOver) setDragOver(true); }}
                 onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false); }}
                 onDrop={e => { e.preventDefault(); setDragOver(false); if (!uploading) pickFile(e.dataTransfer.files); }}
-                className={`relative flex flex-col items-center rounded-2xl border-2 border-dashed px-4 py-8 text-center transition-colors duration-200 sm:py-10 ${dragOver ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface-elevated'}`}
+                className={`relative flex flex-col items-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors duration-200 sm:py-9 ${dragOver ? 'border-primary bg-primary/[.06]' : 'border-border bg-surface'}`}
             >
                 {progress ? (
                     <div aria-live="polite" className="flex w-full max-w-sm flex-col items-center">
                         <Spinner className="h-7 w-7 text-primary" />
-                        <p className="mt-3 max-w-full truncate font-display text-sm font-semibold text-text-primary" title={progress.name}>{progress.name}</p>
+                        <p className="mt-3 max-w-full truncate text-sm font-semibold text-text-primary" title={progress.name}>{progress.name}</p>
                         <p className="mt-1 text-sm text-text-secondary">
                             {progress.phase === 'sending'
                                 ? <>Uploading… <span className="tabular-nums">{Math.round(progress.fraction * 100)}%</span></>
@@ -329,12 +343,12 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                     </div>
                 ) : (
                     <>
-                        <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-surface text-primary-dark shadow-[var(--w-shadow)]">
-                            <FileSpreadsheet className="h-6 w-6" />
+                        <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden>
+                            <FileSpreadsheet className="h-5 w-5" />
                         </span>
-                        <p className="mt-3 font-display text-sm font-semibold text-text-primary">Drop a sourcing sheet here</p>
-                        <p className="mt-1 text-sm text-text-secondary">Excel (.xlsx, .xls) or CSV, up to 4 MB</p>
-                        <button type="button" onClick={() => inputRef.current?.click()} className={`${BTN_SECONDARY} mt-4`}>
+                        <p className="mt-3 text-[15px] font-semibold text-text-primary">Drop a sourcing sheet here</p>
+                        <p className="mt-1 text-sm text-text-tertiary">Excel (.xlsx, .xls) or CSV, up to 4 MB</p>
+                        <button type="button" onClick={() => inputRef.current?.click()} className={`${K_BTN} mt-4`}>
                             <Upload className="h-4 w-4" />Choose file
                         </button>
                     </>
@@ -344,19 +358,19 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
 
             {/* Owner 2026-11-16: where the sheet came from. Optional; a vendor's rows for people the team already had are noted. */}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm text-text-secondary">
-                <label htmlFor="sheet-source-kind">This sheet is from</label>
-                <select id="sheet-source-kind" value={uploadSource.kind} onChange={e => setUploadSource(s => ({ ...s, kind: e.target.value as '' | SourceKind }))} disabled={!!progress} className={FIELD}>
+                <span aria-hidden>This sheet is from</span>
+                <SelectPill label="Where this sheet is from" value={uploadSource.kind} onChange={v => setUploadSource(s => ({ ...s, kind: v as '' | SourceKind }))} disabled={!!progress}>
                     <option value="">Not said (optional)</option>
                     {SOURCE_KINDS.map(k => <option key={k} value={k}>{SOURCE_KIND_LABELS[k]}</option>)}
-                </select>
+                </SelectPill>
                 {(uploadSource.kind === 'vendor' || uploadSource.kind === 'portal') && (
                     <input value={uploadSource.name} onChange={e => setUploadSource(s => ({ ...s, name: e.target.value }))} disabled={!!progress} maxLength={120}
-                        placeholder={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name (LinkedIn, Indeed…)'} aria-label={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name'} className={`${FIELD} w-56`} />
+                        placeholder={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name (LinkedIn, Indeed…)'} aria-label={uploadSource.kind === 'vendor' ? 'Vendor name' : 'Portal name'} className={`${K_FIELD} w-56`} />
                 )}
             </div>
 
             {uploadError && (
-                <p role="alert" className={`${WELL} flex gap-2.5 border-l-2 border-error px-4 py-3 text-sm text-text-primary`}>
+                <p role="alert" className="flex gap-2.5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900 ring-1 ring-inset ring-red-200 dark:bg-red-500/15 dark:text-red-100 dark:ring-red-500/30">
                     <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-error" aria-hidden />{uploadError}
                 </p>
             )}
@@ -366,23 +380,23 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                 {summary && (
                     <motion.section
                         initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} transition={{ duration: 0.22, ease: EASE_PATIENT }}
-                        className={`${CARD} px-4 py-4 sm:p-6`} aria-label="Import summary"
+                        className={`${K_CARD} px-4 py-4 sm:p-5`} aria-label="Import summary"
                     >
                         <div className="flex items-start gap-x-3 gap-y-3">
-                            <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden />
+                            <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-green-600 dark:text-green-400" aria-hidden />
                             <div className="min-w-0 flex-1">
-                                <p className="break-words font-display text-base font-semibold text-text-primary">{summary.sheet.name}</p>
+                                <p className="break-words text-base font-semibold text-text-primary">{summary.sheet.name}</p>
                                 <p className="text-sm text-text-secondary">{MODE_LABEL[summary.mode]}</p>
                             </div>
-                            <button type="button" onClick={() => setSummary(null)} aria-label="Dismiss summary" className="-mr-1 -mt-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-tertiary hover:bg-muted">
+                            <button type="button" onClick={() => setSummary(null)} aria-label="Dismiss summary" className={`${K_ICON_BTN} -mr-1 -mt-1`}>
                                 <X className="h-4 w-4" />
                             </button>
                         </div>
-                        <dl className="mt-6 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-4">
+                        <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                             {summaryTiles(summary).map(([label, n]) => (
-                                <div key={label} className="min-w-0">
-                                    <dt className={LABEL}>{label}</dt>
-                                    <dd className={`${NUM_LG} mt-1 text-text-primary`}>{formatCount(n)}</dd>
+                                <div key={label} className={`${K_WELL} min-w-0 px-3 py-3`}>
+                                    <dd className="text-2xl font-semibold leading-tight tabular-nums text-text-primary">{formatCount(n)}</dd>
+                                    <dt className="mt-0.5 text-sm text-text-tertiary">{label}</dt>
                                 </div>
                             ))}
                         </dl>
@@ -402,7 +416,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                             </p>
                         )}
                         {(summary.rowsFlagged > 0 || summary.rowsSkipped > 0 || summary.rowsAutoFixed > 0) && (
-                            <button type="button" onClick={() => { setIssues(x => ({ sheet: summary.sheet, key: (x?.key ?? 0) + 1 })); setIssuesOpen(true); }} className={`${BTN_GHOST} -ml-2.5 mt-2`}>
+                            <button type="button" onClick={() => { setIssues(x => ({ sheet: summary.sheet, key: (x?.key ?? 0) + 1 })); setIssuesOpen(true); }} className={`${K_BTN} mt-3`}>
                                 <ListChecks className="h-4 w-4" />{summary.rowsFlagged > 0 ? 'Review flagged rows (AI fix available)' : 'See what was fixed'}
                             </button>
                         )}
@@ -411,32 +425,35 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             </AnimatePresence>
 
             {/* Owner 2026-11-21: Google Sheet / Excel trackers synced on a schedule; their rows land in the sheets below */}
-            {!deleted && <TrackerConnections orgId={orgId} onDataChanged={() => { setNonce(n => n + 1); onDataChanged(); }} />}
+            </div>
+            <div hidden={workspace !== 'connections'}>
+            <TrackerConnections orgId={orgId} onDataChanged={() => { setNonce(n => n + 1); onDataChanged(); }} />
+            </div>
 
             {/* Sheets list */}
-            <section className="space-y-3" aria-labelledby="sheets-heading">
+            <section hidden={workspace !== 'library'} className="space-y-3" aria-labelledby="sheets-heading">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-                    <h2 id="sheets-heading" className="font-display text-base font-semibold text-text-primary">{deleted ? 'Deleted sheets' : 'Sheets'}</h2>
-                    <Toggle checked={deleted} onChange={setDeleted} label="Show deleted" />
+                    <h3 id="sheets-heading" className="text-[15px] font-semibold text-text-primary">{deleted ? 'Deleted sheets' : 'All sheets'}</h3>
+                    <Segmented label="Which sheets" value={deleted ? 'deleted' : 'active'} onChange={v => setDeleted(v === 'deleted')} options={[{ value: 'active', label: 'Active' }, { value: 'deleted', label: 'Deleted' }]} />
                 </div>
 
-                <div className={`${CARD} overflow-hidden`}>
+                <div className={`${K_CARD} overflow-hidden`}>
                     {loaded?.error && !loading ? (
                         <div role="alert" className="flex flex-col items-center px-4 py-12 text-center">
                             <CircleAlert className="mb-3 h-8 w-8 text-error" aria-hidden />
                             <p className="max-w-md text-sm text-text-primary">{loaded.error}</p>
-                            <button type="button" onClick={reload} className={`${BTN_SECONDARY} mt-4`}>Try again</button>
+                            <button type="button" onClick={reload} className={`${K_BTN} mt-4`}>Try again</button>
                         </div>
                     ) : !loaded?.data && loading ? (
                         <div className="space-y-3 px-4 py-4 sm:p-6">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-lg" />)}</div>
                     ) : sheets.length === 0 ? (
-                        <EmptyState icon={FileSpreadsheet} title={deleted ? 'No deleted sheets' : 'No sheets yet'}>
+                        <EmptyBlock icon={FileSpreadsheet} title={deleted ? 'No deleted sheets' : 'No sheets yet'}>
                             {deleted ? 'Deleted sheets show up here so you can restore them.' : 'Upload your first sourcing sheet above.'}
-                        </EmptyState>
+                        </EmptyBlock>
                     ) : (
                         <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
                             {/* Phone: cards */}
-                            <ul className="divide-y divide-border-subtle md:hidden">
+                            <ul className="divide-y divide-border md:hidden">
                                 {sheets.map(s => (
                                     <li key={s.id} className="space-y-2 px-4 py-3">
                                         <div className="flex items-start gap-x-2 gap-y-2">
@@ -445,10 +462,10 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                                         </div>
                                         {s.status === 'failed' && s.error && <p className="break-words text-xs text-text-secondary">{s.error}</p>}
                                         <dl className="grid grid-cols-4 gap-x-2 gap-y-2">
-                                            <div><dt className={LABEL}>Live</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.liveRecordCount)}</dd></div>
-                                            <div><dt className={LABEL}>Flagged</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.flaggedCount)}</dd></div>
-                                            <div><dt className={LABEL}>Skipped</dt><dd className={`${NUM_SM} text-text-primary`}>{formatCount(s.skippedCount)}</dd></div>
-                                            <div><dt className={LABEL}>Uploads</dt><dd className={`${NUM_SM} text-text-primary`}><Uploads n={s.uploadCount} /></dd></div>
+                                            <div><dt className={K_LABEL}>Live</dt><dd className="text-sm font-medium tabular-nums text-text-primary">{formatCount(s.liveRecordCount)}</dd></div>
+                                            <div><dt className={K_LABEL}>Flagged</dt><dd className="text-sm font-medium tabular-nums text-text-primary">{formatCount(s.flaggedCount)}</dd></div>
+                                            <div><dt className={K_LABEL}>Skipped</dt><dd className="text-sm font-medium tabular-nums text-text-primary">{formatCount(s.skippedCount)}</dd></div>
+                                            <div><dt className={K_LABEL}>Uploads</dt><dd className="text-sm font-medium tabular-nums text-text-primary"><Uploads n={s.uploadCount} /></dd></div>
                                         </dl>
                                         <p className="break-words text-xs text-text-tertiary">
                                             {s.uploadedByEmail ?? 'Unknown'}{s.sourceKind ? ` · ${sourceLabel({ kind: s.sourceKind, name: s.sourceName })}` : ''} · <span className="tabular-nums">{formatDate(deleted ? s.deletedAt : s.updatedAt)}</span>
@@ -460,35 +477,35 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
 
                             {/* md and up: table */}
                             <div className="hidden overflow-x-auto md:block">
-                                <table className="w-full min-w-[980px] border-collapse text-sm">
-                                    <thead className="bg-surface-elevated">
-                                        <tr className={`${LABEL} text-left`}>
-                                            <th scope="col" className="px-4 py-3 font-semibold">Sheet</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Status</th>
-                                            <th scope="col" className="px-3 py-3 text-right font-semibold">Live records</th>
-                                            <th scope="col" className="px-3 py-3 text-right font-semibold">Flagged</th>
-                                            <th scope="col" className="px-3 py-3 text-right font-semibold">Skipped</th>
-                                            <th scope="col" className="px-3 py-3 text-right font-semibold">Uploads</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">Uploaded by</th>
-                                            <th scope="col" className="px-3 py-3 font-semibold">{deleted ? 'Deleted' : 'Date'}</th>
-                                            <th scope="col" className="sticky right-0 bg-surface-elevated px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)]"><span className="sr-only">Actions</span></th>
+                                <table className={`${K_TABLE} min-w-[980px]`}>
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" className={K_TH}>Sheet</th>
+                                            <th scope="col" className={K_TH}>Status</th>
+                                            <th scope="col" className={K_TH_R}>Live records</th>
+                                            <th scope="col" className={K_TH_R}>Flagged</th>
+                                            <th scope="col" className={K_TH_R}>Skipped</th>
+                                            <th scope="col" className={K_TH_R}>Uploads</th>
+                                            <th scope="col" className={K_TH}>Uploaded by</th>
+                                            <th scope="col" className={K_TH}>{deleted ? 'Deleted' : 'Date'}</th>
+                                            <th scope="col" className={`${K_TH} sticky right-0 shadow-[-1px_0_0_var(--border)]`}><span className="sr-only">Actions</span></th>
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-border-subtle">
+                                    <tbody>
                                         {sheets.map(s => (
-                                            <tr key={s.id} className="align-middle group hover:bg-surface-elevated">
-                                                <td className="max-w-[260px] px-4 py-3">
+                                            <tr key={s.id} className={`${K_TR} group`}>
+                                                <td className={`${K_TD} max-w-[260px]`}>
                                                     <p className="truncate font-semibold text-text-primary" title={s.name}>{s.name}</p>
                                                     <p className="text-xs tabular-nums text-text-tertiary">{formatCount(s.rowCount)} rows in last upload</p>
                                                 </td>
-                                                <td className="px-3 py-3"><SheetStatus sheet={s} preparing={!deleted} /></td>
-                                                <td className={`${NUM_SM} px-3 py-3 text-right text-text-primary`}>{formatCount(s.liveRecordCount)}</td>
-                                                <td className={`${NUM_SM} px-3 py-3 text-right ${s.flaggedCount ? 'text-text-primary' : 'text-text-tertiary'}`}>{formatCount(s.flaggedCount)}</td>
-                                                <td className={`${NUM_SM} px-3 py-3 text-right ${s.skippedCount ? 'text-text-primary' : 'text-text-tertiary'}`}>{formatCount(s.skippedCount)}</td>
-                                                <td className={`${NUM_SM} whitespace-nowrap px-3 py-3 text-right text-text-primary`}><Uploads n={s.uploadCount} /></td>
-                                                <td className="max-w-[200px] truncate px-3 py-3 text-text-secondary" title={s.uploadedByEmail ?? ''}>{s.uploadedByEmail ?? '—'}</td>
-                                                <td className="whitespace-nowrap px-3 py-3 tabular-nums text-text-secondary">{formatDate(deleted ? s.deletedAt : s.updatedAt)}</td>
-                                                <td className="sticky right-0 whitespace-nowrap bg-surface px-4 py-3 shadow-[-1px_0_0_var(--border-subtle)] group-hover:bg-surface-elevated"><div className="flex justify-end gap-0.5">{actions(s)}</div></td>
+                                                <td className={K_TD}><SheetStatus sheet={s} preparing={!deleted} /></td>
+                                                <td className={`${K_TD} text-right font-medium tabular-nums text-text-primary`}>{formatCount(s.liveRecordCount)}</td>
+                                                <td className={`${K_TD} text-right font-medium tabular-nums ${s.flaggedCount ? 'text-text-primary' : 'text-text-tertiary'}`}>{formatCount(s.flaggedCount)}</td>
+                                                <td className={`${K_TD} text-right font-medium tabular-nums ${s.skippedCount ? 'text-text-primary' : 'text-text-tertiary'}`}>{formatCount(s.skippedCount)}</td>
+                                                <td className={`${K_TD} whitespace-nowrap text-right font-medium tabular-nums text-text-primary`}><Uploads n={s.uploadCount} /></td>
+                                                <td className={`${K_TD} max-w-[200px] truncate text-text-secondary`} title={s.uploadedByEmail ?? ''}>{s.uploadedByEmail ?? '—'}</td>
+                                                <td className={`${K_TD} whitespace-nowrap tabular-nums text-text-secondary`}>{formatDate(deleted ? s.deletedAt : s.updatedAt)}</td>
+                                                <td className={`${K_TD} sticky right-0 whitespace-nowrap bg-surface shadow-[-1px_0_0_var(--border)] group-hover:bg-surface-elevated`}><div className="flex justify-end gap-0.5">{actions(s)}</div></td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -509,12 +526,12 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             />
 
             {/* Danger zone */}
-            <section aria-labelledby="danger-heading" className={`${WELL} flex flex-col gap-x-3 gap-y-3 px-4 py-4 sm:flex-row sm:items-center sm:px-6`}>
+            <section hidden={workspace !== 'maintenance'} aria-labelledby="danger-heading" className={`${K_CARD_BASE} flex flex-col gap-x-3 gap-y-3 border-red-200 px-4 py-4 sm:flex-row sm:items-center sm:px-5 dark:border-red-500/30`}>
                 <div className="min-w-0 flex-1">
-                    <h2 id="danger-heading" className="font-display text-sm font-semibold text-text-primary">Clear all candidate data</h2>
-                    <p className="mt-0.5 text-sm text-text-secondary">Permanently erase every sheet, record and candidate, including deleted ones. Search history is kept.</p>
+                    <h3 id="danger-heading" className="text-sm font-semibold text-text-primary">Clear all candidate data</h3>
+                    <p className="mt-0.5 text-sm text-text-tertiary">Permanently erase every sheet, record and candidate, including deleted ones. Search history is kept.</p>
                 </div>
-                <button type="button" onClick={() => setClearState(c => ({ open: true, key: c.key + 1, busy: false }))} className={`${BTN_DANGER_GHOST} self-start sm:self-auto`}>
+                <button type="button" onClick={() => setClearState(c => ({ open: true, key: c.key + 1, busy: false }))} className={`${K_BTN_DANGER_OUTLINE} self-start sm:self-auto`}>
                     <Trash2 className="h-4 w-4" />Clear all data
                 </button>
             </section>
