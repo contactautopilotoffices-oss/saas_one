@@ -60,7 +60,7 @@ test('mail preview requires selection before import, retains errors for retry, a
       await page.getByRole('button', { name: 'Sync now — preview' }).click();
       await page.getByLabel('Import Asha_LinkedIn.pdf', { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => window.requests.filter(r => r.body?.action === 'import').length), 0);
-      assert.match(await page.locator('li').innerText(), /LinkedIn.*Possible duplicate/s);
+      assert.match(await page.locator('li').innerText(), /Zoho Mail.*Possible duplicate/s);
       await page.getByLabel('Import Asha_LinkedIn.pdf', { exact: true }).check();
       await page.getByLabel('Designation for email imports').fill('Engineer');
       await mkdir('scratch/resume-stage2', { recursive: true });

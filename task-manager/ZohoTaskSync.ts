@@ -31,9 +31,12 @@
 
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { encryptToken, decryptToken } from '@/backend/lib/mail/accounts';
+import { getZohoTaskAppCredentials, zohoTaskCallbackUrl } from '@/backend/lib/mail/oauth';
 import { ZohoMailService } from '@/backend/services/zohoMailService';
 import { TaskDatabaseService } from './TaskDatabaseService';
 import type { TaskStatus } from './types';
+
+export { getZohoTaskAppCredentials, zohoTaskCallbackUrl };
 
 export const ZOHO_TASK_SCOPES = 'ZohoMail.tasks.READ,ZohoMail.tasks.UPDATE';
 export const ZOHO_TASK_SOURCE = 'zoho';
@@ -41,22 +44,6 @@ export const ZOHO_TASK_SOURCE = 'zoho';
 const PAGE_SIZE = 200;   // Zoho allows 1-499
 const MAX_PAGES = 5;     // hard cap: 1,000 tasks per list per run
 const PUSH_TIMEOUT_MS = 8_000; // a person's "done" waits on this, so a slow Zoho must not hold it up; the sync retries
-
-/** The redirect Zoho sends the person back to. Must be registered on the Zoho application exactly. */
-export function getZohoTaskAppCredentials(): { clientId: string; clientSecret: string } {
-    const clientId = (process.env.ZOHO_TASKS_CLIENT_ID || process.env.ZOHO_CLIENT_ID || process.env.ZOHO_MAIL_APP_CLIENT_ID || '').trim();
-    const clientSecret = (process.env.ZOHO_TASKS_CLIENT_SECRET || process.env.ZOHO_CLIENT_SECRET || process.env.ZOHO_MAIL_APP_CLIENT_SECRET || '').trim();
-    return { clientId, clientSecret };
-}
-
-export function zohoTaskCallbackUrl(requestUrl?: string): string {
-    const override = (process.env.ZOHO_TASKS_REDIRECT_URL ?? '').trim();
-    if (override) return override.replace(/\/+$/, '');
-    let base = '';
-    if (requestUrl) { try { base = new URL(requestUrl).origin; } catch { /* fall through */ } }
-    base = (base || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '').trim().replace(/^"|"$/g, '').replace(/\/+$/, '');
-    return `${base}/api/task-manager/zoho/callback`;
-}
 
 /** The shape Zoho documents for one task (get-tasks-assigned-to-me / get-all-group-or-personal-tasks). */
 interface ZohoTask {

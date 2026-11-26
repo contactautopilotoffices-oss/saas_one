@@ -171,6 +171,10 @@ class Query implements PromiseLike<Result> {
     this.where.push(`${column} ilike ${this.p(pattern)}`);
     return this;
   }
+  contains(column: string, value: unknown) {
+    this.where.push(`${column} @> ${this.p(value)}::jsonb`);
+    return this;
+  }
   order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) {
     const nulls = options?.nullsFirst === false ? " nulls last" : options?.nullsFirst === true ? " nulls first" : "";
     this.orderBy.push(`${column} ${options?.ascending === false ? "desc" : "asc"}${nulls}`);

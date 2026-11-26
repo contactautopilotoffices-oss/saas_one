@@ -231,7 +231,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                         )}
                         {/* Owner 2026-11-24: link the HR mailbox, like Zoho Tasks */}
                         <RecruitmentMailButton orgId={orgId} onOpenEmail={() => open('email')} />
-                        <button type="button" onClick={() => open('resumes')} className={`${BTN_SECONDARY} h-9 rounded-[10px] px-3`} title="Upload resumes from the Resumes tab"><Upload className="h-4 w-4" />Upload resumes</button>
+                        {view !== 'resumes' && <button type="button" onClick={() => open('resumes')} className={`${BTN_SECONDARY} h-9 rounded-[10px] px-3`} title="Upload resumes from the Resumes tab"><Upload className="h-4 w-4" />Upload resumes</button>}
                     </div>
                 </div>}
 

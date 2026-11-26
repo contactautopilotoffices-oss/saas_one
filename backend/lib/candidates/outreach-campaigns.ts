@@ -65,7 +65,7 @@ export function defaultCampaignSenders(client: SupabaseClient, orgId: string): C
       const [{ connection, grant }, { ZohoMailService }] = await Promise.all([import("./resume-mail"), import("@/backend/services/zohoMailService")]);
       const c = await connection(client, orgId, o.connectionId);
       if (!c.active || !c.can_send || !c.refresh_token_enc) throw new CandidateActionError(409, "The mailbox is not connected for sending.");
-      const sent = await ZohoMailService.sendMessageWithGrant(grant(c), { from: c.address, to: o.to, subject: o.subject, body: o.body });
+      const sent = await ZohoMailService.sendMessageWithGrant(grant(c, client), { from: c.address, to: o.to, subject: o.subject, body: o.body });
       return { ...sent, from: c.address };
     },
   };

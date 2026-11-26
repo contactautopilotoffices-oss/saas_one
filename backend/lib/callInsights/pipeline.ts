@@ -1,3 +1,4 @@
+import { callMayRun } from '@/backend/lib/candidates/interview-consent';
 /**
  * Call Insights, the pipeline (owner 2026-11-16, plan P3 + P7): one uploaded call from 'uploaded' to 'done'.
  *
@@ -87,6 +88,8 @@ export async function runCallAnalysis(client: SupabaseClient, storage: CallAudio
   if ((row.status === "transcribing" || row.status === "analysing") && !isStale(row.status, row.updated_at, now())) {
     return { status: "skipped", why: "another run is working on it" };
   }
+
+  if (!await callMayRun(client, orgId, callId, row.candidate_id)) return { status: "skipped", why: "Interview analysis consent is missing" };
 
   // Claim it: only the run whose conditional update lands owns the row from here.
   const hasTranscript = Boolean(row.transcript_text?.trim());

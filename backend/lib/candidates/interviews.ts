@@ -1,3 +1,4 @@
+import { saveInterviewConsent } from './interview-consent';
 /**
  * Interviews (owner 2026-11-19; HRMS meeting: "FMS meeting integration … generate meeting links directly within the
  * platform, with interviews recorded and auto-transcribed natively", "both physical and online meeting scheduling in
@@ -31,6 +32,7 @@ import { parsePhone } from "./normalize";
 import { campaignFor, maskPhone, withinSendingHours } from "./outreach";
 import { moveMember } from "./positions";
 import { defaultFlowDeps, fileInterview, interviewExtras, scorecardLinks, type FlowDeps } from "./hiring";
+import { loadInterviewAnalyses } from "./interview-analysis";
 import { interviewPageUrl, newInterviewToken } from "./interview-page";
 import { guidelinesLine, whatsappParams } from "./outreach-settings";
 import { loadRecruitmentConfig } from "./requisitions";
@@ -350,9 +352,10 @@ export async function listInterviews(client: SupabaseClient, orgId: string, cand
   const meetingOf = (a: (typeof actions)[number]): string | null => (typeof a.meta.meetingId === "string" && a.meta.meetingId ? a.meta.meetingId : recordingOf.get(a.id) ?? null);
   const meetingIds = [...new Set(actions.map(meetingOf).filter((id): id is string => typeof id === "string" && UUID.test(id)))];
   const positionIds = [...new Set(actions.map((a) => a.positionId).filter((id): id is string => !!id))];
-  const [meetings, positions] = await Promise.all([
+  const [meetings, positions, analyses] = await Promise.all([
     meetingIds.length ? client.from("meeting_notes").select("id, status, summary").in("id", meetingIds) : Promise.resolve({ data: [], error: null }),
     positionIds.length ? client.from("candidate_positions").select("id, title").eq("organization_id", orgId).in("id", positionIds) : Promise.resolve({ data: [], error: null }),
+    loadInterviewAnalyses(client, orgId, candidateId, meetingIds),
   ]);
   const byMeeting = new Map(((meetings.data ?? []) as { id: string; status: string; summary: { summary?: string; decisions?: string[]; openQuestions?: string[] } | null }[]).map((m) => [m.id, m]));
   const titles = new Map(((positions.data ?? []) as { id: string; title: string }[]).map((p) => [p.id, p.title]));
@@ -389,6 +392,7 @@ export async function listInterviews(client: SupabaseClient, orgId: string, cand
         status: m.status,
         summary: m.status === "ready" && m.summary ? { summary: m.summary.summary ?? "", decisions: m.summary.decisions ?? [], openQuestions: m.summary.openQuestions ?? [] } : null,
       } : meetingId ? { status: "deleted", summary: null } : null,
+      ...(meetingId && analyses.has(meetingId) ? { analysis: analyses.get(meetingId) ?? null } : {}),
       byName: a.byName,
       createdAt: a.at,
     };
@@ -403,7 +407,7 @@ export const isInterviewMode = (v: unknown): v is InterviewMode => typeof v === 
  * the interview. A recording still going is handed back instead of starting a second one.
  */
 export async function startInterviewRecording(client: SupabaseClient, orgId: string, by: Actor, body: unknown, deps: Pick<InterviewDeps, "createMeeting">): Promise<{ meetingId: string; title: string }> {
-  const parsed = z.object({ interviewId: z.string().regex(UUID), candidateId: z.string().regex(UUID) }).safeParse(body ?? {});
+  const parsed = z.object({ interviewId: z.string().regex(UUID), candidateId: z.string().regex(UUID), analysisConsent: z.boolean().optional() }).safeParse(body ?? {});
   if (!parsed.success) throw new CandidateActionError(400, "Pick the interview to record.");
   const interviewId = parsed.data.interviewId.toLowerCase();
   const candidateId = parsed.data.candidateId.toLowerCase();
@@ -413,7 +417,11 @@ export async function startInterviewRecording(client: SupabaseClient, orgId: str
   const interview = (await listInterviews(client, orgId, candidateId, "")).find((i) => i.id === interviewId)!;
   const name = await candidateName(client, orgId, candidateId);
   const title = `Interview: ${name} · ${interview.round ?? "Interview"}${interview.positionTitle ? ` · ${interview.positionTitle}` : ""}`.slice(0, 150);
-  if (interview.meetingId && interview.meeting?.status === "recording") return { meetingId: interview.meetingId, title };
+  const recording = async (meetingId: string) => {
+    if (parsed.data.analysisConsent) await saveInterviewConsent(client, orgId, candidateId, meetingId, by.id);
+    return { meetingId, title };
+  };
+  if (interview.meetingId && interview.meeting?.status === "recording") return recording(interview.meetingId);
   if (interview.meetingId && interview.meeting && !["failed", "deleted", "discarded"].includes(interview.meeting.status)) {
     throw new CandidateActionError(409, "This interview was already recorded. Its notes show in the Interviews tab.");
   }
@@ -423,7 +431,7 @@ export async function startInterviewRecording(client: SupabaseClient, orgId: str
     candidateId: entry.candidateId, applicationId: entry.applicationId, positionId: entry.positionId, action: "remark",
     toValue: "Interview recording started", remark: null, meta: { kind: "interview_recording", entryId: interviewId, meetingId: meeting.id },
   });
-  return { meetingId: meeting.id, title };
+  return recording(meeting.id);
 }
 
 async function candidateName(client: SupabaseClient, orgId: string, candidateId: string): Promise<string> {

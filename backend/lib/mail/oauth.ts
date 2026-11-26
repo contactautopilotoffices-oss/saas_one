@@ -29,15 +29,6 @@ export const ZOHO_MAIL_SCOPES = [
  * MAIL_OAUTH_REDIRECT_URL overrides everything for an unusual deployment.
  */
 export function callbackUrl(requestUrl?: string): string {
-    // Logged at BOTH steps, so a mismatch between the authorisation redirect and
-    // the token-exchange redirect is visible in one line instead of inferred
-    // from an HTML error page. Zoho requires the two to be byte-identical.
-    const out = buildCallbackUrl(requestUrl);
-    console.log('[mail oauth] redirect_uri =', out, requestUrl ? `(from ${requestUrl})` : '(no request)');
-    return out;
-}
-
-function buildCallbackUrl(requestUrl?: string): string {
     const override = (process.env.MAIL_OAUTH_REDIRECT_URL ?? '').trim();
     if (override) return override.replace(/\/+$/, '');
     let fromRequest = '';
@@ -45,4 +36,43 @@ function buildCallbackUrl(requestUrl?: string): string {
     const base = (fromRequest || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '')
         .trim().replace(/^"|"$/g, '').replace(/\/+$/, '');
     return `${base}/api/agents/mail/callback`;
+}
+
+/**
+ * Zoho client credentials used by Zoho Tasks (and shared by HR Recruitment
+ * Mail): prefers ZOHO_TASKS_CLIENT_ID, then ZOHO_CLIENT_ID (the Autopilot SSO
+ * login app), then ZOHO_MAIL_APP_CLIENT_ID.
+ */
+export function getZohoTaskAppCredentials(): { clientId: string; clientSecret: string } {
+    return zohoApps().find(a => a.prefix !== 'ZOHO_MAIL') ?? { clientId: '', clientSecret: '' };
+}
+
+export function zohoApps() {
+    return ['ZOHO_TASKS', 'ZOHO', 'ZOHO_MAIL_APP', 'ZOHO_MAIL'].flatMap(prefix => {
+        const clientId = process.env[prefix + '_CLIENT_ID']?.trim();
+        const clientSecret = process.env[prefix + '_CLIENT_SECRET']?.trim();
+        return clientId && clientSecret ? [{ prefix, clientId, clientSecret }] : [];
+    });
+}
+
+const ZOHO_DCS = ['com', 'in', 'eu', 'com.au', 'jp', 'ca', 'com.cn', 'sa'];
+export function trustedZohoAccounts(server: string) {
+    return ZOHO_DCS.some(dc => server === 'https://accounts.zoho.' + dc);
+}
+
+export async function postZohoToken(endpoint: string, form: URLSearchParams, send = fetch) {
+    const url = new URL(endpoint);
+    if (!trustedZohoAccounts(url.origin) || url.href !== url.origin + '/oauth/v2/token') throw new Error('Invalid Zoho token endpoint.');
+    return send(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        redirect: 'error', signal: AbortSignal.timeout(15_000), body: form.toString() });
+}
+
+/** The redirect Zoho sends the person back to. Must be registered on the Zoho application exactly. */
+export function zohoTaskCallbackUrl(requestUrl?: string): string {
+    const override = (process.env.ZOHO_TASKS_REDIRECT_URL ?? '').trim();
+    if (override) return override.replace(/\/+$/, '');
+    let base = '';
+    if (requestUrl) { try { base = new URL(requestUrl).origin; } catch { /* fall through */ } }
+    base = (base || process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '').trim().replace(/^"|"$/g, '').replace(/\/+$/, '');
+    return `${base}/api/task-manager/zoho/callback`;
 }

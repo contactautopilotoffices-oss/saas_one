@@ -5,7 +5,7 @@ import { X } from 'lucide-react';
 import { useParams, usePathname } from 'next/navigation';
 import { useEffect, useState, type CSSProperties } from 'react';
 
-import { BOT_NAME, BOT_TITLE } from '@/backend/lib/hr-assistant/identity';
+import { BOT_NAME, BOT_TITLE, isAllowedBotPath } from '@/backend/lib/hr-assistant/identity';
 import { useAuth } from '@/frontend/context/AuthContext';
 import { isBdSuperAdmin } from '@/frontend/constants/bdSuperAdmins';
 
@@ -90,27 +90,10 @@ function ThoughtCloud() {
     );
 }
 
-// Public, sign-in and marketing pages never show the bot (prefix match, like proxy.ts).
-const HIDDEN_PATH_PREFIXES = [
-    '/login', '/signup', '/forgot-password', '/reset-password', '/join', '/q', '/a/', '/kiosk',
-    '/onboard', '/onboarding', '/landing', '/landing_animation', '/privacy', '/privacy-policy',
-    '/terms', '/data-deletion', '/waiting-approval', '/cc-preview', '/design-lab', '/loader-test',
-    '/test-loader', '/simple-test',
-    // Candidate assessments: the public test link and every /proctor page (runner, preview, report).
-    '/t', '/proctor', '/guest', '/meet',
-];
-
-function isHiddenPath(pathname: string | null): boolean {
-    if (!pathname || pathname === '/' || /^\/[^/]+\/meetings(?:\/|$)/.test(pathname)) return true;
-    return HIDDEN_PATH_PREFIXES.some(prefix =>
-        prefix.endsWith('/') ? pathname.startsWith(prefix) : pathname === prefix || pathname.startsWith(`${prefix}/`),
-    );
-}
-
 /**
- * Floating HR policy assistant, bottom-right on every signed-in page (mounted once in the root
- * layout). Self-gates: renders nothing on public pages, or until the server confirms the user
- * is an employee or staff member.
+ * Floating HR policy assistant, bottom-right on opted-in signed-in screens (mounted once in the root
+ * layout). Fails closed: public pages, newly added screens, and unauthenticated or non-staff users
+ * render nothing.
  */
 /**
  * Owner 2026-10-26: on a phone the bot hides while any other pop-up is open (a dialog, a bottom sheet, the menu drawer),
@@ -166,7 +149,8 @@ export default function HrAssistantBot() {
     const reduceMotion = useReducedMotion();
     const squash = useAnimationControls();
     const otherPopupOpen = useOtherPopupOpen();
-    const canUse = Boolean(user && access?.canUse && !isHiddenPath(pathname));
+    const allowedPath = isAllowedBotPath(pathname);
+    const canUse = Boolean(user && access?.canUse && allowedPath);
 
     const setOpen = (next: boolean) => {
         wasOpen = next;
@@ -194,7 +178,7 @@ export default function HrAssistantBot() {
     };
 
     useEffect(() => {
-        if (!user?.id || isHiddenPath(pathname)) return;
+        if (!user?.id || !allowedPath) return;
         claimHrChat(user.id);
         let cancelled = false;
         void loadAccess(user.id).then(result => {
@@ -203,7 +187,7 @@ export default function HrAssistantBot() {
         return () => {
             cancelled = true;
         };
-    }, [user?.id, pathname]);
+    }, [user?.id, allowedPath]);
 
     useEffect(() => {
         if (!canUse || open || alreadyGreeted()) return;

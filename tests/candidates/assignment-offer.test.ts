@@ -17,12 +17,12 @@ import { publicForm, submitApplication, type ApplicationStorage } from "../../ba
 import { scoreAssignment } from "../../backend/lib/candidates/assignment-score";
 import { cancelAssignment, listAssignments, listDocuments, requestDocuments, reviewDocument, sendAssignment } from "../../backend/lib/candidates/assignments";
 import {
-  breakupGroups, createOffer, decideOffer, editBreakup, editLetter, listHandovers, publicOffer, releaseOffer, respondOnPage, type FlowDeps,
+  fileInterview, setInterviewStatus, submitScorecard, breakupGroups, createOffer, decideOffer, editBreakup, editLetter, listHandovers, publicOffer, releaseOffer, respondOnPage, type FlowDeps,
 } from "../../backend/lib/candidates/hiring";
 import { DEFAULT_OUTREACH } from "../../backend/lib/candidates/outreach-settings";
 import { addMembers, createPosition } from "../../backend/lib/candidates/positions";
 import { createRecord } from "../../backend/lib/candidates/records";
-import { saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
+import { saveDepartmentHeads, saveRecruitmentConfig } from "../../backend/lib/candidates/requisitions";
 
 import { freshDb } from "./db-stub";
 import { pgliteSupabase } from "./pglite-supabase";
@@ -31,6 +31,7 @@ const ORG = "00000000-0000-0000-0000-00000000000a";
 const HR = "00000000-0000-0000-0000-000000000031";
 const HR_HEAD = "00000000-0000-0000-0000-000000000032";
 const DIRECTOR = "00000000-0000-0000-0000-000000000033";
+const HOD = "00000000-0000-0000-0000-000000000035";
 const MANAGER = "00000000-0000-0000-0000-000000000034";
 const by = (id: string, name: string) => ({ id, name });
 const ME = by(HR, "Shweta");
@@ -58,14 +59,14 @@ describe("assignment, documents and the letter of intent", () => {
   before(async () => {
     db = await freshDb();
     await db.query("insert into public.organizations (id) values ($1)", [ORG]);
-    for (const [id, name, email, role] of [[HR, "Shweta", "shweta@example.com", "hr"], [HR_HEAD, "Anita", "anita@example.com", "hr_head"], [DIRECTOR, "Sunil", "sunil@example.com", "org_super_admin"], [MANAGER, "Rakesh", "rakesh@example.com", "manager"]] as const) {
+    for (const [id, name, email, role] of [[HR, "Shweta", "shweta@example.com", "hr"], [HR_HEAD, "Anita", "anita@example.com", "hr_head"], [DIRECTOR, "Sunil", "sunil@example.com", "org_super_admin"], [MANAGER, "Rakesh", "rakesh@example.com", "manager"], [HOD, "Maya", "maya@example.com", "manager"]] as const) {
       await db.query("insert into auth.users (id) values ($1)", [id]);
       await db.query("insert into public.users (id, full_name, email) values ($1, $2, $3) on conflict do nothing", [id, name, email]);
       await db.query("insert into public.organization_memberships (user_id, organization_id, role) values ($1, $2, $3)", [id, ORG, role]);
     }
     client = pgliteSupabase(db);
     await saveRecruitmentConfig(client, ORG, { hrHead: { userId: HR_HEAD }, director: { userId: DIRECTOR } });
-    positionId = (await createPosition(client, ORG, ME, { title: "Marketing Executive", location: "Mumbai", openings: 1 })).id;
+    positionId = (await createPosition(client, ORG, ME, { title: "Marketing Executive", department: "Marketing", location: "Mumbai", openings: 1 })).id;
     await db.query("update public.candidate_positions set jd_text = 'Plan and run social media campaigns; write copy; report on results.' where id = $1", [positionId]);
     // The position came from Rakesh's hiring request (band 4 to 6 LPA): he is the hiring manager.
     await db.query("insert into public.recruitment_requisitions (organization_id, role_title, status, budget_min_ctc, budget_max_ctc, position_id, requisition_no, raised_by) values ($1, 'Marketing Executive', 'approved', 400000, 600000, $2, 'REQ-2026-0042', $3)", [ORG, positionId, MANAGER]);
@@ -148,17 +149,26 @@ describe("assignment, documents and the letter of intent", () => {
   });
 
   it("puts the hiring manager first, restarts approval when the breakup changes, and the candidate accepts once on the letter page", async () => {
+    await saveDepartmentHeads(client, ORG, { heads: [{ department: "Marketing", userId: HOD }] });
+    const interviewId = "33333333-3333-4333-8333-333333333333";
+    const cards = await fileInterview(client, ORG, ME, { id: interviewId, candidateId: person.candidateId, applicationId: person.id, positionId, round: "Manager", atLocal: "2026-11-22T11:00", mode: "in_person", venue: null, joinPath: null, interviewers: [{ id: MANAGER, name: "Rakesh" }] });
+    await setInterviewStatus(client, ORG, ME, interviewId, { status: "done" }, deps);
+    await submitScorecard(client, cards.get(MANAGER)!, { ratings: { "Technical skill": 4, Communication: 4, Attitude: 4, "Relevant experience": 4 }, overall: 4, recommendation: "proceed" });
     emails.length = 0;
     const offer = await createOffer(client, ORG, ME, { applicationId: person.id, positionId, proposedCtc: 540_000, joiningDate: "2027-01-04" }, deps);
     assert.deepEqual([offer.currentLevel, offer.needsDirector], ["hiring_manager", true], "the manager first; the Director approves every offer by default");
     assert.ok(emails.some((e) => e.to === "rakesh@example.com" && e.html.includes(`https://app.test/act/${offer.id}/${MANAGER}/hiring_manager`)), "the manager approves from the email, without a login");
     await assert.rejects(decideOffer(client, ORG, by(HR_HEAD, "Anita"), offer.id, { decision: "approve" }, deps), /hiring manager who raised/);
-    const toHr = await decideOffer(client, ORG, by(MANAGER, "Rakesh"), offer.id, { decision: "approve" }, deps);
-    assert.equal(toHr.currentLevel, "hr_head");
+    const decisions = await Promise.allSettled([1, 2].map(() =>
+      decideOffer(client, ORG, by(MANAGER, "Rakesh"), offer.id, { decision: "approve" }, deps)));
+    assert.deepEqual(decisions.flatMap(d => d.status === "fulfilled" ? [d.value.currentLevel] : []), ["hod"]);
+    assert.equal(decisions.filter(d => d.status === "rejected").length, 1);
+    await assert.rejects(decideOffer(client, ORG, by(DIRECTOR, "Sunil"), offer.id, { decision: "approve" }, deps), /department head/);
 
     // HR adds the breakup: approval starts again from the manager, and it is in the audit log.
     const breakup = { Basic: 22_500, HRA: 9_000, "Special allowance": 13_500, "Employee PF": 1_800, "Professional tax": 200 };
     const edited = await editBreakup(client, ORG, ME, offer.id, { breakup }, deps);
+    await assert.rejects(decideOffer(client, ORG, by(MANAGER, "Rakesh"), offer.id, { decision: "approve", approvalRevision: offer.approvalRevision }, deps), /annexure or approval step changed/);
     assert.deepEqual([edited.status, edited.currentLevel, edited.breakup.Basic], ["pending", "hiring_manager", 22_500]);
     const [entry] = (await db.query<{ action: string; entity_id: string }>("select action, entity_id from public.recruitment_audit_log where entity_type = 'offer'")).rows;
     assert.deepEqual(entry, { action: "breakup_edit", entity_id: offer.id });
@@ -166,7 +176,7 @@ describe("assignment, documents and the letter of intent", () => {
     const g = breakupGroups(edited.breakup, DEFAULT_OUTREACH.offer);
     assert.deepEqual([g.gross, g.totalDeductions, g.net], [45_000, 2_000, 43_000]);
 
-    for (const [id, name] of [[MANAGER, "Rakesh"], [HR_HEAD, "Anita"], [DIRECTOR, "Sunil"]] as const) await decideOffer(client, ORG, by(id, name), offer.id, { decision: "approve" }, deps);
+    for (const [id, name] of [[MANAGER, "Rakesh"], [HOD, "Maya"], [DIRECTOR, "Sunil"]] as const) await decideOffer(client, ORG, by(id, name), offer.id, { decision: "approve" }, deps);
     await editLetter(client, ORG, ME, offer.id, { letter: "Dear Neha, we are glad to offer you the Marketing Executive role. Shweta" });
     emails.length = 0;
     const released = await releaseOffer(client, ORG, ME, offer.id, deps);

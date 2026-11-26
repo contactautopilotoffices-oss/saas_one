@@ -7,8 +7,11 @@
  * Returns a small HTML page rather than JSON: a human lands here from a browser redirect.
  */
 
+import { postZohoToken } from '@/backend/lib/mail/oauth';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
+import { isResumeMailOAuthState } from '@/backend/lib/candidates/resume-mail-oauth';
+import { completeResumeMailCallback } from '@/app/api/candidates/_lib/resume-mail-callback';
 import { TaskManagerAuth } from '../../_shared/adminGuard';
 import { ZohoTaskSync, ZOHO_TASK_SCOPES, zohoTaskCallbackUrl, getZohoTaskAppCredentials } from '@/task-manager/ZohoTaskSync';
 
@@ -20,8 +23,14 @@ function esc(s: string): string {
     return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
-function page(title: string, body: string, tone: 'ok' | 'bad' = 'ok'): NextResponse {
+function page(
+    title: string,
+    body: string,
+    tone: 'ok' | 'bad' = 'ok',
+    opts?: { status?: number; backTo?: string; referrerPolicy?: string },
+): NextResponse {
     const accent = tone === 'ok' ? '#0B6E5F' : '#B0442E';
+    const backTo = opts?.backTo ?? 'the Task Manager';
     return new NextResponse(
         `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head>
 <body style="margin:0;background:#FBFBF9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#16181C">
@@ -30,11 +39,18 @@ function page(title: string, body: string, tone: 'ok' | 'bad' = 'ok'): NextRespo
       <div style="width:9px;height:9px;border-radius:50%;background:${accent};margin-bottom:14px"></div>
       <h1 style="margin:0 0 10px;font-size:21px;letter-spacing:-0.01em">${title}</h1>
       <div style="font-size:14.5px;line-height:1.65;color:#4A4E55">${body}</div>
-      <div style="margin-top:20px;font-size:12.5px;color:#797E86">You can close this tab and go back to the Task Manager.</div>
+      <div style="margin-top:20px;font-size:12.5px;color:#797E86">You can close this tab and go back to ${backTo}.</div>
     </div>
   </div>
 </body></html>`,
-        { status: tone === 'ok' ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } },
+        {
+            status: opts?.status ?? (tone === 'ok' ? 200 : 400),
+            headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Cache-Control': 'no-store',
+                ...(opts?.referrerPolicy ? { 'Referrer-Policy': opts.referrerPolicy } : {}),
+            },
+        },
     );
 }
 
@@ -43,6 +59,16 @@ export async function GET(request: NextRequest) {
     const code = sp.get('code');
     const state = sp.get('state');
     const denied = sp.get('error');
+
+    if (state && isResumeMailOAuthState(state)) {
+        const result = await completeResumeMailCallback(sp);
+        return page(
+            result.ok ? 'Zoho Mail connected' : 'Not connected',
+            esc(result.message),
+            result.ok ? 'ok' : 'bad',
+            { status: result.status, backTo: 'Recruitment', referrerPolicy: 'no-referrer' },
+        );
+    }
 
     if (denied) return page('Not connected', `Zoho reported: <b>${esc(denied)}</b>. Nothing was saved.`, 'bad');
     if (!code || !state) return page('Not connected', 'Zoho did not return a code. Nothing was saved.', 'bad');
@@ -86,18 +112,8 @@ export async function GET(request: NextRequest) {
 
     let tok: { refresh_token?: string; access_token?: string; scope?: string; error?: string } | null = null;
     try {
-        const r = await fetch(tokenEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: form.toString(),
-        });
-        let text = await r.text();
-        // Same fallback the mailbox callback needed: Zoho sometimes answers the form body with HTML.
-        if (/^\s*</.test(text)) {
-            const r2 = await fetch(`${tokenEndpoint}?${form.toString()}`, { method: 'POST', headers: { Accept: 'application/json' } });
-            const t2 = await r2.text();
-            if (!/^\s*</.test(t2)) text = t2;
-        }
+        const r = await postZohoToken(tokenEndpoint, form);
+        const text = await r.text();
         try { tok = JSON.parse(text); } catch { tok = null; }
     } catch (e) {
         return page('Not connected', `Could not reach Zoho: ${esc(e instanceof Error ? e.message : String(e))}`, 'bad');

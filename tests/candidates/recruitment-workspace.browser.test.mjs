@@ -108,7 +108,7 @@ test('recruitment navigation, layouts, theme and responsive error states', { tim
      assert.equal(await screen.getByRole('textbox',{name:'What to revise'}).inputValue(),'Confirm the joining date');
     }
     if(id==='candidates') { await screen.getByRole('button',{name:'Cards',exact:true}).click(); await screen.getByRole('button',{name:'Asha Rao',exact:true}).waitFor(); }
-    if(id==='resumes') { await screen.getByRole('button',{name:'Import & sources',exact:true}).click(); await screen.getByRole('heading',{name:'Add resumes',exact:true}).waitFor(); await screen.getByRole('button',{name:'Resume library',exact:true}).click(); }
+    if(id==='resumes') { assert.equal(await page.getByRole('button',{name:'Upload resumes',exact:true}).count(),1); await screen.getByRole('button',{name:'Import & sources',exact:true}).click(); await screen.getByRole('heading',{name:'Add resumes',exact:true}).waitFor(); await screen.getByRole('button',{name:'Resume library',exact:true}).click(); }
     if(id==='outreach') { await screen.getByRole('button',{name:'Choose candidates',exact:true}).click(); assert.equal(await page.locator('#recruitment-nav-search').getAttribute('aria-current'),'page'); await page.locator('#recruitment-nav-outreach').click(); }
     if(id==='sheets') { assert.equal(await screen.getByRole('button',{name:'Clear all data',exact:true}).count(),0); await screen.getByRole('button',{name:'Import a sheet',exact:true}).click(); await screen.getByRole('heading',{name:'Bring your sourcing data together'}).waitFor(); }
     if(id==='dashboard') { await screen.getByRole('button',{name:'Role health',exact:true}).click(); await screen.getByRole('region',{name:'Roles',exact:true}).waitFor(); }

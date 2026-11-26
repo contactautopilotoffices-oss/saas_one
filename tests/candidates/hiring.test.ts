@@ -104,9 +104,11 @@ describe("the hiring flow after booking", () => {
     const ratings = { "Technical skill": 4, Communication: 4, Attitude: 5, "Relevant experience": 3 };
     await assert.rejects(submitScorecard(client, mine.id, { ratings, overall: 2, recommendation: "reject" }), /Comments are required to reject/);
     await assert.rejects(submitScorecard(client, mine.id, { ratings: { Attitude: 5 }, overall: 4, recommendation: "proceed" }), /Rate Technical skill/);
+    await assert.rejects(createOffer(client, ORG, ME, { applicationId: farah.id, positionId, proposedCtc: 400000 }, deps), /scorecards/);
     const first = await submitScorecard(client, mine.id, { ratings, overall: 4, recommendation: "proceed", comments: "Strong on Tally." });
     assert.equal(first.others.length, 0, "nobody else has submitted: nothing to see");
     await assert.rejects(submitScorecard(client, mine.id, { ratings, overall: 4, recommendation: "proceed" }), /already submitted/);
+    await assert.rejects(createOffer(client, ORG, ME, { applicationId: farah.id, positionId, proposedCtc: 400000 }, deps), /scorecards/);
     const second = await submitScorecard(client, theirs.id, { ratings, overall: 3, recommendation: "hold", comments: "Check references." });
     assert.deepEqual(second.others.map((c) => [c.overall, c.recommendation]), [[4, "proceed"]], "after submitting, the other card is visible");
     // Chasers only for cards still empty: none left here.
@@ -158,6 +160,13 @@ describe("the hiring flow after booking", () => {
     await addMembers(client, ORG, ME, positionId, [record.id]);
     // Owner 2026-11-24: the Director approves every offer by default; with that switched off, within the band it is the HR Head only.
     await saveOutreachSettings(client, ORG, { ...DEFAULT_OUTREACH, offer: { ...DEFAULT_OUTREACH.offer, directorAlways: false } });
+    const proposal = { applicationId: record.id, positionId, proposedCtc: 350_000 };
+    await assert.rejects(createOffer(client, ORG, ME, proposal, deps), /Complete an interview/);
+    const id = "22222222-2222-4222-8222-222222222222";
+    const cards = await fileInterview(client, ORG, ME, { id, candidateId: record.candidateId, applicationId: record.id, positionId, round: "HR", atLocal: "2026-11-22T11:00", mode: "in_person", venue: null, joinPath: null, interviewers: [{ id: PANEL, name: "Priya" }] });
+    await assert.rejects(createOffer(client, ORG, ME, proposal, deps), /scheduled interviews/);
+    await setInterviewStatus(client, ORG, ME, id, { status: "done" }, deps);
+    await submitScorecard(client, cards.get(PANEL)!, { ratings: { "Technical skill": 4, Communication: 4, Attitude: 4, "Relevant experience": 4 }, overall: 4, recommendation: "proceed" });
     const offer = await createOffer(client, ORG, ME, { applicationId: record.id, positionId, proposedCtc: 350_000, joiningDate: "2026-12-20" }, deps);
     assert.equal(offer.needsDirector, false, "within the band: the HR Head only");
     await decideOffer(client, ORG, by(HR_HEAD, "Anita Verma"), offer.id, { decision: "approve" }, deps);

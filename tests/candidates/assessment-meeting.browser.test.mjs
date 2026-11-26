@@ -10,10 +10,10 @@ import postcss from 'postcss';
 import tailwind from '@tailwindcss/postcss';
 
 test('assessment buttons, meeting notes and hidden HR bot on desktop and phone', { timeout: 120000 }, async () => {
-  const bundle = await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import AssessmentSender from './frontend/components/candidates/AssessmentSender'; import HrAssistantBot from './frontend/components/hr-assistant/HrAssistantBot'; import MeetingReview from './frontend/components/task-manager/meetings/MeetingReview';
+  const bundle = await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import AssessmentSender from './frontend/components/candidates/AssessmentSender'; import HrAssistantBot from './frontend/components/hr-assistant/HrAssistantBot'; import { InterviewsList } from './frontend/components/candidates/InterviewScheduler';
     import VideoCall from './frontend/components/task-manager/meetings/VideoCall';
     const record = {id:'record',candidateId:'candidate',fullName:'Asha Rao',email:'asha@example.test',phone:'9876543210',blacklisted:false};
-    createRoot(document.getElementById('root')).render(<><HrAssistantBot/>{location.pathname === '/test-ended-call' ? <VideoCall meetingId="meeting"/> : location.pathname === '/test-notes' ? <div data-meeting-surface><MeetingReview space="hr" meetingId="meeting" onBack={()=>{}} onContinueRecording={()=>{}}/></div> : <AssessmentSender orgId="org" record={record} onSent={()=>{}} onClose={()=>{}}/>}</>);`, loader: 'tsx', resolveDir: process.cwd() },
+    createRoot(document.getElementById('root')).render(<><HrAssistantBot/>{location.pathname === '/test-ended-call' ? <VideoCall meetingId="meeting"/> : location.pathname === '/test-notes' ? <InterviewsList orgId="org" record={record} nonce={0}/> : <AssessmentSender orgId="org" record={record} onSent={()=>{}} onClose={()=>{}}/>}</>);`, loader: 'tsx', resolveDir: process.cwd() },
     bundle: true, jsx: 'automatic', write: false, format: 'iife', platform: 'browser', tsconfig: resolve('tsconfig.json'), define: { 'process.env.NODE_ENV': '"development"', 'process.env': '{}' }, plugins: [{ name: 'auth-fixtures', setup(b) {
       b.onResolve({ filter: /^next\/navigation$/ }, a => ({ path: a.path, namespace: 'mock' }));
       b.onResolve({ filter: /\/context\/AuthContext$/ }, a => ({ path: a.path, namespace: 'mock' }));
@@ -34,6 +34,14 @@ test('assessment buttons, meeting notes and hidden HR bot on desktop and phone',
         window.fetch = async (input, init = {}) => {
           const url = new URL(String(input), location.origin), body = init.body ? JSON.parse(init.body) : null;
           if (url.pathname === '/api/hr-assistant') return Response.json({ canUse: true, isAdmin: false });
+          if (url.pathname === '/api/candidates/interviews') {
+            const facts = Object.fromEntries(['currentInhand', 'expectedInhand', 'noticePeriodDays', 'location', 'reasonForChange'].map(key => [key, { value: null, quote: null, at: null }]));
+            return Response.json({ interviews: [{
+              id: 'interview', meetingId: 'meeting', round: 'L1', at: '2026-11-22T10:00',
+              meeting: { status: 'ready', summary: { summary: 'Available after thirty days.', decisions: ['Proceed to L2.'], openQuestions: ['Confirm date.'] } },
+              analysis: { id: 'analysis', status: 'done', appliedFacts: [], result: { summary: 'Clear answers on availability.', overallSentiment: 'positive', sentimentConfidence: 'high', interestLevel: 'high', concerns: [], redFlags: [], timeline: [], facts } },
+            }] });
+          }
           if (url.pathname.endsWith('/meeting/join')) return Response.json({ success: true, meeting: { id: 'meeting', title: 'Interview: Asha', status: 'ready', purpose: 'interview', scheduledFor: null, confidential: false, hostName: 'HR', isHost: true, open: false, startedAt: null, problem: null }, setup: [] });
           if (url.pathname.includes('/task-manager/meetings/')) return Response.json({ success: true, meeting: {
             id: 'meeting', title: 'Interview: Asha', meetingDate: '2026-11-22', status: 'ready', error: null, confidential: false, durationSeconds: 600, mine: false, createdAt: '2026-11-22', attendees: [], extraNames: ['Asha'],
@@ -50,7 +58,7 @@ test('assessment buttons, meeting notes and hidden HR bot on desktop and phone',
         };
       });
       const base = `http://127.0.0.1:${server.address().port}`;
-      await page.goto(`${base}/org/hr`);
+      await page.goto(`${base}/hr-tickets`);
       await page.getByLabel('Assessment', { exact: true }).selectOption('test');
       assert.equal(await page.evaluate(() => window.sends.length), 0);
       await page.getByRole('button', { name: 'Send by email', exact: true }).click();
@@ -64,12 +72,18 @@ test('assessment buttons, meeting notes and hidden HR bot on desktop and phone',
       await page.locator('[data-hr-policy-bot] button').last().waitFor({ state: 'hidden' });
       await mkdir('scratch/assessment-meeting', { recursive: true });
       await page.screenshot({ path: `scratch/assessment-meeting/assessment-${width}.png`, fullPage: true });
-      for (const path of ['/guest/secret', '/meet/meeting', '/org/meetings/meeting']) {
+      for (const path of ['/apply/token', '/interview/token', '/offer/token', '/display/room', '/guest/secret', '/meet/meeting', '/11111111-1111-1111-1111-111111111111/meetings/meeting', '/org/hr', '/new-screen', '/11111111-1111-1111-1111-111111111111/new-onboarding', '/property/p1/new-tab']) {
         await page.goto(`${base}${path}`);
         await page.getByLabel('Assessment', { exact: true }).waitFor();
         assert.equal(await page.locator('[data-hr-policy-bot]').count(), 0);
       }
       await page.goto(`${base}/test-notes`);
+      await page.getByText('Meeting notes', { exact: true }).click();
+      await page.getByText('Proceed to L2.', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Read interview analysis' }).click();
+      await page.getByText('Clear answers on availability.', { exact: true }).waitFor();
+      assert.equal(await page.getByText('Available after thirty days.', { exact: true }).isVisible(), true);
+      await page.getByRole('button', { name: 'Full notes and transcript' }).click();
       await page.getByText('The interview covered experience and availability.', { exact: true }).waitFor();
       await page.getByRole('button', { name: 'Transcript', exact: true }).click();
       await page.locator('p[id="t-10"]').filter({ hasText: 'I can join in thirty days.' }).waitFor();

@@ -8,7 +8,7 @@ import { encryptToken } from '../../backend/lib/mail/token-crypto';
 import { htmlToText } from '../../backend/lib/mail/text';
 import { ZohoMailSendError, type ZohoMailListItem } from '../../backend/services/zohoMailService';
 import { emailConnections, emailToRequisition, listEmails, readEmail, resolveEmailSend, saveEmailDraft, sendEmail, syncEmails } from '../../backend/lib/candidates/email';
-import { finishResumeMailOAuth, startResumeMailOAuth } from '../../backend/lib/candidates/resume-mail-oauth';
+import { connectRecruitmentMailbox, finishResumeMailOAuth, startResumeMailOAuth } from '../../backend/lib/candidates/resume-mail-oauth';
 import { saveRaisers } from '../../backend/lib/candidates/requisitions';
 import { freshDb } from './db-stub';
 import { pgliteSupabase } from './pglite-supabase';
@@ -54,6 +54,7 @@ describe('Recruitment email sending, replies and hiring drafts', () => {
     process.env.MAIL_TOKEN_KEY = 'email-test-key'; process.env.ZOHO_MAIL_APP_CLIENT_ID = 'test'; process.env.ZOHO_MAIL_APP_CLIENT_SECRET = 'test'; process.env.ZOHO_MAIL_APP_DC = 'in';
     db = await freshDb(); client = pgliteSupabase(db);
     await db.exec(readFileSync('supabase/migrations/20261122000002_recruitment_mail.sql', 'utf8')); await db.exec(migration);
+    await db.exec(readFileSync("supabase/migrations/20261126000003_shared_zoho_mail.sql","utf8"));
     await db.query('insert into organizations(id) values($1),($2)', [ORG, OTHER]);
     for (const id of [USER, COLLEAGUE]) {
       await db.query('insert into auth.users(id) values($1)', [id]);
@@ -83,6 +84,13 @@ describe('Recruitment email sending, replies and hiring drafts', () => {
     assert.equal(JSON.stringify(await emailConnections(client, ORG, USER)).includes('refresh_token'), false);
     assert.equal(htmlToText('&lt;script&gt;alert(1)&lt;/script&gt;'), '<script>alert(1)</script>', 'decoded markup is text only, never rendered as HTML');
     await assert.rejects(readEmail(client, OTHER, m.id, mail), /no longer here/);
+  });
+  it('lets another HR login reuse the organization mailbox without starting another Zoho authorization', async () => {
+    const shared = await connectRecruitmentMailbox(client, ORG, COLLEAGUE, 'https://app.test', true, false);
+    assert.deepEqual(shared, { connected: true, address: 'hr@example.test' });
+    assert.equal((await db.query('select state from candidate_resume_mail_oauth')).rows.length, 0);
+    assert.equal((await emailConnections(client, ORG, COLLEAGUE)).connections[0].id, CONN);
+    assert.equal((await emailConnections(client, OTHER, COLLEAGUE)).connections.length, 0);
   });
   it('saving and editing a draft sends nothing; the reviewed recipient comes from the candidate, not client fields', async () => {
     const d = draft({ to: 'attacker@example.test', from: 'spoof@example.test' });

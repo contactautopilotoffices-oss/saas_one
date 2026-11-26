@@ -180,8 +180,9 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
     const tab = window.open('', '_blank');
     if (!tab) { setError('Allow pop-ups, then connect again.'); return; }
     tab.opener = null;
-    const result = await call<{ url: string }>('connect-send');
-    if (result) { tab.location.href = result.url; setNotice('Complete Zoho consent in the new tab, then click Refresh connections.'); } else tab.close();
+    const result = await call<{ url?: string }>('connect-send', { reconnect: !!box?.connected });
+    if (result && !result.url) { tab.close(); setNotice('The shared HR mailbox is already connected.'); }
+    else if (result?.url) { tab.location.href = result.url; setNotice('Complete Zoho consent in the new tab, then click Refresh connections.'); } else tab.close();
   };
   const openMessage = async (id: string) => {
     setBusy(true); setError('');
@@ -263,7 +264,7 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
       </div>
       <button type="button" disabled={busy || !box?.connected || !box.active || !box.folder_id} className={BTN_SECONDARY} onClick={async () => { const r = await call<{ added: number; complete: boolean }>('sync'); if (r) setNotice(`${r.added} new emails loaded. ${r.complete ? 'This pass is complete.' : 'Click Continue checking for older emails.'}`); }}><RefreshCw className="h-4 w-4" aria-hidden />{box && box.email_scan_start > 1 ? 'Continue checking' : 'Check emails'}</button>
       <div className="ml-auto flex flex-wrap items-center gap-x-1 gap-y-1">
-        <button type="button" className={ICON_BTN} disabled={busy} aria-label="Connect Zoho for sending" title="Connect Zoho for sending" onClick={() => void enableSend()}><Plug className="h-4 w-4" aria-hidden /></button>
+        {!box?.can_send || !box.connected ? <button type="button" className={ICON_BTN} disabled={busy} aria-label="Connect Zoho for sending" title="Connect Zoho for sending" onClick={() => void enableSend()}><Plug className="h-4 w-4" aria-hidden /></button> : null}
         <button type="button" className={ICON_BTN} disabled={busy} aria-label="Refresh connections" title="Refresh connections" onClick={() => { setError(''); setNonce(n => n + 1); }}><RefreshCw className="h-4 w-4" aria-hidden /></button>
         <button type="button" className={ICON_BTN} disabled={busy} aria-label="Mailbox and folder settings" title="Mailbox and folder settings" onClick={onSettings}><Settings className="h-4 w-4" aria-hidden /></button>
         <button type="button" className={BTN_GHOST} onClick={onRequisitions}><ClipboardList className="h-4 w-4" aria-hidden />Open Requisitions</button>
@@ -329,7 +330,8 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
                       <Dir className="h-3 w-3 shrink-0" aria-hidden /><span className="sr-only">{m.direction === 'incoming' ? 'Incoming: ' : 'Outgoing: '}</span>
                       <span className="min-w-0 truncate"><span className="font-medium">{m.subject || '(No subject)'}</span>{preview !== m.subject && <> — {preview}</>}</span>
                     </span>
-                    {(m.candidate_id || STATUS_TAG[m.status]) && <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                    {(m.direction === 'incoming' || m.candidate_id || STATUS_TAG[m.status]) && <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+                      {m.direction === 'incoming' && <span className={`text-xs ${selected ? 'text-white/75' : 'text-text-tertiary'}`}>Zoho Mail</span>}
                       {m.candidate_id && <span className={`truncate text-xs ${selected ? 'text-white/75' : 'text-text-tertiary'}`}>Linked to a candidate</span>}
                       <StatusTag status={m.status} />
                     </span>}
@@ -377,7 +379,7 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
                     <div className="min-w-0 flex-1">
                       <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
                         <span className="min-w-0 truncate font-semibold text-text-primary" title={who.address}>{who.label}</span>
-                        <span className="text-xs text-text-tertiary">· {timeOf(m.received_at)}<span className="sr-only">, {m.direction === 'incoming' ? 'received' : 'sent from this mailbox'}</span></span>
+                        <span className="text-xs text-text-tertiary">{m.direction === 'incoming' && 'Zoho Mail · '}{timeOf(m.received_at)}<span className="sr-only">, {m.direction === 'incoming' ? 'received' : 'sent from this mailbox'}</span></span>
                         <StatusTag status={m.status} />
                       </p>
                       {isOpen

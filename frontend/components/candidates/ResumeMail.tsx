@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import type { ResumeMailConnection, ResumeMailItem } from '@/backend/lib/candidates/resume-mail';
-import { sourceFromResumeName, resumeSourceLabel } from '@/backend/lib/candidates/resume-source';
 import { api, qs } from './api';
 import { BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, CARD, FIELD, LABEL, Spinner } from './ui';
 import { formatDate } from './format';
@@ -92,18 +91,19 @@ function MailPanel({ orgId, onImported }: { orgId: string; onImported: () => voi
     if (!tab) { setError('Allow pop-ups for this site, then click Connect Zoho Mail again.'); return; }
     tab.opener = null;
     setBusy(true); setError('');
-    const res = await api<{ url: string }>(ENDPOINT, { json: { orgId, action: 'connect' } });
+    const res = await api<{ url?: string }>(ENDPOINT, { json: { orgId, action: 'connect', reconnect: connections.some(box => box.connected) } });
     setBusy(false);
     if (!res.ok) { tab.close(); setError(res.error); return; }
+    if (!res.data.url) { tab.close(); setMessage('The shared HR mailbox is already connected.'); setNonce(n => n + 1); return; }
     tab.location.href = res.data.url;
     setMessage('Finish connecting in the Zoho tab, then click Refresh connections here.');
   };
   const dirty = Boolean(c && (folderId !== (c.folder_id ?? '') || sinceDate !== (c.since_date?.slice(0, 10) ?? '') || role !== (c.sourced_role ?? '') || frequency !== c.sync_every));
   const usable = Boolean(c?.connected && c.active && c.folder_id && !dirty);
   return <div className="mt-4 min-w-0 space-y-4">
-    <p className="text-sm text-text-secondary">Read resume attachments from a selected Zoho folder. Connecting and previewing create no resumes. PDF and Word files up to 15 MB are supported; other attachments are left out.</p>
+    <p className="text-sm text-text-secondary">This mailbox is shared by Recruitment users in your organization. Read resume attachments from a selected Zoho folder. Connecting and previewing create no resumes. PDF and Word files up to 15 MB are supported; other attachments are left out.</p>
     <div className="flex flex-wrap gap-2">
-      <button type="button" disabled={busy} onClick={() => void connect()} className={BTN_PRIMARY}>Connect Zoho Mail</button>
+      <button type="button" disabled={busy} onClick={() => void connect()} className={BTN_PRIMARY}>{connections.some(box => box.connected) ? 'Reconnect shared mailbox' : 'Connect Zoho Mail'}</button>
       <button type="button" disabled={busy} onClick={() => { setError(''); setNonce(n => n + 1); }} className={BTN_SECONDARY}>Refresh connections</button>
     </div>
     {error && <p role="alert" className="text-sm text-red-700 break-words">{error}</p>}
@@ -144,7 +144,7 @@ function MailPanel({ orgId, onImported }: { orgId: string; onImported: () => voi
         </select>
       </div>
       {dirty && <p className="text-sm text-text-secondary">Save the settings before previewing or importing.</p>}
-      <p className="text-xs text-text-secondary">{total} attachments in this view. A matching filename means a possible duplicate; exact duplicates are checked during import. Source is detected from the filename and can be corrected in the resume library.</p>
+      <p className="text-xs text-text-secondary">{total} attachments in this view. A matching filename means a possible duplicate; exact duplicates are checked during import. Imported attachments use Zoho Mail as their source.</p>
       <ul className="space-y-2">
         {items.map(item => <li key={item.id} className="rounded-lg border border-border p-3">
           <div className="flex items-start gap-3">
@@ -152,7 +152,7 @@ function MailPanel({ orgId, onImported }: { orgId: string; onImported: () => voi
             <div className="min-w-0 flex-1 break-words text-sm">
               <p className="font-medium">{item.file_name}</p>
               <p>{item.sender} · {formatDate(item.received_at)}</p><p className="text-text-secondary">{item.subject || '(No subject)'}</p>
-              <p className="text-xs text-text-secondary">{resumeSourceLabel(sourceFromResumeName(item.file_name))} · {Math.ceil(item.file_size / 1024)} KB{item.possibleDuplicate && status === 'pending' ? ' · Possible duplicate — same filename' : ''}</p>
+              <p className="text-xs text-text-secondary">Zoho Mail · {Math.ceil(item.file_size / 1024)} KB{item.possibleDuplicate && status === 'pending' ? ' · Possible duplicate — same filename' : ''}</p>
               {item.last_error && <p className="mt-1 text-red-700">{item.last_error}</p>}
               {item.file_id && <a className="text-primary-dark underline" target="_blank" rel="noopener noreferrer" href={`/api/candidates/resumes/${encodeURIComponent(item.file_id)}${qs({ orgId, inline: true })}`}>Open stored resume</a>}
             </div>

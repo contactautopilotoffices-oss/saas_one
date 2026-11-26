@@ -458,7 +458,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
 
                 {tab === 'positions' && open && <MembershipsList orgId={orgId} record={r} nonce={membershipNonce} />}
                 {/* Owner 2026-11-19: the interviews scheduled, their links and, after the call, the notes */}
-                {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} />}
+                {tab === 'interviews' && open && <InterviewsList orgId={orgId} record={r} nonce={historyNonce} onRecord={saved => { replace(saved); setHistoryNonce(n => n + 1); setCallsNonce(n => n + 1); }} />}
 
                 {/* Owner 2026-11-24: the assignment (with the AI score, HR only) and the documents after selection */}
                 {tab === 'work' && open && <AssignmentsTab orgId={orgId} record={r} onChanged={() => setHistoryNonce(n => n + 1)} />}
@@ -478,12 +478,12 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         <dl className="mt-3 space-y-3">
                             {r.email && (
                                 <InfoRow icon={Mail} label="Email">
-                                    <span className={CONTACT_PILL}><span className="truncate">{r.email}</span><CopyButton value={r.email} label="email address" /></span>
+                                    <span className={CONTACT_PILL}><span className="min-w-0 break-all">{r.email}</span><CopyButton value={r.email} label="email address" /></span>
                                 </InfoRow>
                             )}
                             {r.phone && (
                                 <InfoRow icon={Phone} label="Phone">
-                                    <span className={`${CONTACT_PILL} tabular-nums`}><span className="truncate">{r.phone}</span><CopyButton value={r.phone} label="phone number" /></span>
+                                    <span className={`${CONTACT_PILL} tabular-nums`}><span className="min-w-0 break-all">{r.phone}</span><CopyButton value={r.phone} label="phone number" /></span>
                                 </InfoRow>
                             )}
                             {r.location && <InfoRow icon={MapPin} label="Location">{r.location}</InfoRow>}

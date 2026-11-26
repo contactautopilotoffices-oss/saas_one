@@ -29,6 +29,17 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
         return () => { cancelled = true; };
     }, [token]);
 
+    const agreeToAnalysis = async () => {
+        setBusy(true); setError(null);
+        try {
+            const res = await fetch('/api/public/interview/' + encodeURIComponent(token), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisConsent: true }) });
+            const data = await res.json();
+            if (res.ok && data.analysisConsent) setPage(p => p && { ...p, analysisConsent: true });
+            else setError(data.error || 'Your consent could not be saved.');
+        } catch { setError('Your consent could not be saved. Please try again.'); }
+        finally { setBusy(false); }
+    };
+
     const answer = async (value: 'yes' | 'no') => {
         if (!page || busy) return;
         setBusy(true);
@@ -65,6 +76,13 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
                                 {!page.online && page.venue && <div><dt className="text-xs font-semibold text-slate-500">Where</dt><dd className="whitespace-pre-wrap">{page.venue}</dd></div>}
                                 {page.location && page.online && <div><dt className="text-xs font-semibold text-slate-500">Role location</dt><dd>{page.location}</dd></div>}
                             </dl>
+                            {page.analysisConsent !== undefined && <div className="mt-4 rounded-xl border p-3 text-sm">
+                                {page.analysisConsent ? 'You agreed to AI analysis of this recorded interview.' : <>
+                                    <p>HR can use AI to review your answers and suggest follow-up questions. You can join the interview either way.</p>
+                                    <button type="button" disabled={busy} onClick={() => void agreeToAnalysis()} className="mt-2 font-semibold underline">I agree to AI analysis of this interview</button>
+                                </>}
+                            </div>}
+                            {error && <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p>}
                             {page.joinUrl && <a href={page.joinUrl} className="mt-4 block rounded-xl bg-slate-900 px-4 py-3 text-center text-[15px] font-bold text-white">Join the video call</a>}
                             {page.joinUrl && <p className="mt-1 text-center text-xs text-slate-500">Open it a few minutes early. You will be let in when the interview starts. The call is recorded.</p>}
                         </section>
@@ -88,7 +106,7 @@ export default function InterviewPage({ params }: { params: Promise<{ token: str
                                         </div>
                                     </div>
                                 )}
-                                {error && <p role="alert" className="mt-2 text-sm text-rose-700">{error}</p>}
+
                             </section>
                         )}
 

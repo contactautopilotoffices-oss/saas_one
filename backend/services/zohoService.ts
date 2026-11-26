@@ -1,3 +1,4 @@
+import { postZohoToken } from '@/backend/lib/mail/oauth';
 import { InvoiceData } from "./aiProcessor";
 
 export class ZohoService {
@@ -37,9 +38,7 @@ export class ZohoService {
                     grant_type: 'refresh_token',
                 });
 
-                const res = await fetch(`https://accounts.zoho.${tld}/oauth/v2/token?${params.toString()}`, {
-                    method: 'POST',
-                });
+                const res = await postZohoToken(`https://accounts.zoho.${tld}/oauth/v2/token`, params);
 
                 const data = await res.json();
                 if (res.ok && data.access_token) {
