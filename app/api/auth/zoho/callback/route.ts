@@ -1,8 +1,11 @@
+import { isResumeMailOAuthState } from '@/backend/lib/candidates/resume-mail-oauth';
+import { recruitmentMailboxCallback } from '@/app/api/candidates/_lib/resume-mail-callback';
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/frontend/utils/supabase/admin';
 import { createClient } from '@/frontend/utils/supabase/server';
 
 export async function GET(request: Request) {
+    if (isResumeMailOAuthState(new URL(request.url).searchParams.get('state') ?? '')) return recruitmentMailboxCallback(request);
     const requestUrl = new URL(request.url);
     const code = requestUrl.searchParams.get('code');
     const stateParam = requestUrl.searchParams.get('state');

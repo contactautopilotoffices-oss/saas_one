@@ -18,7 +18,7 @@ import { EmptyBlock, K_BTN, K_BTN_DANGER, K_BTN_GHOST, K_BTN_GHOST_DANGER, K_BTN
  */
 
 const lpa = (v: number | null) => (v === null ? '—' : `₹${(v / 100_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} LPA`);
-const LEVEL: Record<NonNullable<Offer['currentLevel']>, string> = { hiring_manager: 'the hiring manager', hr_head: 'the HR Head', director: 'the Director' };
+const LEVEL: Record<NonNullable<Offer['currentLevel']>, string> = { hiring_manager: 'the hiring manager', hod: 'the department head', hr_head: 'the HR Head', director: 'the Director' };
 const inr = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 const TONE: Record<Offer['status'], PillTone> = { pending: 'amber', approved: 'blue', rejected: 'red', released: 'blue', accepted: 'green', declined: 'red', joined: 'green', dropped: 'grey', withdrawn: 'grey' };
 const OPEN: Offer['status'][] = ['pending', 'approved', 'released', 'accepted'];
@@ -59,13 +59,16 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
             <p className="flex items-center gap-x-1.5 text-sm font-semibold text-text-primary"><BadgeIndianRupee className="h-4 w-4" aria-hidden />Selection and offer</p>
             {positions.map(([positionId, title]) => {
                 const cards = cardsFor(positionId);
+                const rounds = interviews.filter(i => i.positionId === positionId && i.status !== 'cancelled' && i.status !== 'no_show');
+                const eligible = rounds.length > 0 && rounds.every(i => i.status === 'done' && i.scorecards?.length && i.scorecards.every(c => c.submittedAt));
                 const avg = cards.length ? Math.round((cards.reduce((n, c) => n + (c.overall ?? 0), 0) / cards.length) * 10) / 10 : null;
                 const live = offers?.some(o => o.positionId === positionId && ['pending', 'approved', 'released', 'accepted'].includes(o.status));
                 return (
                     <div key={positionId} className={`${K_WELL} mt-2 px-3 py-2.5`}>
                         <p className="text-sm font-semibold text-text-primary">{title}</p>
                         <p className="text-xs text-text-secondary">{cards.length ? `Combined scorecard: ${avg}/5 over ${cards.length} card${cards.length === 1 ? '' : 's'} · ${cards.map(c => `${c.round ?? 'Round'}: ${c.recommendation ? RECOMMENDATION_LABELS[c.recommendation] : '—'}`).join(' · ')}` : 'No scorecard submitted yet.'}</p>
-                        {!live && (form?.positionId === positionId ? (
+                        {!live && !eligible && <p className="mt-2 text-sm text-text-secondary">Complete the interviews and collect all panel scorecards before making an offer.</p>}
+                        {!live && eligible && (form?.positionId === positionId ? (
                             <div className="mt-2 grid gap-2 sm:grid-cols-3">
                                 <label className="text-xs text-text-secondary">Offer CTC (lakhs per year)<input type="number" min={0} step={0.1} value={form.ctc} onChange={e => setForm({ ...form, ctc: e.target.value })} className={`${INPUT} mt-1`} autoFocus /></label>
                                 <label className="text-xs text-text-secondary">Joining date<input type="date" value={form.joining} onChange={e => setForm({ ...form, joining: e.target.value })} className={`${INPUT} mt-1`} /></label>
@@ -74,7 +77,7 @@ export function CandidateOffers({ orgId, record, interviews }: { orgId: string; 
                                     <button type="button" onClick={() => setForm(null)} disabled={busy} className={K_BTN}>Cancel</button>
                                     <button type="button" onClick={() => void make()} disabled={busy || !form.ctc} className={K_BTN_PRIMARY}>{busy && <Spinner />}Send for approval</button>
                                 </div>
-                                <p className="text-xs text-text-tertiary sm:col-span-3">The hiring manager (who raised the request), then the HR Head, then the Director approve the offer and its salary breakup. The candidate sees nothing until HR releases the letter of intent.</p>
+                                <p className="text-xs text-text-tertiary sm:col-span-3">The annexure goes to the configured approvers for this position. The candidate sees nothing until HR releases the letter of intent.</p>
                             </div>
                         ) : <button type="button" onClick={() => setForm({ positionId, ctc: '', joining: '', note: '' })} className={`${K_BTN} mt-2`}><Check className="h-4 w-4" />Select and make an offer</button>)}
                     </div>
@@ -184,7 +187,7 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
                 {o.variancePct !== null && <span className="font-semibold text-red-700 dark:text-red-400"> · {o.variancePct}% above the band</span>}
                 <span className="text-text-secondary"> · joining {o.joiningDate ? formatDate(o.joiningDate) : '—'}</span>
             </p>
-            {o.status === 'pending' && <p className="text-xs text-text-secondary">Waiting on {o.currentApproverName ?? (o.currentLevel ? LEVEL[o.currentLevel] : 'the approver')}{o.currentLevel === 'hiring_manager' ? ' (hiring manager), then the HR Head' : ''}{o.needsDirector && o.currentLevel !== 'director' ? ', then the Director' : ''}.</p>}
+            {o.status === 'pending' && <p className="text-xs text-text-secondary">Waiting on {o.currentApproverName ?? (o.currentLevel ? LEVEL[o.currentLevel] : 'the approver')}{o.currentLevel === 'hiring_manager' ? ' (hiring manager)' : ''}{o.needsDirector && o.currentLevel !== 'director' ? ', then the Director' : ''}.</p>}
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
                 <span>Salary breakup: {rows.length ? rows.map(([k, v]) => `${k} ${inr(v)}`).join(' · ') : 'not given yet'}</span>
                 {(o.status === 'pending' || o.status === 'approved') && <button type="button" onClick={() => setBreakupOpen(true)} className={K_BTN_GHOST}>{rows.length ? 'Edit' : 'Add the breakup'}</button>}
@@ -199,13 +202,13 @@ function OfferCard({ orgId, offer: o, onChanged, compact = false }: { orgId: str
             {/* The next step */}
             {o.canDecide && !step && (
                 <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => void act({ action: 'decide', decision: 'approve' }, o.needsDirector && o.currentLevel === 'hr_head' ? 'Approved: passed to the Director' : 'Approved: HR can release the letter')} disabled={busy} className={K_BTN_PRIMARY}>{busy && <Spinner />}<Check className="h-4 w-4" />Approve</button>
+                    <button type="button" onClick={() => void act({ action: 'decide', approvalRevision: o.approvalRevision, expectedLevel: o.currentLevel, decision: 'approve' }, 'Approval recorded')} disabled={busy} className={K_BTN_PRIMARY}>{busy && <Spinner />}<Check className="h-4 w-4" />Approve</button>
                     <button type="button" onClick={() => setStep('revise')} disabled={busy} className={K_BTN}>Ask to revise</button>
                     <button type="button" onClick={() => setStep('reject')} disabled={busy} className={K_BTN_GHOST_DANGER}><X className="h-4 w-4" />Reject</button>
                 </div>
             )}
-            {step === 'reject' && box('Reason', true, () => void act({ action: 'decide', decision: 'reject', reason: text }, 'Rejected'), 'Reject', true)}
-            {step === 'revise' && box('What to revise', true, () => void act({ action: 'decide', decision: 'revise', reason: text }, 'Sent back to revise'), 'Send back')}
+            {step === 'reject' && box('Reason', true, () => void act({ action: 'decide', approvalRevision: o.approvalRevision, expectedLevel: o.currentLevel, decision: 'reject', reason: text }, 'Rejected'), 'Reject', true)}
+            {step === 'revise' && box('What to revise', true, () => void act({ action: 'decide', approvalRevision: o.approvalRevision, expectedLevel: o.currentLevel, decision: 'revise', reason: text }, 'Sent back to revise'), 'Send back')}
 
             {o.status === 'approved' && !step && (
                 <div className="mt-2 space-y-2">

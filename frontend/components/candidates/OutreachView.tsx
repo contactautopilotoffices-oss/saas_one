@@ -488,7 +488,7 @@ function OfferSettingsEditor({ value, onChange }: { value: OutreachSettings; onC
                 </div>
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
                     <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={o.hiringManagerApproves} onChange={e => setO({ hiringManagerApproves: e.target.checked })} className={CHECK} />The hiring manager approves first</label>
-                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={o.directorAlways} onChange={e => setO({ directorAlways: e.target.checked })} className={CHECK} />The Director approves every offer (not only those above the budget)</label>
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={o.directorAlways} onChange={e => setO({ directorAlways: e.target.checked })} className={CHECK} />Require Director approval for within-budget offers without a department head</label>
                 </div>
                 <label className="block sm:max-w-md"><span className={K_LABEL}>Letter of intent WhatsApp template</span>
                     <select value={o.loiTemplateId} onChange={e => setO({ loiTemplateId: e.target.value })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>

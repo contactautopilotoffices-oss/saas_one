@@ -65,6 +65,8 @@ interface MeetingRow {
     capture?: Capture | null;
     /** Owner 2026-11-18: online meetings (absent before migration 20261118000001 = 'room') */
     kind?: MeetingKind | null; scheduled_for?: string | null; online?: OnlineState | null;
+    /** Owner 2026-11-19: 'interview' for Recruitment interviews (absent before 20261119000002) */
+    purpose?: 'interview' | null;
 }
 /** The phone's account of the recording (heartbeats) lives in ./capture.ts. */
 export type { Capture };
@@ -1026,6 +1028,14 @@ export class MeetingService {
             llm: { model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut, failures: result.failures, tasks: findTasks ? result.tasks.length : 0, ...(findTasks ? {} : { findTasks: false }) },
         });
         await TaskDatabaseService.logAudit({ eventType: 'meeting_ready', details: { meetingId: m.id, tasks: findTasks ? result.tasks.length : 0, findTasks, model: result.model, provider: m.stt?.provider ?? null } });
+        if (m.purpose === 'interview') {
+            try {
+                const { ensureInterviewAnalysis } = await import('@/backend/lib/candidates/interview-analysis');
+                await ensureInterviewAnalysis(supabaseAdmin, m.id);
+            } catch (err) {
+                console.error('[MeetingService] interview analysis failed:', err instanceof Error ? err.message : err);
+            }
+        }
     }
 
     // ── the task list ─────────────────────────────────────────────────────────

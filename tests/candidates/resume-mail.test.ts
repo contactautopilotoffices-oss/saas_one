@@ -4,9 +4,9 @@ import { after, before, describe, it } from 'node:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PGlite } from '@electric-sql/pglite';
 import { encryptToken } from '../../backend/lib/mail/token-crypto';
-import { disconnectResumeMail, dueResumeMail, importResumeMail, listResumeMail, listResumeMailItems, pauseResumeMail, previewResumeMail, saveResumeMailSettings, syncResumeMail, type MailStorage } from '../../backend/lib/candidates/resume-mail';
+import { connection, disconnectResumeMail, dueResumeMail, grant, importResumeMail, listResumeMail, listResumeMailItems, pauseResumeMail, previewResumeMail, saveResumeMailSettings, syncResumeMail, type MailStorage } from '../../backend/lib/candidates/resume-mail';
 import { finishResumeMailOAuth, recruitmentAccountsServer, resumeMailOAuthState, startResumeMailOAuth } from '../../backend/lib/candidates/resume-mail-oauth';
-import type { ZohoMailListItem } from '../../backend/services/zohoMailService';
+import { ZohoMailService, type ZohoMailListItem } from '../../backend/services/zohoMailService';
 import { freshDb } from './db-stub';
 import { pgliteSupabase } from './pglite-supabase';
 
@@ -54,6 +54,7 @@ describe('Recruitment Zoho resume imports', () => {
     process.env.MAIL_TOKEN_KEY = 'test-mail-key';
     process.env.ZOHO_MAIL_APP_CLIENT_ID = 'test-client'; process.env.ZOHO_MAIL_APP_CLIENT_SECRET = 'test-secret'; process.env.ZOHO_MAIL_APP_DC = 'in';
     db = await freshDb(); client = pgliteSupabase(db); await db.exec(migration);
+    await db.exec(readFileSync("supabase/migrations/20261126000003_shared_zoho_mail.sql","utf8"));
     await db.query('insert into public.organizations(id) values ($1),($2)', [ORG, OTHER]);
     await db.query('insert into auth.users(id) values ($1)', [USER.id]);
     await db.query('insert into public.users(id,full_name,email) values ($1,$2,$3)', [USER.id, 'HR User', USER.email]);
@@ -101,7 +102,7 @@ describe('Recruitment Zoho resume imports', () => {
     failStorage = false;
     assert.equal((await importResumeMail(client, ORG, CONN, USER, { ids: [item.id], sourcedRole: 'Engineer' }, mail, storage)).imported, 1);
     const stored = await db.query<{ source_name: string; sourced_role: string; status: string }>('select * from candidate_resume_files');
-    assert.equal(stored.rows.length, 1); assert.equal(stored.rows[0].source_name, 'LinkedIn');
+    assert.equal(stored.rows.length, 1); assert.equal(stored.rows[0].source_name, 'Zoho Mail');
     assert.equal(stored.rows[0].sourced_role, 'Engineer'); assert.equal(stored.rows[0].status, 'ready');
     const before = downloads;
     await importResumeMail(client, ORG, CONN, USER, { ids: [item.id], sourcedRole: 'Wrong' }, mail, storage);
@@ -148,13 +149,13 @@ describe('Recruitment Zoho resume imports', () => {
     const start = await startResumeMailOAuth(client, ORG, USER.id, 'https://app.test/api/candidates/resume-mail');
     const url = new URL(start.url); const state = url.searchParams.get('state')!;
     assert.equal(url.hostname, 'accounts.zoho.in');
-    assert.equal(url.searchParams.get('redirect_uri'), 'https://app.test/api/candidates/resume-mail/callback');
+    assert.equal(url.searchParams.get('redirect_uri'), 'https://app.test/api/agents/mail/callback');
     assert.equal(url.searchParams.get('scope')?.includes('WRITE'), false);
     assert.throws(() => recruitmentAccountsServer('https://accounts.zoho.in.evil.test'), /unsupported/);
     const io = { fetch: (async (url: string | URL | Request, options?: RequestInit) => {
       assert.equal(String(url), 'https://accounts.zoho.in/oauth/v2/token');
       assert.equal(String(url).includes('test-secret'), false);
-      assert.equal(new URLSearchParams(String(options?.body)).get('redirect_uri'), 'https://app.test/api/candidates/resume-mail/callback');
+      assert.equal(new URLSearchParams(String(options?.body)).get('redirect_uri'), 'https://app.test/api/agents/mail/callback');
       return Response.json({ refresh_token: 'new-test-refresh' });
     }) as typeof fetch, addresses: async () => ['hr@example.test'] };
     await assert.rejects(finishResumeMailOAuth(client, state, { ...USER, id: OTHER }, 'code', undefined, io), /account that started/);
@@ -166,6 +167,58 @@ describe('Recruitment Zoho resume imports', () => {
     await db.query("update candidate_resume_mail_oauth set expires_at=now()-interval '1 minute' where state=$1", [expired]);
     await assert.rejects(resumeMailOAuthState(client, expired), /expired/);
     assert.equal((await listResumeMail(client, ORG)).connections[0].sync_every, 'manual');
+  });
+  it('pins grants to the issuing app, preserves sync settings and never retries an HTML response with credentials in the URL', async () => {
+    const previousFetch = globalThis.fetch;
+    process.env.ZOHO_CLIENT_ID = 'sso-client'; process.env.ZOHO_CLIENT_SECRET = 'sso-secret';
+    try {
+      await db.query("update candidate_resume_mail_connections set sync_every='hourly' where id=$1", [CONN]);
+      const start = async () => new URL((await startResumeMailOAuth(client, ORG, USER.id, 'https://app.test')).url);
+      process.env.RECRUITMENT_ZOHO_REDIRECT_URL = 'https://registered.test/api/auth/zoho/callback';
+      await assert.rejects(start(), /Open Recruitment at https:\/\/registered.test/);
+      delete process.env.RECRUITMENT_ZOHO_REDIRECT_URL;
+      const url = await start();
+      assert.equal(url.searchParams.get('redirect_uri'), 'https://app.test/api/auth/zoho/callback');
+      let calls = 0;
+      const exchange = (html: boolean) => ({
+        fetch: (async (target, init) => {
+          calls++;
+          assert.equal(String(target), 'https://accounts.zoho.in/oauth/v2/token');
+          const body = new URLSearchParams(String(init?.body));
+          assert.equal(body.get('client_secret'), 'sso-secret');
+          assert.equal(body.get('redirect_uri'), url.searchParams.get('redirect_uri'));
+          return html ? new Response('<html>Error</html>') : Response.json({ refresh_token: 'sso-refresh' });
+        }) as typeof fetch,
+        addresses: async () => ['hr@example.test'],
+      });
+      await assert.rejects(finishResumeMailOAuth(client, url.searchParams.get('state')!, USER, 'code', undefined, exchange(true)), /did not grant/);
+      assert.equal(calls, 1);
+      const next = await start();
+      process.env.ZOHO_TASKS_CLIENT_ID = 'incomplete-task-client';
+      await finishResumeMailOAuth(client, next.searchParams.get('state')!, USER, 'code', undefined, exchange(false));
+      const saved = await connection(client, ORG, CONN);
+      assert.equal(saved.oauth_client_id, 'sso-client');
+      assert.equal(saved.sync_every, 'hourly'); assert.equal(saved.folder_id, '123');
+      assert.equal(grant(saved, client).clientId, 'sso-client');
+      await db.query('update candidate_resume_mail_connections set oauth_client_id=null where id=$1', [CONN]);
+      const tried: string[] = [];
+      globalThis.fetch = (async (target, init) => {
+        if (String(target).endsWith('/api/accounts')) return Response.json({ data: [{ primaryEmailAddress: 'hr@example.test' }] });
+        assert.equal(String(target), 'https://accounts.zoho.in/oauth/v2/token');
+        const form = new URLSearchParams(String(init?.body));
+        assert.equal(form.get('refresh_token'), 'sso-refresh');
+        tried.push(form.get('client_id')!);
+        return tried.length === 1 ? Response.json({ error: 'invalid_client' }) : Response.json({ access_token: 'valid', expires_in: 3600 });
+      }) as typeof fetch;
+      await ZohoMailService.listAddressesWithGrant(grant(await connection(client, ORG, CONN), client));
+      assert.deepEqual(tried, ['test-client', 'sso-client']);
+      assert.equal((await connection(client, ORG, CONN)).oauth_client_id, 'sso-client');
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of ['ZOHO_CLIENT_ID', 'ZOHO_CLIENT_SECRET', 'ZOHO_TASKS_CLIENT_ID', 'RECRUITMENT_ZOHO_REDIRECT_URL']) {
+        if (savedEnv[key] === undefined) delete process.env[key]; else process.env[key] = savedEnv[key];
+      }
+    }
   });
   it('keeps the encrypted credentials and email metadata inaccessible to browser database clients', async () => {
     await db.exec(migration);

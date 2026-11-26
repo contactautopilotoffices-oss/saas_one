@@ -1039,6 +1039,20 @@ export const INTERVIEW_MODE_LABELS: Record<InterviewMode, string> = {
 };
 
 /** One interview scheduled for a candidate (GET /api/candidates/interviews), newest first. */
+export interface InterviewAnalysis {
+  id: string;
+  round: CallRound | null;
+  status: CallStatus;
+  error: string | null;
+  language: string | null;
+  durationSeconds: number | null;
+  result: CallInsights | null;
+  appliedFacts: { key: CallFactKey; at: string; byName: string | null }[];
+  model: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+}
+
 export interface Interview {
   /** The history entry's id. */
   id: string;
@@ -1057,6 +1071,8 @@ export interface Interview {
   joinUrl: string | null;
   /** The meeting as it is now: scheduled, live, the notes being written, ready (with the notes), failed. */
   meeting: { status: string; summary: { summary: string; decisions: string[]; openQuestions: string[] } | null } | null;
+  /** Structured Call Insights (sentiment, answer verdicts, concerns, red flags, facts) once analysed. */
+  analysis?: InterviewAnalysis | null;
   byName: string | null;
   createdAt: string;
   /** The follow-up's id (the interview as filed by migration 20261121000003); null for one booked before it. */
@@ -1415,7 +1431,8 @@ export interface Offer {
   joiningDate: string | null;
   status: OfferStatus;
   /** Owner 2026-11-24: the hiring manager (who raised the request) approves the annexure first. */
-  currentLevel: "hiring_manager" | "hr_head" | "director" | null;
+  approvalRevision?: number;
+  currentLevel: "hiring_manager" | "hod" | "hr_head" | "director" | null;
   currentApproverName: string | null;
   needsDirector: boolean;
   letter: string | null;

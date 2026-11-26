@@ -31,7 +31,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const deps = defaultFlowDeps();
     const a = body.action;
     const offer =
-      a === "decide" ? await decideOffer(auth.admin, auth.orgId, by, id, { decision: body.decision, reason: body.reason }, deps)
+      a === "decide" ? await decideOffer(auth.admin, auth.orgId, by, id, { decision: body.decision, reason: body.reason, approvalRevision: body.approvalRevision, expectedLevel: body.expectedLevel }, deps)
       : a === "breakup" ? await editBreakup(auth.admin, auth.orgId, by, id, { breakup: body.breakup, proposedCtc: body.proposedCtc }, deps)
       : a === "letter" ? await editLetter(auth.admin, auth.orgId, by, id, { letter: body.letter, joiningDate: body.joiningDate })
       : a === "release" ? await releaseOffer(auth.admin, auth.orgId, by, id, deps)

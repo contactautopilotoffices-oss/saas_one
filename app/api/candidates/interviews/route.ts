@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
+import { ensureInterviewAnalysis, meetingLinkKnownMissing } from "@/backend/lib/candidates/interview-analysis";
 import { defaultInterviewDeps, listInterviews, scheduleInterview } from "@/backend/lib/candidates/interviews";
 import { interviewsBetween } from "@/backend/lib/candidates/recruitment-dashboard";
 
@@ -29,7 +30,21 @@ export async function GET(request: Request) {
     }
     const candidateId = params.get("candidateId") ?? "";
     if (!UUID.test(candidateId)) return NextResponse.json({ error: "candidateId is required" }, { status: 400 });
-    return NextResponse.json({ interviews: await listInterviews(auth.admin, auth.orgId, candidateId.toLowerCase(), defaultInterviewDeps(url.origin).appUrl) });
+    const interviews = await listInterviews(auth.admin, auth.orgId, candidateId.toLowerCase(), defaultInterviewDeps(url.origin).appUrl);
+    if (!meetingLinkKnownMissing()) {
+      const missing = interviews.filter((i) => i.meetingId && i.meeting?.status === "ready" && !i.analysis).map((i) => i.meetingId!);
+      const allowed = missing.length ? await auth.admin.from('interview_analysis_consents').select('meeting_id')
+        .eq('organization_id', auth.orgId).eq('candidate_id', candidateId).in('meeting_id', missing).limit(3) : null;
+      if (allowed?.data?.length) {
+        const consented = allowed.data.map(row => String(row.meeting_id));
+        after(async () => {
+          for (const meetingId of consented) {
+            await ensureInterviewAnalysis(auth.admin, meetingId, { orgId: auth.orgId });
+          }
+        });
+      }
+    }
+    return NextResponse.json({ interviews });
   } catch (error) {
     return errorResponse(error, "Couldn't load the interviews");
   }

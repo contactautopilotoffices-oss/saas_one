@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { BOT_NAME, COMPANY_NAME } from "../../backend/lib/hr-assistant/identity";
+import { BOT_NAME, COMPANY_NAME, isAllowedBotPath } from "../../backend/lib/hr-assistant/identity";
 import { CANNED_REPLIES, cannedReply, parsePlannerResponse, quickIntent } from "../../backend/lib/hr-assistant/planner";
 
 describe("quickIntent", () => {
@@ -64,5 +64,56 @@ describe("canned replies", () => {
   it("introduce the bot by name and company", () => {
     assert.ok(CANNED_REPLIES.greeting.includes(BOT_NAME) && CANNED_REPLIES.greeting.includes(COMPANY_NAME));
     assert.ok(CANNED_REPLIES.identity.includes(BOT_NAME) && CANNED_REPLIES.identity.includes(COMPANY_NAME));
+  });
+});
+
+describe("isAllowedBotPath", () => {
+  const ORG = "11111111-1111-1111-1111-111111111111";
+
+  it("allows existing signed-in screens", () => {
+    for (const p of [
+      "/dashboard",
+      "/procurement",
+      "/master",
+      "/tickets/t-1",
+      "/hr-tickets",
+      "/recruitment",
+      "/crm/leads",
+      `/${ORG}/recruitment/`,
+      `/${ORG}/hr-assistant/documents`,
+      `/${ORG}/properties/p1/guest-requests`,
+      `/org/${ORG}/dashboard`,
+      "/property/p1/mst/requests/r1",
+    ]) {
+      assert.equal(isAllowedBotPath(p), true, `expected ${p} to allow Otto`);
+    }
+  });
+
+  it("blocks public, meeting, and any new/unlisted screens by default", () => {
+    for (const p of [
+      null,
+      "",
+      "/",
+      "/login",
+      "/apply/tok",
+      "/interview/tok",
+      "/offer/tok",
+      "/display/room/1",
+      "/guest/sec",
+      "/meet/1",
+      "/t/tok",
+      "/proctor/1",
+      "/onboard",
+      "/onboarding",
+      `/${ORG}/meetings`,
+      `/${ORG}/meetings/m1`,
+      "/new-screen",
+      "/org/hr",
+      `/${ORG}/new-onboarding`,
+      `/${ORG}/crm/new-subtab`,
+      "/property/p1/new-tab",
+    ]) {
+      assert.equal(isAllowedBotPath(p), false, `expected ${String(p)} to hide Otto`);
+    }
   });
 });

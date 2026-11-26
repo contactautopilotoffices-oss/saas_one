@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { emailConnections, emailToRequisition, listEmails, readEmail, resolveEmailSend, saveEmailDraft, sendEmail, syncEmails } from '@/backend/lib/candidates/email';
-import { startResumeMailOAuth } from '@/backend/lib/candidates/resume-mail-oauth';
+import { connectRecruitmentMailbox } from '@/backend/lib/candidates/resume-mail-oauth';
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess } from '../_lib/auth';
 
 export const runtime = 'nodejs';
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
     const { admin, orgId, user } = auth;
     let result: unknown;
     switch (body.action) {
-      case 'connect-send': result = await startResumeMailOAuth(admin, orgId, user.id, request.url, true); break;
+      case 'connect-send': result = await connectRecruitmentMailbox(admin, orgId, user.id, request.url, true, body.reconnect === true); break;
       case 'sync': result = await syncEmails(admin, orgId, body.connectionId); break;
       case 'draft': result = await saveEmailDraft(admin, orgId, user.id, body); break;
       case 'send': result = await sendEmail(admin, orgId, user.id, body.id, body.reviewedAt); break;

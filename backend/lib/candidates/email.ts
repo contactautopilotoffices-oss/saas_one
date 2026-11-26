@@ -59,7 +59,7 @@ export async function syncEmails(db: SupabaseClient, orgId: string, id: unknown,
   return locked(db, orgId, id, async c => {
     if (!c.active || !c.folder_id || !c.since_date) throw new CandidateActionError(409, 'Choose a folder and starting date in Resumes → Zoho Mail, and resume the connection.');
     if (c.email_scan_start === undefined) throw new CandidateActionError(503, 'Apply the Stage 3 recruitment email migration first.');
-    const g = grant(c);
+    const g = grant(c, db);
     const folders = await mail.listFolders({ grant: g }, c.address);
     if (!folders.some(f => f.folderId === c.folder_id)) throw new CandidateActionError(409, 'The selected folder is no longer available. Choose it again.');
     const page = await mail.listPage({ grant: g }, { address: c.address, folderId: c.folder_id, start: c.email_scan_start, limit: 30 });
@@ -87,7 +87,7 @@ export async function readEmail(db: SupabaseClient, orgId: string, id: unknown, 
   if (!m.body_loaded && m.direction === 'incoming') {
     const c = await connection(db, orgId, m.connection_id);
     if (!c.active) throw new CandidateActionError(409, 'Resume the mail connection before reading new content.');
-    const body = await mail.getMessageContentWithGrant(m.message_id!, m.folder_id, grant(c), c.address);
+    const body = await mail.getMessageContentWithGrant(m.message_id!, m.folder_id, grant(c, db), c.address);
     const updated = await db.from(TABLE).update({ body: htmlToText(body.content, 50_000), body_loaded: true, updated_at: new Date().toISOString() })
       .eq('organization_id', orgId).eq('id', m.id).select(COLUMNS).single();
     emailDb(updated.error);
@@ -115,7 +115,7 @@ export async function saveEmailDraft(db: SupabaseClient, orgId: string, userId: 
   const d = parsed.data;
   return locked(db, orgId, d.connectionId, async c => {
     if (!c.active || !c.can_send) throw new CandidateActionError(409, 'Connect this mailbox for sending and resume it first.');
-    grant(c);
+    grant(c, db);
     let recipient: string; let candidateId = d.candidateId ?? null; let threadId: string | null = null;
     if (d.replyToId) {
       const incoming = await row(db, orgId, d.replyToId);
@@ -155,7 +155,7 @@ export async function sendEmail(db: SupabaseClient, orgId: string, userId: strin
     if (blocked.data?.length) throw new CandidateActionError(409, 'This email address belongs to a blacklisted candidate. No email will be sent.');
     const reply = m.reply_to_id ? await row(db, orgId, m.reply_to_id) : null;
     if (reply && (reply.connection_id !== c.id || reply.direction !== 'incoming' || reply.sender !== m.recipient)) throw new CandidateActionError(409, 'The reply destination changed. Create a fresh draft.');
-    const g = grant(c);
+    const g = grant(c, db);
     const now = new Date().toISOString();
     const claimed = await db.from(TABLE).update({ status: 'sending', attempted_at: now, updated_at: now, last_error: null })
       .eq('organization_id', orgId).eq('id', m.id).eq('status', 'draft').select('id');

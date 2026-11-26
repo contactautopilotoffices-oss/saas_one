@@ -31,7 +31,7 @@ import { parsePhone } from "./normalize";
 import { withinSendingHours } from "./outreach";
 import { guidelinesLine, whatsappParams, type OfferConfig } from "./outreach-settings";
 import { CandidateActionError } from "./records";
-import { activeRoles, HR_ROLES, loadRecruitmentConfig } from "./requisitions";
+import { activeRoles, headOfDepartment, HR_ROLES, loadRecruitmentConfig } from "./requisitions";
 import { findStage } from "./stage-list";
 import { loadStages } from "./stages";
 import { moveMember } from "./positions";
@@ -52,6 +52,7 @@ const DAY = 86_400_000;
 export const missingFlow = (error: { code?: string; message?: string } | null | undefined) =>
   Boolean(error) && (["42P01", "42703", "PGRST205", "PGRST204"].includes(error?.code ?? "") || /recruitment_(interviews|scorecards|offers|offer_events)|does not exist|schema cache/i.test(error?.message ?? ""));
 function fail(what: string, error: { code?: string; message?: string }): never {
+  if (/hod_approver_id|approval_revision/.test(error.message ?? "")) throw new CandidateActionError(503, "Apply the recruitment selection gates migration before using offers.");
   if (missingFlow(error)) throw new CandidateActionError(503, HIRING_FLOW_MIGRATION_MESSAGE);
   console.error(`[candidates] hiring: ${what}`, error);
   throw new CandidateActionError(500, `Couldn't ${what}. Please try again.`);
@@ -94,11 +95,12 @@ export interface FlowDeps {
 }
 
 /** Owner 2026-11-24: who approves an offer's annexure, in order. */
-export type OfferLevel = "hiring_manager" | "hr_head" | "director";
-export const OFFER_LEVEL_LABELS: Record<OfferLevel, string> = { hiring_manager: "Hiring manager", hr_head: "HR Head", director: "Director" };
+export type OfferLevel = NonNullable<Offer["currentLevel"]>;
+export const OFFER_LEVEL_LABELS: Record<OfferLevel, string> = { hiring_manager: "Hiring manager", hod: "department head", hr_head: "HR Head", director: "Director" };
 export const OFFER_ENTITY = "recruitment_offer";
 /** What the approver's decision page shows (kept on the token). */
 export interface OfferLinkSummary {
+  approvalRevision?: number;
   candidateName: string; role: string | null; ctc: number; bandMin: number | null; bandMax: number | null; joiningDate: string | null;
   proposedBy: string | null; note: string | null; breakup: Record<string, number>;
   /** The breakup grouped by HR's rows, with the totals. */
@@ -513,7 +515,7 @@ Warm regards,
 {{recruiter_name}}
 {{company}}`;
 
-const OFFER_COLUMNS = "id, candidate_id, application_id, position_id, requisition_id, proposed_ctc, band_min, band_max, breakup, joining_date, status, current_level, current_approver_id, level_entered_at, needs_director, letter, released_at, response_at, response_reason, joined_at, dropped_reason, last_contact_at, notices, selected_note, created_by, created_by_name, created_at";
+const OFFER_COLUMNS = "id, candidate_id, application_id, position_id, requisition_id, proposed_ctc, band_min, band_max, breakup, joining_date, status, current_level, current_approver_id, approval_revision, hod_approver_id, level_entered_at, needs_director, letter, released_at, response_at, response_reason, joined_at, dropped_reason, last_contact_at, notices, selected_note, created_by, created_by_name, created_at";
 
 /** Owner 2026-11-24 (migration 20261124000004): the LOI page's token and who recorded the answer. Read when there. */
 const OFFER_EXTRA = ", public_token, responded_via";
@@ -574,14 +576,14 @@ async function toOffers(client: SupabaseClient, orgId: string, rows: Record<stri
     const ctc = Number(r.proposed_ctc);
     const max = num(r.band_max);
     const level = (r.current_level as Offer["currentLevel"]) ?? null;
-    const approvers = viewer && level ? (level === "hiring_manager" ? [r.current_approver_id as string].filter(Boolean) : level === "hr_head" ? hrHeads(viewer.config) : directors(viewer.config)) : [];
+    const approvers = viewer && level ? ((level === "hiring_manager" || level === "hod") ? [r.current_approver_id as string].filter(Boolean) : level === "hr_head" ? hrHeads(viewer.config) : directors(viewer.config)) : [];
     return {
       id: r.id as string, candidateId: r.candidate_id as string, candidateName: nameOf.get(r.candidate_id as string) ?? "Candidate",
       applicationId: (r.application_id as string | null) ?? null, positionId: (r.position_id as string | null) ?? null,
       positionTitle: r.position_id ? titleOf.get(r.position_id as string) ?? null : null, requisitionNo: r.requisition_id ? reqNo.get(r.requisition_id as string) ?? null : null,
       proposedCtc: ctc, bandMin: num(r.band_min), bandMax: max, variancePct: max && ctc > max ? Math.round(((ctc - max) / max) * 1000) / 10 : null,
       breakup: (r.breakup as Record<string, number>) ?? {}, joiningDate: iso(r.joining_date)?.slice(0, 10) ?? null, status: r.status as OfferStatus,
-      currentLevel: level, currentApproverName: r.current_approver_id ? names.get(r.current_approver_id as string)?.name ?? null : null, needsDirector: Boolean(r.needs_director),
+      approvalRevision: Number(r.approval_revision), currentLevel: level, currentApproverName: r.current_approver_id ? names.get(r.current_approver_id as string)?.name ?? null : null, needsDirector: Boolean(r.needs_director),
       letter: (r.letter as string | null) ?? null, letterGaps: letterGaps(r.letter as string | null), releasedAt: iso(r.released_at), responseAt: iso(r.response_at),
       responseReason: (r.response_reason as string | null) ?? null, joinedAt: iso(r.joined_at), droppedReason: (r.dropped_reason as string | null) ?? null,
       lastContactAt: iso(r.last_contact_at), selectedNote: (r.selected_note as string | null) ?? null, createdByName: (r.created_by_name as string | null) ?? null,
@@ -641,21 +643,26 @@ export async function createOffer(client: SupabaseClient, orgId: string, by: Act
   const candidateId = (app as { candidate_id: string }).candidate_id;
   const { data: member } = await client.from("candidate_position_members").select("id").eq("organization_id", orgId).eq("position_id", o.positionId).eq("candidate_id", candidateId).is("deleted_at", null).maybeSingle();
   if (!member) throw new CandidateActionError(400, "Add the person to the position first.");
-  const { data: req } = await client.from("recruitment_requisitions").select("id, budget_min_ctc, budget_max_ctc, raised_by").eq("organization_id", orgId).eq("position_id", o.positionId).is("deleted_at", null).maybeSingle();
-  const r = req as { id: string; budget_min_ctc: number | null; budget_max_ctc: number | null; raised_by: string | null } | null;
+  const { data: req, error: reqError } = await client.from("recruitment_requisitions").select("id, department, budget_min_ctc, budget_max_ctc, raised_by").eq("organization_id", orgId).eq("position_id", o.positionId).is("deleted_at", null).maybeSingle();
+  if (reqError) fail("load the hiring request", reqError);
+  const r = req as { id: string; department: string | null; budget_min_ctc: number | null; budget_max_ctc: number | null; raised_by: string | null } | null;
   const bandMax = num(r?.budget_max_ctc);
   const config = await loadRecruitmentConfig(client, orgId);
-  const chain = firstApprover(config, by.id, r?.raised_by ?? null, o.proposedCtc, bandMax);
+  const position = await client.from("candidate_positions").select("department").eq("organization_id", orgId).eq("id", o.positionId).single();
+  if (position.error) fail("load the position department", position.error);
+  const hod = headOfDepartment(config, r?.department || position.data.department);
+  const chain = firstApprover(config, by.id, r?.raised_by ?? null, hod, o.proposedCtc, bandMax);
   if (!chain) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
   const { level, approverId, needsDirector } = chain;
   const now = (deps.now?.() ?? new Date()).toISOString();
   const { data, error } = await client.from(OFFERS).insert({
     organization_id: orgId, candidate_id: candidateId, application_id: o.applicationId, position_id: o.positionId, requisition_id: r?.id ?? null,
     proposed_ctc: o.proposedCtc, band_min: num(r?.budget_min_ctc), band_max: bandMax, breakup: o.breakup ?? {}, joining_date: o.joiningDate ?? null,
-    status: "pending", current_level: level, current_approver_id: approverId, level_entered_at: now, needs_director: needsDirector,
+    status: "pending", hod_approver_id: hod, current_level: level, current_approver_id: approverId, level_entered_at: now, needs_director: needsDirector,
     selected_note: o.note || null, created_by: by.id, created_by_name: by.name, created_at: now, updated_at: now,
   }).select("id").single();
   if (error) {
+    if (error.code === "P4201") throw new CandidateActionError(409, error.message);
     if (error.code === "23505") throw new CandidateActionError(409, "This person already has an open offer for this position.");
     fail("make the offer", error);
   }
@@ -667,19 +674,16 @@ export async function createOffer(client: SupabaseClient, orgId: string, by: Act
   return offer;
 }
 
-/**
- * Owner 2026-11-24 (23 Nov meeting: "annexure approval by the hiring manager and directors before the candidate sees
- * it"): the first approver. The hiring manager (who raised the request) when HR switched it on and they did not propose
- * it; else the HR Head; else the Director. The Director also approves when the CTC is above the band, or always when HR
- * set it so (and a Director is set). Nobody approves an offer they proposed.
- */
-function firstApprover(config: RecruitmentConfig, proposerId: string | null, raiserId: string | null, ctc: number, bandMax: number | null): { level: OfferLevel; approverId: string; needsDirector: boolean } | null {
+/** A configured department head reviews the annexure before the Director. The proposer cannot approve. */
+function firstApprover(config: RecruitmentConfig, proposerId: string | null, raiserId: string | null, hod: string | null, ctc: number, bandMax: number | null): { level: OfferLevel; approverId: string; needsDirector: boolean } | null {
   const cfg = config.outreach.offer;
   const hm = cfg.hiringManagerApproves && raiserId && raiserId !== proposerId ? raiserId : null;
   const hr = hrHeads(config).find((id) => id !== proposerId) ?? null;
   const director = directors(config).find((id) => id !== proposerId) ?? null;
-  const needsDirector = (bandMax !== null && ctc > bandMax) || (cfg.directorAlways && Boolean(director));
+  const needsDirector = Boolean(hod) || (bandMax !== null && ctc > bandMax) || (cfg.directorAlways && Boolean(director));
+  if (hod && !director) throw new CandidateActionError(409, "Set an independent Director for department annexure approval.");
   if (hm) return { level: "hiring_manager", approverId: hm, needsDirector };
+  if (hod && hod !== proposerId) return { level: "hod", approverId: hod, needsDirector };
   if (hr) return { level: "hr_head", approverId: hr, needsDirector };
   if (director) return { level: "director", approverId: director, needsDirector };
   return null;
@@ -688,8 +692,10 @@ function firstApprover(config: RecruitmentConfig, proposerId: string | null, rai
 /** The approver after this level, or null when every approval is in. */
 function nextApprover(level: OfferLevel, row: Record<string, unknown>, config: RecruitmentConfig): { level: OfferLevel; approverId: string } | null {
   if (level === "hiring_manager") {
+    const hod = row.hod_approver_id as string | null;
+    if (hod && hod !== row.created_by && hod !== row.current_approver_id) return { level: "hod", approverId: hod };
     const hr = hrHeads(config).find((id) => id !== row.created_by);
-    if (hr) return { level: "hr_head", approverId: hr };
+    if (hr && (!hod || hod === row.created_by)) return { level: "hr_head", approverId: hr };
   }
   if (level !== "director" && row.needs_director) {
     const d = directors(config).find((id) => id !== row.created_by);
@@ -702,7 +708,7 @@ function nextApprover(level: OfferLevel, row: Record<string, unknown>, config: R
 async function tellApprover(client: SupabaseClient, orgId: string, deps: FlowDeps, offer: Offer, approverId: string, level: OfferLevel, reminder = false) {
   const who = (await emailsOf(client, [approverId])).get(approverId);
   const config = await loadRecruitmentConfig(client, orgId);
-  const summary: OfferLinkSummary = { candidateName: offer.candidateName, role: offer.positionTitle, ctc: offer.proposedCtc, bandMin: offer.bandMin, bandMax: offer.bandMax, joiningDate: offer.joiningDate, proposedBy: offer.createdByName, note: offer.selectedNote, breakup: offer.breakup, groups: breakupGroups(offer.breakup, config.outreach.offer) };
+  const summary: OfferLinkSummary = { approvalRevision: offer.approvalRevision, candidateName: offer.candidateName, role: offer.positionTitle, ctc: offer.proposedCtc, bandMin: offer.bandMin, bandMax: offer.bandMax, joiningDate: offer.joiningDate, proposedBy: offer.createdByName, note: offer.selectedNote, breakup: offer.breakup, groups: breakupGroups(offer.breakup, config.outreach.offer) };
   let link: string | null = null;
   try { link = (await deps.offerDecisionLink?.(orgId, offer.id, approverId, level, summary)) ?? null; } catch (error) { console.error("[candidates] offer decision link failed", error); }
   const html = mail(
@@ -714,7 +720,7 @@ async function tellApprover(client: SupabaseClient, orgId: string, deps: FlowDep
   await send(deps, [who?.email], `${reminder ? "Reminder: " : ""}Offer to approve: ${offer.candidateName} · ${offer.positionTitle ?? ""}`, html.replace(/<\/table>/, `</table>${breakupHtml(offer.breakup, config.outreach.offer)}`));
 }
 
-const DecideInput = z.object({ decision: z.enum(["approve", "reject", "revise"]), reason: z.string().trim().max(2000).optional() });
+const DecideInput = z.object({ approvalRevision: z.number().int().positive().optional(), expectedLevel: z.enum(["hiring_manager", "hod", "hr_head", "director"]).optional(), decision: z.enum(["approve", "reject", "revise"]), reason: z.string().trim().max(2000).optional() });
 
 /** HR Head, then (above the band) the Director: approve, reject, or ask for a revision (with a reason). */
 export async function decideOffer(client: SupabaseClient, orgId: string, by: Actor, id: string, body: unknown, deps: FlowDeps): Promise<Offer> {
@@ -727,12 +733,22 @@ export async function decideOffer(client: SupabaseClient, orgId: string, by: Act
   const config = await loadRecruitmentConfig(client, orgId);
   const level = row.current_level as OfferLevel;
   if (row.created_by === by.id) throw new CandidateActionError(403, "An offer cannot be approved by the person who proposed it.");
-  const allowed = level === "hiring_manager" ? [row.current_approver_id as string] : level === "hr_head" ? hrHeads(config) : directors(config);
+  if ((parsed.data.approvalRevision !== undefined && parsed.data.approvalRevision !== row.approval_revision) ||
+      (parsed.data.expectedLevel && parsed.data.expectedLevel !== level)) {
+    throw new CandidateActionError(409, "The annexure or approval step changed. Review the latest offer.");
+  }
+  const allowed = (level === "hiring_manager" || level === "hod") ? [row.current_approver_id as string] : level === "hr_head" ? hrHeads(config) : directors(config);
   if (!allowed.includes(by.id)) throw new CandidateActionError(403, level === "hiring_manager" ? "Only the hiring manager who raised the request can decide on this offer now." : `Only the ${OFFER_LEVEL_LABELS[level]} (or their backup) can decide on this offer now.`);
-  await deps.revokeOfferLinks?.(row.id as string).catch((error) => console.error("[candidates] revoking offer links failed", error));
   if (decision !== "approve" && !reason) throw new CandidateActionError(400, decision === "reject" ? "Give the reason for rejecting." : "Say what to revise.");
   const now = (deps.now?.() ?? new Date()).toISOString();
-  const update = (values: Record<string, unknown>) => client.from(OFFERS).update({ ...values, updated_at: now }).eq("organization_id", orgId).eq("id", row.id as string);
+  const update = async (values: Record<string, unknown>) => {
+    const result = await client.from(OFFERS).update({ ...values, updated_at: now })
+      .eq("organization_id", orgId).eq("id", id).eq("status", "pending").eq("current_level", level)
+      .eq("approval_revision", row.approval_revision).select("id");
+    if (!result.error && !result.data?.length) throw new CandidateActionError(409, "The offer changed. Review the latest approval step.");
+    if (!result.error) await deps.revokeOfferLinks?.(id).catch((error) => console.error("[candidates] revoking decided offer links failed", error));
+    return result;
+  };
   if (decision !== "approve") {
     const { error } = await update({ status: "rejected", current_level: null, current_approver_id: null, response_reason: reason });
     if (error) fail("record the decision", error);
@@ -1017,14 +1033,15 @@ export async function editBreakup(client: SupabaseClient, orgId: string, by: Act
   const ctc = parsed.data.proposedCtc ?? Number(row.proposed_ctc);
   const config = await loadRecruitmentConfig(client, orgId);
   const { data: req } = row.requisition_id ? await client.from("recruitment_requisitions").select("raised_by").eq("id", row.requisition_id as string).maybeSingle() : { data: null };
-  const chain = firstApprover(config, row.created_by as string | null, (req as { raised_by?: string | null } | null)?.raised_by ?? null, ctc, num(row.band_max));
+  const chain = firstApprover(config, row.created_by as string | null, (req as { raised_by?: string | null } | null)?.raised_by ?? null, row.hod_approver_id as string | null, ctc, num(row.band_max));
   if (!chain) throw new CandidateActionError(409, "Nobody can approve this offer: set the HR Head and Director in the Tech dashboard → HR Configs.");
   const now = (deps.now?.() ?? new Date()).toISOString();
-  const { error } = await client.from(OFFERS).update({
-    breakup: parsed.data.breakup, proposed_ctc: ctc, status: "pending", current_level: chain.level, current_approver_id: chain.approverId, level_entered_at: now,
+  const { data: changed, error } = await client.from(OFFERS).update({
+    approval_revision: Number(row.approval_revision) + 1, breakup: parsed.data.breakup, proposed_ctc: ctc, status: "pending", current_level: chain.level, current_approver_id: chain.approverId, level_entered_at: now,
     needs_director: chain.needsDirector, letter: null, notices: {}, updated_at: now,
-  }).eq("organization_id", orgId).eq("id", row.id as string).in("status", ["pending", "approved"]);
+  }).eq("organization_id", orgId).eq("id", row.id as string).in("status", ["pending", "approved"]).eq("approval_revision", row.approval_revision).select("id");
   if (error) fail("save the breakup", error);
+  if (!changed?.length) throw new CandidateActionError(409, "The annexure changed. Reload the offer.");
   await deps.revokeOfferLinks?.(row.id as string).catch((e) => console.error("[candidates] revoking offer links failed", e));
   await event(client, orgId, row.id as string, by, "breakup_edited", null, "The breakup changed: approval starts again");
   await audit(client, orgId, by, { action: Number(row.proposed_ctc) !== ctc ? "offer_edit" : "breakup_edit", entityType: "offer", entityId: row.id as string, before: { ctc: Number(row.proposed_ctc), breakup: row.breakup }, after: { ctc, breakup: parsed.data.breakup } });

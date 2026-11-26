@@ -1,3 +1,4 @@
+import { callMayRun } from './interview-consent';
 /**
  * A candidate's calls (owner 2026-11-16, plan P3; migration 20261116000001, table call_analyses).
  *
@@ -339,6 +340,7 @@ export async function setCallRound(client: SupabaseClient, orgId: string, id: st
 
 export async function retryCall(client: SupabaseClient, orgId: string, id: string, now = new Date()): Promise<CallAnalysis> {
   const row = await loadRow(client, orgId, id);
+  if (!await callMayRun(client, orgId, id, row.candidate_id)) throw new CandidateActionError(409, "Candidate consent for analysis of this interview is required.");
   if (row.status === "uploading") throw new CandidateActionError(409, "The recording has not finished uploading.");
   if ((row.status === "transcribing" || row.status === "analysing") && !isStale(row.status, row.updated_at, now)) {
     throw new CandidateActionError(409, "This call is still being read. Give it a minute.");

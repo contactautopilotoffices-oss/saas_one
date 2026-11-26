@@ -101,7 +101,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { data: user } = await admin.from("users").select("full_name").eq("id", t.user_id).maybeSingle();
     const by = { id: t.user_id, name: ((user as { full_name?: string | null } | null)?.full_name ?? "").trim() || null };
-    const offer = await decideOffer(admin, t.organization_id, by as { id: string; name: string | null }, t.entity_id, { decision, reason: reason || undefined }, defaultFlowDeps());
+    const offer = await decideOffer(admin, t.organization_id, by as { id: string; name: string | null }, t.entity_id, { decision, reason: reason || undefined, expectedLevel: got.level, approvalRevision: got.summary.approvalRevision ?? 1 }, defaultFlowDeps());
     await recordTokenResult(t.id, "ok", ip);
     const message = offer.status === "approved" ? "Every approval is in. HR will release the letter to the candidate."
       : offer.status === "pending" ? `It goes on to the ${offer.currentLevel ? OFFER_LEVEL_LABELS[offer.currentLevel] : "next approver"}.`

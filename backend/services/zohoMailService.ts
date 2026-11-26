@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { postZohoToken, zohoApps } from '@/backend/lib/mail/oauth';
 /**
  * Zoho Mail REST client for the shared purchase@ mailbox.
  *
@@ -42,8 +44,11 @@ export interface ZohoMailListItem extends ZohoMailMessage {
     sizeBytes: number | null;
 }
 
+/** Caller-supplied OAuth grant for a mailbox or task connection. */
+export type ZohoMailGrant = { refreshToken: string; dc: string; clientId?: string; clientSecret?: string; legacyApps?: { clientId: string; clientSecret: string }[]; rememberClient?: (id: string) => Promise<void> };
+
 /** Where a token comes from: an env grant prefix, or a mailbox connected through the console. */
-export type MailSource = { prefix: string } | { grant: { refreshToken: string; dc: string } };
+export type MailSource = { prefix: string } | { grant: ZohoMailGrant };
 
 export interface ZohoMailAttachment {
     attachmentId: string;
@@ -191,9 +196,7 @@ export class ZohoMailService {
                     grant_type: 'refresh_token',
                 });
 
-                const res = await fetch(`https://accounts.zoho.${tld}/oauth/v2/token?${params.toString()}`, {
-                    method: 'POST',
-                });
+                const res = await postZohoToken(`https://accounts.zoho.${tld}/oauth/v2/token`, params);
 
                 const data = await res.json();
                 if (res.ok && data.access_token) {
@@ -314,7 +317,7 @@ export class ZohoMailService {
 
     static async getMessageContentWithGrant(
         messageId: string, folderId: string | null | undefined,
-        grant: { refreshToken: string; dc: string }, address?: string,
+        grant: ZohoMailGrant, address?: string,
     ): Promise<{ subject: string; content: string; fromAddress: string; rfcMessageId: string | null }> {
         const t = await this.tokenFromGrant(grant);
         return this.getMessageContentRaw(messageId, folderId, t.token, t.apiDomain, address);
@@ -402,29 +405,38 @@ export class ZohoMailService {
     }
 
     /** Mint (and cache) an access token for a caller-supplied refresh token. */
-    private static async tokenFromGrant(grant: { refreshToken: string; dc: string; clientId?: string; clientSecret?: string }): Promise<{ token: string; apiDomain: string }> {
-        const cacheKey = `grant:${grant.refreshToken.slice(-12)}`;
-        const cached = tokenCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now()) return { token: cached.token, apiDomain: cached.apiDomain };
-
-        const clientId = grant.clientId ?? process.env.ZOHO_MAIL_APP_CLIENT_ID ?? process.env.ZOHO_CLIENT_ID ?? process.env.ZOHO_MAIL_CLIENT_ID;
-        const clientSecret = grant.clientSecret ?? process.env.ZOHO_MAIL_APP_CLIENT_SECRET ?? process.env.ZOHO_CLIENT_SECRET ?? process.env.ZOHO_MAIL_CLIENT_SECRET;
-        if (!clientId || !clientSecret) throw new Error('No Zoho mail application configured (ZOHO_MAIL_APP_CLIENT_ID / _SECRET).');
-
-        const dc = (grant.dc || 'com').trim();
-        const params = new URLSearchParams({
-            refresh_token: grant.refreshToken, client_id: clientId,
-            client_secret: clientSecret, grant_type: 'refresh_token',
-        });
-        const res = await fetch(`https://accounts.zoho.${dc}/oauth/v2/token?${params}`, { method: 'POST' });
-        const data = await res.json().catch(() => null);
-        if (!data?.access_token) {
-            throw new Error(`Zoho refused this mailbox connection: ${data?.error ?? 'unknown'}. It may have been revoked — reconnect it from the console.`);
+    private static async tokenFromGrant(grant: ZohoMailGrant): Promise<{ token: string; apiDomain: string }> {
+        let apps = grant.legacyApps;
+        if (!apps && grant.clientId && grant.clientSecret) apps = [{ clientId: grant.clientId, clientSecret: grant.clientSecret }];
+        if (!apps) {
+            const configured = zohoApps();
+            const app = configured.find(a => a.prefix === 'ZOHO_MAIL_APP') ?? configured.find(a => a.prefix === 'ZOHO') ?? configured.find(a => a.prefix === 'ZOHO_MAIL');
+            apps = app ? [app] : [];
         }
-        const apiDomain = this.mailApiDomain(data.api_domain, dc, 'ZOHO_MAIL');
-        const ttlMs = Math.max(0, (Number(data.expires_in) || 3600) * 1000 - TOKEN_SAFETY_MS);
-        tokenCache.set(cacheKey, { token: data.access_token, apiDomain, expiresAt: Date.now() + ttlMs });
-        return { token: data.access_token, apiDomain };
+        const dc = grant.dc || 'com';
+        const fingerprint = createHash('sha256').update(grant.refreshToken).digest('hex');
+        for (const [index, app] of apps.entries()) {
+            const cacheKey = ['grant', dc, app.clientId, fingerprint].join(':');
+            const cached = tokenCache.get(cacheKey);
+            if (cached && cached.expiresAt > Date.now()) {
+                await grant.rememberClient?.(app.clientId);
+                return { token: cached.token, apiDomain: cached.apiDomain };
+            }
+            const form = new URLSearchParams({ refresh_token: grant.refreshToken, client_id: app.clientId,
+                client_secret: app.clientSecret, grant_type: 'refresh_token' });
+            const res = await postZohoToken('https://accounts.zoho.' + dc + '/oauth/v2/token', form);
+            const data = await res.json().catch(() => null);
+            if (res.ok && data?.access_token) {
+                const apiDomain = this.mailApiDomain(data.api_domain, dc, 'ZOHO_MAIL');
+                const ttlMs = Math.max(0, (Number(data.expires_in) || 3600) * 1000 - TOKEN_SAFETY_MS);
+                tokenCache.set(cacheKey, { token: data.access_token, apiDomain, expiresAt: Date.now() + ttlMs });
+                await grant.rememberClient?.(app.clientId);
+                return { token: data.access_token, apiDomain };
+            }
+            if (res.status < 500 && res.status !== 429 && index + 1 < apps.length && ['invalid_client', 'invalid_code', 'invalid_grant', 'invalid_client_secret'].includes(data?.error)) continue;
+            throw new Error('Zoho refused the mailbox refresh. Check the connection and retry.');
+        }
+        throw new Error('Configure the OAuth application that issued this mailbox connection.');
     }
 
     /**
@@ -467,7 +479,7 @@ export class ZohoMailService {
     }
 
     /** Addresses reachable on a caller-supplied grant — a console connection. */
-    static async listAddressesWithGrant(grant: { refreshToken: string; dc: string }): Promise<string[]> {
+    static async listAddressesWithGrant(grant: ZohoMailGrant): Promise<string[]> {
         const t = await this.tokenFromGrant(grant);
         const res = await fetch(`${t.apiDomain}/api/accounts`, { headers: { 'Authorization': `Zoho-oauthtoken ${t.token}` } });
         const data = await res.json().catch(() => null);
@@ -615,7 +627,7 @@ export class ZohoMailService {
 
     /** A single reviewed message; no automatic retry after the provider may have accepted it. */
     static async sendMessageWithGrant(
-        grant: { refreshToken: string; dc: string },
+        grant: ZohoMailGrant,
         input: { from: string; to: string; subject: string; body: string; replyMessageId?: string },
     ): Promise<{ messageId: string | null; threadId: string | null }> {
         let token: string; let apiDomain: string; let acct: string;
@@ -690,7 +702,7 @@ export class ZohoMailService {
     /** Same listing on a console-connected mailbox — no env prefix to name. */
     static async listAttachmentsWithGrant(
         messageId: string,
-        grant: { refreshToken: string; dc: string },
+        grant: ZohoMailGrant,
         address?: string,
         folderId?: string,
     ): Promise<ZohoMailAttachment[]> {
@@ -753,7 +765,7 @@ export class ZohoMailService {
     static async downloadAttachmentWithGrant(
         messageId: string,
         attachmentId: string,
-        grant: { refreshToken: string; dc: string },
+        grant: ZohoMailGrant,
         address?: string,
         options?: { folderId: string; maxBytes: number },
     ): Promise<Buffer> {

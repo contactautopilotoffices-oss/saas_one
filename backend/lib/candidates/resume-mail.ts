@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
-import { ZohoMailService } from '@/backend/services/zohoMailService';
+import { ZohoMailService, type ZohoMailGrant } from '@/backend/services/zohoMailService';
+import { zohoApps } from '@/backend/lib/mail/oauth';
 import { decryptToken } from '@/backend/lib/mail/token-crypto';
 import { MAX_RESUME_BYTES, RESUME_BUCKET, RESUME_TYPES } from './config';
 import { CandidateActionError } from './records';
 import { fileExtension } from './resume-pick';
-import { sourceFromResumeName } from './resume-source';
 import { confirmResumeUploads, prepareResumeUploads, uploaderName, type ResumeStorage } from './resumes';
 
 export const MAIL_CONNECTIONS = 'candidate_resume_mail_connections';
@@ -21,7 +21,7 @@ export interface ResumeMailConnection {
 export interface Connection extends ResumeMailConnection {
   organization_id: string; refresh_token_enc: string | null; dc: string;
   connected_by: string | null; connected_email: string | null;
-  can_send?: boolean; email_scan_start?: number;
+  oauth_client_id?: string | null; can_send?: boolean; email_scan_start?: number;
 }
 export interface ResumeMailItem {
   id: string; connection_id: string; message_id: string; attachment_id: string; folder_id: string;
@@ -36,6 +36,7 @@ export type MailStorage = ResumeStorage & {
 
 export function mailDb(error: { message: string; code?: string } | null): void {
   if (!error) return;
+  if (/oauth_client_id/.test(error.message)) throw new CandidateActionError(503, 'Apply the shared Zoho mailbox migration 20261126000003 before connecting.');
   if (/42P01|42703|PGRST20[45]/.test(error.code ?? '') || /schema cache|does not exist/.test(error.message)) {
     throw new CandidateActionError(503, 'Zoho resume import needs a database update first: run 20261122000002_recruitment_mail.sql after the resume sourcing migration.');
   }
@@ -46,10 +47,23 @@ export function mailId(value: unknown): string {
   if (!id.success) throw new CandidateActionError(400, 'Choose a mail connection or attachment.');
   return id.data;
 }
-export function grant(c: Connection) {
-  if (!c.refresh_token_enc) throw new CandidateActionError(409, 'Connect this mailbox again.');
-  try { return { refreshToken: decryptToken(c.refresh_token_enc), dc: c.dc }; }
+export function grant(c: Connection, db: SupabaseClient): ZohoMailGrant {
+  if (!c.refresh_token_enc) throw new CandidateActionError(409, 'Connect this shared mailbox once in Recruitment.');
+  const apps = zohoApps();
+  const known = apps.find(a => a.clientId === c.oauth_client_id);
+  if (c.oauth_client_id && !known) throw new CandidateActionError(503, 'Restore the credentials for the Zoho app that issued this mailbox connection, or reconnect the shared mailbox.');
+  let refreshToken: string;
+  try { refreshToken = decryptToken(c.refresh_token_enc); }
   catch { throw new CandidateActionError(409, 'This mailbox connection can no longer be read. Connect it again.'); }
+  if (known) return { refreshToken, dc: c.dc, clientId: known.clientId, clientSecret: known.clientSecret };
+  // Older grants carried no client ID. Try the historical mail app first and pin only a successful refresh.
+  const legacy = [...apps.filter(a => a.prefix === 'ZOHO_MAIL_APP'), ...apps];
+  return { refreshToken, dc: c.dc, legacyApps: legacy.filter((a, i) => legacy.findIndex(b => b.clientId === a.clientId) === i),
+    rememberClient: async id => {
+      const saved = await db.from(MAIL_CONNECTIONS).update({ oauth_client_id: id }).eq('organization_id', c.organization_id)
+        .eq('id', c.id).eq('refresh_token_enc', c.refresh_token_enc!).is('oauth_client_id', null);
+      mailDb(saved.error);
+    } };
 }
 export async function connection(db: SupabaseClient, orgId: string, id: unknown): Promise<Connection> {
   const { data, error } = await db.from(MAIL_CONNECTIONS).select('*').eq('organization_id', orgId).eq('id', mailId(id)).maybeSingle();
@@ -64,7 +78,7 @@ export async function listResumeMail(db: SupabaseClient, orgId: string) {
 }
 export async function resumeMailFolders(db: SupabaseClient, orgId: string, id: unknown, mail: Mail = ZohoMailService) {
   const c = await connection(db, orgId, id);
-  return { folders: await mail.listFolders({ grant: grant(c) }, c.address) };
+  return { folders: await mail.listFolders({ grant: grant(c, db) }, c.address) };
 }
 
 export async function locked<T>(db: SupabaseClient, orgId: string, id: unknown, run: (c: Connection) => Promise<T>): Promise<T> {
@@ -95,7 +109,7 @@ export async function saveResumeMailSettings(db: SupabaseClient, orgId: string, 
   }
   return locked(db, orgId, id, async c => {
     const settings = parsed.data;
-    const folders = await mail.listFolders({ grant: grant(c) }, c.address);
+    const folders = await mail.listFolders({ grant: grant(c, db) }, c.address);
     const folder = folders.find(f => f.folderId === settings.folderId);
     if (!folder) throw new CandidateActionError(400, 'Choose a folder from this mailbox.');
     const changed = c.folder_id !== folder.folderId || !c.since_date || new Date(c.since_date).toISOString().slice(0, 10) !== settings.sinceDate;
@@ -125,7 +139,7 @@ export async function disconnectResumeMail(db: SupabaseClient, orgId: string, id
 }
 export async function pauseResumeMail(db: SupabaseClient, orgId: string, id: unknown, paused: boolean) {
   return locked(db, orgId, id, async c => {
-    if (!paused) grant(c);
+    if (!paused) grant(c, db);
     const result = await db.from(MAIL_CONNECTIONS).update({ active: !paused }).eq('organization_id', orgId).eq('id', c.id);
     mailDb(result.error); return { ok: true };
   });
@@ -153,7 +167,7 @@ function ready(c: Connection) {
 
 async function scan(db: SupabaseClient, c: Connection, mail: Mail) {
   ready(c);
-  const g = grant(c);
+  const g = grant(c, db);
   const folders = await mail.listFolders({ grant: g }, c.address);
   if (!folders.some(f => f.folderId === c.folder_id)) throw new CandidateActionError(409, 'The selected mail folder is no longer available. Choose a folder again.');
   const page = await mail.listPage({ grant: g }, { address: c.address, folderId: c.folder_id!, start: c.scan_start, limit: 10 });
@@ -195,7 +209,7 @@ async function recordError(db: SupabaseClient, c: Connection, error: unknown) {
 const Import = z.object({ ids: z.array(z.string().uuid()).min(1).max(10), sourcedRole: z.string().trim().max(200).optional(), skip: z.boolean().optional() });
 async function importItems(db: SupabaseClient, c: Connection, user: { id: string; email: string | null }, input: z.infer<typeof Import>, mail: Mail, storage: MailStorage) {
   ready(c);
-  const g = grant(c);
+  const g = grant(c, db);
   const { data, error } = await db.from(MAIL_ITEMS).select('*').eq('organization_id', c.organization_id).eq('connection_id', c.id).in('id', input.ids);
   mailDb(error);
   const rows = (data ?? []) as ResumeMailItem[];
@@ -216,7 +230,7 @@ async function importItems(db: SupabaseClient, c: Connection, user: { id: string
       if (!bytes.length || bytes.length > MAX_RESUME_BYTES) throw new CandidateActionError(400, 'The attachment is empty or exceeds the 15 MB resume limit.');
       const prepared = await prepareResumeUploads(db, storage, c.organization_id, user, { device, sourcedRole: input.sourcedRole ?? c.sourced_role,
         files: [{ index: 0, name: item.file_name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
-          modifiedAt: new Date(item.received_at).toISOString(), source: sourceFromResumeName(item.file_name) }],
+          modifiedAt: new Date(item.received_at).toISOString(), source: { kind: 'own', name: 'Zoho Mail' } }],
       });
       const slot = prepared.files[0];
       if (slot.outcome === 'rejected' || !slot.id) throw new CandidateActionError(400, slot.reason ?? 'This attachment cannot be imported.');

@@ -6,6 +6,7 @@ import { CalendarClock, Check, Copy, MessageCircle, Mic, Search, Video, X } from
 import { boardColumns, columnIndexOf, findStage, stageGroups, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { INTERVIEW_MODE_LABELS, INTERVIEW_MODES, INTERVIEW_STATUS_LABELS, RECOMMENDATION_LABELS, type CandidateRecord, type Interview, type InterviewMode, type InterviewSend, type Position, type PositionMember } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
+import CallInsightsView from './CallInsightsView';
 import { CandidateOffers } from './OffersView';
 import { REMARK_MAX } from './Remarks';
 import { StageOptions } from './stage-ui';
@@ -258,22 +259,34 @@ function Overlay({ dark, children }: { dark: boolean; children: React.ReactNode 
     return <div data-meeting-surface role="dialog" aria-label="Recruitment interview" aria-modal="true" className={`fixed inset-0 z-50 overflow-y-auto ${dark ? 'bg-zinc-950' : 'bg-surface px-4 py-6 sm:py-10'}`}>{children}</div>;
 }
 
-/** The candidate's Interviews tab: each interview, Join call / Record interview, its link while it is ahead, its notes once written. */
-export function InterviewsList({ orgId, record, nonce }: { orgId: string; record: CandidateRecord; nonce: number }) {
+/** The candidate's Interviews tab: each interview, Join call / Record interview, its link while it is ahead, its analysis and notes once written. */
+export function InterviewsList({ orgId, record, nonce, onRecord }: { orgId: string; record: CandidateRecord; nonce: number; onRecord?: (record: CandidateRecord) => void }) {
     const { notify, reportError } = useUi();
     const [reload, setReload] = useState(0);
+    const [retrying, setRetrying] = useState<string | null>(null);
     const [opened, setOpened] = useState<null | { kind: 'call' | 'notes'; meetingId: string } | { kind: 'record'; meetingId: string; title: string; people: { id: string; name: string; department: string | null }[] }>(null);
     const [starting, setStarting] = useState<string | null>(null);
     const close = () => { setOpened(null); setReload(n => n + 1); };
+    const retryAnalysis = async (callId: string) => {
+        if (retrying) return;
+        setRetrying(callId);
+        const res = await api(`/api/candidates/calls/${encodeURIComponent(callId)}/retry`, { json: { orgId } });
+        setRetrying(null);
+        if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        notify('Analysing the interview again', 'info');
+        setReload(n => n + 1);
+    };
+    const [analysisConsentFor, setAnalysisConsentFor] = useState<string | null>(null);
     const record_ = async (i: Interview) => {
         if (starting) return;
         setStarting(i.id);
         const [res, people] = await Promise.all([
-            api<{ meetingId: string; title: string }>('/api/candidates/interviews/record', { json: { orgId, candidateId: record.candidateId, interviewId: i.id } }),
+            api<{ meetingId: string; title: string }>('/api/candidates/interviews/record', { json: { orgId, candidateId: record.candidateId, interviewId: i.id, analysisConsent: analysisConsentFor === i.id } }),
             api<{ people: Person[] }>(`/api/candidates/interviews${qs({ orgId, people: '1' })}`),
         ]);
         setStarting(null);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
+        setAnalysisConsentFor(null);
         setOpened({ kind: 'record', meetingId: res.data.meetingId, title: res.data.title, people: (people.ok ? people.data.people : []).map(p => ({ id: p.id, name: p.name, department: p.department ?? null })) });
     };
     // `at`: when the list was loaded (the links of interviews more than 3 hours past are not shown)
@@ -289,7 +302,10 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
         return () => ctrl.abort();
     }, [orgId, record.candidateId, nonce, reload, reportError]);
     const list = state?.id === record.candidateId ? state.list : null;
-    const processing = list?.some(i => i.meeting && ['live', 'uploaded', 'transcribing', 'identifying', 'extracting'].includes(i.meeting.status)) ?? false;
+    const processing = list?.some(i =>
+        (i.meeting && ['live', 'uploaded', 'transcribing', 'identifying', 'extracting'].includes(i.meeting.status)) ||
+        (i.analysis && ['uploaded', 'transcribing', 'analysing'].includes(i.analysis.status)),
+    ) ?? false;
     useEffect(() => {
         if (!processing || opened) return;
         const timer = window.setInterval(() => setReload(n => n + 1), 10_000);
@@ -317,12 +333,28 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
             {list.map(i => {
                 const ahead = Date.parse(`${i.at}:00+05:30`) > (state?.at ?? 0) - 3 * 3_600_000;
                 const summary = i.meeting?.summary;
+                const analysis = i.analysis ?? null;
+                const analysisWorking = analysis && ['uploaded', 'transcribing', 'analysing'].includes(analysis.status);
+                const statusLabel = analysis?.status === 'done' && analysis.result
+                    ? 'Analysis ready'
+                    : analysisWorking
+                        ? 'Analysing interview'
+                        : analysis?.status === 'failed'
+                            ? 'Analysis failed'
+                            : i.meeting ? (STATUS_WORDS[i.meeting.status] ?? i.meeting.status) : null;
+                const statusTone = analysis?.status === 'done' && analysis.result
+                    ? 'text-green-800'
+                    : analysis?.status === 'failed' || i.meeting?.status === 'failed'
+                        ? 'text-red-800'
+                        : i.meeting?.status === 'ready'
+                            ? 'text-green-800'
+                            : 'text-text-secondary';
                 return (
                     <li key={i.id} className={`${CARD} px-4 py-3`}>
                         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                             <span className="text-sm font-semibold text-text-primary">{i.round ?? 'Interview'} · {interviewWhen(i.at)}</span>
                             <span className="text-xs text-text-secondary">{[i.positionTitle, i.mode && (INTERVIEW_MODE_LABELS as Record<string, string>)[i.mode], i.venue].filter(Boolean).join(' · ')}</span>
-                            {i.meeting && <span className={`ml-auto text-xs font-semibold ${i.meeting.status === 'ready' ? 'text-green-800' : i.meeting.status === 'failed' ? 'text-red-800' : 'text-text-secondary'}`}>{STATUS_WORDS[i.meeting.status] ?? i.meeting.status}</span>}
+                            {statusLabel && <span className={`ml-auto text-xs font-semibold ${statusTone}`}>{statusLabel}</span>}
                         </div>
                         {(i.interviewers || i.byName) && <p className="mt-0.5 text-xs text-text-secondary">{i.interviewers ? `With ${i.interviewers}` : ''}{i.interviewers && i.byName ? ' · ' : ''}{i.byName ? `scheduled by ${i.byName}` : ''}</p>}
                         {i.note && <p className="mt-1 text-xs italic text-text-secondary">“{i.note}”</p>}
@@ -337,20 +369,53 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
                         )}
                         {i.mode === 'in_person' && (!i.meeting || ['recording', 'failed', 'deleted', 'discarded'].includes(i.meeting.status)) && (
                             <div className="mt-2.5">
+                                <label className="mb-2 flex items-center gap-2 text-sm text-text-secondary"><input type="checkbox" checked={analysisConsentFor === i.id} onChange={e => setAnalysisConsentFor(e.target.checked ? i.id : null)} />The candidate agreed to AI analysis of this recorded interview.</label>
                                 <button type="button" onClick={() => void record_(i)} disabled={!!starting} className={BTN_PRIMARY}>
                                     {starting === i.id ? <Spinner /> : <Mic className="h-4 w-4" />}{i.meeting?.status === 'recording' ? 'Continue recording' : 'Record interview'}
                                 </button>
                                 <p className="mt-1 text-xs text-text-tertiary">Press it when the interview starts, with this laptop or phone in the room.</p>
                             </div>
                         )}
+                        {analysis?.status === 'failed' && (
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-error">
+                                <span>{analysis.error ?? 'Could not analyse the interview.'}</span>
+                                <button type="button" onClick={() => void retryAnalysis(analysis.id)} disabled={retrying === analysis.id} className="font-semibold text-primary-dark hover:underline disabled:opacity-50">
+                                    {retrying === analysis.id ? 'Retrying…' : 'Retry analysis'}
+                                </button>
+                            </div>
+                        )}
                         {summary && (
+                            <details className="mt-2">
+                                <summary className="cursor-pointer text-sm font-semibold text-primary-dark hover:underline">Meeting notes</summary>
+                                <div className={`${WELL} mt-2 space-y-2 px-3 py-3 text-sm text-text-primary`}>
+                                    <p className="whitespace-pre-line leading-relaxed">{summary.summary}</p>
+                                    {summary.decisions.length > 0 && <div><p className={LABEL}>Decisions</p><ol className="mt-1 list-decimal space-y-0.5 pl-5">{summary.decisions.map((d, k) => <li key={k}>{d}</li>)}</ol></div>}
+                                    {summary.openQuestions.length > 0 && <div><p className={LABEL}>Open questions</p><ol className="mt-1 list-decimal space-y-0.5 pl-5">{summary.openQuestions.map((d, k) => <li key={k}>{d}</li>)}</ol></div>}
+                                </div>
+                            </details>
+                        )}
+                        {analysis?.status === 'done' && analysis.result && (
                             <div className="mt-2">
-                                <button type="button" onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} aria-expanded={!!open[i.id]} className="text-sm font-semibold text-primary-dark hover:underline">{open[i.id] ? 'Hide the notes' : 'Read the notes'}</button>
+                                <button type="button" onClick={() => setOpen(o => ({ ...o, [i.id]: !o[i.id] }))} aria-expanded={!!open[i.id]} className="text-sm font-semibold text-primary-dark hover:underline">
+                                    {open[i.id] ? 'Hide interview analysis' : 'Read interview analysis'}
+                                </button>
                                 {open[i.id] && (
-                                    <div className={`${WELL} mt-2 space-y-2 px-3 py-3 text-sm text-text-primary`}>
-                                        <p className="whitespace-pre-line leading-relaxed">{summary.summary}</p>
-                                        {summary.decisions.length > 0 && <div><p className={LABEL}>Decisions</p><ol className="mt-1 list-decimal space-y-0.5 pl-5">{summary.decisions.map((d, k) => <li key={k}>{d}</li>)}</ol></div>}
-                                        {summary.openQuestions.length > 0 && <div><p className={LABEL}>Open questions</p><ol className="mt-1 list-decimal space-y-0.5 pl-5">{summary.openQuestions.map((d, k) => <li key={k}>{d}</li>)}</ol></div>}
+                                    <div className="mt-2 space-y-3">
+                                        <CallInsightsView
+                                            orgId={orgId}
+                                            call={analysis}
+                                            record={record}
+                                            onApplied={(_updated, saved) => { if (saved) onRecord?.(saved); setReload(n => n + 1); }}
+                                        />
+                                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-tertiary">
+                                            <span>Advisory only: the AI never changes a status.</span>
+                                            {analysis.language && <><span aria-hidden>·</span><span>{analysis.language}</span></>}
+                                            {analysis.model && <><span aria-hidden>·</span><span>Model {analysis.model.replace(/^anthropic:/, '')}</span></>}
+                                            <span aria-hidden>·</span>
+                                            <button type="button" onClick={() => void retryAnalysis(analysis.id)} disabled={retrying === analysis.id} className="font-semibold text-primary-dark hover:underline disabled:opacity-50">
+                                                {retrying === analysis.id ? 'Retrying…' : 'Read it again'}
+                                            </button>
+                                        </p>
                                     </div>
                                 )}
                             </div>

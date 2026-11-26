@@ -12,6 +12,9 @@
  * a browser redirect and should be told what happened in words.
  */
 
+import { postZohoToken } from '@/backend/lib/mail/oauth';
+import { isResumeMailOAuthState } from '@/backend/lib/candidates/resume-mail-oauth';
+import { recruitmentMailboxCallback } from '@/app/api/candidates/_lib/resume-mail-callback';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/backend/lib/supabase/admin';
 import { saveMailAccount } from '@/backend/lib/mail/accounts';
@@ -38,6 +41,7 @@ function page(title: string, body: string, tone: 'ok' | 'bad' = 'ok'): NextRespo
 }
 
 export async function GET(request: NextRequest) {
+    if (isResumeMailOAuthState(new URL(request.url).searchParams.get('state') ?? '')) return recruitmentMailboxCallback(request);
     const sp = new URL(request.url).searchParams;
     const code = sp.get('code');
     const state = sp.get('state');
@@ -93,70 +97,15 @@ export async function GET(request: NextRequest) {
         client_id: clientId, client_secret: clientSecret, redirect_uri: callbackUrl(request.url),
     });
     const tokenEndpoint = `${accountsServer}/oauth/v2/token`;
-    console.log('[mail oauth] exchanging code', {
-        tokenEndpoint,
-        redirect_uri: callbackUrl(request.url),
-        content_type: 'application/x-www-form-urlencoded',
-        code_prefix: code.slice(0, 12) + '…',
-        client_id_prefix: clientId.slice(0, 14) + '…',
-        accounts_server_from_zoho: sp.get('accounts-server') ?? '(not sent)',
-        location_from_zoho: sp.get('location') ?? '(not sent)',
-    });
-
     let tok: { access_token?: string; refresh_token?: string; scope?: string; error?: string };
     try {
-        const r = await fetch(tokenEndpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-            body: form.toString(),
-        });
-        let text = await r.text();
-
-        /**
-         * Zoho's token endpoint accepts the grant either as a form body or as
-         * query parameters, and which one it will answer with JSON has proved
-         * inconsistent in practice: a correctly form-encoded POST with a valid
-         * fresh code, the right redirect and the right region still came back
-         * as an HTML error page. So if the first shape does not yield JSON, the
-         * other is tried once before giving up.
-         *
-         * The code is single-use, but a request Zoho refused without reading
-         * does not spend it — and if it did, the retry simply fails the same
-         * way. Not trying leaves the operator with an error and no connection.
-         */
-        if (/^\s*</.test(text)) {
-            console.warn('[mail oauth] form body gave HTML; retrying as query parameters');
-            const r2 = await fetch(`${tokenEndpoint}?${form.toString()}`, {
-                method: 'POST', headers: { Accept: 'application/json' },
-            });
-            const t2 = await r2.text();
-            if (!/^\s*</.test(t2)) text = t2;
-            else console.error('[mail oauth] query form ALSO gave HTML, status', r2.status);
-        }
-
+        const r = await postZohoToken(tokenEndpoint, form);
+        const text = await r.text();
         try {
             tok = JSON.parse(text);
         } catch {
             const looksLikeHtml = /^\s*</.test(text);
             console.error('[mail oauth] NON-JSON from', tokenEndpoint, 'status', r.status);
-            // The readable sentence, not 600 characters of stylesheet.
-            const said = text
-                .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-                .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/&nbsp;/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-            console.error('[mail oauth] Zoho said:', said.slice(0, 300));
-            /**
-             * Zoho answers EVERY token error with the same generic HTML page —
-             * verified by posting a deliberately invalid code and getting this
-             * exact response. So the page does not tell us which error it was,
-             * and claiming it does would be a guess dressed as a diagnosis.
-             *
-             * By far the most common cause is the first one listed: the
-             * authorisation code is single-use and lives about a minute.
-             */
             return page('Not connected', looksLikeHtml
                 ? `Zoho rejected the exchange (HTTP ${r.status}) and returned a generic error page, which does not say why. In order of likelihood:
                    <ol style="margin:10px 0 0;padding-left:20px;line-height:1.7">

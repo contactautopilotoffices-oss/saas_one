@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
   if (limited) return limited;
   try {
-    const result = await startInterviewRecording(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), { candidateId: body.candidateId, interviewId: body.interviewId }, defaultInterviewDeps(new URL(request.url).origin));
+    const result = await startInterviewRecording(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), { candidateId: body.candidateId, interviewId: body.interviewId, analysisConsent: body.analysisConsent }, defaultInterviewDeps(new URL(request.url).origin));
     return NextResponse.json(result);
   } catch (error) {
     return errorResponse(error, "Couldn't start the recording");

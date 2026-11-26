@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getCandidatesAdmin } from "@/backend/lib/candidates/access";
 import { defaultFlowDeps } from "@/backend/lib/candidates/hiring";
-import { publicInterview, rsvpInterview } from "@/backend/lib/candidates/interview-page";
+import { consentFromInvite, publicInterview, rsvpInterview } from "@/backend/lib/candidates/interview-page";
 import { CandidateActionError } from "@/backend/lib/candidates/records";
 
 import { rateLimited } from "../../../candidates/_lib/auth";
@@ -35,8 +35,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const limited = rateLimited("interview-rsvp", ipOf(request), { maxRequests: 10, windowMs: 10 * 60_000 });
   if (limited) return limited;
   const { token } = await params;
-  const body = await request.json().catch(() => ({})) as { answer?: unknown; note?: unknown };
+  const body = await request.json().catch(() => ({})) as { answer?: unknown; note?: unknown; analysisConsent?: unknown };
   try {
+    if (body.analysisConsent === true) {
+      await consentFromInvite(getCandidatesAdmin(), token);
+      return NextResponse.json({ analysisConsent: true }, { headers: noStore });
+    }
     const answer = await rsvpInterview(getCandidatesAdmin(), token, { answer: body.answer, note: body.note }, { sendEmail: defaultFlowDeps().sendEmail });
     return NextResponse.json({ rsvp: answer }, { headers: noStore });
   } catch (error) {

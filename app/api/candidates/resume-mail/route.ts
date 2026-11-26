@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { disconnectResumeMail, importResumeMail, listResumeMail, listResumeMailItems, pauseResumeMail, previewResumeMail, resumeMailFolders, saveResumeMailSettings } from '@/backend/lib/candidates/resume-mail';
-import { startResumeMailOAuth } from '@/backend/lib/candidates/resume-mail-oauth';
+import { connectRecruitmentMailbox } from '@/backend/lib/candidates/resume-mail-oauth';
 import { errorResponse, rateLimited, readJson, requireCandidateAccess } from '../_lib/auth';
 
 export const runtime = 'nodejs';
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     let result: unknown;
     const { admin, orgId, user } = auth;
     switch (body.action) {
-      case 'connect': result = await startResumeMailOAuth(admin, orgId, user.id, request.url); break;
+      case 'connect': result = await connectRecruitmentMailbox(admin, orgId, user.id, request.url, false, body.reconnect === true); break;
       case 'settings': result = await saveResumeMailSettings(admin, orgId, body.id, body); break;
       case 'preview': result = await previewResumeMail(admin, orgId, body.id); break;
       case 'import': result = await importResumeMail(admin, orgId, body.id, { id: user.id, email: user.email ?? null }, body); break;

@@ -1,3 +1,4 @@
+import { hasInterviewConsent, saveInterviewConsent } from './interview-consent';
 /**
  * The interview page (owner 2026-11-24, from the 23 Nov HR meeting; migration 20261124000003): /interview/<token>.
  *   "Interview invites should include position, location, JD, company profile and interview link"; "reminders should
@@ -49,6 +50,7 @@ export interface PublicInterview {
   /** The time has passed (the answer can no longer change). */
   past: boolean;
   rsvp: "yes" | "no" | null;
+  analysisConsent?: boolean;
 }
 
 interface Row {
@@ -65,6 +67,21 @@ async function byToken(client: SupabaseClient, token: string): Promise<Row | nul
   return data as unknown as Row | null;
 }
 
+async function onlineMeeting(db: SupabaseClient, row: Row) {
+  if (row.mode !== 'online' || row.status !== 'scheduled') return null;
+  const { data, error } = await db.from('candidate_actions').select('meta').eq('organization_id', row.organization_id)
+    .eq('candidate_id', row.candidate_id).eq('action', 'remark').contains('meta', { kind: 'interview', interviewId: row.id }).maybeSingle();
+  return !error && typeof data?.meta?.meetingId === 'string' ? data.meta.meetingId as string : null;
+}
+
+export async function consentFromInvite(db: SupabaseClient, token: string, now = new Date()) {
+  const row = await byToken(db, token);
+  if (!row || new Date(row.at).getTime() + 3 * 3600000 < now.getTime()) throw new CandidateActionError(409, 'This interview is no longer open.');
+  const meetingId = await onlineMeeting(db, row);
+  if (!meetingId) throw new CandidateActionError(409, 'This interview is no longer available for analysis consent.');
+  await saveInterviewConsent(db, row.organization_id, row.candidate_id, meetingId);
+}
+
 /** What the page shows, or null when the link is unknown. */
 export async function publicInterview(client: SupabaseClient, token: string, now = new Date(), appUrl = APP_URL): Promise<PublicInterview | null> {
   const row = await byToken(client, token);
@@ -77,8 +94,10 @@ export async function publicInterview(client: SupabaseClient, token: string, now
   const p = pos as { title?: string; location?: string | null; summary?: string | null; jd_text?: string | null } | null;
   const online = row.mode === "online";
   const at = new Date(row.at);
+  const meetingId = at.getTime() + 3 * 3600000 >= now.getTime() ? await onlineMeeting(client, row) : null;
   const s = config.outreach;
   return {
+    ...(meetingId ? { analysisConsent: await hasInterviewConsent(client, row.organization_id, row.candidate_id, meetingId) } : {}),
     companyName: s.companyName,
     companyProfileUrl: s.companyProfileUrl || null,
     firstName: ((person as { full_name?: string | null } | null)?.full_name ?? "").trim().split(/\s+/)[0] || null,
