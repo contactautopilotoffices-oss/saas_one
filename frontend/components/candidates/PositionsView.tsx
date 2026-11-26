@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BookOpen, Briefcase, Building2, CalendarDays, ChevronDown, ChevronRight, CircleDot, ClipboardPaste, FileUp, Info, Layers, MapPin, MoreHorizontal, PencilLine, Plus, RotateCcw, Search, Trash2, Users, XCircle } from 'lucide-react';
+import { ArrowLeft, BookOpen, Briefcase, Building2, CalendarDays, ChevronDown, ChevronRight, CircleDot, LayoutGrid, List, ClipboardPaste, FileUp, Info, Layers, MapPin, MoreHorizontal, PencilLine, Plus, RotateCcw, Search, Trash2, Users, XCircle } from 'lucide-react';
 import type { Preferences } from '@/backend/lib/candidates/query-spec';
 import { boardColumns, type StageDef } from '@/backend/lib/candidates/stage-list';
 import { EMPLOYMENT_TYPE_LABELS, PRIORITY_LABELS, type Position, type PositionReadResponse } from '@/backend/lib/candidates/types';
@@ -56,7 +56,7 @@ function Funnel({ counts, stages }: { counts: Position['counts']; stages: StageD
             <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label={label} title={label}>
                 {total > 0 && columns.map((c, i) => c.n > 0 && (
                     <span key={c.name} title={`${c.name}: ${c.n}`} style={{ width: `${(c.n / total) * 100}%` }}
-                        className={`block h-full ${i > 0 ? 'border-l border-surface' : ''} ${i === columns.length - 1 ? 'bg-emerald-500 dark:bg-emerald-400' : FUNNEL_SHADES[Math.min(i, FUNNEL_SHADES.length - 1)]}`} />
+                        className={`block h-full ${i > 0 ? 'border-l border-surface' : ''} ${i === columns.length - 1 ? 'bg-green-500 dark:bg-green-400' : FUNNEL_SHADES[Math.min(i, FUNNEL_SHADES.length - 1)]}`} />
                 ))}
             </div>
             <p className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] text-text-tertiary" aria-hidden>
@@ -78,7 +78,7 @@ function extraLine(p: Position): string {
 }
 
 /** A department keeps the same small colour square everywhere (a stable pick from its name). */
-const DEPT_SQUARES = ['bg-sky-500', 'bg-violet-500', 'bg-amber-500', 'bg-rose-500', 'bg-indigo-500', 'bg-teal-500', 'bg-orange-500', 'bg-fuchsia-500'];
+const DEPT_SQUARES = ['bg-primary/70', 'bg-primary/50', 'bg-primary/90'];
 function deptSquare(name: string): string {
     let h = 0;
     for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
@@ -87,7 +87,7 @@ function deptSquare(name: string): string {
 
 /** Status look per card: the pill, its dot, and the 3px edge. Hardcoded hues carry a dark: pair. */
 const STATUS_LOOK = {
-    open: { pill: 'bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30', dot: 'bg-emerald-500', edge: 'bg-emerald-500 dark:bg-emerald-400' },
+    open: { pill: 'bg-green-50 text-green-800 ring-green-200 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-500/30', dot: 'bg-green-500', edge: 'bg-green-500 dark:bg-green-400' },
     ageing: { pill: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30', dot: 'bg-amber-500', edge: 'bg-amber-500 dark:bg-amber-400' },
     closed: { pill: 'bg-muted text-text-secondary ring-border', dot: 'bg-gray-400 dark:bg-gray-500', edge: 'bg-gray-300 dark:bg-gray-600' },
 } as const;
@@ -180,6 +180,8 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     const [locFilter, setLocFilter] = useState<string>(ALL);
     const [deptFilter, setDeptFilter] = useState<string>(ALL);
     const [q, setQ] = useState('');
+    const [layout, setLayout] = useState<'grid' | 'list'>('grid');
+    const [focus, setFocus] = useState<'all' | 'late' | 'unassigned'>('all');
     const [nonce, setNonce] = useState(0);
     const [busy, setBusy] = useState(false);
     // The form: a new position (optionally seeded by a JD read), or one being edited (with its JD text fetched first).
@@ -291,14 +293,15 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
     const shown = all.filter(p =>
         (!needle || [p.title, p.location, p.department, p.hiringManager].filter(Boolean).join(' ').toLowerCase().includes(needle))
         && (locOn === ALL || p.location === locOn)
-        && (deptOn === ALL || p.department === deptOn));
-    const filtered = !!needle || locOn !== ALL || deptOn !== ALL;
+        && (deptOn === ALL || p.department === deptOn)
+        && (focus === 'all' || (p.status === 'open' && (focus === 'late' ? p.daysOpen > p.targetDays : !p.recruiterId))));
+    const filtered = focus !== 'all' || !!needle || locOn !== ALL || deptOn !== ALL;
     const inPipeline = (p: Position) => Object.values(p.counts).reduce((n, c) => n + c, 0);
 
     // The list at a glance (owner 2026-11-25): what is open, what is late, what has nobody on it, what is closed.
     const openOnes = all.filter(p => p.status === 'open');
     const glance = [
-        { label: 'Open', n: openOnes.length, dot: 'bg-emerald-500' },
+        { label: 'Open', n: openOnes.length, dot: 'bg-green-500' },
         { label: 'Past target', n: openOnes.filter(p => p.daysOpen > p.targetDays).length, dot: 'bg-amber-500' },
         { label: 'Without a recruiter', n: openOnes.filter(p => !p.recruiterId).length, dot: 'bg-red-500' },
         { label: 'Closed', n: all.length - openOnes.length, dot: 'bg-gray-400 dark:bg-gray-500' },
@@ -366,6 +369,11 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                 </section>
             )}
 
+            {view === 'positions' && <div className="recruitment-queue" aria-label="Position priorities">
+                <button type="button" aria-pressed={focus === 'all'} onClick={() => setFocus('all')}><strong>{positions ? all.length : '—'}</strong><span>Roles in this view</span></button>
+                <button type="button" aria-pressed={focus === 'late'} onClick={() => { setStatusFilter('open'); setFocus('late'); }}><strong>{positions ? openOnes.filter(p => p.daysOpen > p.targetDays).length : '—'}</strong><span>Past the hiring target</span></button>
+                <button type="button" aria-pressed={focus === 'unassigned'} onClick={() => { setStatusFilter('open'); setFocus('unassigned'); }}><strong>{positions ? openOnes.filter(p => !p.recruiterId).length : '—'}</strong><span>Need a recruiter</span></button>
+            </div>}
             {/* Toolbar: search, then the pill filters. */}
             {view === 'positions' && (
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-2" role="search" aria-label="Find jobs">
@@ -385,8 +393,12 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                             options={[{ value: ALL, label: 'All departments' }, ...departments.map(d => ({ value: d, label: d }))]} />
                     )}
                     {filtered && (
-                        <button type="button" onClick={() => { setQ(''); setLocFilter(ALL); setDeptFilter(ALL); }} className={`h-9 rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-muted ${FOCUS}`}>Clear</button>
+                        <button type="button" onClick={() => { setQ(''); setLocFilter(ALL); setDeptFilter(ALL); setFocus('all'); }} className={`h-9 rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-muted ${FOCUS}`}>Clear</button>
                     )}
+                    <div role="group" aria-label="Job layout" className="ml-auto inline-flex rounded-full border border-border bg-surface p-1">
+                        <button type="button" aria-label="Grid view" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')} className={`rounded-full px-3 py-2 ${FOCUS} ${layout === 'grid' ? 'bg-primary text-white' : 'text-text-secondary'}`}><LayoutGrid className="h-4 w-4" aria-hidden /></button>
+                        <button type="button" aria-label="List view" aria-pressed={layout === 'list'} onClick={() => setLayout('list')} className={`rounded-full px-3 py-2 ${FOCUS} ${layout === 'list' ? 'bg-primary text-white' : 'text-text-secondary'}`}><List className="h-4 w-4" aria-hidden /></button>
+                    </div>
                     {busy && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                 </div>
             )}
@@ -404,7 +416,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                     <EmptyState icon={Layers} title={positions.length ? 'No job matches that' : 'No jobs yet'}>{positions.length ? 'Try another word or filter.' : 'Upload or paste a job description, or Create job, to open the first one.'}</EmptyState>
                 </section>
             ) : (
-                <ul className="grid grid-cols-1 gap-x-4 gap-y-4 md:grid-cols-2 xl:grid-cols-3" aria-label="Jobs">
+                <ul data-job-layout={layout} className={`grid grid-cols-1 gap-x-4 gap-y-4 ${layout === 'grid' ? 'md:grid-cols-2 xl:grid-cols-3' : 'recruitment-job-list'}`} aria-label="Jobs">
                     {shown.map(p => {
                         const ageing = p.status === 'open' && p.daysOpen > p.targetDays;
                         const look = STATUS_LOOK[p.status === 'closed' ? 'closed' : ageing ? 'ageing' : 'open'];
@@ -416,7 +428,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                         meta.push({ icon: Users, text: `${p.openings} opening${p.openings === 1 ? '' : 's'}` });
                         const bare = !p.department && !p.location && !p.employmentType && !extra;
                         return (
-                            <li key={p.id} className={`relative flex flex-col rounded-xl bg-surface shadow-[var(--w-shadow)] ${CARD_HOVER}`}>
+                            <li key={p.id} className={`recruitment-card relative flex flex-col rounded-xl bg-surface shadow-[var(--w-shadow)] ${CARD_HOVER}`}>
                                 <div className="flex flex-1 flex-col px-5 pb-4 pt-4">
                                     {/* Status pill (a real select: Open or Closed), department chip, priority; edit and "…" on the right. */}
                                     <div className="flex items-start justify-between gap-x-2">
@@ -518,7 +530,7 @@ export default function PositionsView({ orgId, dataVersion, onDataChanged, onSea
                                         </div>
                                         {/* Owner 2026-11-25: time used against the target: green on time, amber near it, red late. */}
                                         <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-muted" role="img" aria-label={`${p.daysOpen} of ${p.targetDays} days used`}>
-                                            <span className={`block h-full rounded-full ${p.status === 'closed' ? 'bg-gray-400 dark:bg-gray-500' : ageing ? 'bg-red-500' : near ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                            <span className={`block h-full rounded-full ${p.status === 'closed' ? 'bg-gray-400 dark:bg-gray-500' : ageing ? 'bg-red-500' : near ? 'bg-amber-500' : 'bg-green-500'}`}
                                                 style={{ width: `${Math.min(100, (p.daysOpen / Math.max(1, p.targetDays)) * 100)}%` }} />
                                         </span>
                                     </div>

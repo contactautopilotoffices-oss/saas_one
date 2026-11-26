@@ -122,7 +122,7 @@ export function ScheduleInterviewForm({ orgId, record, position, member, stages,
         const failed = done.sent.filter(s => !s.ok);
         return (
             <div className={`${WELL} mt-3 space-y-3 px-3 py-3`}>
-                <p className="flex items-center gap-x-2 text-sm font-semibold text-text-primary"><Check className="h-4 w-4 text-emerald-700" aria-hidden />Interview scheduled: {done.interview?.round ?? round}, {interviewWhen(at)}{done.moved ? ` · moved to ${done.moved}` : ''}</p>
+                <p className="flex items-center gap-x-2 text-sm font-semibold text-text-primary"><Check className="h-4 w-4 text-green-700" aria-hidden />Interview scheduled: {done.interview?.round ?? round}, {interviewWhen(at)}{done.moved ? ` · moved to ${done.moved}` : ''}</p>
                 {done.interview?.joinUrl && (
                     <div>
                         <p className={LABEL}>The link, for everyone: interviewers go straight in, {first} waits to be let in</p>
@@ -133,7 +133,7 @@ export function ScheduleInterviewForm({ orgId, record, position, member, stages,
                     <ul className="space-y-1">
                         {done.sent.map((s, i) => (
                             <li key={i} className="flex items-start gap-x-2 text-sm">
-                                {s.ok ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden /> : <X className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden />}
+                                {s.ok ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-700" aria-hidden /> : <X className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden />}
                                 <span className="text-text-primary">{s.channel === 'whatsapp' ? 'WhatsApp' : 'Email'} to {s.name}{s.to === 'interviewer' ? ' (interviewer)' : ''}{s.ok ? ' sent' : ' not sent'}{s.note ? <span className="text-text-secondary">: {s.note}</span> : null}</span>
                             </li>
                         ))}
@@ -322,7 +322,7 @@ export function InterviewsList({ orgId, record, nonce }: { orgId: string; record
                         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                             <span className="text-sm font-semibold text-text-primary">{i.round ?? 'Interview'} · {interviewWhen(i.at)}</span>
                             <span className="text-xs text-text-secondary">{[i.positionTitle, i.mode && (INTERVIEW_MODE_LABELS as Record<string, string>)[i.mode], i.venue].filter(Boolean).join(' · ')}</span>
-                            {i.meeting && <span className={`ml-auto text-xs font-semibold ${i.meeting.status === 'ready' ? 'text-emerald-800' : i.meeting.status === 'failed' ? 'text-red-800' : 'text-text-secondary'}`}>{STATUS_WORDS[i.meeting.status] ?? i.meeting.status}</span>}
+                            {i.meeting && <span className={`ml-auto text-xs font-semibold ${i.meeting.status === 'ready' ? 'text-green-800' : i.meeting.status === 'failed' ? 'text-red-800' : 'text-text-secondary'}`}>{STATUS_WORDS[i.meeting.status] ?? i.meeting.status}</span>}
                         </div>
                         {(i.interviewers || i.byName) && <p className="mt-0.5 text-xs text-text-secondary">{i.interviewers ? `With ${i.interviewers}` : ''}{i.interviewers && i.byName ? ' · ' : ''}{i.byName ? `scheduled by ${i.byName}` : ''}</p>}
                         {i.note && <p className="mt-1 text-xs italic text-text-secondary">“{i.note}”</p>}
@@ -391,10 +391,10 @@ function InterviewFollowUp({ orgId, interview: i, onChanged }: { orgId: string; 
     return (
         <div className="mt-2.5 border-t border-border-subtle pt-2.5">
             <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'done' ? 'bg-emerald-50 text-emerald-800' : status === 'scheduled' ? 'bg-sky-50 text-sky-800' : 'bg-slate-100 text-slate-700'}`}>{INTERVIEW_STATUS_LABELS[status]}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'done' ? 'bg-green-50 text-green-800' : status === 'scheduled' ? 'bg-stone-50 text-stone-800' : 'bg-slate-100 text-slate-700'}`}>{INTERVIEW_STATUS_LABELS[status]}</span>
                 {i.statusReason && <span className="text-xs text-text-secondary">“{i.statusReason}”</span>}
                 {/* Owner 2026-11-24: the candidate's answer on their interview page */}
-                {status === 'scheduled' && i.rsvp && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${i.rsvp === 'yes' ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'}`} title={i.rsvpNote ?? undefined}>{i.rsvp === 'yes' ? 'Confirmed' : `Cannot attend${i.rsvpNote ? `: ${i.rsvpNote}` : ''}`}</span>}
+                {status === 'scheduled' && i.rsvp && <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${i.rsvp === 'yes' ? 'bg-green-50 text-green-800' : 'bg-rose-50 text-rose-800'}`} title={i.rsvpNote ?? undefined}>{i.rsvp === 'yes' ? 'Confirmed' : `Cannot attend${i.rsvpNote ? `: ${i.rsvpNote}` : ''}`}</span>}
                 {status === 'scheduled' && (
                     <span className="ml-auto flex flex-wrap gap-1">
                         <button type="button" onClick={() => void patch({ status: 'done' }, 'Marked done')} disabled={busy} className={`${BTN_GHOST} h-8`}><Check className="h-4 w-4" />Done</button>

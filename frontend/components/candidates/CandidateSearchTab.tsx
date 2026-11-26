@@ -84,6 +84,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
     /** The host shows the module's name and its own navigation, so the name and the tab bar are left out. */
     hideTabs?: boolean;
 }) {
+    const [readingRequest, setReadingRequest] = useState(0);
     const controlled = viewProp !== undefined;
     const [ownView, setOwnView] = useState<View>('search');
     const view: View | null = controlled ? viewProp : ownView;
@@ -139,7 +140,7 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                 // Open positions; absent before migration 20261115000002 (the call answers 409 then).
                 positions: positions.ok ? positions.data.positions.length : null,
                 // Files not finished yet: a file whose text is still being read is also waiting for its details.
-                reading: resumes.ok ? Math.max(resumes.data.textPending, resumes.data.extractPending) : 0,
+                reading: resumes.ok ? (resumes.data.textPending + resumes.data.extractPending) : 0,
                 // The same files the Resumes tab lists under "Needs attention": unread ones and the documents kept aside.
                 attention: (attention.ok ? attention.data.total : 0) + (resumes.ok ? resumes.data.other : 0),
             });
@@ -177,11 +178,11 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
             {/* One width for every view (owner 2026-11-11), so the tab bar does not shift when the view changes: the
                 whole width of the page, so nothing is left empty beside it when the sidebar is collapsed. */}
             <div className="w-full min-w-0 space-y-5">
-                {view !== null && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {view !== null && (!hideTabs || reading || counts.attention > 0 || ['search', 'candidates', 'resumes', 'email'].includes(view)) && <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                     {/* The module's name: this row replaces the HR page header on the Recruitment tab. */}
                     {!hideTabs && <>
                     <div className="flex items-center gap-2">
-                        <div className="rounded-xl bg-indigo-50 p-2 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400"><UserSearch className="h-5 w-5" /></div>
+                        <div className="rounded-xl bg-stone-50 p-2 text-stone-600 dark:bg-stone-950/60 dark:text-stone-400"><UserSearch className="h-5 w-5" /></div>
                         <h1 className="font-display text-lg font-black tracking-tight text-text-primary sm:text-xl">Recruitment</h1>
                         {/* Owner 2026-11-16: the module is in beta while HR starts using it. */}
                         <span className="inline-flex h-[22px] items-center rounded-full bg-amber-100 px-2.5 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-800/60" title="New module: in use by the HR team, still being refined">Beta</span>
@@ -219,8 +220,8 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                     </>}
                     <div className="ml-auto flex flex-wrap items-center gap-x-2 gap-y-2" aria-live="polite">
                         {reading && (
-                            <button type="button" onClick={() => open('resumes')} className="inline-flex h-9 items-center gap-x-2 rounded-[10px] bg-surface px-3 text-sm font-semibold text-text-secondary shadow-[var(--w-shadow)] hover:text-text-primary" title="Resumes are being read in the background. You can keep working.">
-                                <Spinner className="h-3.5 w-3.5" /><span>Reading <span className="tabular-nums">{formatCount(counts.reading)}</span> {counts.reading === 1 ? 'resume' : 'resumes'}</span>
+                            <button type="button" onClick={() => { setReadingRequest(n => n + 1); open('resumes'); }} className="inline-flex h-9 items-center gap-x-2 rounded-[10px] bg-surface px-3 text-sm font-semibold text-text-secondary shadow-[var(--w-shadow)] hover:text-text-primary" title="Open queued resumes to inspect, cancel reading or delete.">
+                                <Spinner className="h-3.5 w-3.5" /><span>Reading queue: <span className="tabular-nums">{formatCount(counts.reading)}</span> {counts.reading === 1 ? 'resume' : 'resumes'}</span>
                             </button>
                         )}
                         {counts.attention > 0 && (
@@ -234,8 +235,8 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                     </div>
                 </div>}
 
-                {VIEWS.map(({ id }) => visited[id] && (
-                    <div key={id} role="tabpanel" id={`cand-panel-${id}`} aria-labelledby={`cand-tab-${id}`} hidden={view !== id} className="min-w-0">
+                {VIEWS.map(({ id, label }) => visited[id] && (
+                    <div key={id} data-recruitment-screen={id} role={hideTabs ? "region" : "tabpanel"} id={`cand-panel-${id}`} aria-label={hideTabs ? label : undefined} aria-labelledby={hideTabs ? undefined : `cand-tab-${id}`} hidden={view !== id} className="min-w-0">
                         {id === 'search' && <SearchView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} collapseStyle={collapseStyle} loadPosition={searchRequest} />}
                         {id === 'dashboard' && <RecruitmentDashboardView orgId={orgId} />}
                         {id === 'requisitions' && <RequisitionsView key={requisitionVersion} orgId={orgId} mode="hr" />}
@@ -244,11 +245,11 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
                         {id === 'pipeline' && <PipelineView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} selectPosition={pipelineRequest} onSearch={openSearch} />}
                         {id === 'candidates' && <RecordsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
                         {id === 'sheets' && <SheetsView orgId={orgId} dataVersion={dataVersion} onDataChanged={onDataChanged} />}
-                        {id === 'resumes' && <ResumesView orgId={orgId} />}
-                        {id === 'outreach' && <OutreachView orgId={orgId} />}
+                        {id === 'resumes' && <ResumesView orgId={orgId} readingRequest={readingRequest} />}
+                        {id === 'outreach' && <OutreachView orgId={orgId} onSearch={() => open('search')} />}
                         {id === 'email' && <EmailView orgId={orgId} onSettings={() => open('resumes')} onRequisitions={() => { setRequisitionVersion(n => n + 1); open('requisitions'); }} />}
                         {/* Owner 2026-11-20: the hiring request approvers are in the Tech dashboard's HR Configs tab */}
-                        {id === 'settings' && <div className="space-y-6"><StagesSettings orgId={orgId} /><RejectionReasonsSettings orgId={orgId} /><OfferLetterSettings orgId={orgId} /></div>}
+                        {id === 'settings' && <RecruitmentSettings orgId={orgId} />}
                     </div>
                 ))}
             </div>
@@ -265,4 +266,25 @@ export default function CandidateSearchTab({ orgId, collapseStyle = 'panel', vie
             </ModalPortal>
         </UiProvider>
     );
+}
+
+function RecruitmentSettings({ orgId }: { orgId: string }) {
+    const [section, setSection] = useState('stages');
+    const sections = [
+        { id: 'stages', title: 'Hiring stages', description: 'Define the journey candidates follow and the rules for each transition.' },
+        { id: 'rejections', title: 'Decision reasons', description: 'Give your team consistent reasons for candidate decisions and reporting.' },
+        { id: 'letters', title: 'Offer letters', description: 'Manage the templates and salary structure used when preparing offers.' },
+    ];
+    const current = sections.find(item => item.id === section)!;
+    return <div className="recruitment-workbench">
+        <nav className="recruitment-section-nav" aria-label="Recruitment settings">
+            {sections.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)}>{item.title}</button>)}
+        </nav>
+        <div className="min-w-0 space-y-5">
+            <div className="recruitment-hero"><h2 className="text-xl font-semibold">{current.title}</h2><p className="mt-2 text-sm text-text-secondary">{current.description}</p></div>
+            <div hidden={section !== 'stages'}><StagesSettings orgId={orgId} /></div>
+            <div hidden={section !== 'rejections'}><RejectionReasonsSettings orgId={orgId} /></div>
+            <div hidden={section !== 'letters'}><OfferLetterSettings orgId={orgId} /></div>
+        </div>
+    </div>;
 }

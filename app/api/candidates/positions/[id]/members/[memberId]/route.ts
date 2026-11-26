@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { moveMember, removeMember } from "@/backend/lib/candidates/positions";
 import { loadRecruitmentConfig } from "@/backend/lib/candidates/requisitions";
-import { onStageMove } from "@/backend/lib/candidates/screening";
 import { loadStages } from "@/backend/lib/candidates/stages";
 
 import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../../../../_lib/auth";
@@ -27,21 +26,13 @@ export async function PATCH(request: Request, { params }: Params) {
   try {
     const by = await actorFor(auth.admin, auth.user);
     const member = await moveMember(auth.admin, auth.orgId, by, id, memberId, body.stage, body.remark);
-    // Owner 2026-11-24: the screening questions go when someone reaches HR's screening stage (if switched on); a move
-    // to a rejected stage offers the soft rejection email. Neither ever undoes the move.
-    let screening: Awaited<ReturnType<typeof onStageMove>> = null;
-    try {
-      screening = await onStageMove(auth.admin, auth.orgId, by, id, member);
-    } catch (error) {
-      console.error("[candidates] screening after a move failed", error);
-    }
     let rejectionEmail: { templateId: string } | null = null;
     try {
       const [{ stages }, config] = await Promise.all([loadStages(auth.admin, auth.orgId), loadRecruitmentConfig(auth.admin, auth.orgId)]);
       const templateId = config.outreach.rejectionEmailTemplateId;
       if (templateId && stages.find((s) => s.key === member.stage)?.kind === "rejected") rejectionEmail = { templateId };
     } catch { /* the offer is a convenience */ }
-    return NextResponse.json({ member, screening, rejectionEmail });
+    return NextResponse.json({ member, rejectionEmail });
   } catch (error) {
     return errorResponse(error, "Couldn't move the candidate");
   }

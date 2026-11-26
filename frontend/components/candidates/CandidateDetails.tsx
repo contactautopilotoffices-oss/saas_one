@@ -50,14 +50,12 @@ const statusPill = (s: RecordStatus) => (
     s === 'rejected' ? 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'
         : s === 'on_hold' ? 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200'
         : s === 'not_responding' || s === 'others' ? 'bg-muted text-text-primary'
-        : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+        : 'bg-green-50 text-green-800 dark:bg-green-950/40 dark:text-green-200'
 );
 /** The contact pills on the right panel: light green with teal text. */
-const CONTACT_PILL = 'inline-flex max-w-full items-center rounded-full bg-emerald-50 pl-2.5 text-[13px] font-medium text-primary-dark dark:bg-emerald-950/40 dark:text-emerald-300';
+const CONTACT_PILL = 'inline-flex max-w-full items-center rounded-full bg-primary/10 pl-2.5 text-[13px] font-medium text-primary-dark dark:text-primary-light';
 
 /** Email and phone with the middle hidden, as the panel's meta line shows them. */
-const maskEmail = (email: string) => { const [user, domain] = email.split('@'); return domain && user.length > 3 ? `${user.slice(0, 3)}•••@${domain}` : email; };
-const maskPhone = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 2)}•••• ${phone.slice(-4)}` : phone);
 
 /**
  * One candidate's panel (owner 2026-11-15, to the mockup): the person at the top with the actions that matter
@@ -308,8 +306,8 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
             {/* Section tabs as pills with an icon: the selected one dark (reference layout). */}
             <div role="tablist" aria-label="Candidate sections" className="mt-4 flex flex-wrap gap-2 pb-3.5">
                 {([['overview', 'Overview', null, LayoutGrid], ['resume', 'Resume', files.length || null, FileText], ['activity', 'Activity', null, History], ['positions', 'Positions', null, Briefcase], ['interviews', 'Interviews', null, CalendarDays], ['calls', 'Calls', null, PhoneCall], ['work', 'Assignment & documents', null, ClipboardList]] as const).map(([id, label, n, Icon]) => (
-                    <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => goTo(id)}
-                        className={`inline-flex h-8 items-center gap-x-1.5 rounded-full px-3.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1 ${tab === id ? 'bg-[#1f2330] text-white dark:bg-[#eef0f3] dark:text-[#16181d]' : 'bg-surface text-text-secondary ring-1 ring-inset ring-border hover:bg-surface-elevated hover:text-text-primary'}`}>
+                    <button key={id} type="button" role="tab" aria-selected={tab === id} tabIndex={tab === id ? 0 : -1} onKeyDown={event => { const tabs = Array.from(event.currentTarget.parentElement!.querySelectorAll<HTMLButtonElement>('[role="tab"]')); const index = tabs.indexOf(event.currentTarget); const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1; if (next >= 0) { event.preventDefault(); tabs[next].focus(); tabs[next].click(); } }} onClick={() => goTo(id)}
+                        className={`inline-flex h-8 items-center gap-x-1.5 rounded-full px-3.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-1 ${tab === id ? 'bg-[#292929] text-white dark:bg-[#f5f5f4] dark:text-[#171717]' : 'bg-surface text-text-secondary ring-1 ring-inset ring-border hover:bg-surface-elevated hover:text-text-primary'}`}>
                         <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                         {label}{n ? <span className="ml-0.5 text-xs font-medium opacity-70">{n}</span> : null}
                         {id === 'activity' && <ActivityCount orgId={orgId} record={r} nonce={historyNonce} />}
@@ -325,7 +323,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
         >
             {/* Owner 2026-11-25 (reference layout): the section on the left, the person on the right; one column below ~770 px. */}
             <div className="@container">
-            <div className="grid items-start gap-4 @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
+            <div className="grid items-start gap-x-5 gap-y-5 @3xl:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
             {/* The left column sits on a very light grey panel, its cards white (reference layout). */}
             <div className="@container min-w-0 space-y-3.5 rounded-2xl bg-surface-elevated p-3 sm:p-3.5">                {pipeline && <PipelineStrip key={`${r.id}:${pipeline.member.id}`} orgId={orgId} record={r} ctx={pipeline} tab={tab} onHistory={() => { setHistoryNonce(n => n + 1); setMembershipNonce(n => n + 1); }} />}
 
@@ -407,7 +405,7 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         <section className={`${CARD} @container px-4 py-4`} aria-labelledby="cand-job-title">
                             <div className="flex items-center justify-between gap-x-3">
                                 <h3 id="cand-job-title" className="text-sm font-semibold text-text-primary">Job details</h3>
-                                <button type="button" onClick={() => goTo('positions')} className="inline-flex h-8 items-center gap-x-0.5 rounded-md px-1.5 text-[13px] font-semibold text-primary-dark hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-emerald-300">
+                                <button type="button" onClick={() => goTo('positions')} className="inline-flex h-8 items-center gap-x-0.5 rounded-md px-1.5 text-[13px] font-semibold text-primary-dark hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-green-300">
                                     View positions<ChevronRight className="h-4 w-4" aria-hidden />
                                 </button>
                             </div>
@@ -480,12 +478,12 @@ export default function CandidateDetails({ record, open, onClose, onEdit, orgId,
                         <dl className="mt-3 space-y-3">
                             {r.email && (
                                 <InfoRow icon={Mail} label="Email">
-                                    <span className={CONTACT_PILL}><span className="truncate">{maskEmail(r.email)}</span><CopyButton value={r.email} label="email address" /></span>
+                                    <span className={CONTACT_PILL}><span className="truncate">{r.email}</span><CopyButton value={r.email} label="email address" /></span>
                                 </InfoRow>
                             )}
                             {r.phone && (
                                 <InfoRow icon={Phone} label="Phone">
-                                    <span className={`${CONTACT_PILL} tabular-nums`}><span className="truncate">{maskPhone(r.phone)}</span><CopyButton value={r.phone} label="phone number" /></span>
+                                    <span className={`${CONTACT_PILL} tabular-nums`}><span className="truncate">{r.phone}</span><CopyButton value={r.phone} label="phone number" /></span>
                                 </InfoRow>
                             )}
                             {r.location && <InfoRow icon={MapPin} label="Location">{r.location}</InfoRow>}

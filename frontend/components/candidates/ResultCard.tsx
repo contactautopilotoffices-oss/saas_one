@@ -88,7 +88,7 @@ export const CHIP = 'rounded-md border border-border bg-surface-elevated px-2 py
 export const SECTION_TITLE = 'text-[13px] font-semibold text-text-primary';
 
 const PILL_TONE = {
-    green: 'bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-400/15 dark:text-emerald-200 dark:ring-emerald-400/25',
+    green: 'bg-green-50 text-green-800 ring-green-200 dark:bg-green-400/15 dark:text-green-200 dark:ring-green-400/25',
     amber: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-400/15 dark:text-amber-200 dark:ring-amber-400/25',
     grey: 'bg-surface-elevated text-text-secondary ring-border',
 } as const;

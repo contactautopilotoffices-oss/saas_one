@@ -53,6 +53,7 @@ test('resume preview and library work on desktop and phone without uploading bef
             await page.goto(`http://127.0.0.1:${server.address().port}`);
             await page.getByRole('combobox', { name: 'Uploaded by', exact: true }).waitFor();
             assert.match(await page.getByRole('combobox', { name: 'Uploaded by', exact: true }).innerText(), /All users/);
+            await page.getByRole('button', { name: 'Import & sources', exact: true }).click();
             await page.getByLabel('Designation / role sourced for', { exact: true }).fill('Facility Manager');
             await page.locator('input[type=file][accept]').setInputFiles([
                 { name: 'Asha_Naukri.pdf', mimeType: 'application/pdf', buffer: Buffer.from('test CV one') },
@@ -72,6 +73,7 @@ test('resume preview and library work on desktop and phone without uploading bef
             await page.waitForFunction(() => window.requests.some(r => r.method === 'POST'));
             const sent = await page.evaluate(() => window.requests.find(r => r.method === 'POST').body.files);
             assert.deepEqual(sent.map(f => [f.source.kind, f.source.name, f.sourcedRole]), [[null, null, 'Facility Manager'], ['portal', 'LinkedIn', 'Engineer'], [null, null, 'Facility Manager']]);
+            await page.getByRole('button', { name: 'Resume library', exact: true }).click();
             await page.getByRole('button', { name: /Edit details|Edit source and designation/ }).filter({ visible: true }).first().click();
             const dialog = page.getByRole('dialog');
             await dialog.getByLabel('Designation / role sourced for', { exact: true }).fill('Supervisor');

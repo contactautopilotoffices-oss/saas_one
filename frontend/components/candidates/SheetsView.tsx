@@ -78,7 +78,7 @@ function summaryTiles(s: ImportSummary): [string, number][] {
 /** `inlineError={false}`: the caller shows the failure text itself (phone cards put it on its own line). */
 function SheetStatus({ sheet, inlineError = true, preparing = false }: { sheet: CandidateSheet; inlineError?: boolean; preparing?: boolean }) {
     if (sheet.status === 'importing') {
-        return <span className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full bg-blue-50 px-2.5 text-xs font-semibold text-blue-800 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30"><Spinner className="h-3 w-3" />Importing</span>;
+        return <span className="inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full bg-stone-50 px-2.5 text-xs font-semibold text-stone-800 ring-1 ring-inset ring-stone-200 dark:bg-stone-500/15 dark:text-stone-300 dark:ring-stone-500/30"><Spinner className="h-3 w-3" />Importing</span>;
     }
     if (sheet.status === 'failed') {
         return (
@@ -110,6 +110,7 @@ function Uploads({ n }: { n: number }) {
 export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
     const { notify, reportError } = useUi();
     const [deleted, setDeleted] = useState(false);
+    const [workspace, setWorkspace] = useState<'library' | 'import' | 'connections' | 'maintenance'>('library');
     const [nonce, setNonce] = useState(0);
     const [loaded, setLoaded] = useState<Loaded | null>(null);
 
@@ -315,8 +316,11 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                 sub={loaded?.data ? (deleted
                     ? `${formatCount(sheets.length)} deleted ${sheets.length === 1 ? 'sheet' : 'sheets'}`
                     : `${formatCount(sheets.length)} ${sheets.length === 1 ? 'sheet' : 'sheets'} · ${formatCount(liveTotal)} live records${flaggedTotal ? ` · ${formatCount(flaggedTotal)} flagged` : ''}`) : 'Sourcing sheets and trackers'}
-                actions={<button type="button" onClick={() => inputRef.current?.click()} disabled={uploading} className={K_BTN_PRIMARY}><Upload className="h-4 w-4" aria-hidden />Upload sheet</button>} />
+                actions={<button type="button" onClick={() => { setWorkspace('import'); inputRef.current?.click(); }} disabled={uploading} className={K_BTN_PRIMARY}><Upload className="h-4 w-4" aria-hidden />Upload sheet</button>} />
 
+            <Segmented label="Sheet workspace" value={workspace} onChange={setWorkspace} options={[{value:'library',label:'Source library'}, {value:'import',label:'Import a sheet'}, {value:'connections',label:'Connected trackers'}, {value:'maintenance',label:'Data maintenance'}]} />
+            <div hidden={workspace !== 'import'} className="space-y-4">
+            <div className="recruitment-hero"><h2 className="text-lg font-semibold">Bring your sourcing data together</h2><p className="mt-2 text-sm text-text-secondary">Upload a sheet, review the import result, then resolve flagged rows before using them in recruitment.</p></div>
             {/* Upload */}
             <div
                 onDragOver={e => { e.preventDefault(); if (!dragOver) setDragOver(true); }}
@@ -379,7 +383,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
                         className={`${K_CARD} px-4 py-4 sm:p-5`} aria-label="Import summary"
                     >
                         <div className="flex items-start gap-x-3 gap-y-3">
-                            <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                            <CircleCheck className="mt-0.5 h-5 w-5 shrink-0 text-green-600 dark:text-green-400" aria-hidden />
                             <div className="min-w-0 flex-1">
                                 <p className="break-words text-base font-semibold text-text-primary">{summary.sheet.name}</p>
                                 <p className="text-sm text-text-secondary">{MODE_LABEL[summary.mode]}</p>
@@ -421,10 +425,13 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             </AnimatePresence>
 
             {/* Owner 2026-11-21: Google Sheet / Excel trackers synced on a schedule; their rows land in the sheets below */}
-            {!deleted && <TrackerConnections orgId={orgId} onDataChanged={() => { setNonce(n => n + 1); onDataChanged(); }} />}
+            </div>
+            <div hidden={workspace !== 'connections'}>
+            <TrackerConnections orgId={orgId} onDataChanged={() => { setNonce(n => n + 1); onDataChanged(); }} />
+            </div>
 
             {/* Sheets list */}
-            <section className="space-y-3" aria-labelledby="sheets-heading">
+            <section hidden={workspace !== 'library'} className="space-y-3" aria-labelledby="sheets-heading">
                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                     <h3 id="sheets-heading" className="text-[15px] font-semibold text-text-primary">{deleted ? 'Deleted sheets' : 'All sheets'}</h3>
                     <Segmented label="Which sheets" value={deleted ? 'deleted' : 'active'} onChange={v => setDeleted(v === 'deleted')} options={[{ value: 'active', label: 'Active' }, { value: 'deleted', label: 'Deleted' }]} />
@@ -519,7 +526,7 @@ export default function SheetsView({ orgId, dataVersion, onDataChanged }: { orgI
             />
 
             {/* Danger zone */}
-            <section aria-labelledby="danger-heading" className={`${K_CARD_BASE} flex flex-col gap-x-3 gap-y-3 border-red-200 px-4 py-4 sm:flex-row sm:items-center sm:px-5 dark:border-red-500/30`}>
+            <section hidden={workspace !== 'maintenance'} aria-labelledby="danger-heading" className={`${K_CARD_BASE} flex flex-col gap-x-3 gap-y-3 border-red-200 px-4 py-4 sm:flex-row sm:items-center sm:px-5 dark:border-red-500/30`}>
                 <div className="min-w-0 flex-1">
                     <h3 id="danger-heading" className="text-sm font-semibold text-text-primary">Clear all candidate data</h3>
                     <p className="mt-0.5 text-sm text-text-tertiary">Permanently erase every sheet, record and candidate, including deleted ones. Search history is kept.</p>

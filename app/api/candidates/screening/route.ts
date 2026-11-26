@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
-import { getRecord } from "@/backend/lib/candidates/records";
-import { screeningViews, startScreening } from "@/backend/lib/candidates/screening";
+import { screeningViews } from "@/backend/lib/candidates/screening";
 
-import { actorFor, errorResponse, rateLimited, readJson, requireCandidateAccess, UUID } from "../_lib/auth";
+import { errorResponse, readJson, requireCandidateAccess } from "../_lib/auth";
 
 export const runtime = "nodejs";
 
@@ -25,26 +23,11 @@ export async function GET(request: Request) {
   }
 }
 
-/** { orgId, applicationId, positionId } → sends the screening questions (once per person and position). */
+/** Reject old clients rather than sending candidate questionnaires. */
 export async function POST(request: Request) {
   const body = await readJson(request);
   if (body instanceof NextResponse) return body;
   const auth = await requireCandidateAccess(body.orgId);
   if (auth.error) return auth.error;
-  const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
-  if (limited) return limited;
-  if (typeof body.applicationId !== "string" || !UUID.test(body.applicationId) || typeof body.positionId !== "string" || !UUID.test(body.positionId)) {
-    return NextResponse.json({ error: "Pick the candidate and the position." }, { status: 400 });
-  }
-  try {
-    const record = await getRecord(auth.admin, auth.orgId, body.applicationId);
-    const { data: member } = await auth.admin.from("candidate_position_members").select("id").eq("organization_id", auth.orgId).eq("position_id", body.positionId).eq("candidate_id", record.candidateId).is("deleted_at", null).maybeSingle();
-    if (!member) return NextResponse.json({ error: "This person is not in that position." }, { status: 400 });
-    const result = await startScreening(auth.admin, auth.orgId, await actorFor(auth.admin, auth.user), {
-      positionId: body.positionId, candidateId: record.candidateId, applicationId: record.id, memberId: (member as { id: string }).id,
-    });
-    return NextResponse.json({ result });
-  } catch (error) {
-    return errorResponse(error, "Couldn't send the screening questions");
-  }
+  return NextResponse.json({ error: "Screening questions are for internal HR use only." }, { status: 410 });
 }

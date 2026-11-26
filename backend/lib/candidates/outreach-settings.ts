@@ -140,14 +140,6 @@ const BASE_TEMPLATES: OutreachTemplate[] = [
 /** Owner 2026-11-24: the screening, interview and rejection templates (added to saved settings that predate them). */
 export const FLOW_TEMPLATES: OutreachTemplate[] = [
   {
-    id: "wa_screening",
-    name: "Screening questions",
-    channel: "whatsapp",
-    campaign: "hr_candidate_screening_v1",
-    params: ["first_name", "recruiter_name", "company", "role", "location", "screening_link"],
-    body: "Hello {{first_name}},\n\nThis is {{recruiter_name}} from the {{company}} HR team. We have considered your profile for the {{role}} role in {{location}}.\n\nIf you are interested, please answer a few quick questions here: {{screening_link}}\n\nWe will also call you shortly.",
-  },
-  {
     id: "wa_interview_invite",
     name: "Interview invite",
     channel: "whatsapp",
@@ -260,7 +252,7 @@ export interface ScreeningConfig {
   maxQuestions: number;
 }
 export const DEFAULT_SCREENING: ScreeningConfig = {
-  enabled: true,
+  enabled: false,
   stageKey: "screening_pending",
   noResponseStageKey: "not_responding",
   whatsappTemplateId: "wa_screening",
@@ -480,7 +472,7 @@ export function validateOutreachSettings(body: unknown): OutreachSettings {
   if (s.auto.enabled && !s.auto.whatsappTemplateId && !s.auto.emailTemplateId) throw new SettingsError("Automatic outreach is on: pick a WhatsApp or an email template for it.");
 
   // Screening: its own questions (no name / email / mobile / file: the person is already known).
-  if (!has(s.screening.whatsappTemplateId, "whatsapp")) throw new SettingsError("Screening points to a WhatsApp template that is not in the list.");
+  s.screening.enabled = false;
   const sIds = s.screening.fields.map((f) => f.id);
   const sDupe = sIds.find((id, i) => sIds.indexOf(id) !== i);
   if (sDupe) throw new SettingsError(`Two screening questions use the id "${sDupe}".`);
@@ -524,9 +516,9 @@ export function toOutreachSettings(raw: unknown): OutreachSettings {
       companyName: r.companyName ?? DEFAULT_OUTREACH.companyName,
       companyProfileUrl: r.companyProfileUrl ?? "",
       applicationForm: r.applicationForm ?? DEFAULT_APPLICATION_FORM,
-      templates,
+      templates: templates.filter(t => t.id !== "wa_screening" && !t.params?.includes("screening_link") && !t.body.includes("{{screening_link}}")),
       auto: { ...DEFAULT_AUTO, ...(r.auto ?? {}) },
-      screening: { ...DEFAULT_SCREENING, ...(r.screening ?? {}) },
+      screening: { ...DEFAULT_SCREENING, ...(r.screening ?? {}), enabled: false },
       interview: { ...DEFAULT_INTERVIEW, ...(r.interview ?? {}) },
       rejectionEmailTemplateId: r.rejectionEmailTemplateId ?? DEFAULT_OUTREACH.rejectionEmailTemplateId,
       assignment: { ...DEFAULT_ASSIGNMENT, ...(r.assignment ?? {}) },

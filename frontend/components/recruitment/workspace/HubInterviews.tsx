@@ -66,10 +66,10 @@ const roundLine = (iv: CalendarInterview) => [iv.round ?? 'Interview', iv.positi
 const fullLabel = (iv: CalendarInterview) => `${iv.candidateName}, ${dayLabel(new Date(iv.at).getTime(), { weekday: 'short', day: 'numeric', month: 'short' })} ${time(iv.at)}, ${roundLine(iv)}, ${modeOf(iv.mode).label}${iv.status === 'no_show' ? ', no-show' : ''}`;
 
 // Local finishing touches: a visible keyboard focus ring, and no movement for people who ask for less of it.
-const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4f46e5]';
+const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#353535]';
 const CALM = 'motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:hover:scale-100';
-const LINE = 'border-[#17152d]/10 dark:border-white/[.14]';
-const PAST = 'bg-[repeating-linear-gradient(135deg,rgba(23,21,45,.04)_0_6px,transparent_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.04)_0_6px,transparent_6px_12px)]';
+const LINE = 'border-[#262626]/10 dark:border-white/[.14]';
+const PAST = 'bg-[repeating-linear-gradient(135deg,rgba(38,38,38,.04)_0_6px,transparent_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,rgba(255,255,255,.04)_0_6px,transparent_6px_12px)]';
 const VIEWS: Array<{ key: CalView; label: string }> = [{ key: 'day', label: 'Day' }, { key: 'week', label: 'Week' }, { key: 'month', label: 'Month' }];
 
 export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; data: RecruitmentDashboard; onOpen: (view: RecruitmentView) => void }) {
@@ -169,7 +169,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
             aria-pressed={picked === iv.id}
             aria-label={fullLabel(iv)}
             title={fullLabel(iv)}
-            className={`absolute flex overflow-hidden rounded-xl border-l-[3px] border-current px-2 py-1.5 text-left text-xs leading-tight shadow-[0_4px_12px_rgba(60,60,120,.08)] transition-transform hover:z-20 hover:scale-[1.02] ${CALM} ${FOCUS} ${TONE[toneOf(iv)]} ${picked === iv.id ? 'z-20 ring-2 ring-[#4f46e5]' : ''} ${iv.status === 'done' ? 'opacity-70' : ''} ${wide ? 'items-center gap-3' : 'flex-col'}`}
+            className={`absolute flex overflow-hidden rounded-xl border-l-[3px] border-current px-2 py-1.5 text-left text-xs leading-tight shadow-[0_4px_12px_rgba(45,45,40,.08)] transition-transform hover:z-20 hover:scale-[1.02] ${CALM} ${FOCUS} ${TONE[toneOf(iv)]} ${picked === iv.id ? 'z-20 ring-2 ring-[#353535]' : ''} ${iv.status === 'done' ? 'opacity-70' : ''} ${wide ? 'items-center gap-3' : 'flex-col'}`}
             style={{ top: top + 2, height: ROW - 4, left: `calc(${(lane / lanes) * 100}% + 3px)`, width: `calc(${100 / lanes}% - 6px)` }}
         >
             {wide ? (
@@ -205,7 +205,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                     <span className={`self-end text-xs font-bold ${INK3}`}>Time</span>
                     {days.map(d => (
                         <span key={d} className="px-1 text-center text-[12px] font-bold">
-                            <span className={`inline-block rounded-full px-2.5 py-1 ${d === today ? 'bg-[#4f46e5]/10 text-[#4f46e5] ring-1 ring-[#4f46e5]/30 dark:text-[#a5b4fc]' : d < today ? INK3 : ''}`}>
+                            <span className={`inline-block rounded-full px-2.5 py-1 ${d === today ? 'bg-[#353535]/10 text-[#353535] ring-1 ring-[#353535]/30 dark:text-[#d6d3cd]' : d < today ? INK3 : ''}`}>
                                 {view === 'day' ? `${dayLabel(d, { weekday: 'long' })}, ${dayLabel(d, { day: '2-digit', month: 'long' })}` : `${dayLabel(d, { weekday: 'long' })}, ${dayLabel(d, { day: '2-digit' })}`}
                             </span>
                         </span>
@@ -217,8 +217,8 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                         {showNow && <span className={`absolute left-0 z-30 -translate-y-1/2 rounded-full px-1.5 py-0.5 text-[10px] font-extrabold tabular-nums ${TONE.c}`} style={{ top: nowTop }}>{time(now)}</span>}
                     </div>
                     {days.map(d => (
-                        <div key={d} className={`relative border-l ${LINE} ${d < today ? PAST : d === today ? 'bg-[#4f46e5]/[.04]' : ''}`}>
-                            {hours.map((h, i) => <span key={h} aria-hidden className="absolute inset-x-0 border-t border-dashed border-[#17152d]/[.07] dark:border-white/[.08]" style={{ top: i * ROW }} />)}
+                        <div key={d} className={`relative border-l ${LINE} ${d < today ? PAST : d === today ? 'bg-[#353535]/[.04]' : ''}`}>
+                            {hours.map((h, i) => <span key={h} aria-hidden className="absolute inset-x-0 border-t border-dashed border-[#262626]/[.07] dark:border-white/[.08]" style={{ top: i * ROW }} />)}
                             {d === today && showNow && <span aria-hidden className={`absolute inset-x-0 top-0 ${PAST}`} style={{ height: nowTop }} />}
                             {d === today && showNow && (
                                 <span aria-hidden className="absolute inset-x-0 z-10 h-0.5 bg-[#f87171]" style={{ top: nowTop }}>
@@ -249,12 +249,12 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                         const inMonth = ist(d).getUTCMonth() === monthMonth;
                         const dateText = dayLabel(d, { weekday: 'long', day: 'numeric', month: 'long' });
                         return (
-                            <div key={d} className={`flex min-h-[116px] min-w-0 flex-col gap-1 border-b border-r ${LINE} p-1.5 ${d < today ? PAST : d === today ? 'bg-[#4f46e5]/[.04]' : ''} ${inMonth ? '' : 'opacity-50'}`}>
+                            <div key={d} className={`flex min-h-[116px] min-w-0 flex-col gap-1 border-b border-r ${LINE} p-1.5 ${d < today ? PAST : d === today ? 'bg-[#353535]/[.04]' : ''} ${inMonth ? '' : 'opacity-50'}`}>
                                 <button
                                     type="button"
                                     onClick={() => openDay(d)}
                                     aria-label={`Open ${dateText} in the day view`}
-                                    className={`flex h-7 min-w-7 items-center justify-center self-start rounded-full px-1.5 text-xs font-extrabold tabular-nums ${FOCUS} ${d === today ? 'bg-[#4f46e5] text-white' : `${ROW_HOVER} ${inMonth ? '' : INK3}`}`}
+                                    className={`flex h-7 min-w-7 items-center justify-center self-start rounded-full px-1.5 text-xs font-extrabold tabular-nums ${FOCUS} ${d === today ? 'bg-[#353535] text-white' : `${ROW_HOVER} ${inMonth ? '' : INK3}`}`}
                                 >
                                     {dayLabel(d, { day: 'numeric' })}
                                 </button>
@@ -266,7 +266,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                                         aria-pressed={picked === iv.id}
                                         aria-label={fullLabel(iv)}
                                         title={fullLabel(iv)}
-                                        className={`flex w-full min-w-0 items-center gap-1 rounded-md border-l-[3px] border-current px-1.5 py-0.5 text-left text-[11px] leading-tight ${FOCUS} ${TONE[toneOf(iv)]} ${picked === iv.id ? 'ring-2 ring-[#4f46e5]' : ''} ${iv.status === 'done' ? 'opacity-70' : ''}`}
+                                        className={`flex w-full min-w-0 items-center gap-1 rounded-md border-l-[3px] border-current px-1.5 py-0.5 text-left text-[11px] leading-tight ${FOCUS} ${TONE[toneOf(iv)]} ${picked === iv.id ? 'ring-2 ring-[#353535]' : ''} ${iv.status === 'done' ? 'opacity-70' : ''}`}
                                     >
                                         <span className="shrink-0 font-extrabold tabular-nums">{time(iv.at)}</span>
                                         <span className="truncate">{iv.candidateName}</span>
@@ -297,7 +297,7 @@ export default function HubInterviews({ orgId, data, onOpen }: { orgId: string; 
                                 type="button"
                                 aria-pressed={view === v.key}
                                 onClick={() => setView(v.key)}
-                                className={`min-h-9 rounded-full px-4 text-sm font-bold transition-colors motion-reduce:transition-none ${FOCUS} ${view === v.key ? 'bg-[#4f46e5] text-white shadow-[0_6px_16px_rgba(79,70,229,.22)]' : INK2}`}
+                                className={`min-h-9 rounded-full px-4 text-sm font-bold transition-colors motion-reduce:transition-none ${FOCUS} ${view === v.key ? 'bg-[#353535] text-white shadow-[0_6px_16px_rgba(53,53,53,.22)]' : INK2}`}
                             >
                                 {v.label}
                             </button>

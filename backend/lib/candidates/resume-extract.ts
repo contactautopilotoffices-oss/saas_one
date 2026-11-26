@@ -1,3 +1,4 @@
+import { resumeReadingStopped } from "./resumes";
 /**
  * Reading details from resumes (owner 2026-11-11, phase 4). Spec block: docs/features/candidate_search.md.
  *
@@ -465,7 +466,7 @@ export async function processResumeExtraction(client: SupabaseClient, orgId: str
 
 async function extractOne(client: SupabaseClient, orgId: string, row: FileRow, caller: JsonCaller, now: () => number, result: ResumeExtractResult): Promise<void> {
   const at = () => new Date(now()).toISOString();
-  const update = (values: Record<string, unknown>) => client.from(TABLE).update({ ...values, updated_at: at() }).eq("id", row.id).eq("organization_id", orgId);
+  const update = (values: Record<string, unknown>) => client.from(TABLE).update({ ...values, updated_at: at() }).eq("id", row.id).eq("organization_id", orgId).eq("extract_status", "working");
   if (!row.resume_text) {
     await update({ extract_status: "skipped", extract_error: "No text" });
     return;
@@ -489,6 +490,7 @@ async function extractOne(client: SupabaseClient, orgId: string, row: FileRow, c
     return;
   }
   try {
+    if (await resumeReadingStopped(client, orgId, row.id)) return;
     const applied = await applyExtraction(client, orgId, row, reply.data);
     await update({
       extract_status: "done", extract_error: null, extracted: reply.data, extract_model: reply.model, extracted_at: at(),
@@ -510,7 +512,7 @@ async function extractOne(client: SupabaseClient, orgId: string, row: FileRow, c
 export async function processResumeExtractionAll(client: SupabaseClient, options: ResumeExtractOptions = {}): Promise<{ organisations: number; done: number; created: number }> {
   const now = options.now ?? Date.now;
   const deadline = now() + (options.budgetMs ?? RESUME_EXTRACT_BUDGET_MS.cron);
-  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").eq("text_status", "ready").eq("extract_status", "pending").limit(500);
+  const { data, error } = await client.from(TABLE).select("organization_id").eq("status", "ready").eq("text_status", "ready").in("extract_status", ["pending", "working"]).limit(500);
   if (error) {
     if (extractMigrationMissing(error)) warnMissing(error);
     else console.error("[candidates] resume details: listing organisations failed", message(error));

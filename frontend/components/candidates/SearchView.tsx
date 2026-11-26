@@ -435,7 +435,7 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
             {/* Page header (workspace skin): the screen's name, the live count under it, the actions on the right. */}
             <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
                 <div className="min-w-0">
-                    <h1 className="text-xl font-semibold tracking-tight text-text-primary">Search</h1>
+                    <h2 className="text-xl font-semibold tracking-tight text-text-primary">Build your shortlist</h2>
                     <p role="status" className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-text-secondary">
                         <span className="tabular-nums">{total === null ? 'Loading…' : `${formatCount(total)} ${total === 1 ? 'candidate' : 'candidates'}`}</span>
                         {total !== null && starred.length > 0 && <span>· {starred.length === 1 ? 'have the starred keyword' : 'have every starred keyword'}{nearlyN ? ` · ${formatCount(nearlyN)} more have ${starred.length === 2 ? 'one of the two' : 'some of them'}` : ''}</span>}
@@ -450,9 +450,10 @@ export default function SearchView({ orgId, dataVersion, onDataChanged, collapse
                 </div>
             </header>
             <KeywordBar orgId={orgId} filters={filters} update={update} reading={reading} onReadJob={readJob} jobNote={jobNote} />
-            {/* Owner 2026-11-24: a recruiter's own named searches. */}
-            <SavedSearches orgId={orgId} filters={filters} onLoad={f => { setFilters(f); setPage(1); }} />
+            <details className="recruitment-hero"><summary className="cursor-pointer text-sm font-semibold">Start from a role or a saved search</summary><div className="mt-4 space-y-3">
             <SearchFor orgId={orgId} dataVersion={dataVersion} onPosition={applyPosition} />
+            <SavedSearches orgId={orgId} filters={filters} onLoad={f => { setFilters(f); setPage(1); }} />
+            </div></details>
             {jobText && (
                 <JdStrip
                     filters={filters}

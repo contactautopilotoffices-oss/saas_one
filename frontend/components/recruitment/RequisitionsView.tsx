@@ -134,7 +134,14 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                 sub={state ? `${all.length} ${all.length === 1 ? 'request' : 'requests'} · ${openCount} open · ${approvedCount} approved${forMe ? ` · ${forMe} waiting on you` : ''}` : 'Loading'}
                 actions={mode === 'manager' && access?.canRaise ? <button type="button" onClick={() => setForm({ open: true, requisition: null })} className={K_BTN_PRIMARY}><Plus className="h-4 w-4" aria-hidden />Raise a request</button> : undefined} />
 
-            <div className={`${K_CARD} flex gap-x-3 px-4 py-3`} aria-label="How hiring requests work">
+            <div className="recruitment-queue" aria-label="Request priorities">
+                <button type="button" aria-pressed={filter === 'mine'} onClick={() => { setFilter('mine'); setStatus(''); }}><strong>{state ? forMe : '—'}</strong><span>Waiting for your decision</span></button>
+                <button type="button" aria-pressed={filter === 'open'} onClick={() => { setFilter('open'); setStatus(''); }}><strong>{state ? openCount : '—'}</strong><span>Requests in progress</span></button>
+                <button type="button" aria-pressed={status === 'approved'} onClick={() => { setFilter('all'); setStatus('approved'); }}><strong>{state ? approvedCount : '—'}</strong><span>Approved for hiring</span></button>
+            </div>
+            {forMe > 0 && <section className="recruitment-hero" aria-label="Approval inbox"><h2 className="text-lg font-semibold">Your approval inbox</h2><div className="mt-3 divide-y divide-border">{all.filter(waitingOnMe).slice(0, 4).map(r => <button type="button" key={r.id} onClick={() => setOpenId(r.id)} className="flex w-full flex-wrap items-center justify-between gap-2 py-3 text-left"><span><span className="block font-semibold">{r.roleTitle}</span><span className="text-sm text-text-secondary">{r.department} · {r.positions} seats · {r.ageDays} days waiting</span></span><span className="text-sm font-semibold text-primary">Review request</span></button>)}</div></section>}
+            <details className={`${K_CARD} px-4 py-3`}><summary className="cursor-pointer text-sm font-semibold">Approval process & access</summary>
+            <div className="mt-3 flex gap-x-3" aria-label="How hiring requests work">
                 <Briefcase className="mt-0.5 hidden h-4 w-4 shrink-0 text-primary sm:block" aria-hidden />
                 <div className="min-w-0 space-y-1 text-sm text-text-secondary">
                     <p>{mode === 'hr' ? 'Every request raised from the “Hiring requests” page in people’s sidebars: who raised it, where it stands and who it waits on. ' : ''}A request to hire goes to its department head, then the HR Head, and to the Director when the role is out of plan or above the CTC level. Approved, it becomes an open position. Nothing is approved by the system.</p>
@@ -144,6 +151,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                 </div>
             </div>
 
+            </details>
             <div className="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Filter the requests">
                 <SearchBox value={query} onChange={setQuery} placeholder="Search role, number or person" label="Search the requests" className="w-full sm:w-64" maxLength={80} />
                 <Segmented label="Which requests" value={filter} onChange={setFilter}
@@ -171,7 +179,16 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                 ) : shown.length === 0 ? (
                     <EmptyBlock icon={ClipboardList} title={all.length ? 'Nothing here' : 'No hiring requests yet'}>{all.length ? 'Try another filter.' : mode === 'hr' ? 'Requests appear here when someone raises one from “Hiring requests” in their sidebar.' : 'Raise the first one: the role, the budget band and why it is needed.'}</EmptyBlock>
                 ) : (
-                    <div className={K_TABLE_WRAP}>
+                    <>
+                    <ul className="divide-y divide-border md:hidden" aria-label="Hiring requests">
+                        {shown.map(r => <li key={r.id} className="px-4 py-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{r.roleTitle}</h3><StatusPill tone={STATUS_TONE[r.status]}>{REQUISITION_STATUS_LABELS[r.status]}</StatusPill></div>
+                            <p className="mt-2 text-sm text-text-secondary">{r.department} · {r.location} · {r.positions} seats</p>
+                            <p className="mt-2 text-sm text-text-secondary">{r.currentLevel ? `Waiting on ${r.currentApproverName ?? APPROVAL_LEVEL_LABELS[r.currentLevel]}` : 'No pending approval'} · {r.ageDays} days</p>
+                            <button type="button" className={`${waitingOnMe(r) ? K_BTN_PRIMARY : K_BTN} mt-3`} onClick={() => setOpenId(r.id)}>{waitingOnMe(r) ? 'Review request' : 'Open request'}</button>
+                        </li>)}
+                    </ul>
+                    <div className={`hidden md:block ${K_TABLE_WRAP}`}>
                         <table className={`${K_TABLE} min-w-[820px]`}>
                             <thead>
                                 <tr>
@@ -224,6 +241,7 @@ export default function RequisitionsView({ orgId, mode }: { orgId: string; mode:
                             </tbody>
                         </table>
                     </div>
+                    </>
                 )}
             </section>
         </div>
@@ -310,7 +328,7 @@ function RequisitionForm({ orgId, open, requisition, departments, hierarchy, onC
         >
             <div className="space-y-5">
                 {restored && (
-                    <p role="status" className="flex flex-wrap items-center gap-x-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900 ring-1 ring-inset ring-blue-200 dark:bg-blue-500/15 dark:text-blue-200 dark:ring-blue-500/30">
+                    <p role="status" className="flex flex-wrap items-center gap-x-2 rounded-lg bg-stone-50 px-3 py-2 text-sm text-stone-900 ring-1 ring-inset ring-stone-200 dark:bg-stone-500/15 dark:text-stone-200 dark:ring-stone-500/30">
                         Brought back what you typed before. Nothing is sent until you save or submit.
                         <button type="button" onClick={discardTyped} className="rounded font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Start over</button>
                     </p>
@@ -500,7 +518,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                         </section>
                     )}
                     {s.canEndorse && (
-                        <section className={`${K_CARD_BASE} border-emerald-300 px-4 py-4 dark:border-emerald-500/40`} aria-label="Endorse as department head">
+                        <section className={`${K_CARD_BASE} border-green-300 px-4 py-4 dark:border-green-500/40`} aria-label="Endorse as department head">
                             <p className="text-sm font-semibold text-text-primary">Endorse as head of {r.department}</p>
                             <p className="mt-0.5 text-xs text-text-secondary">Tells the approvers you support this request. It does not approve it, and the HR Head and Director still decide.</p>
                             <label htmlFor="req-endorse-note" className="mt-3 block text-xs font-medium text-text-secondary">Note (optional)</label>
@@ -513,7 +531,7 @@ function RequisitionDrawer({ orgId, id, onClose, onChanged, onEdit }: { orgId: s
                     {r.status === 'sent_back' && r.decisionReason && <div role="status" className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/15 dark:text-amber-100 dark:ring-amber-500/30"><span className="font-semibold">Sent back:</span> {r.decisionReason}</div>}
                     {r.status === 'rejected' && r.decisionReason && <div role="status" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-900 ring-1 ring-inset ring-red-200 dark:bg-red-500/15 dark:text-red-100 dark:ring-red-500/30"><span className="font-semibold">Rejected:</span> {r.decisionReason}</div>}
                     {r.status === 'on_hold' && <div role="status" className={`${K_WELL} px-4 py-3 text-sm text-text-primary`}><span className="font-semibold">On hold</span>{r.holdSince ? ` since ${formatDate(r.holdSince)}` : ''}{r.holdReason ? `: ${r.holdReason}` : ''}</div>}
-                    {r.status === 'approved' && <div role="status" className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-100 dark:ring-emerald-500/30"><span className="font-semibold">Approved</span>{r.decidedAt ? ` on ${formatDate(r.decidedAt)}` : ''}. {r.positionId ? 'The role is open under Recruitment → Positions.' : 'HR opens the position from here.'}</div>}
+                    {r.status === 'approved' && <div role="status" className="rounded-xl bg-green-50 px-4 py-3 text-sm text-green-900 ring-1 ring-inset ring-green-200 dark:bg-green-500/15 dark:text-green-100 dark:ring-green-500/30"><span className="font-semibold">Approved</span>{r.decidedAt ? ` on ${formatDate(r.decidedAt)}` : ''}. {r.positionId ? 'The role is open under Recruitment → Positions.' : 'HR opens the position from here.'}</div>}
                     {r.previous && <p className="text-xs text-text-secondary">Last request for this role: <span className="font-semibold text-text-primary">{r.previous.requisitionNo ?? 'draft'}</span>, {REQUISITION_STATUS_LABELS[r.previous.status].toLowerCase()}, {formatDate(r.previous.createdAt)}.</p>}
 
                     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">

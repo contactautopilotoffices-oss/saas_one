@@ -272,7 +272,7 @@ function FeedbackForm({ orgId, record, position, onCancel, onSaved }: { orgId: s
 }
 
 const VERDICT_ICON: Record<FitVerdict, React.ReactNode> = {
-    meets: <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-success/15 text-emerald-800"><Check className="h-3 w-3" /></span>,
+    meets: <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-success/15 text-green-800"><Check className="h-3 w-3" /></span>,
     off: <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-warning/15 text-amber-800"><X className="h-3 w-3" /></span>,
     unknown: <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-surface-elevated text-text-tertiary"><CircleHelp className="h-3 w-3" /></span>,
 };

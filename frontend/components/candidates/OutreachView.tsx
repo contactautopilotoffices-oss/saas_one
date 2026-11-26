@@ -41,15 +41,21 @@ const H = 'text-[15px] font-semibold text-text-primary';
 
 interface SettingsResponse { settings: OutreachSettings; placeholders: Record<Placeholder, string>; targets: Record<ApplicationTarget, string> }
 
-export default function OutreachView({ orgId }: { orgId: string }) {
+export default function OutreachView({ orgId, onSearch }: { orgId: string; onSearch?: () => void }) {
     const [section, setSection] = useState<Section>('sends');
     return (
         <div className="space-y-5">
             <PageHeader title="Outreach" sub="Bulk and automatic sends, applications, the application form and the message templates" />
-            <Segmented label="Outreach sections" value={section} onChange={setSection} options={SECTIONS.map(x => ({ value: x.id, label: x.label }))} />
+            <div className="recruitment-workbench">
+            <nav className="recruitment-section-nav" aria-label="Outreach sections">
+                {SECTIONS.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => setSection(item.id)}>{item.label}</button>)}
+            </nav>
+            <div className="min-w-0 space-y-4">
+            {section === 'sends' && <div className="recruitment-hero"><h2 className="text-xl font-semibold">Reach the right people</h2><p className="mt-2 text-sm text-text-secondary">Build a shortlist, choose a message, and review every recipient before sending.</p>{onSearch && <button type="button" className={`${K_BTN_PRIMARY} mt-4`} onClick={onSearch}>Choose candidates</button>}</div>}
             {section === 'sends' && <SendsPanel orgId={orgId} />}
             {section === 'applications' && <ApplicationsPanel orgId={orgId} />}
             {(section === 'form' || section === 'screening' || section === 'offer' || section === 'templates' || section === 'auto') && <SettingsPanel orgId={orgId} section={section} />}
+            </div></div>
         </div>
     );
 }
@@ -94,7 +100,7 @@ function SendsPanel({ orgId }: { orgId: string }) {
                                             </span>
                                             <span className="block text-xs text-text-tertiary">{[c.whatsappTemplateName && `WhatsApp: ${c.whatsappTemplateName}`, c.emailTemplateName && `Email: ${c.emailTemplateName}`, `${c.total} ${c.total === 1 ? 'person' : 'people'}`, c.createdByName, formatDate(c.createdAt)].filter(Boolean).join(' · ')}</span>
                                         </span>
-                                        <span className="text-sm tabular-nums text-text-secondary"><span className="font-semibold text-emerald-700 dark:text-emerald-400">{c.counts.sent}</span> sent{c.counts.failed + c.counts.unknown ? <> · <span className="font-semibold text-red-700 dark:text-red-400">{c.counts.failed + c.counts.unknown}</span> failed</> : null}{c.counts.skipped ? ` · ${c.counts.skipped} skipped` : ''}{c.counts.queued + c.counts.sending ? ` · ${c.counts.queued + c.counts.sending} waiting` : ''}</span>
+                                        <span className="text-sm tabular-nums text-text-secondary"><span className="font-semibold text-green-700 dark:text-green-400">{c.counts.sent}</span> sent{c.counts.failed + c.counts.unknown ? <> · <span className="font-semibold text-red-700 dark:text-red-400">{c.counts.failed + c.counts.unknown}</span> failed</> : null}{c.counts.skipped ? ` · ${c.counts.skipped} skipped` : ''}{c.counts.queued + c.counts.sending ? ` · ${c.counts.queued + c.counts.sending} waiting` : ''}</span>
                                     </button>
                                 </li>
                             ))}
@@ -380,41 +386,17 @@ function ScreeningEditor({ orgId, value, targets, onChange }: { orgId: string; v
     const iv = value.interview;
     const setS = (patch: Partial<OutreachSettings['screening']>) => onChange({ ...value, screening: { ...s, ...patch } });
     const setI = (patch: Partial<OutreachSettings['interview']>) => onChange({ ...value, interview: { ...iv, ...patch } });
-    const [stages, setStages] = useState<{ key: string; name: string }[]>([]);
-    useEffect(() => {
-        const ctrl = new AbortController();
-        void api<{ stages: { key: string; name: string; hidden?: boolean }[] }>(`/api/candidates/stages${qs({ orgId })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setStages(res.data.stages.filter(x => !x.hidden)); });
-        return () => ctrl.abort();
-    }, [orgId]);
     const wa = value.templates.filter(t => t.channel === 'whatsapp');
     const em = value.templates.filter(t => t.channel === 'email');
     const lines = (v: string) => v.split('\n').map(x => x.trim()).filter(Boolean);
-    const stageOptions = (current: string) => [...stages, ...(current && !stages.some(x => x.key === current) ? [{ key: current, name: current }] : [])];
     return (
         <div className="space-y-4">
             <section className={`${K_CARD} space-y-4 px-4 py-4 sm:px-5`} aria-label="Screening">
                 <div>
                     <h2 className={H}>Screening questions</h2>
-                    <p className="mt-0.5 text-sm text-text-secondary">When someone moves to the screening stage, they get a WhatsApp from the person who moved them, with their own link to these questions. Their answers fill their record and show on their Calls tab, beside the job description, for the screening call. No answer: a reminder at 24 h and 48 h, then &quot;No response&quot;.</p>
+                    <p className="mt-0.5 text-sm text-text-secondary">Internal questions for HR to ask during screening calls. These are not sent to candidates.</p>
                 </div>
-                <label className="inline-flex items-center gap-2 text-sm font-semibold text-text-primary"><input type="checkbox" checked={s.enabled} onChange={e => setS({ enabled: e.target.checked })} className={CHECK} />Send the screening questions on the move</label>
-                <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block"><span className={K_LABEL}>The stage that sends them</span>
-                        <select value={s.stageKey} onChange={e => setS({ stageKey: e.target.value })} className={`${INPUT} mt-1`}>{stageOptions(s.stageKey).map(x => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
-                    </label>
-                    <label className="block"><span className={K_LABEL}>WhatsApp template</span>
-                        <select value={s.whatsappTemplateId} onChange={e => setS({ whatsappTemplateId: e.target.value })} className={`${INPUT} mt-1`}>{wa.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-                    </label>
-                    <label className="block"><span className={K_LABEL}>Most questions per position (standard ones included)</span><input type="number" min={5} max={40} value={s.maxQuestions} onChange={e => setS({ maxQuestions: Math.max(5, Math.min(40, Number(e.target.value) || 25)) })} className={`${INPUT} mt-1`} /></label>
-                    <label className="block"><span className={K_LABEL}>No answer after (hours)</span><input type="number" min={24} max={336} value={s.noResponseAfterHours} onChange={e => setS({ noResponseAfterHours: Math.max(24, Math.min(336, Number(e.target.value) || 72)) })} className={`${INPUT} mt-1`} /></label>
-                    <label className="block"><span className={K_LABEL}>Then move them to</span>
-                        <select value={s.noResponseStageKey} onChange={e => setS({ noResponseStageKey: e.target.value })} className={`${INPUT} mt-1`}>
-                            <option value="">Leave them where they are</option>
-                            {stageOptions(s.noResponseStageKey).filter(x => x.key !== s.stageKey).map(x => <option key={x.key} value={x.key}>{x.name}</option>)}
-                        </select>
-                    </label>
-                    <label className="block sm:col-span-2"><span className={K_LABEL}>Introduction on the questions page</span><input value={s.intro} onChange={e => setS({ intro: e.target.value })} maxLength={1000} className={`${INPUT} mt-1`} /></label>
-                </div>
+                <label className="block"><span className={K_LABEL}>Most questions per position (standard ones included)</span><input type="number" min={5} max={40} value={s.maxQuestions} onChange={e => setS({ maxQuestions: Math.max(5, Math.min(40, Number(e.target.value) || 25)) })} className={`${INPUT} mt-1`} /></label>
                 <FieldsEditor fields={s.fields} targets={targets} onChange={fields => setS({ fields })} screening />
             </section>
             <section className={`${K_CARD} space-y-4 px-4 py-4 sm:px-5`} aria-label="Interviews">

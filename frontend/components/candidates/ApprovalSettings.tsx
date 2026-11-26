@@ -112,7 +112,7 @@ export default function ApprovalSettings({ orgId }: { orgId: string }) {
                 </div>
                 {canConfigure ? (
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
-                        {dirty ? <span className="text-xs font-semibold text-amber-800">Unsaved changes</span> : savedNote ? <span className="inline-flex items-center gap-x-1 text-xs font-semibold text-emerald-800"><Check className="h-3.5 w-3.5" aria-hidden />Approvers saved</span> : <span className="text-xs text-text-tertiary">All changes saved</span>}
+                        {dirty ? <span className="text-xs font-semibold text-amber-800">Unsaved changes</span> : savedNote ? <span className="inline-flex items-center gap-x-1 text-xs font-semibold text-green-800"><Check className="h-3.5 w-3.5" aria-hidden />Approvers saved</span> : <span className="text-xs text-text-tertiary">All changes saved</span>}
                         <button type="button" onClick={discard} disabled={!dirty || busy} className={BTN_GHOST}><RotateCcw className="h-4 w-4" />Discard</button>
                         <button type="button" onClick={() => void save()} disabled={!dirty || busy || badLpa || badDays} className={BTN_PRIMARY}>{busy && <Spinner />}Save approvers</button>
                     </div>

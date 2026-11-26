@@ -130,7 +130,7 @@ export default function HubInsights({ data }: { data: RecruitmentDashboard }) {
                                             <span className={`text-xs ${INK3}`}>{plural(r.openRoles, 'role', 'roles')}{r.ageing ? ` · ${r.ageing} late` : ''}</span>
                                             <span className="font-extrabold tabular-nums">{r.inPipeline}</span>
                                         </div>
-                                        <div className={`h-2 rounded ${TRACK}`}><div className="h-2 rounded bg-[#4f46e5]" style={{ width: `${(r.inPipeline / loadMax) * 100}%` }} /></div>
+                                        <div className={`h-2 rounded ${TRACK}`}><div className="h-2 rounded bg-[#353535]" style={{ width: `${(r.inPipeline / loadMax) * 100}%` }} /></div>
                                     </div>
                                 ))}
                             </div>

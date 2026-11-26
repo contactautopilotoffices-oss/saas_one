@@ -272,9 +272,7 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
         setBusy(false);
         if (!res.ok) { notify(res.error, 'error'); if (res.noAccess) reportError(res); return; }
         setPendingMove(null);
-        // Owner 2026-11-24: the screening questions go on the move to the screening stage; say what happened.
-        const sc = res.data.screening;
-        notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}${sc ? (sc.status === 'sent' ? ' · screening questions sent on WhatsApp' : ` · screening not sent: ${sc.note ?? ''}`) : ''}`, sc && sc.status !== 'sent' ? 'info' : 'success');
+        notify(`${member.record?.fullName ?? 'Candidate'} → ${stage.name}`, 'success');
         refresh();
         // Owner 2026-11-24: a rejected stage offers the soft rejection email (HR's template, from the connected mailbox).
         if (res.data.rejectionEmail && member.record && !member.record.blacklisted && member.record.email) {
@@ -430,6 +428,11 @@ export default function PipelineView({ orgId, dataVersion, onDataChanged, select
                 <div className={CARD}><EmptyState icon={FileText} title="No positions yet">Save a job description as a position from Search or the Positions tab, then tick candidates in the results and add them to it.</EmptyState></div>
             ) : (
                 <>
+                    <section className="recruitment-hero" aria-label="Role brief">
+                        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-text-secondary">Hiring workspace</p><h2 className="mt-2 text-2xl font-semibold">{position.title}</h2><p className="mt-2 text-sm text-text-secondary">{[position.department, position.location, position.recruiterName ? `Recruiter: ${position.recruiterName}` : 'Recruiter not assigned'].filter(Boolean).join(' · ')}</p></div><span className="rounded-full bg-surface px-4 py-2 text-sm font-medium">{position.daysOpen} / {position.targetDays} days</span></div>
+                        {position.summary && <p className="mt-3 max-w-3xl text-sm text-text-secondary">{position.summary}</p>}
+                    </section>
+                    {waiting > 0 && <details className={`${CARD} px-5 py-4`}><summary className="cursor-pointer text-sm font-semibold">{waiting} {waiting === 1 ? 'candidate needs' : 'candidates need'} a follow-up</summary><div className="mt-3 grid gap-2 sm:grid-cols-2">{early.filter(m => daysSince(m.stageChangedAt) > WAITING_DAYS).map(m => <button type="button" key={m.id} onClick={() => { if (m.record) setDetails({ memberId: m.id, record: m.record, ids: early.map(x => x.id), scopeLabel: 'Needs follow-up', open: true }); }} className="rounded-xl bg-surface-elevated px-4 py-3 text-left"><span className="block font-semibold">{m.record?.fullName ?? 'Candidate'}</span><span className="text-sm text-text-secondary">{stageOf(m).name} · {daysSince(m.stageChangedAt)} days in stage</span></button>)}</div></details>}
                     {/* The numbers a recruiter acts on today */}
                     <section className={`${CARD} flex flex-wrap`} aria-label="This position at a glance">
                         <Kpi label="In pipeline" value={formatCount(list?.length ?? 0)} hint={addedThisWeek ? `+${formatCount(addedThisWeek)} this week` : 'nobody added this week'} />

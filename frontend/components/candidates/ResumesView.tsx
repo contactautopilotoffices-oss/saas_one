@@ -230,11 +230,15 @@ function DuplicatesPanel({ orgId, reloadKey, onChanged }: { orgId: string; reloa
  * browser will read it without asking. `unsupported`: this browser cannot keep a folder (Firefox, Safari, Brave as shipped).
  */
 type Source = { state: 'unknown' | 'none' | 'unsupported' } | { state: 'remembered'; name: string; allowed: boolean };
-type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate';
+type LinkFilter = '' | 'linked' | 'unlinked' | 'rejected' | 'other' | 'attention' | 'duplicate' | 'reading';
 type Loaded = { key: string; data: ResumeFilesResponse | null; error: string };
 
 /** Phase 2 / 4: has the file's text been read, and have its details been read into the candidate. Reasons sit in the tooltip. */
+const awaitingRead = (f: ResumeFile) => !f.removed && !f.other && (['pending', 'working', 'scan', 'scanning'].includes(f.textStatus) || (f.textStatus === 'ready' && ['pending', 'working'].includes(f.extractStatus)));
+
 function TextStatus({ f }: { f: ResumeFile }) {
+    if (f.extractError === 'Reading cancelled by recruiter') return <span className="text-text-secondary">Reading cancelled</span>;
+    if (awaitingRead(f) && Date.now() - new Date(f.createdAt).getTime() > 86400000) return <span className="text-amber-700" title={f.extractError || f.textError || undefined}>Reading delayed · open or cancel</span>;
     if (f.removed) return <span className="text-amber-700 dark:text-amber-400" title={f.textError ?? undefined}>Removed: not a resume</span>;
     if (f.other) return <span className="text-text-secondary" title={f.textError ?? undefined}>Other document (kept)</span>;
     const bad = f.textStatus === 'unreadable' || f.textStatus === 'failed';
@@ -375,7 +379,8 @@ function attentionOf(f: ResumeFile): { kind: string; why: string } {
     return { kind: 'Could not be read', why: f.textError ?? 'The text of this file could not be read.' };
 }
 
-export default function ResumesView({ orgId }: { orgId: string }) {
+export default function ResumesView({ orgId, readingRequest = 0 }: { orgId: string; readingRequest?: number }) {
+    const [workspace, setWorkspace] = useState<'library' | 'import' | 'attention'>('library');
     const { notify, reportError } = useUi();
     const mounted = useRef(true);
     useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -782,7 +787,23 @@ export default function ResumesView({ orgId }: { orgId: string }) {
     const attnAll = attnRows.length > 0 && attnMarked.length === attnRows.length;
     const toggleAttn = (id: string) => setAttnMarkedIds(ids => (ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]));
     const listRef = useRef<HTMLElement | null>(null);
-    const showInList = (link: LinkFilter) => { setPreset('all'); setLinkFilter(link); listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    const showInList = (link: LinkFilter) => { setWorkspace('library'); setPreset('all'); setLinkFilter(link); if (link === 'reading') { setQ(''); setDeviceFilter(''); setSourceFilter(''); setRoleFilter(''); } requestAnimationFrame(() => listRef.current?.scrollIntoView({ block: 'start' })); };
+
+    useEffect(() => {
+        if (readingRequest) showInList('reading');
+        // A new request opens the queue even when the Resumes screen is already mounted.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [readingRequest]);
+    const [cancelling, setCancelling] = useState<string | null>(null);
+    const cancelReading = async (f: ResumeFile) => {
+        if (cancelling) return;
+        setCancelling(f.id);
+        const res = await api(`/api/candidates/resumes/${encodeURIComponent(f.id)}`, { method: 'PATCH', json: { orgId, cancelReading: true } });
+        setCancelling(null);
+        if (!res.ok) { reportError(res); return; }
+        notify(`Reading cancelled for ${f.fileName}. The original file is kept.`, 'success');
+        reloadLibrary();
+    };
 
     /** Open reads the file (a PDF in the browser's viewer, a .docx as a page); download saves the original. */
     const openFile = (f: ResumeFile, inline = true) => { window.open(`/api/candidates/resumes/${encodeURIComponent(f.id)}${qs({ orgId, inline })}`, '_blank', 'noopener'); };
@@ -946,16 +967,18 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                 sub={summary ? `${formatCount(summary.total)} ${summary.total === 1 ? 'file' : 'files'} stored · ${formatCount(summary.linked)} linked to a candidate${team.length ? ` · from ${formatCount(team.length)} ${team.length === 1 ? 'person' : 'people'}` : ''}` : 'Loading'}
                 actions={<>
                     <a href={`/api/candidates/resumes/export${qs(listParams)}`} className={K_BTN} download><Download className="h-4 w-4" aria-hidden />Download Excel</a>
-                    <button type="button" onClick={() => void uploadNew()} disabled={uploading || scanning} className={K_BTN_PRIMARY}>{scanning ? <Spinner className="h-4 w-4 text-white" /> : <Upload className="h-4 w-4" aria-hidden />}Upload resumes</button>
+                    <button type="button" onClick={() => { setWorkspace('import'); void uploadNew(); }} disabled={uploading || scanning} className={K_BTN_PRIMARY}>{scanning ? <Spinner className="h-4 w-4 text-white" /> : <Upload className="h-4 w-4" aria-hidden />}Upload resumes</button>
                 </>} />
             {summary && (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" role="group" aria-label="Resumes at a glance">
                     <KpiTile icon={FileText} label="Resumes stored" value={formatCount(summary.total)} note={fmtSize(summary.totalBytes)} />
                     <KpiTile icon={Link2} label="Linked to a candidate" value={formatCount(summary.linked)} note={summary.unlinked > 0 ? `${formatCount(summary.unlinked)} not linked yet` : undefined} />
-                    <KpiTile icon={ScanText} label="Still being read" value={formatCount(stillToDo)} note={stillToDo > 0 ? 'in the background' : 'every file read'} />
+                    <button type="button" className="text-left" onClick={() => showInList('reading')}><KpiTile icon={ScanText} label="Reading queue" value={formatCount(stillToDo)} note="View files · open, cancel or delete" /></button>
                     <KpiTile icon={CircleAlert} label="Need attention" value={formatCount(attentionCount)} />
                 </div>
             )}
+            <Segmented label="Resume workspace" value={workspace} onChange={setWorkspace} options={[{ value: 'library', label: 'Resume library' }, { value: 'import', label: 'Import & sources' }, { value: 'attention', label: `Needs attention${attentionCount ? ` · ${attentionCount}` : ''}` }]} />
+            <div hidden={workspace !== 'import'} className="space-y-5">
             <ResumeMail orgId={orgId} onImported={reloadLibrary} />
             <div className="grid items-start gap-x-4 gap-y-4 xl:grid-cols-[minmax(0,1fr)_340px]">
             {/* Add resumes */}
@@ -1145,7 +1168,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
                                     <p className="text-sm font-semibold text-text-primary">
                                         {run.phase === 'running' ? <span className="inline-flex items-center gap-x-2 gap-y-2"><Spinner />Uploading</span>
-                                            : run.phase === 'stopped' ? 'Stopped' : <span className="inline-flex items-center gap-x-2 gap-y-2"><CircleCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />Finished</span>}
+                                            : run.phase === 'stopped' ? 'Stopped' : <span className="inline-flex items-center gap-x-2 gap-y-2"><CircleCheck className="h-4 w-4 text-green-600 dark:text-green-400" />Finished</span>}
                                         <span className="ml-2 tabular-nums text-text-secondary">{formatCount(run.done)} / {formatCount(run.total)} files</span>
                                     </p>
                                     {run.phase === 'running' ? (
@@ -1229,6 +1252,9 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             </div>
 
             {/* How far the background reading is */}
+            </div>
+            <div hidden={workspace !== 'attention'} className="space-y-4">
+            {attentionCount === 0 && <div className="recruitment-hero"><h2 className="text-lg font-semibold">Your library is up to date</h2><p className="mt-2 text-sm text-text-secondary">No files currently need attention. Reading progress and files to review will appear here.</p></div>}
             {summary && summary.total > 0 && (
                 <section className={`${K_CARD} px-4 py-4 sm:px-5`} aria-label="Reading progress">
                     <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-text-primary" aria-live="polite">
@@ -1239,7 +1265,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                 <span className="font-normal text-text-secondary">· it runs in the background, you can leave this page</span>
                             </>
                         ) : (
-                            <><CircleCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" aria-hidden />Every stored resume has been read</>
+                            <><CircleCheck className="h-4 w-4 text-green-600 dark:text-green-400" aria-hidden />Every stored resume has been read</>
                         )}
                     </p>
                     <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-4">
@@ -1333,6 +1359,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
             )}
 
             {/* The library */}
+            </div>
+            <div hidden={workspace !== 'library'}>
             <section ref={listRef} className="scroll-mt-4 space-y-3" aria-labelledby="resume-list-heading">
                 <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-3">
                     <div>
@@ -1365,6 +1393,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                         <option value="">All</option>
                         <option value="linked">Linked</option>
                         <option value="unlinked">Not linked</option>
+                        <option value="reading">Reading queue</option>
                         <option value="attention">Could not be read</option>
                         <option value="other">Other documents</option>
                         <option value="rejected">Removed</option>
@@ -1421,7 +1450,8 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                         <p className="text-xs text-text-tertiary">Uploaded by {f.deviceLabel ?? f.uploadedByEmail ?? 'someone'} · <span className="tabular-nums">{formatDate(f.createdAt)}</span></p>
                                         <p className="text-xs text-text-secondary">Source: {resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })} ? Role: {f.sourcedRole || 'Not assigned'}</p>
                                         <div className="flex justify-end gap-x-1 gap-y-1">
-                                            {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={K_BTN_GHOST}>Edit details</button>}
+                                            {awaitingRead(f) && <button type="button" disabled={!!cancelling} onClick={() => void cancelReading(f)} className={K_BTN_GHOST}>Cancel reading</button>}
+                                                        {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={K_BTN_GHOST}>Edit details</button>}
                                             {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={K_BTN_GHOST}><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                             {!f.removed && (
                                                 <>
@@ -1471,11 +1501,12 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                                                 </td>
                                                 <td className={`${K_TD} text-text-secondary`}>{resumeSourceLabel({ kind: f.sourceKind, name: f.sourceName })}</td>
                                                 <td className={`${K_TD} max-w-[220px] truncate text-text-secondary`} title={f.sourcedRole ?? ''}>{f.sourcedRole || 'Not assigned'}</td>
-                                                <td className={`${K_TD} whitespace-nowrap text-xs`}><TextStatus f={f} /></td>
+                                                <td className={`${K_TD} whitespace-nowrap text-xs`}><TextStatus f={f} />{awaitingRead(f) && (f.extractError || f.textError) && <p className="mt-1 max-w-xs whitespace-normal text-xs text-text-secondary">{f.extractError || f.textError}</p>}</td>
                                                 <td className={`${K_TD} whitespace-nowrap tabular-nums text-text-secondary`}>{formatDate(f.createdAt)}</td>
                                                 <td className={`${K_TD} max-w-[200px] truncate text-text-secondary`} title={f.uploadedByEmail ?? ''}>{f.deviceLabel ?? f.uploadedByEmail ?? '—'}</td>
                                                 <td className={`${K_TD} sticky right-0 whitespace-nowrap bg-surface shadow-[-1px_0_0_var(--border)] group-hover:bg-surface-elevated`}>
                                                     <div className="flex justify-end gap-0.5">
+                                                        {awaitingRead(f) && <button type="button" disabled={!!cancelling} onClick={() => void cancelReading(f)} className={K_BTN_GHOST}>Cancel reading</button>}
                                                         {!f.removed && !f.other && <button type="button" onClick={() => editDetails(f)} className={K_BTN_GHOST} aria-label={`Edit source and designation for ${f.fileName}`}>Edit details</button>}
                                                         {f.removed && <button type="button" onClick={() => void allowReupload(f)} disabled={markBusy} className={K_BTN_GHOST} title="Upload this file again and it will be kept as a resume"><FileCheck className="h-4 w-4" />Allow re-upload</button>}
                                                         {!f.removed && !f.other && !f.candidateName && f.textStatus === 'ready' && (
@@ -1514,6 +1545,7 @@ export default function ResumesView({ orgId }: { orgId: string }) {
                     </p>
                 )}
             </section>
+            </div>
 
             <Dialog open={editing !== null} onClose={() => { if (!savingDetails) setEditing(null); }} labelId="resume-details-title" title="Edit resume details" size="sm"
                 description={editing?.file.fileName} footer={<>

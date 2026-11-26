@@ -105,7 +105,7 @@ export default function TrackerConnections({ orgId, onDataChanged }: { orgId: st
                                     </p>
                                     {t.syncing ? <p className="mt-0.5 flex items-center gap-x-1.5 text-xs text-text-secondary"><Spinner className="h-3 w-3" />Syncing…</p>
                                         : t.lastOk === false ? <p className="mt-0.5 flex items-start gap-x-1.5 text-xs text-red-800"><CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />Last sync failed{t.lastSyncedAt ? ` (${formatDateTime(t.lastSyncedAt)})` : ''}: {t.lastError}</p>
-                                        : t.lastSyncedAt ? <p className="mt-0.5 flex items-start gap-x-1.5 text-xs text-text-secondary"><CircleCheck className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-700" aria-hidden />Synced {formatDateTime(t.lastSyncedAt)} · {summaryLine(t.lastSummary)}</p>
+                                        : t.lastSyncedAt ? <p className="mt-0.5 flex items-start gap-x-1.5 text-xs text-text-secondary"><CircleCheck className="mt-px h-3.5 w-3.5 shrink-0 text-green-700" aria-hidden />Synced {formatDateTime(t.lastSyncedAt)} · {summaryLine(t.lastSummary)}</p>
                                         : <p className="mt-0.5 text-xs text-text-tertiary">Not synced yet.</p>}
                                     {(t.lastSummary?.duplicateRows ?? 0) > 0 && (
                                         <details className="mt-0.5 text-xs text-amber-800">

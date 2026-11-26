@@ -1,5 +1,6 @@
 'use client';
 
+import { Segmented } from './page-kit';
 import React, { useEffect, useState } from 'react';
 import { Ban, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleDot, Download, FileSpreadsheet, FileText, PanelRightOpen, PencilLine, Plus, RotateCcw, Search, Trash2, Users, X } from 'lucide-react';
 import {
@@ -42,10 +43,10 @@ const CHECKBOX = `h-4 w-4 cursor-pointer rounded accent-primary ${FOCUS}`;
 
 /** A coloured rounded pill per status: a light tint with dark text of the same family (light and dark pairs). */
 const STATUS_PILL: Record<RecordStatus, string> = {
-    new: 'bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/50 dark:text-sky-300 dark:ring-sky-900',
-    in_process: 'bg-teal-50 text-teal-800 ring-teal-200 dark:bg-teal-950/50 dark:text-teal-300 dark:ring-teal-900',
-    shortlisted: 'bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:ring-emerald-900',
-    interview: 'bg-cyan-50 text-cyan-800 ring-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-300 dark:ring-cyan-900',
+    new: 'bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-950/50 dark:text-stone-300 dark:ring-stone-900',
+    in_process: 'bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-950/50 dark:text-stone-300 dark:ring-stone-900',
+    shortlisted: 'bg-green-50 text-green-800 ring-green-200 dark:bg-green-950/50 dark:text-green-300 dark:ring-green-900',
+    interview: 'bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-950/50 dark:text-stone-300 dark:ring-stone-900',
     on_hold: 'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:ring-amber-900',
     not_responding: 'bg-muted text-text-secondary ring-border',
     rejected: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-950/50 dark:text-red-300 dark:ring-red-900',
@@ -94,6 +95,7 @@ function SourceCell({ r }: { r: CandidateRecord }) {
 export default function RecordsView({ orgId, dataVersion, onDataChanged }: { orgId: string; dataVersion: number; onDataChanged: () => void }) {
     const { notify, reportError } = useUi();
     const [qInput, setQInput] = useState('');
+    const [layout, setLayout] = useState<'table' | 'cards'>('table');
     const [q, setQ] = useState('');
     const [status, setStatus] = useState<RecordStatus | ''>('');
     const [sheetId, setSheetId] = useState('');
@@ -272,13 +274,14 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
             {/* Page header (workspace skin): the screen's name, the live count under it, the actions on the right. */}
             <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
                 <div className="min-w-0">
-                    <h1 className="text-xl font-semibold tracking-tight text-text-primary">Candidates</h1>
+                    <h2 className="text-xl font-semibold tracking-tight text-text-primary">Talent directory</h2>
                     <p role="status" className="mt-0.5 flex items-center gap-2 text-sm text-text-secondary">
                         <span className="tabular-nums">{!data ? 'Loading…' : `${formatCount(total)} ${deleted ? 'deleted ' : ''}${total === 1 ? 'candidate' : 'candidates'}${filtering ? ' match' : ''}`}</span>
                         {loading && data && <Spinner className="h-3.5 w-3.5 text-text-tertiary" />}
                     </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                    <Segmented label="Candidate layout" value={layout} onChange={setLayout} options={[{value:'table',label:'Table'}, {value:'cards',label:'Cards'}]} />
                     <Toggle checked={deleted} onChange={v => { setDeleted(v); setPage(1); }} label="Show deleted" />
                     <button type="button" onClick={() => openEditor(null)} className={BTN_PRIMARY}>
                         <Plus className="h-4 w-4" aria-hidden />Add candidate
@@ -375,9 +378,9 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                 ) : (
                     <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}>
                         {/* Phone: cards */}
-                        <ul className="divide-y divide-border-subtle md:hidden">
+                        <ul className={layout === 'cards' ? "grid gap-x-4 gap-y-4 px-4 py-4 lg:grid-cols-2 xl:grid-cols-3" : "divide-y divide-border-subtle md:hidden"}>
                             {records.map(r => (
-                                <li key={r.id} className="space-y-2 px-4 py-3">
+                                <li key={r.id} className={`space-y-2 px-4 py-3 ${layout === 'cards' ? 'rounded-2xl border border-border bg-surface' : ''}`}>
                                     <div className="flex items-start gap-x-2 gap-y-2">
                                         <input type="checkbox" checked={selected.includes(r.id)} onChange={() => toggleRow(r.id)} aria-label={`Select ${r.fullName}`} className={`mt-2.5 shrink-0 ${CHECKBOX}`} />
                                         <RowAvatar name={r.fullName} size="h-9 w-9 text-xs" />
@@ -405,7 +408,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                         </ul>
 
                         {/* md and up: table, scrolling inside its own container */}
-                        <div className="hidden overflow-x-auto md:block">
+                        <div className={layout === 'cards' ? "hidden" : "hidden overflow-x-auto md:block"}>
                             <table className="w-full min-w-[1120px] border-collapse text-sm">
                                 <thead className="border-b border-border bg-surface-elevated">
                                     <tr className="text-left text-xs font-semibold text-text-secondary">
@@ -451,7 +454,7 @@ export default function RecordsView({ orgId, dataVersion, onDataChanged }: { org
                                             <td className="max-w-[170px] px-3 py-2">
                                                 <p className="truncate" title={originLabel(r)}><SourceCell r={r} /></p>
                                                 {r.hasResume !== undefined && (
-                                                    <p className={`flex items-center gap-x-1 text-xs ${r.hasResume ? 'font-medium text-emerald-800 dark:text-emerald-300' : 'text-text-tertiary'}`}>
+                                                    <p className={`flex items-center gap-x-1 text-xs ${r.hasResume ? 'font-medium text-green-800 dark:text-green-300' : 'text-text-tertiary'}`}>
                                                         {r.hasResume && <FileText className="h-3 w-3 shrink-0" aria-hidden />}{r.hasResume ? 'Resume on file' : 'No resume'}
                                                     </p>
                                                 )}

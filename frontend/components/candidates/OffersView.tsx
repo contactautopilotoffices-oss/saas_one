@@ -91,7 +91,8 @@ export default function OffersView({ orgId }: { orgId: string }) {
     const [offers, setOffers] = useState<Offer[] | null>(null);
     const [error, setError] = useState('');
     const [nonce, setNonce] = useState(0);
-    const [filter, setFilter] = useState<'open' | 'all'>('open');
+    const [filter, setFilter] = useState<'open' | 'all' | 'mine'>('open');
+    const [selectedId, setSelectedId] = useState<string | null>(null);
     useEffect(() => {
         const ctrl = new AbortController();
         void api<{ offers: Offer[] }>(`/api/candidates/offers${qs({ orgId })}`, { signal: ctrl.signal }).then(res => {
@@ -108,7 +109,8 @@ export default function OffersView({ orgId }: { orgId: string }) {
         void api<{ handovers: OfferHandover[] }>(`/api/candidates/offers${qs({ orgId, handovers: '1' })}`, { signal: ctrl.signal }).then(res => { if (!ctrl.signal.aborted && res.ok) setHandovers(res.data.handovers); });
         return () => ctrl.abort();
     }, [orgId, nonce]);
-    const shown = (offers ?? []).filter(o => filter === 'all' || OPEN.includes(o.status));
+    const shown = (offers ?? []).filter(o => filter === 'all' || (filter === 'mine' ? o.canDecide : OPEN.includes(o.status)));
+    const activeId = shown.some(o => o.id === selectedId) ? selectedId : shown[0]?.id;
     const mine = (offers ?? []).filter(o => o.canDecide).length;
     const open = (offers ?? []).filter(o => OPEN.includes(o.status)).length;
     const ready = handovers.filter(h => h.status === 'pending').length;
@@ -120,15 +122,23 @@ export default function OffersView({ orgId }: { orgId: string }) {
     return (
         <div className="space-y-5">
             <PageHeader title="Offers" sub={sub}
-                actions={<Segmented label="Which offers" value={filter} onChange={setFilter} options={[{ value: 'open', label: 'In progress' }, { value: 'all', label: 'All' }]} />} />
+                actions={<Segmented label="Which offers" value={filter} onChange={setFilter} options={[{ value: 'open', label: 'In progress' }, { value: 'mine', label: 'My approvals' }, { value: 'all', label: 'All' }]} />} />
             {error && <p role="alert" className={`${K_CARD} px-4 py-3 text-sm text-error`}>{error}</p>}
-            <Handovers orgId={orgId} handovers={handovers} onChanged={() => setNonce(n => n + 1)} />
+            <div className="recruitment-queue" aria-label="Offer priorities">
+                <button type="button" onClick={() => setFilter('mine')} aria-pressed={filter === 'mine'}><strong>{offers ? mine : '—'}</strong><span>Waiting for your approval</span></button>
+                <button type="button" onClick={() => setFilter('open')} aria-pressed={filter === 'open'}><strong>{offers ? open : '—'}</strong><span>In progress</span></button>
+                <button type="button" onClick={() => document.getElementById('offer-handovers')?.scrollIntoView({ block: 'start' })}><strong>{ready}</strong><span>Ready for onboarding</span></button>
+            </div>
+            <div id="offer-handovers"><Handovers orgId={orgId} handovers={handovers} onChanged={() => setNonce(n => n + 1)} /></div>
             {offers === null ? <Loading />
                 : (
                     <div className={`${K_CARD} overflow-hidden`}>
                         {shown.length === 0
                             ? <EmptyBlock icon={BadgeIndianRupee} title={offers.length ? 'Nothing in progress' : 'No offers yet'}>{offers.length ? 'Switch to All to see the closed ones.' : 'Make an offer from a candidate’s Interviews tab.'}</EmptyBlock>
-                            : <ul className="divide-y divide-border">{shown.map(o => <li key={o.id}><OfferCard orgId={orgId} offer={o} onChanged={() => setNonce(n => n + 1)} /></li>)}</ul>}
+                            : <div className="grid items-start lg:grid-cols-[300px_minmax(0,1fr)]">
+                                <nav aria-label="Offer list" className="max-h-[640px] overflow-y-auto border-b border-border px-3 py-3 lg:border-b-0 lg:border-r">{shown.map(o => <button type="button" key={o.id} aria-pressed={activeId === o.id} onClick={() => setSelectedId(o.id)} className={`mb-2 w-full rounded-xl px-4 py-4 text-left ${activeId === o.id ? 'bg-surface-elevated ring-1 ring-primary/30' : 'hover:bg-muted'}`}><span className="block font-semibold">{o.candidateName}</span><span className="mb-2 block text-sm text-text-secondary">{o.positionTitle}</span><StatusPill tone={TONE[o.status]}>{OFFER_STATUS_LABELS[o.status]}</StatusPill></button>)}</nav>
+                                <div className="min-w-0">{shown.map(o => <div key={o.id} hidden={activeId !== o.id}><OfferCard orgId={orgId} offer={o} onChanged={() => setNonce(n => n + 1)} /></div>)}</div>
+                            </div>}
                     </div>
                 )}
         </div>

@@ -6,7 +6,7 @@ import { INTERVIEW_STATUS_LABELS, OFFER_STATUS_LABELS, type RecruitmentDashboard
 import { api, qs } from './api';
 import { downloadCsv } from './export-csv';
 import { AuditLog } from './PrivacyControls';
-import { EmptyBlock, K_BTN, K_BTN_GHOST, K_CARD, K_LABEL, K_SECTION_TITLE, K_TABLE, K_TABLE_WRAP, K_TD, K_TH, K_TR, KpiTile, Loading, PageHeader, StatusPill } from './page-kit';
+import { EmptyBlock, K_BTN, K_BTN_GHOST, K_CARD, K_LABEL, K_SECTION_TITLE, K_TABLE, K_TABLE_WRAP, K_TD, K_TH, K_TR, KpiTile, Loading, PageHeader, Segmented, StatusPill } from './page-kit';
 
 /*
  * The recruitment dashboard (owner 2026-11-21; spec "Dashboard views": Today for the recruiter; Roles for the HR Head
@@ -18,6 +18,7 @@ const csv = (rows: (string | number | null)[][]) => rows.map(r => r.map(v => `"$
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
 
 export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
+    const [report, setReport] = useState<'overview' | 'roles' | 'funnel' | 'audit'>('overview');
     const [data, setData] = useState<RecruitmentDashboard | null>(null);
     const [error, setError] = useState('');
     const [nonce, setNonce] = useState(0);
@@ -59,6 +60,7 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                 sub={`${data.roles.length} open ${data.roles.length === 1 ? 'role' : 'roles'}${ageing ? ` · ${ageing} ageing` : ''} · ${t.interviews.length} ${t.interviews.length === 1 ? 'interview' : 'interviews'} today`}
                 actions={refresh} />
 
+            <Segmented label="Report sections" value={report} onChange={setReport} options={[{value:'overview',label:'Hiring overview'}, {value:'roles',label:'Role health'}, {value:'funnel',label:'Conversion funnel'}, {value:'audit',label:'Activity & audit'}]} />
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" role="group" aria-label="Today at a glance">
                 <KpiTile icon={CalendarClock} label="Interviews today" value={t.interviews.length} />
                 <KpiTile icon={ClipboardList} label="Scorecards pending" value={t.scorecardsPending.length} />
@@ -67,7 +69,7 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                 <KpiTile icon={BriefcaseBusiness} label="Open roles" value={data.roles.length} note={ageing ? `${ageing} ageing` : undefined} />
             </div>
 
-            <section className={`${K_CARD} pb-4`} aria-label="Today">
+            <section hidden={report !== 'overview'} className={`${K_CARD} pb-4`} aria-label="Today">
                 {head('Today', exportToday)}
                 <div className="mt-3 grid gap-x-6 gap-y-5 px-5 md:grid-cols-2">
                     <List title={`Interviews today · ${t.interviews.length}`} empty="No interviews today." items={t.interviews.map(i => [i.id, `${time(i.at)} · ${i.candidateName}`, `${i.round ?? 'Interview'} · ${i.positionTitle ?? ''} · ${INTERVIEW_STATUS_LABELS[i.status]}`])} />
@@ -77,7 +79,7 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                 </div>
             </section>
 
-            <section className={`${K_CARD} overflow-hidden`} aria-label="Roles">
+            <section hidden={report !== 'roles'} className={`${K_CARD} overflow-hidden`} aria-label="Roles">
                 {head('Roles', () => downloadCsv('recruitment-roles.csv', csv([['Role', 'Location', 'Recruiter', 'Days open', 'Target days', 'Ageing', 'In pipeline', 'Next action'], ...data.roles.map(r => [r.title, r.location, r.recruiterName, r.daysOpen, r.targetDays, r.ageing ? 'yes' : 'no', r.inPipeline, r.nextAction])])), 'Ageing roles first')}
                 {data.roles.length === 0 ? <EmptyBlock icon={BriefcaseBusiness} title="No open roles">Open roles show here with their age and next step.</EmptyBlock> : (
                     <div className={`${K_TABLE_WRAP} mt-3`}>
@@ -99,9 +101,9 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
                 )}
             </section>
 
-            {data.metrics && <Metrics m={data.metrics} />}
+            <div hidden={report !== 'overview'}>{data.metrics && <Metrics m={data.metrics} />}</div>
 
-            <section className={`${K_CARD} pb-4`} aria-label="Funnel">
+            <section hidden={report !== 'funnel'} className={`${K_CARD} pb-4`} aria-label="Funnel">
                 {head('Funnel', () => downloadCsv('recruitment-funnel.csv', csv([['Round', 'In the running', 'Rejected here'], ...data.funnel.map(f => [f.column, f.count, f.rejected])])), 'People in each round across the open positions, and how many were rejected there.')}
                 {data.funnel.length === 0 ? <EmptyBlock icon={BarChart3} title="No rounds yet">The funnel fills as people move through the pipeline.</EmptyBlock> : (
                     <ul className="mt-4 space-y-2.5 px-5">
@@ -117,7 +119,7 @@ export default function RecruitmentDashboardView({ orgId }: { orgId: string }) {
             </section>
 
             {/* Owner 2026-11-24 (product safety): exports, salary and offer changes, data removals. */}
-            <AuditLog orgId={orgId} />
+            <div hidden={report !== 'audit'}><AuditLog orgId={orgId} /></div>
         </div>
     );
 }

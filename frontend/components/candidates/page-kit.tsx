@@ -12,8 +12,8 @@ import { ChevronDown, Search } from 'lucide-react';
 
 const FOCUS = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary';
 
-export const K_BTN = `inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
-export const K_BTN_PRIMARY = `inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+export const K_BTN = `recruitment-secondary inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-border bg-surface px-3.5 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-elevated disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
+export const K_BTN_PRIMARY = `recruitment-primary inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary-dark disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
 export const K_BTN_DANGER = `inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-red-700 bg-red-700 px-3.5 text-sm font-semibold text-white transition-colors hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
 export const K_BTN_DANGER_OUTLINE = `inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-surface px-3.5 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10 ${FOCUS}`;
 export const K_BTN_GHOST = `inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-text-secondary transition-colors hover:bg-surface-elevated hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
@@ -22,11 +22,11 @@ export const K_ICON_BTN = `inline-flex h-8 w-8 shrink-0 items-center justify-cen
 export const K_ICON_BTN_DANGER = `inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-tertiary transition-colors hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-400 ${FOCUS}`;
 
 /** A white card with a hairline border and a 12px radius. */
-export const K_CARD_BASE = 'rounded-xl border bg-surface';
+export const K_CARD_BASE = 'recruitment-card rounded-xl border bg-surface';
 export const K_CARD = `${K_CARD_BASE} border-border`;
 /** A light grey inset inside a card. */
 export const K_WELL = 'rounded-lg bg-surface-elevated';
-const FIELD_BASE = 'rounded-lg border border-border bg-surface text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
+const FIELD_BASE = 'recruitment-field rounded-lg border border-border bg-surface text-base text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 sm:text-sm';
 export const K_FIELD = `h-9 px-3 ${FIELD_BASE}`;
 /** A text area: the field's look without its fixed height. */
 export const K_AREA = `w-full resize-y px-3 py-2 leading-relaxed ${FIELD_BASE}`;
@@ -44,9 +44,9 @@ export const K_TD = 'h-[52px] px-4 py-2 align-middle';
 
 export type PillTone = 'green' | 'amber' | 'blue' | 'red' | 'grey' | 'teal';
 const PILL: Record<PillTone, [string, string]> = {
-    green: ['bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/30', 'bg-emerald-500'],
+    green: ['bg-green-50 text-green-800 ring-green-200 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-500/30', 'bg-green-500'],
     amber: ['bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-500/30', 'bg-amber-500'],
-    blue: ['bg-blue-50 text-blue-800 ring-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-500/30', 'bg-blue-500'],
+    blue: ['bg-stone-50 text-stone-800 ring-stone-200 dark:bg-stone-500/15 dark:text-stone-300 dark:ring-stone-500/30', 'bg-stone-500'],
     red: ['bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/15 dark:text-red-300 dark:ring-red-500/30', 'bg-red-500'],
     grey: ['bg-surface-elevated text-text-secondary ring-border', 'bg-text-tertiary'],
     teal: ['bg-primary/10 text-primary-dark ring-primary/25 dark:text-primary-light', 'bg-primary'],

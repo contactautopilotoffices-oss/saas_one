@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { ClipboardList, Send } from 'lucide-react';
+import { ClipboardList } from 'lucide-react';
 import type { ScreeningView } from '@/backend/lib/candidates/screening';
 import type { ApplicationField } from '@/backend/lib/candidates/outreach-settings';
 import type { CandidateRecord } from '@/backend/lib/candidates/types';
 import { api, qs } from './api';
 import { formatDate } from './format';
-import { BTN_GHOST, BTN_SECONDARY, LABEL, Spinner, Tag, useUi, WELL } from './ui';
+import { BTN_GHOST, LABEL, Tag, WELL } from './ui';
 
 /*
  * The screening screen (owner 2026-11-24, 23 Nov meeting: "on the HR screen the JD and questionnaire should be shown,
@@ -22,11 +22,8 @@ const STATUS: Record<NonNullable<ScreeningView['screening']>['status'], { label:
 };
 
 export default function ScreeningPanel({ orgId, record, onChanged }: { orgId: string; record: CandidateRecord; onChanged?: () => void }) {
-    const { notify } = useUi();
     const [data, setData] = useState<{ candidateId: string; questions: ApplicationField[]; views: ScreeningView[] } | null>(null);
-    const [nonce, setNonce] = useState(0);
     const [positionId, setPositionId] = useState('');
-    const [busy, setBusy] = useState(false);
     const [showJd, setShowJd] = useState(false);
     useEffect(() => {
         const ctrl = new AbortController();
@@ -34,20 +31,11 @@ export default function ScreeningPanel({ orgId, record, onChanged }: { orgId: st
             if (!ctrl.signal.aborted && res.ok) setData({ candidateId: record.candidateId, ...res.data });
         });
         return () => ctrl.abort();
-    }, [orgId, record.candidateId, nonce]);
+    }, [orgId, record.candidateId]);
     const d = data?.candidateId === record.candidateId ? data : null;
     if (!d || !d.views.length) return null;
     const view = d.views.find(v => v.positionId === positionId) ?? d.views[0];
     const s = view.screening;
-    const send = async () => {
-        setBusy(true);
-        const res = await api<{ result: { status: string; note: string | null } }>('/api/candidates/screening', { json: { orgId, applicationId: record.id, positionId: view.positionId } });
-        setBusy(false);
-        if (!res.ok) { notify(res.error, 'error'); return; }
-        notify(res.data.result.status === 'sent' ? 'Screening questions sent on WhatsApp' : (res.data.result.note ?? 'Not sent'), res.data.result.status === 'sent' ? 'success' : 'info');
-        setNonce(n => n + 1);
-        onChanged?.();
-    };
     return (
         <section className={`${WELL} space-y-3 px-4 py-3`} aria-label="Screening">
             <div className="flex flex-wrap items-center gap-2">
@@ -59,7 +47,6 @@ export default function ScreeningPanel({ orgId, record, onChanged }: { orgId: st
                     </select>
                 ) : <span className="text-sm text-text-secondary">{view.positionTitle}</span>}
                 {s && <Tag tone={STATUS[s.status].tone}>{STATUS[s.status].label}</Tag>}
-                {(!s || s.status === 'failed') && <button type="button" onClick={() => void send()} disabled={busy} className={`${BTN_SECONDARY} ml-auto h-8`}>{busy ? <Spinner /> : <Send className="h-3.5 w-3.5" />}Send the questions on WhatsApp</button>}
             </div>
             {s?.status === 'failed' && s.error && <p className="text-xs text-warning">{s.error}</p>}
             {s?.sentAt && <p className="text-xs text-text-tertiary">Sent {formatDate(s.sentAt)}{s.sentByName ? ` by ${s.sentByName}` : ''}{s.answeredAt ? ` · answered ${formatDate(s.answeredAt)}` : ''}</p>}

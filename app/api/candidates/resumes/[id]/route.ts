@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { RESUME_RATE_LIMIT, WRITE_RATE_LIMIT } from "@/backend/lib/candidates/config";
 import { setResumeCandidate } from "@/backend/lib/candidates/resume-text";
-import { deleteResumeFile, resumeFileText, resumeLink, resumeOpen, resumeStorage, updateResumeMetadata } from "@/backend/lib/candidates/resumes";
+import { cancelResumeReading, deleteResumeFile, resumeFileText, resumeLink, resumeOpen, resumeStorage, updateResumeMetadata } from "@/backend/lib/candidates/resumes";
 
 import { errorResponse, rateLimited, readJson, requireCandidateAccess } from "../../_lib/auth";
 
@@ -59,7 +59,8 @@ export async function PATCH(request: Request, { params }: Params) {
   const limited = rateLimited("write", auth.user.id, WRITE_RATE_LIMIT);
   if (limited) return limited;
   try {
-    if ('metadata' in body) await updateResumeMetadata(auth.admin, auth.orgId, id, body.metadata);
+    if (body.cancelReading === true) await cancelResumeReading(auth.admin, auth.orgId, id);
+    else if ('metadata' in body) await updateResumeMetadata(auth.admin, auth.orgId, id, body.metadata);
     else await setResumeCandidate(auth.admin, auth.orgId, id, body.candidateId ?? null);
     return NextResponse.json({ ok: true });
   } catch (error) {

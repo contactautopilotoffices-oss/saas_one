@@ -67,8 +67,8 @@ function StatusTag({ status }: { status: RecruitmentEmail['status'] }) {
 const FOCUS = 'outline-none focus-visible:ring-2 focus-visible:ring-primary';
 /** A small square icon button (the reference's column-header icons). */
 const ICON_BTN = `inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-text-secondary ring-1 ring-inset ring-border transition-colors hover:bg-surface-elevated hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 ${FOCUS}`;
-/** The reference's selected row: near-black with white text (white on #1f2330 is 15:1; the grey lines on it 7:1+). */
-const ROW_SELECTED = 'bg-[#1f2330] text-white dark:bg-[#343b4d]';
+/** The reference's selected row: near-black with white text (white on #292929 is 15:1; the grey lines on it 7:1+). */
+const ROW_SELECTED = 'bg-[#292929] text-white dark:bg-[#404040]';
 
 const DIRECTIONS = [
   { value: '', label: 'All correspondence' },
@@ -243,6 +243,8 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
   const hiringLabel = detail?.requisitionId ? 'Hiring draft already created' : !canRaise ? 'Creating a hiring request requires the existing permission set by the Tech team' : 'Create hiring request draft';
 
   return <section className="min-w-0 space-y-3">
+    <div className="recruitment-hero flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Recruitment inbox</h2><p className="mt-1 text-sm text-text-secondary">Conversations, candidate context and next steps in one place.</p></div><span className="rounded-full bg-surface px-4 py-2 text-sm">{box?.address ?? 'Connect a mailbox to get started'}</span></div>
+    <div role="group" aria-label="Mailbox views" className="flex flex-wrap gap-2">{DIRECTIONS.map(item => <button key={item.value} type="button" aria-pressed={direction === item.value} disabled={busy} onClick={() => { setDirection(item.value); setPage(1); }} className={direction === item.value ? BTN_PRIMARY : BTN_SECONDARY}>{item.label}</button>)}</div>
     {/* Slim toolbar: mailbox, candidate filter, check emails, and the mailbox's connection controls. */}
     <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
       <label className="min-w-0 basis-60 grow sm:grow-0">
@@ -277,7 +279,7 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
 
     {/* The inbox: list | conversation | candidate, in one white container. Below 48rem only one of list / conversation
         shows at a time; between 48rem and 64rem the candidate sits under the conversation. */}
-    <div className="@container overflow-hidden rounded-2xl bg-surface shadow-[var(--w-shadow)]">
+    <div className="recruitment-inbox @container overflow-hidden rounded-2xl bg-surface shadow-[var(--w-shadow)]">
       <div className="grid min-w-0 @3xl:h-[min(48rem,calc(100dvh-12rem))] @3xl:grid-rows-[minmax(0,1fr)] @3xl:grid-cols-[minmax(0,18.75rem)_minmax(0,1fr)] @5xl:grid-cols-[minmax(0,18.75rem)_minmax(0,1fr)_minmax(0,18.75rem)]">
 
         {/* Left: the emails. */}
@@ -401,7 +403,7 @@ export default function EmailView({ orgId, onSettings, onRequisitions }: { orgId
                 </div>
               </div>}
               {opened.direction === 'incoming' && <button type="button" disabled={busy || !canReply} onClick={() => compose(opened)}
-                className={`flex h-11 w-full min-w-0 items-center gap-x-2 rounded-xl bg-surface pl-4 pr-1.5 text-left text-sm text-text-tertiary ring-1 ring-inset ring-border transition-shadow hover:ring-[#c9ced6] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:ring-white/25 ${FOCUS}`}>
+                className={`flex h-11 w-full min-w-0 items-center gap-x-2 rounded-xl bg-surface pl-4 pr-1.5 text-left text-sm text-text-tertiary ring-1 ring-inset ring-border transition-shadow hover:ring-[#d6d3d1] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:ring-white/25 ${FOCUS}`}>
                 <span className="min-w-0 flex-1 truncate">{canReply ? `Write message to ${openedParty.label}… you review it before it is sent` : 'Replying needs a connected mailbox that can send'}</span>
                 <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-white" aria-hidden><Send className="h-4 w-4" /></span>
               </button>}

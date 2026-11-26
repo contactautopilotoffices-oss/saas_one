@@ -24,8 +24,8 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
     const allInPipeline = data.roles.reduce((n, r) => n + r.inPipeline, 0);
 
     const chips = [
-        { id: 'all', label: 'All roles', sub: plural(data.roles.length, 'open role', 'open roles'), n: allInPipeline, color: '#4f46e5' },
-        ...data.roles.map(r => ({ id: r.id, label: r.title, sub: [r.location, r.recruiterName ?? 'No recruiter'].filter(Boolean).join(' · '), n: r.inPipeline, color: r.ageing ? '#f87171' : r.daysOpen >= r.targetDays * 0.8 ? '#f59e0b' : '#7c3aed' })),
+        { id: 'all', label: 'All roles', sub: plural(data.roles.length, 'open role', 'open roles'), n: allInPipeline, color: '#353535' },
+        ...data.roles.map(r => ({ id: r.id, label: r.title, sub: [r.location, r.recruiterName ?? 'No recruiter'].filter(Boolean).join(' · '), n: r.inPipeline, color: r.ageing ? '#f87171' : r.daysOpen >= r.targetDays * 0.8 ? '#f59e0b' : '#8c7957' })),
     ];
 
     const aging = data.roles.slice(0, 8);
@@ -47,7 +47,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                             onClick={() => setRoleId(c.id)}
                             aria-pressed={on}
                             className={`flex min-h-14 shrink-0 items-center gap-3 rounded-[20px] border py-2 pl-2.5 pr-4 text-left backdrop-blur-[24px] transition-[transform,background-color,color] duration-300 hover:-translate-y-0.5 ${on
-                                ? 'border-[#4f46e5] bg-[#4f46e5] text-white shadow-[0_12px_28px_rgba(79,70,229,.25)]'
+                                ? 'border-[#353535] bg-[#353535] text-white shadow-[0_12px_28px_rgba(53,53,53,.25)]'
                                 : 'border-white/95 bg-white/65 dark:border-white/[.13] dark:bg-white/[.07]'}`}
                         >
                             <span aria-hidden className="h-[34px] w-2 shrink-0 rounded" style={{ background: on ? '#ffffff' : c.color }} />
@@ -85,7 +85,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                         </div>
                         <div className="mt-3.5 flex flex-wrap gap-x-[18px] gap-y-2">
                             {conv.map(c => (
-                                <span key={`${c.from}-${c.to}`} className={`text-[13px] ${INK3}`}>{c.from} to {c.to}: <b className="text-[#17152d] dark:text-[#f0eff4]">{c.pct === null ? '—' : `${c.pct}%`}</b></span>
+                                <span key={`${c.from}-${c.to}`} className={`text-[13px] ${INK3}`}>{c.from} to {c.to}: <b className="text-[#262626] dark:text-[#fafaf9]">{c.pct === null ? '—' : `${c.pct}%`}</b></span>
                             ))}
                         </div>
                         <p className={`mb-0 mt-2 text-xs ${INK3}`}>The share of people who reached a stage and went on to the next one, rejected people included.</p>
@@ -131,7 +131,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                                                     style={{
                                                         flex: `${Math.max(1, n)} 1 46px`,
                                                         // An empty column stays as a faint grey step, so the row keeps its shape.
-                                                        background: n ? bg : 'rgba(127,127,150,.16)',
+                                                        background: n ? bg : 'rgba(130,130,125,.16)',
                                                         color: n ? fg : 'inherit',
                                                         clipPath: i === 0 ? 'polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)'
                                                             : last ? 'polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%)'
@@ -158,7 +158,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                     {aging.length === 0 && <p className={`m-0 text-sm ${INK3}`}>No open roles.</p>}
                     {aging.map(r => {
                         const tone: Tone = r.ageing ? 'c' : r.daysOpen >= r.targetDays * 0.8 ? 'a' : 'v';
-                        const bar = r.ageing ? '#f87171' : tone === 'a' ? '#f59e0b' : '#4f46e5';
+                        const bar = r.ageing ? '#f87171' : tone === 'a' ? '#f59e0b' : '#353535';
                         return (
                             <button key={r.id} type="button" onClick={() => setRoleId(r.id)} className={`flex w-full items-center gap-3 rounded-2xl p-2 text-left ${ROW_HOVER}`}>
                                 <span className={`w-14 shrink-0 rounded-[14px] py-[9px] text-center text-[13px] font-extrabold tabular-nums ${TONE[tone]}`}>{r.daysOpen}d</span>
@@ -167,7 +167,7 @@ export default function HubPipeline({ data, onOpen }: { data: RecruitmentDashboa
                                     <span className={`block truncate text-xs ${INK3}`}>{r.nextAction}</span>
                                     <span className={`relative mt-1.5 block h-2 rounded ${TRACK}`}>
                                         <span className="block h-2 rounded" style={{ width: `${Math.min(100, (r.daysOpen / maxDays) * 100)}%`, background: bar }} />
-                                        <span aria-hidden className="absolute -top-[3px] h-3.5 w-0.5 rounded-sm bg-[#17152d] dark:bg-[#f0eff4]" style={{ left: `${Math.min(100, (r.targetDays / maxDays) * 100)}%` }} />
+                                        <span aria-hidden className="absolute -top-[3px] h-3.5 w-0.5 rounded-sm bg-[#262626] dark:bg-[#fafaf9]" style={{ left: `${Math.min(100, (r.targetDays / maxDays) * 100)}%` }} />
                                     </span>
                                 </span>
                             </button>
