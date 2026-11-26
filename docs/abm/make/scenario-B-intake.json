@@ -1,0 +1,73 @@
+{
+  "name": "ABM 0 - Intake leads from Claude",
+  "flow": [
+    {
+      "id": 1,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "handleErrors": true,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_intake",
+        "method": "post",
+        "headers": [
+          {
+            "name": "apikey",
+            "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Authorization",
+            "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"p_campaign\": \"{{var.input.campaign}}\",\n  \"p_target_office\": \"{{var.input.target_office}}\",\n  \"p_leads\": \"{{var.input.leads}}\"\n}",
+        "parseResponse": true
+      }
+    }
+  ],
+  "metadata": {
+    "instant": false,
+    "version": 1
+  },
+  "scheduling": {
+    "type": "on-demand"
+  },
+  "interface": {
+    "input": [
+      {
+        "name": "campaign",
+        "type": "text",
+        "required": true,
+        "help": "Campaign name, e.g. Andheri_Nov26_B1"
+      },
+      {
+        "name": "target_office",
+        "type": "text",
+        "required": true,
+        "help": "Office being pitched, e.g. Andheri East"
+      },
+      {
+        "name": "leads",
+        "type": "any",
+        "required": true,
+        "help": "JSON array of lead objects. See db/README.md for the fields."
+      }
+    ],
+    "output": []
+  }
+}

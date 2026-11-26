@@ -1,0 +1,70 @@
+{
+  "name": "ABM 4 - Catch WhatsApp replies",
+  "flow": [
+    {
+      "id": 1,
+      "module": "gateway:CustomWebHook",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "hook": "__MAKE_HOOK_ID__",
+        "maxResults": 1
+      },
+      "mapper": {}
+    },
+    {
+      "id": 2,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "handleErrors": true,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_record_reply",
+        "method": "post",
+        "headers": [
+          {
+            "name": "apikey",
+            "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Authorization",
+            "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{\n  \"p_phone\": \"{{1.phone}}\",\n  \"p_linkedin_url\": null,\n  \"p_channel\": \"whatsapp\",\n  \"p_body\": \"{{1.text}}\"\n}",
+        "parseResponse": true
+      }
+    }
+  ],
+  "metadata": {
+    "instant": true,
+    "version": 1
+  },
+  "scheduling": {
+    "type": "immediately"
+  },
+  "interface": {
+    "input": [],
+    "output": []
+  }
+}

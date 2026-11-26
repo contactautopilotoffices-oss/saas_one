@@ -1,0 +1,411 @@
+{
+  "name": "ABM - 8 day cadence (all WhatsApp touches)",
+  "flow": [
+    {
+      "id": 1,
+      "module": "http:ActionSendData",
+      "version": 3,
+      "metadata": {
+        "designer": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      "parameters": {
+        "handleErrors": true,
+        "useNewZLibDeCompress": true
+      },
+      "mapper": {
+        "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_expire_sequences",
+        "method": "post",
+        "headers": [
+          {
+            "name": "apikey",
+            "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Authorization",
+            "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+          },
+          {
+            "name": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "qs": [],
+        "bodyType": "raw",
+        "contentType": "application/json",
+        "data": "{}",
+        "parseResponse": true
+      }
+    },
+    {
+      "id": 2,
+      "module": "builtin:BasicRouter",
+      "version": 1,
+      "metadata": {
+        "designer": {
+          "x": 300,
+          "y": 0
+        }
+      },
+      "mapper": null,
+      "routes": [
+        {
+          "flow": [
+            {
+              "id": 3,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": -300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/v_abm_due_wa_intro?select=id,first_name,company,phone,score,campaign,why_now",
+                "method": "get",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 4,
+              "module": "builtin:BasicFeeder",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": -300
+                }
+              },
+              "parameters": {},
+              "mapper": {
+                "array": "{{3.data}}"
+              }
+            },
+            {
+              "id": 5,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": -300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://backend.aisensy.com/campaign/t1/api/v2",
+                "method": "post",
+                "headers": [],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"apiKey\": \"__AISENSY_API_KEY__\",\n  \"campaignName\": \"abm_intro_v1\",\n  \"destination\": \"{{4.phone}}\",\n  \"userName\": \"{{4.first_name}}\",\n  \"source\": \"{{4.campaign}}\",\n  \"templateParams\": [\n    \"{{4.first_name}}\",\n    \"{{4.company}}\",\n    \"{{4.why_now}}\"\n  ],\n  \"attributes\": {\n    \"company\": \"{{4.company}}\",\n    \"score\": \"{{4.score}}\",\n    \"lead_id\": \"{{4.id}}\"\n  }\n}",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 6,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": -300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_mark_sent",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"p_lead\": \"{{4.id}}\",\n  \"p_touch\": \"wa_intro\"\n}",
+                "parseResponse": true
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 7,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/v_abm_due_wa_followup?select=id,first_name,company,phone,score,campaign,why_now",
+                "method": "get",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 8,
+              "module": "builtin:BasicFeeder",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 0
+                }
+              },
+              "parameters": {},
+              "mapper": {
+                "array": "{{7.data}}"
+              }
+            },
+            {
+              "id": 9,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://backend.aisensy.com/campaign/t1/api/v2",
+                "method": "post",
+                "headers": [],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"apiKey\": \"__AISENSY_API_KEY__\",\n  \"campaignName\": \"abm_followup_v1\",\n  \"destination\": \"{{8.phone}}\",\n  \"userName\": \"{{8.first_name}}\",\n  \"source\": \"{{8.campaign}}\",\n  \"templateParams\": [\n    \"{{8.first_name}}\",\n    \"{{8.company}}\"\n  ],\n  \"attributes\": {\n    \"company\": \"{{8.company}}\",\n    \"score\": \"{{8.score}}\",\n    \"lead_id\": \"{{8.id}}\"\n  }\n}",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 10,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 0
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_mark_sent",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"p_lead\": \"{{8.id}}\",\n  \"p_touch\": \"wa_followup\"\n}",
+                "parseResponse": true
+              }
+            }
+          ]
+        },
+        {
+          "flow": [
+            {
+              "id": 11,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 600,
+                  "y": 300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/v_abm_due_wa_final?select=id,first_name,company,phone,score,campaign,why_now",
+                "method": "get",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 12,
+              "module": "builtin:BasicFeeder",
+              "version": 1,
+              "metadata": {
+                "designer": {
+                  "x": 900,
+                  "y": 300
+                }
+              },
+              "parameters": {},
+              "mapper": {
+                "array": "{{11.data}}"
+              }
+            },
+            {
+              "id": 13,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1200,
+                  "y": 300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://backend.aisensy.com/campaign/t1/api/v2",
+                "method": "post",
+                "headers": [],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"apiKey\": \"__AISENSY_API_KEY__\",\n  \"campaignName\": \"abm_final_v1\",\n  \"destination\": \"{{12.phone}}\",\n  \"userName\": \"{{12.first_name}}\",\n  \"source\": \"{{12.campaign}}\",\n  \"templateParams\": [\n    \"{{12.first_name}}\",\n    \"{{12.company}}\"\n  ],\n  \"attributes\": {\n    \"company\": \"{{12.company}}\",\n    \"score\": \"{{12.score}}\",\n    \"lead_id\": \"{{12.id}}\"\n  }\n}",
+                "parseResponse": true
+              }
+            },
+            {
+              "id": 14,
+              "module": "http:ActionSendData",
+              "version": 3,
+              "metadata": {
+                "designer": {
+                  "x": 1500,
+                  "y": 300
+                }
+              },
+              "parameters": {
+                "handleErrors": true,
+                "useNewZLibDeCompress": true
+              },
+              "mapper": {
+                "url": "https://vvozzvbwduoruozsphxa.supabase.co/rest/v1/rpc/abm_mark_sent",
+                "method": "post",
+                "headers": [
+                  {
+                    "name": "apikey",
+                    "value": "__SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Authorization",
+                    "value": "Bearer __SUPABASE_SERVICE_ROLE_KEY__"
+                  },
+                  {
+                    "name": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "qs": [],
+                "bodyType": "raw",
+                "contentType": "application/json",
+                "data": "{\n  \"p_lead\": \"{{12.id}}\",\n  \"p_touch\": \"wa_final\"\n}",
+                "parseResponse": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "instant": false,
+    "version": 1
+  },
+  "scheduling": {
+    "type": "indefinitely",
+    "interval": 3600
+  },
+  "interface": {
+    "input": [],
+    "output": []
+  }
+}
