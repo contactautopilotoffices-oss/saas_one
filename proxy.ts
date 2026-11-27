@@ -164,7 +164,7 @@ export async function proxy(request: NextRequest) {
         '/guest/',     // Meeting Assistant guest links (/guest/<secret>) — people without a login ask to join an
                        // online meeting; staff let them in (stage 2, owner 2026-11-18). Keep the trailing slash.
         '/api',        // API routes handle their own auth
-        '/.well-known/oauth-protected-resource', // MCP sign-in discovery (RFC 9728); public metadata, no data
+        '/.well-known/', // Public RFC/MCP discovery metadata (RFC 9728, RFC 8414, OIDC); no user data
         '/kiosk',
         '/display/',   // Meeting-room door panels (/display/room/<roomId>) — the screen is screwed
                        // to a wall and has no session. Read-only, and the payload is minimised in

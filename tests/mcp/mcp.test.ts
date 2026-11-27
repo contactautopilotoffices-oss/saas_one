@@ -455,16 +455,77 @@ test('POST /api/mcp: no token gets 401 with the discovery header; GET is 405', a
     const res = await route.POST(req);
     assert.equal(res.status, 401);
     assert.match(res.headers.get('www-authenticate') || '', /resource_metadata="https:\/\/fms\.example\.com\/\.well-known\/oauth-protected-resource\/api\/mcp"/);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
     const cross = new NextRequest('https://fms.example.com/api/mcp', { method: 'POST', body: '{}', headers: { origin: 'https://evil.example' } });
     assert.equal((await route.POST(cross)).status, 403);
+    const chatgptProbe = new NextRequest('https://fms.example.com/api/mcp', { method: 'POST', body: '{}', headers: { origin: 'https://chatgpt.com' } });
+    assert.equal((await route.POST(chatgptProbe)).status, 401);
+    const opt = await route.OPTIONS();
+    assert.equal(opt.status, 204);
+    assert.equal(opt.headers.get('access-control-allow-origin'), '*');
+    assert.match(opt.headers.get('access-control-expose-headers') || '', /WWW-Authenticate/);
     assert.equal((await route.GET()).status, 405);
+    const unauthGet = await route.GET(new NextRequest('https://fms.example.com/api/mcp', { method: 'GET' }));
+    assert.equal(unauthGet.status, 401);
 });
 
-test('protected resource metadata points at this Supabase Auth', async () => {
-    const route = await import('../../app/.well-known/oauth-protected-resource/[[...path]]/route');
+test('protected resource & authorization server metadata support ChatGPT and any MCP client', async () => {
+    const prmRoute = await import('../../app/.well-known/oauth-protected-resource/[[...path]]/route');
+    const asRoute = await import('../../app/.well-known/oauth-authorization-server/[[...path]]/route');
     const { NextRequest } = await import('next/server');
-    const res = await route.GET(new NextRequest('https://fms.example.com/.well-known/oauth-protected-resource/api/mcp'));
+    const res = await prmRoute.GET(new NextRequest('https://fms.example.com/.well-known/oauth-protected-resource/api/mcp'));
     const body = await res.json();
     assert.equal(body.resource, 'https://fms.example.com/api/mcp');
     assert.deepEqual(body.authorization_servers, ['http://127.0.0.1:9/auth/v1']);
+    assert.ok(Array.isArray(body.scopes_supported) && body.scopes_supported.includes('offline_access'));
+    assert.equal((await prmRoute.OPTIONS()).status, 204);
+
+    const asRes = await asRoute.GET();
+    const asBody = await asRes.json();
+    assert.equal(asRes.status, 200);
+    assert.equal(asBody.issuer, 'http://127.0.0.1:9/auth/v1');
+    assert.equal(asBody.registration_endpoint, 'http://127.0.0.1:9/auth/v1/oauth/clients/register');
+    assert.equal((await asRoute.OPTIONS()).status, 204);
+});
+
+test('multi-platform OAuth redirects allow ChatGPT, IDEs, and safe HTTPS platforms while blocking unsafe URLs', async () => {
+    const { redirect } = await mods();
+    assert.equal(redirect.isAllowedRedirect('https://chatgpt.com/connector_platform_oauth_redirect'), true);
+    assert.equal(redirect.isAllowedRedirect('https://chatgpt.com/connector/oauth/abc123'), true);
+    assert.equal(redirect.isConnectableRedirect('https://chatgpt.com/connector_platform_oauth_redirect'), true);
+    assert.equal(redirect.isConnectableRedirect('cursor://anysphere.cursor-mcp/oauth/callback'), true);
+    assert.equal(redirect.isConnectableRedirect('vscode://ms-vscode.mcp/callback'), true);
+    assert.equal(redirect.isConnectableRedirect('https://custom-agent.example.com/oauth/callback'), true);
+    assert.equal(redirect.isConnectableRedirect('http://localhost:6274/oauth/callback'), true);
+    assert.equal(redirect.isConnectableRedirect('http://evil.example/cb'), false);
+    assert.equal(redirect.isConnectableRedirect('https://169.254.169.254/latest/meta-data'), false);
+    assert.equal(redirect.isConnectableRedirect('javascript:alert(1)'), false);
+    assert.equal(redirect.isConnectableRedirect('https://chatgpt.com/cb#frag'), false);
+
+    const prev = process.env.MCP_RESTRICT_REDIRECT_HOSTS;
+    process.env.MCP_RESTRICT_REDIRECT_HOSTS = 'true';
+    assert.equal(redirect.isConnectableRedirect('https://custom-agent.example.com/oauth/callback'), false);
+    assert.equal(redirect.isConnectableRedirect('https://chatgpt.com/connector_platform_oauth_redirect'), true);
+    if (prev === undefined) delete process.env.MCP_RESTRICT_REDIRECT_HOSTS;
+    else process.env.MCP_RESTRICT_REDIRECT_HOSTS = prev;
+});
+
+test('tool schemas avoid OpenAI unsupported propertyNames keyword and proxy unlocks /.well-known/', async () => {
+    const { tools } = await mods();
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
+    const fs = await import('node:fs');
+    const server = tools.buildMcpServer(ctxOf());
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1' });
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const listed = await client.listTools();
+    for (const t of listed.tools) {
+        assert.equal(JSON.stringify(t.inputSchema).includes('"propertyNames"'), false, `${t.name} must not emit propertyNames`);
+    }
+    await client.close();
+    await server.close();
+
+    const proxySrc = fs.readFileSync('proxy.ts', 'utf8');
+    assert.match(proxySrc, /'\/\.well-known\/'/);
 });

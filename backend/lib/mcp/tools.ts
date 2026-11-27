@@ -231,7 +231,7 @@ export function buildMcpServer(ctx: McpContext): McpServer {
                 'Example: {"path": "/api/organizations/3f2b8c1e-5a7d-4e2f-9b1c-2d4e6f8a0b1c/ppm-summary", "query": {}}.',
             inputSchema: {
                 path: z.string().max(512).describe('Route path starting with /api/, placeholders filled, no query string. e.g. "/api/crm/stats".'),
-                query: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional()
+                query: z.object({}).catchall(z.union([z.string(), z.number(), z.boolean()])).optional()
                     .describe('Query parameters as an object, e.g. {"org_id": "<id>", "period": "month"}.'),
             },
             annotations: READ_ONLY,

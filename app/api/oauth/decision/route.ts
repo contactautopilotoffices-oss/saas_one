@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/frontend/utils/supabase/server';
-import { isAllowedRedirect } from '@/backend/lib/mcp/redirectPolicy';
+import { isConnectableRedirect } from '@/backend/lib/mcp/redirectPolicy';
 import { publicOrigin } from '@/backend/lib/mcp/config';
 
 /**
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
         // consent page never shows Allow for a client that fails the redirect policy.
         const { data: details, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
         if (error) console.warn('[oauth/decision] details re-check failed, relying on the redirect check:', error.message);
-        if (details && 'authorization_id' in details && !isAllowedRedirect(details.redirect_uri)) effective = 'deny';
+        if (details && 'authorization_id' in details && !isConnectableRedirect(details.redirect_uri)) effective = 'deny';
     }
 
     const result = effective === 'approve'
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
         }
         return page(`The FMS could not record your choice (${escapeHtml(reason)}). Start the connection again from your assistant.`, 400);
     }
-    if (!isAllowedRedirect(result.data.redirect_url)) {
+    if (!isConnectableRedirect(result.data.redirect_url)) {
         return page(effective === 'approve' ? 'Connection refused: this app is not an approved assistant.' : 'Access denied. You can close this window.', 200);
     }
     return continueTo(result.data.redirect_url, effective === 'approve');

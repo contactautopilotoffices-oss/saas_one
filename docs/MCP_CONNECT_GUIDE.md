@@ -1,21 +1,22 @@
-# Connect Claude to the FMS
+# Connect AI Assistants (ChatGPT, Claude, Cursor & Any MCP Platform) to the FMS
 
-The FMS has an MCP server at `https://<your FMS domain>/api/mcp`. When you connect Claude to it,
-Claude can **read** what you can see in the FMS, signed in as you. It can also **create** records
-(tickets, HR tickets, ticket comments, CRM leads, notes and activities, tasks, diesel, electricity
-and water readings, stock movements, petty cash drafts, meeting room bookings) and **update** one
-existing record (close or change a ticket, reassign it, move an HR ticket on, update a CRM lead,
-mark a task done), one at a time and only after it shows you a preview and you say yes. There are
-no delete tools.
+The FMS exposes a standard Streamable HTTP MCP server at `https://<your FMS domain>/api/mcp` with OAuth 2.1 + PKCE (`S256`) and Dynamic Client Registration (via Supabase Auth).
 
-## For users (anyone with an FMS login, clients included)
+When you connect ChatGPT, Claude, Cursor, VS Code, Windsurf, or any other MCP-compatible platform, the assistant can **read** what you can see in the FMS, signed in as you. It can also **create** records (tickets, HR tickets, ticket comments, CRM leads, notes and activities, tasks, diesel, electricity and water readings, stock movements, petty cash drafts, meeting room bookings) and **update** one existing record (close or change a ticket, reassign it, move an HR ticket on, update a CRM lead, mark a task done), one at a time and only after it shows you a preview and you say yes. There are no delete tools.
 
-1. In Claude, open **Settings → Connectors → Add custom connector**.
-2. Name: `Autopilot FMS`. URL: `https://<your FMS domain>/api/mcp`. Leave the OAuth fields empty.
-3. Click **Connect**. The FMS login opens. Sign in with your normal FMS account.
-4. You will see "Connect Claude to the FMS?". Check it says you go back to `claude.ai`, then click **Allow**.
-5. Ask Claude things like "what open tickets do I have at Andheri?", "raise a ticket: the AC on the
-   3rd floor is leaking" or "book a room for 6 people tomorrow 3 to 4 pm".
+## Connect from any MCP platform (anyone with an FMS login, clients included)
+
+1. **Claude (Web / Desktop / Code):**
+   - Web/Desktop: **Settings → Connectors → Add custom connector** → Name: `Autopilot FMS`, URL: `https://<your FMS domain>/api/mcp` (leave OAuth fields empty) → **Connect**.
+   - Claude Code CLI: `claude mcp add --transport http autopilot-fms https://<your FMS domain>/api/mcp` then sign in when asked.
+2. **ChatGPT (Developer Mode / Custom Apps & Connectors):**
+   - Enable **Developer Mode** in ChatGPT (**Settings → Apps / Connectors → Advanced**).
+   - Create a custom connector/app: URL `https://<your FMS domain>/api/mcp`, Authentication: **OAuth** (leave Client ID / Secret empty for Dynamic Client Registration).
+   - Click **Connect**, sign in with your normal FMS account, and click **Allow** on the consent screen (`chatgpt.com` is approved out of the box).
+3. **Cursor / VS Code / Windsurf / Other MCP platforms:**
+   - Configure a remote HTTP MCP server pointing to `https://<your FMS domain>/api/mcp` with OAuth (`/.well-known/oauth-protected-resource/api/mcp` and `/.well-known/oauth-authorization-server` are both served).
+   - Complete the browser sign-in and click **Allow** on `/oauth/consent` (if connecting a custom or self-hosted platform host, verify the displayed domain before clicking **Allow**).
+4. **In any assistant, ask things like:** "what open tickets do I have at Andheri?", "raise a ticket: the AC on the 3rd floor is leaking" or "book a room for 6 people tomorrow 3 to 4 pm".
 
 For a ticket or a booking, Claude first shows what it will do ("Book Board Room, tomorrow 15:00 to
 16:00, uses 1 hour of credits?"). Nothing happens until you reply yes. The same app rules apply as
@@ -41,7 +42,7 @@ then sign in when asked.
    third, everyone keeps every tool and the Claude tools screen cannot save.
 2. **Supabase dashboard → Authentication → OAuth Server:**
    - Turn on **OAuth 2.1 server**.
-   - Turn on **Dynamic client registration** (Claude registers itself).
+   - Turn on **Dynamic client registration** (ChatGPT, Claude, Cursor, etc. register automatically).
    - **Authorization path:** `/oauth/consent`.
 3. **Supabase dashboard → Authentication → URL Configuration:** the **Site URL** must be the FMS
    domain (the consent page is Site URL + `/oauth/consent`).
@@ -51,8 +52,12 @@ then sign in when asked.
    app). Optional:
    - `MCP_PUBLIC_ORIGIN` overrides it for the MCP only.
    - `MCP_INTERNAL_ORIGIN` sets where the MCP calls FMS routes (default: the same URL).
-   - `MCP_ALLOWED_REDIRECT_HOSTS`: extra assistant hosts allowed on the consent screen, comma
-     separated. Default: `claude.ai, claude.com`, plus localhost.
+   - `MCP_ALLOWED_REDIRECT_HOSTS`: extra recognized assistant hosts shown without warning on the
+     consent screen, comma separated. Common platforms (`claude.ai`, `chatgpt.com`, `openai.com`,
+     `cursor.com`, `vscode.dev`, `windsurf.com`, `perplexity.ai`, etc.), desktop IDE schemes, and
+     localhost are already recognized by default.
+   - `MCP_RESTRICT_REDIRECT_HOSTS`: set to `true` to reject OAuth redirects to unlisted HTTPS
+     domains instead of showing an unrecognized-host warning on the consent screen.
    - `MCP_RATE_LIMIT_PER_MINUTE`: default 60 per user.
 6. Deploy, then connect one account and check that `mcp_call_log` gets rows.
 
