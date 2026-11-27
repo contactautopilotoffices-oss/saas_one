@@ -464,7 +464,8 @@ test('POST /api/mcp: no token gets 401 with the discovery header; GET is 405', a
     assert.equal(opt.status, 204);
     assert.equal(opt.headers.get('access-control-allow-origin'), '*');
     assert.match(opt.headers.get('access-control-expose-headers') || '', /WWW-Authenticate/);
-    assert.equal((await route.GET()).status, 405);
+    const authGet = new NextRequest('https://fms.example.com/api/mcp', { method: 'GET', headers: { authorization: 'Bearer tok' } });
+    assert.equal((await route.GET(authGet)).status, 405);
     const unauthGet = await route.GET(new NextRequest('https://fms.example.com/api/mcp', { method: 'GET' }));
     assert.equal(unauthGet.status, 401);
 });
